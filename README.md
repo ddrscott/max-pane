@@ -51,6 +51,18 @@ Everything in `scripts/` does this for you.
 ## Build
 
 ```sh
+./scripts/build-app.sh         # everything: core, bindings, app, bundle, signing
+./scripts/build-app.sh release run   # ...and launch it
+```
+
+Signing is the last step and it is not optional. WKWebView will not spawn its
+content processes for an unsigned, unbundled binary, and adding a file to the
+bundle *after* signing breaks the seal — with no symptom until something checks,
+so `build-app.sh` checks.
+
+For the core alone:
+
+```sh
 ./scripts/gen-bindings.sh      # build laned-core, regenerate the Swift bindings
 cd swift/MaxPane && swift build
 ```
@@ -105,4 +117,24 @@ which was written from the Rust pty-host source and cites it.
 - **Spikes keep their code.** A number in `docs/spikes/` is only trustworthy if
   the program that produced it is still runnable.
 - When reality contradicts the PRD, surface the conflict in an ADR rather than
-  silently reinterpreting the requirement.
+  silently reinterpreting the requirement. Six such conflicts are tabulated in
+  [`docs/acceptance.md`](docs/acceptance.md), and the PRD itself is annotated
+  **[AMENDED]** in place.
+
+## Running it for real
+
+```sh
+./scripts/build-app.sh release run
+```
+
+Terminals spawned by the app get `BROWSER` pointed at the bundled
+`maxpane-open`, so anything that opens a URL politely gets a web lane beside the
+terminal that asked. To get the same from a terminal you started yourself:
+
+```sh
+export BROWSER="$PWD/build/MaxPane.app/Contents/MacOS/maxpane-open"
+```
+
+`MAXPANE_WINDOWED=1` skips fullscreen, and `MAXPANE_DEBUG=1` turns on the chatty
+half of the logging. Both go to stderr, which you only see if you run the binary
+inside the bundle directly rather than via `open`.

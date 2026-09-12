@@ -33,13 +33,17 @@ cp swift/MaxPane/Resources/Info.plist "$APP/Contents/Info.plist"
 # laned-core is linked statically, so nothing to copy — but the dylib would land
 # in Frameworks/ with an @rpath fixup if that ever changes.
 
-echo "==> signing (ad-hoc)"
-codesign --force --sign - --timestamp=none "$APP" >/dev/null
-codesign --verify --deep --strict "$APP"
-
-echo "==> also building maxpane-open (the BROWSER shim)"
+echo "==> maxpane-open (the BROWSER shim)"
 cargo build --release -p maxpane-open
 cp "target/release/maxpane-open" "$APP/Contents/MacOS/maxpane-open"
+
+# Signing must come last. Adding a file to the bundle afterwards breaks the seal,
+# and the only symptom is `codesign --verify` saying "a sealed resource is
+# missing or invalid" — which nothing checks unless you ask it to. So we ask.
+echo "==> signing (ad-hoc)"
+codesign --force --sign - --timestamp=none "$APP/Contents/MacOS/maxpane-open" >/dev/null
+codesign --force --sign - --timestamp=none "$APP" >/dev/null
+codesign --verify --deep --strict "$APP"
 
 echo "built $APP"
 echo "  terminals should run with BROWSER=$PWD/$APP/Contents/MacOS/maxpane-open"
