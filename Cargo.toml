@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["crates/laned-core"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.86"
+license = "MIT"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"

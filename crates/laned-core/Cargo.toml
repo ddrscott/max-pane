@@ -1,0 +1,25 @@
+[package]
+name = "laned-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Durable ledger, ordinals, tagging, search and eviction policy for Max Pane. Platform-agnostic."
+
+[lib]
+crate-type = ["staticlib", "cdylib", "lib"]
+name = "laned_core"
+
+[dependencies]
+uniffi = { version = "0.32", features = ["cli"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+ulid = "1"
+thiserror = "2"
+parking_lot = "0.12"
+
+[dev-dependencies]
+tempfile = "3"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"

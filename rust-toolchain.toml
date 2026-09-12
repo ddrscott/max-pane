@@ -1,0 +1,6 @@
+# Homebrew's `rust` formula is pinned to 1.86 and shadows rustup in PATH.
+# Build through /opt/homebrew/opt/rustup/bin/cargo (or `scripts/build.sh`) so
+# this file is what decides the toolchain.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
