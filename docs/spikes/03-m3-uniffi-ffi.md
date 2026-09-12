@@ -89,6 +89,10 @@ At the PRD's actual §10.1 target of 150 lanes the cost is roughly half again;
 300 lanes was chosen as 2× headroom over the real target, and it still passes
 with 2× headroom over the budget.
 
+A re-run with three other spikes compiling and running on the same machine gave
+**2.744 ms p95** — still a pass, and a useful reminder that the headline number
+was taken on an idle machine while the real app will not be on one.
+
 ## What this means
 
 ### For §14's "uniffi vs cbindgen"

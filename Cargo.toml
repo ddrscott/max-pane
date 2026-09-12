@@ -11,4 +11,7 @@ license = "MIT"
 [profile.release]
 lto = "thin"
 codegen-units = 1
-panic = "abort"
+# Deliberately NOT panic = "abort". uniffi wraps every exported call in
+# catch_unwind so a Rust panic arrives in Swift as an error the app can show and
+# survive; aborting would take the whole strip down instead, which is the one
+# thing this design exists to prevent.
