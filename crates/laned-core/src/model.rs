@@ -130,6 +130,44 @@ pub struct Pane {
     pub zoom: f64,
 }
 
+/// Which edge of the window a docked lane holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum DockSide {
+    Left,
+    Right,
+}
+
+/// What a docked lane does to the strip beside it. The owner asked for both:
+/// *"another option should allow the pinned pane to hover over the strip, or
+/// reduce the space of the strip."*
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum DockMode {
+    /// The dock floats above the strip. The strip keeps the whole window's
+    /// width, so nothing about its arithmetic changes — and the lane beneath
+    /// the dock is *occluded*, which is the one thing the edge-peek work exists
+    /// to prevent. The shell owes the reader some other evidence that the strip
+    /// continues under there; see `docs/work/docked-panes-contract.md`.
+    Overlay,
+    /// The dock takes its width out of the strip's viewport. Nothing is ever
+    /// hidden, at the price of every viewport computation in the shell having
+    /// to agree about what the viewport now is.
+    Inset,
+}
+
+/// Where a docked lane sits, and how wide.
+///
+/// `Option<Dock>` on the lane rather than a `docked: bool` beside three fields:
+/// "docked with no side" is a lane the layout cannot place, and the cheapest
+/// way to never handle that case is to make it unrepresentable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct Dock {
+    pub side: DockSide,
+    pub mode: DockMode,
+    /// Points. Bounded by `DOCK_MIN_PT`/`DOCK_MAX_PT`, which are not the lane
+    /// bounds — a dock is not a reading column.
+    pub width_pt: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct Lane {
     pub id: String,
@@ -144,8 +182,22 @@ pub struct Lane {
     pub created_at: i64,
     /// Epoch milliseconds. Drives eviction ranking.
     pub last_focus_at: i64,
-    /// Pinned lanes are never evicted.
-    pub pinned: bool,
+    /// Never destroy this lane's web panes to reclaim memory.
+    ///
+    /// This is the flag that used to be called `pinned`, before the owner said
+    /// plainly that pinning means docking. It kept its meaning and its key
+    /// (⇧⌘P) and lost only the word; ADR-0010 is why it was not
+    /// simply folded into `dock` instead.
+    pub keep_live: bool,
+    /// `Some` while this lane is held at an edge of the window instead of
+    /// scrolling with the strip. Every pane in the lane is docked with it — the
+    /// unit is the lane, which the owner settled directly: *"when a lane is
+    /// docked all its panes are inherently docked with it."*
+    ///
+    /// A docked lane keeps its `ordinal` and stays in `StripState.lanes`, so
+    /// undocking returns it to the same place in the order it left. It is *not*
+    /// laid out by the strip; the shell filters on this field. See the contract.
+    pub dock: Option<Dock>,
     /// How many lane-widths this lane may occupy. 1 almost always.
     ///
     /// PRD §13 Phase 3's escape hatch for "the rare landscape site" — a wide
@@ -164,7 +216,16 @@ pub struct Lane {
 /// currently showing and touches only what changed.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct StripState {
-    /// In ordinal order. Already filtered when a gather filter is active.
+    /// In ordinal order, **docked lanes included**. Already filtered when a
+    /// gather filter is active.
+    ///
+    /// Docked lanes stay in this list rather than being split into one of their
+    /// own, because everything that is not the strip's layout — ⌘P, gather,
+    /// the sidebar, `maxpane ls`, export — wants them. A lane drawn twice
+    /// because a view forgot to filter is a bug you see the instant it happens;
+    /// a lane missing from search because a list forgot to union is a hole
+    /// nobody notices. The strip's layout is the one consumer that must skip
+    /// them, and it is the one consumer that is told to, loudly.
     pub lanes: Vec<Lane>,
     /// Horizontal scroll offset in points, restored across launches.
     pub scroll_x: f64,

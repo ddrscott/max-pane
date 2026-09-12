@@ -28,7 +28,12 @@ public enum Command: String, CaseIterable {
     case search
     case gather
     case ungather
-    case togglePinned
+    case toggleKeepLive
+    case dockLaneLeft
+    case dockLaneRight
+    case toggleDockMode
+    case focusDockLeft
+    case focusDockRight
     case peekDesktop
     case widenLane
     case narrowLane
@@ -64,7 +69,12 @@ public enum Command: String, CaseIterable {
         case .search: return "Search…"
         case .gather: return "Gather Project"
         case .ungather: return "Leave Gather View"
-        case .togglePinned: return "Pin Lane"
+        case .toggleKeepLive: return "Keep Lane Loaded"
+        case .dockLaneLeft: return "Dock Lane Left"
+        case .dockLaneRight: return "Dock Lane Right"
+        case .toggleDockMode: return "Dock Floats Over Strip"
+        case .focusDockLeft: return "Focus Left Dock"
+        case .focusDockRight: return "Focus Right Dock"
         case .peekDesktop: return "Peek Desktop"
         case .widenLane: return "Widen Lane"
         case .narrowLane: return "Narrow Lane"
@@ -120,7 +130,39 @@ public enum Command: String, CaseIterable {
         case .gather:          return ("g", [.command])
         // Esc, which is not a menu key equivalent — handled in the responder chain.
         case .ungather:        return ("\u{1b}", [])
-        case .togglePinned:    return ("p", [.command, .shift])
+        // ⇧⌘P kept its key and lost its word. It used to be "Pin Lane", which
+        // meant "never evict this lane" — and the owner has since said plainly
+        // that pinning is what he calls docking. The key is not the word, and
+        // moving a binding people have in their fingers to rename a concept
+        // costs more than it buys.
+        case .toggleKeepLive:  return ("p", [.command, .shift])
+        // ⌘[ / ⌘] move focus between lanes; ⌃⌘[ / ⌃⌘] push a lane out to that
+        // edge entirely. Same axis, one modifier further. Both toggle, so the
+        // key that docked a lane is the key that gives the edge back.
+        case .dockLaneLeft:    return ("[", [.command, .control])
+        case .dockLaneRight:   return ("]", [.command, .control])
+        // ⌘\ spans a lane to 2×; ⌃⌘\ is the other question about how much room
+        // something takes — whether the dock floats over the strip or takes its
+        // width out of it.
+        case .toggleDockMode:  return ("\\", [.command, .control])
+        // The way in, and the way out, for the keyboard.
+        //
+        // ⌘[ / ⌘] skip the docks — the owner asked for that directly, and it is
+        // right: those keys scroll the strip, and a docked lane does not
+        // scroll, so landing on one would be a keypress with no motion and a
+        // focus ring that jumped across the window and back. But PRD §8 says
+        // every action has a shortcut and the mouse is optional, and a music
+        // page you cannot focus is a music page you cannot pause without
+        // reaching for the trackpad.
+        //
+        // So: one key per edge, and each one is a toggle. Pressing it while
+        // focus is already in that dock returns focus to the lane it came from.
+        // A single "go to the dock and come back" key was the tempting cheaper
+        // option and it is worse with two docks: which of them it means is
+        // hidden state the user cannot see. Naming the edge is never ambiguous,
+        // and it matches ⌘[ / ⌘] on the same axis.
+        case .focusDockLeft:   return ("[", [.command, .option])
+        case .focusDockRight:  return ("]", [.command, .option])
         // PRD §16: the escape hatch to the rest of macOS.
         case .peekDesktop:     return ("\u{21e5}", [.command, .option])
         case .widenLane:       return ("=", [.command, .control])
@@ -161,8 +203,12 @@ public enum Command: String, CaseIterable {
         case .openAnything, .openPages, .openSessions, .newTerminalLane, .splitDown: return .file
         case .closePane, .closeLane: return .file
         case .focusLeft, .focusRight, .focusUp, .focusDown, .search, .gather, .ungather: return .navigate
-        case .moveLaneLeft, .moveLaneRight, .toggleSidebar, .togglePinned,
+        case .moveLaneLeft, .moveLaneRight, .toggleSidebar, .toggleKeepLive,
              .widenLane, .narrowLane, .peekDesktop: return .view
+        case .dockLaneLeft, .dockLaneRight, .toggleDockMode: return .view
+        // Under Navigate, not View: these move focus, which is the same thing
+        // ⌘[ / ⌘] do and the reason they exist at all.
+        case .focusDockLeft, .focusDockRight: return .navigate
         case .claimSession: return .file
         case .showMemory, .showHelp: return .view
         case .reload, .hardReload: return .navigate

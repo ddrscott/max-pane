@@ -189,7 +189,7 @@ enum SidebarModel {
                 badgeIsThroughput: t.badgeIsThroughput,
                 age: t.ageText,
                 isRunning: t.isRunning,
-                pinned: lane?.pinned ?? false,
+                pinned: lane?.keepLive ?? false,
                 createdAt: created[id] ?? (t.lastActivity?.timeIntervalSince1970 ?? 0),
                 activityAt: t.lastActivity?.timeIntervalSince1970 ?? 0)
             grouped[t.groupPath, default: []].append(entry)
@@ -226,7 +226,7 @@ enum SidebarModel {
                 // process is gone, however live its pane still is — counting it
                 // as running would put a phantom in the group's header.
                 isRunning: kind == .session ? false : live,
-                pinned: lane.pinned,
+                pinned: lane.keepLive,
                 createdAt: Double(lane.createdAt) / 1000,
                 activityAt: Double(lane.lastFocusAt) / 1000)
             grouped[group(for: lane), default: []].append(entry)

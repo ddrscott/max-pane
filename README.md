@@ -133,6 +133,7 @@ Press **⌘/** for every shortcut. The three that matter:
 |---|---|
 | **⌘O** (also **⌘T**, **⌘D**) | start anything — a command, a URL, a page you have been to, a session that is already running |
 | **⌘[** / **⌘]** | move focus between lanes |
+| **⌃⌘[** / **⌃⌘]** | dock this lane to that edge of the window, or undock it |
 | **⌘P** | find a lane by title, URL or something it printed |
 
 ⌘O is the only door into the strip, because "something goes to the right of
@@ -149,6 +150,34 @@ picker with those scopes already chosen. **⌘⌫** forgets the selected row.
 
 ⌘P stays separate on purpose: it finds what is *already on the strip* and
 scrolls to it, where every ⌘O row spends something to create a pane.
+
+### Docking a lane to an edge
+
+**⌃⌘[** and **⌃⌘]** hold a lane at the left or right edge of the window instead
+of letting it scroll with the strip — a music player, a chat, anything you want
+on screen while you work somewhere else. One lane per edge, two at once; press
+the same key again to give the edge back. Every pane in the lane goes with it.
+
+**⌃⌘\\** switches that dock between *inset*, where the strip's viewport narrows
+so nothing is hidden behind the dock, and *overlay*, where it floats above the
+strip. **⌃⌘=** and **⌃⌘-** resize the dock rather than the lane while it is
+docked, and the width is remembered separately from the lane's own — undock it
+and it goes back to the width you gave it in the strip.
+
+**⌥⌘[** and **⌥⌘]** move focus into a dock and, pressed again, back out to where
+you were. ⌘[ / ⌘] deliberately skip the docks: those keys scroll the strip, and
+a docked lane does not scroll.
+
+A docked lane keeps its place in the strip's order the whole time, so undocking
+puts it back exactly where it was — even if lanes were created or closed around
+it meanwhile. It is also never evicted and never unparented, whatever memory
+does, which is what keeps a docked page playing.
+
+**⇧⌘P** is the other half of that: "Keep Lane Loaded" protects a lane's pages
+from eviction *without* giving it an edge of the screen, for the long-running
+thing you do not need to look at. It used to be called "Pin Lane" —
+[ADR-0010](docs/decisions/0010-docking-takes-the-word-pinned.md) is why the word
+moved.
 
 A terminal whose process exits takes its lane with it, after a beat.
 
@@ -172,7 +201,11 @@ maxpane ls                # what is on the strip
 ```
  0	pty:bc780940	max-pane	untitled
 *1	web	-	Google
+ ◀	web	-	YouTube Music
 ```
+
+A docked lane is listed with `◀` or `▶` where the others have a strip position,
+because it does not have one.
 
 Terminals Max Pane starts already have `BROWSER` set to the bundled shim, so
 anything inside them that opens a URL politely gets a web lane beside the

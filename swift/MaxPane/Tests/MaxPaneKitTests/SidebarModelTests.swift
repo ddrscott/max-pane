@@ -27,7 +27,7 @@ struct SidebarModelTests {
         Lane(
             id: id, ordinal: 1, widthPt: 500, title: url == nil ? nil : nil,
             projectRoot: project, projectSource: .cwd,
-            createdAt: created, lastFocusAt: created, pinned: pinned, span: 1,
+            createdAt: created, lastFocusAt: created, keepLive: pinned, dock: nil, span: 1,
             panes: [Pane(
                 id: "p-" + id, laneId: id, position: 0, kind: kind,
                 relaySessionId: session, url: url, scrollY: nil,

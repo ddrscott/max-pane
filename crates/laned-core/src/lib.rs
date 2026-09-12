@@ -46,6 +46,28 @@ pub const LANE_MAX_PT: u32 = 900;
 /// says anything — the tests, a future shell mid-boot — gets.
 pub const LANE_DEFAULT_PT: u32 = 656;
 
+/// Both ends of the allowed *dock* width, in points.
+///
+/// Deliberately not `LANE_MIN_PT`/`LANE_MAX_PT`. §8's 420 pt floor exists so a
+/// terminal lane still holds a readable grid — 656 pt is 80 columns at a 13 pt
+/// monospace cell, and 420 is about 50. A dock is not that: the owner's stated
+/// case is *"a page that's for background music"*, which is a player, and a
+/// player forced to 420 pt takes a third of a portrait window to show a
+/// play button.
+///
+/// The floor is 240 rather than nothing because a dock you have dragged down to
+/// a sliver is a dock you cannot grab to drag back. The ceiling is the lane
+/// ceiling, since past that the thing at the edge of the screen has stopped
+/// being a dock and become the window.
+///
+/// Neither bound knows how wide the window is, and neither should: the core
+/// clamps the number the user chose, and the *view* clamps again against the
+/// viewport at layout time without ever writing that back. A dock is not
+/// permanently narrowed by having once been opened on a small screen — the same
+/// rule ADR-0007 settled for lanes and session sizes.
+pub const DOCK_MIN_PT: u32 = 240;
+pub const DOCK_MAX_PT: u32 = LANE_MAX_PT;
+
 const KEY_SCROLL_X: &str = "strip_scroll_x";
 const KEY_FOCUSED_PANE: &str = "focused_pane_id";
 
@@ -219,7 +241,11 @@ impl Core {
             project_source,
             created_at: now,
             last_focus_at: now,
-            pinned: false,
+            keep_live: false,
+            // A lane is born in the strip. Docking is always something the user
+            // did to a lane that already exists, which is what makes "where
+            // does it go back to" answerable at all.
+            dock: None,
             span: 1,
             panes: Vec::new(),
         };
@@ -328,10 +354,27 @@ impl Core {
     }
 
     /// Swap a lane with its neighbour (⌘⇧← / ⌘⇧→).
+    ///
+    /// Over the lanes the *strip* shows. A docked lane still holds an ordinal
+    /// somewhere in the middle of the order — that is the whole mechanism by
+    /// which it returns to the same spot — and swapping with it would move the
+    /// lane past something invisible, twice, to no visible effect. The user
+    /// would press ⌘⇧→ and watch nothing happen.
+    ///
+    /// Nudging a *docked* lane is a no-op for the same reason from the other
+    /// side. It would move the spot the lane returns to when it is undocked,
+    /// which is a real change with nothing on screen to show for it — and a
+    /// keystroke that silently rearranges a strip you cannot see it rearrange
+    /// is worse than a keystroke that does nothing.
     pub fn nudge_lane(&self, lane_id: String, right: bool) -> Result<StripState> {
         let lanes = {
             let inner = self.inner.lock();
-            inner.ledger.lanes()?
+            if inner.ledger.lane(&lane_id)?.dock.is_some() {
+                return Self::snapshot(&inner);
+            }
+            let mut lanes = inner.ledger.lanes()?;
+            lanes.retain(|l| l.dock.is_none());
+            lanes
         };
         let i = lanes
             .iter()
@@ -421,11 +464,117 @@ impl Core {
         Self::snapshot(&inner)
     }
 
-    pub fn set_pinned(&self, lane_id: String, pinned: bool) -> Result<StripState> {
+    /// Protect a lane's web panes from the eviction policy (⇧⌘P).
+    ///
+    /// This is `set_pinned` under the name the word "pinned" had to give up
+    /// when the owner said docking is what he means by pinning. Same flag, same
+    /// key, same behaviour; ADR-0010 records why it survived the rename instead
+    /// of being folded into docking.
+    ///
+    /// Nothing needs to call this for a *docked* lane: protection is derived
+    /// from the dock rather than written alongside it, so undocking cannot
+    /// quietly clear a flag the user set by hand.
+    pub fn set_keep_live(&self, lane_id: String, keep_live: bool) -> Result<StripState> {
         let mut inner = self.inner.lock();
-        inner.ledger.set_pinned(&lane_id, pinned)?;
+        inner.ledger.set_keep_live(&lane_id, keep_live)?;
         Self::bump(&mut inner);
         Self::snapshot(&inner)
+    }
+
+    // ---- docking -----------------------------------------------------------
+
+    /// Hold a lane at one edge of the window instead of letting it scroll with
+    /// the strip.
+    ///
+    /// The unit is the lane, which the owner settled directly — *"when a lane
+    /// is docked all its panes are inherently docked with it"* — so this takes
+    /// a lane id and a stack of three docks as one thing. The brief argued both
+    /// sides; it is not an open question any more, and nothing here should be
+    /// rebuilt around panes without him saying so.
+    ///
+    /// **The lane keeps its ordinal and stays in `StripState.lanes`.** It is
+    /// not removed from the order and re-inserted on undock, because a
+    /// remembered ordinal is a fact that goes stale: lanes created either side
+    /// of it, both its neighbours closed, or a [`Ledger::renormalize`] rewriting
+    /// every ordinal underneath it, and the remembered number no longer names
+    /// the place it came from. A lane that never left the order cannot be put
+    /// back in the wrong place, so *"the order of the docked lane is remembered
+    /// so it returns to the same spot"* costs nothing to guarantee and survives
+    /// all four of those cases and a restart. The price is one filter in the
+    /// strip's layout, which is stated in the contract and is one predicate.
+    ///
+    /// `width_pt` of `None` means "the width this lane already has", clamped
+    /// into [`DOCK_MIN_PT`]..=[`DOCK_MAX_PT`]. Docking must not reflow the page:
+    /// if the act of docking re-laid a running web app out at some default
+    /// width, every dock would begin with the thing you docked jumping.
+    ///
+    /// Docking a lane to an edge another lane holds displaces the incumbent
+    /// back into the strip. See [`Ledger::set_dock`] for why that is not an
+    /// error.
+    pub fn dock_lane(
+        &self,
+        lane_id: String,
+        side: DockSide,
+        mode: DockMode,
+        width_pt: Option<u32>,
+    ) -> Result<StripState> {
+        let mut inner = self.inner.lock();
+        let lane = inner.ledger.lane(&lane_id)?;
+        let width = width_pt.unwrap_or(lane.width_pt).clamp(DOCK_MIN_PT, DOCK_MAX_PT);
+        inner.ledger.set_dock(&lane_id, Some(Dock { side, mode, width_pt: width }))?;
+        Self::bump(&mut inner);
+        Self::snapshot(&inner)
+    }
+
+    /// Give the edge back. The lane resumes scrolling with the strip between
+    /// the same two neighbours it left, because its ordinal never moved.
+    ///
+    /// A no-op on a lane that is not docked, rather than an error: the one
+    /// caller is a toggle, and a toggle that throws on the half of its range
+    /// that is already correct is a toggle with a bug in every call site.
+    ///
+    /// The lane's own `width_pt` is untouched throughout, so it returns to the
+    /// strip at the width it had there however narrow it was dragged while
+    /// docked. `span` is the same: it describes how many lane-widths this lane
+    /// may take *in the strip*, which is not a question while it is at an edge.
+    pub fn undock_lane(&self, lane_id: String) -> Result<StripState> {
+        let mut inner = self.inner.lock();
+        inner.ledger.lane(&lane_id)?;
+        inner.ledger.set_dock(&lane_id, None)?;
+        Self::bump(&mut inner);
+        Self::snapshot(&inner)
+    }
+
+    /// Overlay ↔ inset for a lane that is already docked.
+    ///
+    /// Errors rather than docking the lane, so that a keystroke aimed at the
+    /// wrong lane cannot silently take an edge of the screen.
+    pub fn set_dock_mode(&self, lane_id: String, mode: DockMode) -> Result<StripState> {
+        let mut inner = self.inner.lock();
+        let dock = Self::dock_of(&inner, &lane_id)?;
+        inner.ledger.set_dock(&lane_id, Some(Dock { mode, ..dock }))?;
+        Self::bump(&mut inner);
+        Self::snapshot(&inner)
+    }
+
+    /// How wide the dock is, in points. Clamped; see [`DOCK_MIN_PT`].
+    pub fn set_dock_width(&self, lane_id: String, width_pt: u32) -> Result<StripState> {
+        let mut inner = self.inner.lock();
+        let dock = Self::dock_of(&inner, &lane_id)?;
+        let width_pt = width_pt.clamp(DOCK_MIN_PT, DOCK_MAX_PT);
+        inner.ledger.set_dock(&lane_id, Some(Dock { width_pt, ..dock }))?;
+        Self::bump(&mut inner);
+        Self::snapshot(&inner)
+    }
+
+    /// Which lane holds an edge, if any.
+    ///
+    /// Cheap enough to call per frame — it is one lane, not the strip — but the
+    /// shell should read `StripState.lanes` it already has instead. This exists
+    /// for the CLI and for tests, which have no snapshot in hand.
+    pub fn docked_lane(&self, side: DockSide) -> Result<Option<Lane>> {
+        let inner = self.inner.lock();
+        Ok(inner.ledger.lanes()?.into_iter().find(|l| l.dock.is_some_and(|d| d.side == side)))
     }
 
     /// The user's own tag. Sticky: the cwd tagger will not overwrite it.
@@ -828,13 +977,34 @@ impl Core {
     /// machine that session will not exist, and the lane renders "reconnecting"
     /// with its ordinal and tag intact — which is the same thing that happens
     /// when Relay is down (PRD §11).
+    ///
+    /// **Import never displaces a dock.** An imported lane takes an edge only
+    /// if that edge is free — including free of an earlier lane in the same
+    /// file, so a hand-edited strip with two left docks in it is merged rather
+    /// than refused. Import is a merge by its own definition above, and kicking
+    /// the user's music player off the screen to install one from a file is the
+    /// destructive version of it: the lane arrives in the strip instead, where
+    /// it is one keystroke from being docked on purpose.
     pub fn import_strip(&self, json: String) -> Result<StripState> {
         let lanes = portable::import(&json)?;
         let mut inner = self.inner.lock();
         let now = now_ms();
+        let mut taken: Vec<DockSide> = inner
+            .ledger
+            .lanes()?
+            .iter()
+            .filter_map(|l| l.dock.map(|d| d.side))
+            .collect();
 
         for incoming in lanes {
             let ordinal = Self::place(&mut inner.ledger, &Placement::End)?;
+            let dock = incoming.dock.filter(|d| !taken.contains(&d.side)).map(|d| Dock {
+                width_pt: d.width_pt.clamp(DOCK_MIN_PT, DOCK_MAX_PT),
+                ..d
+            });
+            if let Some(d) = dock {
+                taken.push(d.side);
+            }
             let lane = Lane {
                 id: new_id(),
                 ordinal,
@@ -844,7 +1014,8 @@ impl Core {
                 project_source: incoming.project_source,
                 created_at: now,
                 last_focus_at: now,
-                pinned: incoming.pinned,
+                keep_live: incoming.keep_live,
+                dock,
                 span: incoming.span.clamp(1, 2),
                 panes: Vec::new(),
             };
@@ -895,6 +1066,15 @@ impl Core {
             .ok_or_else(|| CoreError::Invalid { message: "ordinal space exhausted after renormalize".into() })
     }
 
+    /// The dock a lane is currently in, or an error naming the lane that is not
+    /// docked. Both `set_dock_mode` and `set_dock_width` are edits to a dock
+    /// that exists, never a way to create one.
+    fn dock_of(inner: &Inner, lane_id: &str) -> Result<Dock> {
+        inner.ledger.lane(lane_id)?.dock.ok_or_else(|| CoreError::Invalid {
+            message: format!("lane {lane_id} is not docked"),
+        })
+    }
+
     fn bump(inner: &mut Inner) {
         inner.revision += 1;
     }
@@ -902,7 +1082,15 @@ impl Core {
     fn snapshot(inner: &Inner) -> Result<StripState> {
         let mut lanes = inner.ledger.lanes()?;
         if let Some(root) = &inner.gather {
-            lanes.retain(|l| l.project_root.as_deref() == Some(root.as_str()));
+            // Docked lanes survive the filter. Gather narrows *the strip* — and
+            // a docked lane is not in the strip, it is held at an edge of the
+            // window beside it. Filtering one out would take it out of the
+            // snapshot, which is what the shell retires lane views from: press
+            // ⌘G on a project your music player is not tagged with, and the
+            // player is destroyed. Nothing about that is what the user asked
+            // for, and no amount of care in the layout can put it back, because
+            // the layout would be doing exactly what it is told.
+            lanes.retain(|l| l.dock.is_some() || l.project_root.as_deref() == Some(root.as_str()));
         }
         let scroll_x = inner.ledger.app_state(KEY_SCROLL_X)?.and_then(|s| s.parse().ok()).unwrap_or(0.0);
         Ok(StripState {

@@ -942,8 +942,8 @@ final class LaneHeaderView: NSView {
 
         // Titles and keys come from `Command` so this menu cannot drift from the
         // menu bar, and so it teaches the shortcut rather than replacing it.
-        add(to: menu, model.pinned ? "Unpin Lane" : Command.togglePinned.title,
-            command: .togglePinned, action: #selector(menuTogglePin), enabled: actions?.onTogglePin != nil)
+        add(to: menu, model.pinned ? "Stop Keeping Loaded" : Command.toggleKeepLive.title,
+            command: .toggleKeepLive, action: #selector(menuTogglePin), enabled: actions?.onTogglePin != nil)
         add(to: menu, "Set Project Tag…",
             command: nil, action: #selector(menuSetProjectTag), enabled: actions?.onSetProjectTag != nil)
         add(to: menu, Command.toggleSpan.title,

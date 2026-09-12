@@ -16,7 +16,7 @@
 //! path in it — and this crate does not otherwise carry serde.
 
 use crate::error::{CoreError, Result};
-use crate::ledger::{kind_str, project_source_str};
+use crate::ledger::{dock_mode_str, dock_side_str, kind_str, parse_dock_mode, project_source_str};
 use crate::model::*;
 
 /// The format version, in the file. Bumped only when an old file would be read
@@ -33,8 +33,28 @@ pub fn export(lanes: &[Lane]) -> String {
     for (i, lane) in lanes.iter().enumerate() {
         out.push_str("    {\n");
         out.push_str(&format!("      \"width_pt\": {},\n", lane.width_pt));
-        out.push_str(&format!("      \"pinned\": {},\n", lane.pinned));
+        // Written twice on purpose, for one release. `pinned` is what a shipped
+        // build reads, and a strip exported here and imported by the copy still
+        // on someone's disk would otherwise come back with every protected lane
+        // unprotected — silently, since nothing in the file would say so. The
+        // format version is not the tool for this: it is for a file an old
+        // reader would read *wrongly*, and this one would merely be read
+        // incompletely. Drop `pinned` when no build that reads it survives.
+        out.push_str(&format!("      \"keep_live\": {},\n", lane.keep_live));
+        out.push_str(&format!("      \"pinned\": {},\n", lane.keep_live));
         out.push_str(&format!("      \"span\": {},\n", lane.span));
+        // A dock is layout, and layout is the whole of what this format
+        // carries: a strip restored without its docks is missing the two things
+        // the user looks at most.
+        match lane.dock {
+            Some(d) => out.push_str(&format!(
+                "      \"dock\": {{ \"side\": \"{}\", \"mode\": \"{}\", \"width_pt\": {} }},\n",
+                dock_side_str(d.side),
+                dock_mode_str(d.mode),
+                d.width_pt
+            )),
+            None => out.push_str("      \"dock\": null,\n"),
+        }
         out.push_str(&format!("      \"title\": {},\n", json_opt(lane.title.as_deref())));
         out.push_str(&format!("      \"project_root\": {},\n", json_opt(lane.project_root.as_deref())));
         out.push_str(&format!(
@@ -75,7 +95,10 @@ pub fn export(lanes: &[Lane]) -> String {
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct PortableLane {
     pub width_pt: u32,
-    pub pinned: bool,
+    pub keep_live: bool,
+    /// Where this lane was docked on the machine it came from, if it was.
+    /// Honoured on import only when that edge is free; see `Core::import_strip`.
+    pub dock: Option<Dock>,
     /// 1 unless the user widened this lane for landscape content.
     pub span: u32,
     pub title: Option<String>,
@@ -134,7 +157,14 @@ fn parse_lane(fields: &[(String, mini_json::Value)]) -> PortableLane {
     let get = |name: &str| fields.iter().find(|(k, _)| k == name).map(|(_, v)| v);
     PortableLane {
         width_pt: get("width_pt").and_then(|v| v.number()).unwrap_or(560.0) as u32,
-        pinned: get("pinned").and_then(|v| v.boolean()).unwrap_or(false),
+        // `pinned` is the name this flag had in every file written before
+        // ADR-0010. It meant exactly what `keep_live` means, so an old export
+        // is read correctly rather than tolerantly.
+        keep_live: get("keep_live")
+            .or_else(|| get("pinned"))
+            .and_then(|v| v.boolean())
+            .unwrap_or(false),
+        dock: get("dock").and_then(|v| v.object()).and_then(parse_dock),
         span: get("span").and_then(|v| v.number()).unwrap_or(1.0).clamp(1.0, 2.0) as u32,
         title: get("title").and_then(|v| v.string()).map(str::to_string),
         project_root: get("project_root").and_then(|v| v.string()).map(str::to_string),
@@ -148,6 +178,34 @@ fn parse_lane(fields: &[(String, mini_json::Value)]) -> PortableLane {
             .map(|panes| panes.iter().filter_map(|p| p.object().map(parse_pane)).collect())
             .unwrap_or_default(),
     }
+}
+
+/// A dock object, or `None` for a lane that was not docked.
+///
+/// An unreadable `side` drops the whole dock rather than guessing one: a lane
+/// that arrives in the strip is a lane the user can see and dock again, where a
+/// lane guessed onto the wrong edge is a lane that has taken over a corner of
+/// the screen nobody asked it to.
+fn parse_dock(fields: &[(String, mini_json::Value)]) -> Option<Dock> {
+    let get = |name: &str| fields.iter().find(|(k, _)| k == name).map(|(_, v)| v);
+    let side = match get("side").and_then(|v| v.string()) {
+        Some("left") => DockSide::Left,
+        Some("right") => DockSide::Right,
+        _ => return None,
+    };
+    Some(Dock {
+        side,
+        mode: get("mode").and_then(|v| v.string()).map(parse_dock_mode).unwrap_or(DockMode::Inset),
+        width_pt: get("width_pt")
+            .and_then(|v| v.number())
+            .filter(|w| w.is_finite() && *w > 0.0)
+            .map(|w| w as u32)
+            // The core clamps this on the way in, so an out-of-range hand edit
+            // lands at a bound rather than being refused. A missing width is
+            // the one thing that needs a value here, and the lane's own width
+            // is the same default `Core::dock_lane` would have used.
+            .unwrap_or(crate::LANE_MIN_PT),
+    })
 }
 
 fn parse_pane(fields: &[(String, mini_json::Value)]) -> PortablePane {
@@ -396,7 +454,8 @@ mod tests {
             project_source: ProjectSource::Manual,
             created_at: 0,
             last_focus_at: 0,
-            pinned: true,
+            keep_live: true,
+            dock: None,
             span: 1,
             panes,
         }
@@ -431,7 +490,7 @@ mod tests {
 
         assert_eq!(back[0].title.as_deref(), Some("docs"));
         assert_eq!(back[0].width_pt, 640);
-        assert!(back[0].pinned);
+        assert!(back[0].keep_live);
         assert_eq!(back[0].project_root.as_deref(), Some("/src/foo"));
         assert_eq!(back[0].project_source, ProjectSource::Manual);
         assert_eq!(back[0].panes[0].url.as_deref(), Some("https://docs.rs/rusqlite"));

@@ -235,10 +235,26 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     }
 
     /// One line per lane, tab-separated, so `maxpane ls` pipes.
+    ///
+    /// A docked lane is listed — it is on screen, and leaving it out would make
+    /// `ls` a worse answer to "what is running" than looking at the window —
+    /// but it has no strip position, so it prints `◀` or `▶` where the others
+    /// print a number. Numbering it would be the same lie the layout is told not
+    /// to tell: `state.lanes` holds the docked lane at the ordinal it returns
+    /// to, and that is not where anything is on screen.
     private func describeStrip() -> String {
         let state = store.state
         guard !state.lanes.isEmpty else { return "(no lanes)\n" }
-        return state.lanes.enumerated().map { index, lane in
+        var position = 0
+        return state.lanes.map { lane in
+            let index: String
+            switch lane.dock?.side {
+            case .left: index = "◀"
+            case .right: index = "▶"
+            case nil:
+                index = String(position)
+                position += 1
+            }
             let kinds = lane.panes.map { pane -> String in
                 switch pane.kind {
                 case .pty: return pane.relaySessionId.map { "pty:\($0)" } ?? "pty"
@@ -290,9 +306,19 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .pty
         case .pairWithNext:
             return pairCandidates() != nil
-        case .closePane, .closeLane, .splitDown, .togglePinned,
-             .moveLaneLeft, .moveLaneRight, .widenLane, .narrowLane, .toggleSpan:
+        case .closePane, .closeLane, .splitDown, .toggleKeepLive,
+             .moveLaneLeft, .moveLaneRight, .widenLane, .narrowLane, .toggleSpan,
+             .dockLaneLeft, .dockLaneRight:
             return store.focusedLane != nil
+        case .toggleDockMode:
+            // A mode is a property of a dock, and a lane that is not docked has
+            // none. Greying it out is how the menu says which of the two
+            // questions this key answers.
+            return store.focusedLane?.dock != nil
+        case .focusDockLeft:
+            return store.dockedLane(.left) != nil
+        case .focusDockRight:
+            return store.dockedLane(.right) != nil
         default:
             return true
         }
@@ -358,14 +384,38 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             case .moveLaneRight:
                 if let lane = focusedLane { try store.nudgeLane(lane.id, right: true) }
 
+            // ⌃⌘= / ⌃⌘- mean "this column is the wrong width", and a docked
+            // lane is still a column. Routing them to the dock's width rather
+            // than adding two more keys keeps one thought on one pair of keys —
+            // and the lane's own width is deliberately left alone, so it comes
+            // back to the strip at the width it was dragged to there.
             case .widenLane:
                 if let lane = focusedLane {
-                    try store.setLaneWidth(lane.id, config.clampWidth(lane.widthPt + 60))
+                    if let dock = lane.dock {
+                        try store.setDockWidth(lane.id, dock.widthPt + 60)
+                    } else {
+                        try store.setLaneWidth(lane.id, config.clampWidth(lane.widthPt + 60))
+                    }
                 }
             case .narrowLane:
                 if let lane = focusedLane {
-                    try store.setLaneWidth(lane.id, config.clampWidth(lane.widthPt >= 60 ? lane.widthPt - 60 : config.laneMinPt))
+                    if let dock = lane.dock {
+                        try store.setDockWidth(lane.id, dock.widthPt >= 60 ? dock.widthPt - 60 : 0)
+                    } else {
+                        try store.setLaneWidth(lane.id, config.clampWidth(lane.widthPt >= 60 ? lane.widthPt - 60 : config.laneMinPt))
+                    }
                 }
+
+            case .dockLaneLeft:  try toggleDock(.left)
+            case .dockLaneRight: try toggleDock(.right)
+
+            case .toggleDockMode:
+                if let lane = focusedLane, let dock = lane.dock {
+                    try store.setDockMode(lane.id, dock.mode == .inset ? .overlay : .inset)
+                }
+
+            case .focusDockLeft:  try focusDock(.left)
+            case .focusDockRight: try focusDock(.right)
 
             case .toggleSidebar:
                 split.splitViewItems[0].animator().isCollapsed.toggle()
@@ -379,8 +429,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             case .ungather:
                 try store.ungather()
 
-            case .togglePinned:
-                if let lane = focusedLane { try store.setPinned(lane.id, !lane.pinned) }
+            case .toggleKeepLive:
+                if let lane = focusedLane { try store.setKeepLive(lane.id, !lane.keepLive) }
 
             case .peekDesktop:
                 // PRD §16's accepted v1 boundary: drop out of fullscreen so the
@@ -418,6 +468,68 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         } catch {
             showError(error)
         }
+    }
+
+    // MARK: - docking
+
+    /// Where focus was before it went into a dock, so the same key can bring it
+    /// back.
+    ///
+    /// In memory, not in the ledger. PRD §5.2 keeps durable state in the core,
+    /// and this is not durable state: it is the other half of a keystroke. A
+    /// launch that restores focus inside a dock has no "before" to return to,
+    /// and the fallback below is the honest answer rather than a remembered one
+    /// that would be a guess about a session that has ended.
+    private var paneBeforeDock: String?
+
+    /// ⌃⌘[ / ⌃⌘]. Docks the focused lane to that edge, or gives the edge back
+    /// if it is already the one this lane holds.
+    ///
+    /// Inset is the default mode, because inset hides nothing: the strip's
+    /// viewport narrows and every lane stays reachable. Overlay is the
+    /// deliberate choice — it occludes a lane, which is precisely what the
+    /// edge-peek work exists to prevent — and it is one key away.
+    ///
+    /// Docking a lane that is already docked to the *other* edge moves it, and
+    /// carries its dock width across: the width is a property of the dock the
+    /// user dragged, not of the side it happens to be on.
+    private func toggleDock(_ side: DockSide) throws {
+        guard let lane = store.focusedLane else { return }
+        if lane.dock?.side == side {
+            try store.undockLane(lane.id)
+        } else {
+            try store.dockLane(
+                lane.id, side: side, mode: lane.dock?.mode ?? .inset, widthPt: lane.dock?.widthPt)
+        }
+    }
+
+    /// ⌥⌘[ / ⌥⌘]. Focus that dock, or leave it if focus is already inside.
+    ///
+    /// The way out matters as much as the way in: ⌘[ / ⌘] skip the docks, so
+    /// without this a docked lane is a place the keyboard can reach and never
+    /// leave. Same key both ways, so there is nothing extra to learn and
+    /// nothing to be stuck in.
+    ///
+    /// Leaving returns focus to the pane it came from. When that pane is gone —
+    /// closed while you were in the dock, or a fresh launch that restored focus
+    /// inside it — the fallback is the strip lane focused most recently, which
+    /// is the lane you were last working in and therefore almost certainly the
+    /// one still on screen. Never the first lane of the strip: on a strip of
+    /// forty that is a jump to somewhere the user has not been in an hour.
+    private func focusDock(_ side: DockSide) throws {
+        guard let dock = store.dockedLane(side), let entry = dock.panes.first else { return }
+        let focused = store.state.focusedPaneId
+
+        if let focused, dock.panes.contains(where: { $0.id == focused }) {
+            let back = paneBeforeDock.flatMap { store.pane($0) }?.id
+                ?? store.stripLanes.max(by: { $0.lastFocusAt < $1.lastFocusAt })?.panes.first?.id
+            paneBeforeDock = nil
+            if let back { try store.focusPane(back) }
+            return
+        }
+
+        paneBeforeDock = focused
+        try store.focusPane(entry.id)
     }
 
     // MARK: - helpers

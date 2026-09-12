@@ -549,7 +549,7 @@ final class SidebarViewController: NSViewController {
 
     @objc private func togglePin() {
         guard let lane = clickedLane() else { return }
-        try? store.setPinned(lane.id, !lane.pinned)
+        try? store.setKeepLive(lane.id, !lane.keepLive)
     }
 
     @objc private func setTag() {
@@ -603,7 +603,7 @@ extension SidebarViewController: NSMenuDelegate {
         }
         if entry.laneId != nil {
             add("Reveal on Strip", #selector(revealClicked))
-            add(entry.pinned ? "Unpin Lane" : "Pin Lane", #selector(togglePin))
+            add(entry.pinned ? "Stop Keeping Loaded" : Command.toggleKeepLive.title, #selector(togglePin))
             add("Set Project Tag…", #selector(setTag))
         } else if entry.sessionId != nil {
             add("Attach to Strip", #selector(attachClicked))

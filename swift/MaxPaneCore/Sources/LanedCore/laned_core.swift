@@ -666,6 +666,47 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func createLane(placement: Placement, kind: PaneKind, relaySessionId: String?, url: String?, inheritTagFromLane: String?) throws  -> StripState
     
     /**
+     * Hold a lane at one edge of the window instead of letting it scroll with
+     * the strip.
+     *
+     * The unit is the lane, which the owner settled directly — *"when a lane
+     * is docked all its panes are inherently docked with it"* — so this takes
+     * a lane id and a stack of three docks as one thing. The brief argued both
+     * sides; it is not an open question any more, and nothing here should be
+     * rebuilt around panes without him saying so.
+     *
+     * **The lane keeps its ordinal and stays in `StripState.lanes`.** It is
+     * not removed from the order and re-inserted on undock, because a
+     * remembered ordinal is a fact that goes stale: lanes created either side
+     * of it, both its neighbours closed, or a [`Ledger::renormalize`] rewriting
+     * every ordinal underneath it, and the remembered number no longer names
+     * the place it came from. A lane that never left the order cannot be put
+     * back in the wrong place, so *"the order of the docked lane is remembered
+     * so it returns to the same spot"* costs nothing to guarantee and survives
+     * all four of those cases and a restart. The price is one filter in the
+     * strip's layout, which is stated in the contract and is one predicate.
+     *
+     * `width_pt` of `None` means "the width this lane already has", clamped
+     * into [`DOCK_MIN_PT`]..=[`DOCK_MAX_PT`]. Docking must not reflow the page:
+     * if the act of docking re-laid a running web app out at some default
+     * width, every dock would begin with the thing you docked jumping.
+     *
+     * Docking a lane to an edge another lane holds displaces the incumbent
+     * back into the strip. See [`Ledger::set_dock`] for why that is not an
+     * error.
+     */
+    func dockLane(laneId: String, side: DockSide, mode: DockMode, widthPt: UInt32?) throws  -> StripState
+    
+    /**
+     * Which lane holds an edge, if any.
+     *
+     * Cheap enough to call per frame — it is one lane, not the strip — but the
+     * shell should read `StripState.lanes` it already has instead. This exists
+     * for the CLI and for tests, which have no snapshot in hand.
+     */
+    func dockedLane(side: DockSide) throws  -> Lane?
+    
+    /**
      * The whole strip as JSON. Order, widths, titles, tags, URLs, and which
      * Relay session each terminal was on.
      *
@@ -732,6 +773,14 @@ public protocol CoreProtocol: AnyObject, Sendable {
      * machine that session will not exist, and the lane renders "reconnecting"
      * with its ordinal and tag intact — which is the same thing that happens
      * when Relay is down (PRD §11).
+     *
+     * **Import never displaces a dock.** An imported lane takes an edge only
+     * if that edge is free — including free of an earlier lane in the same
+     * file, so a hand-edited strip with two left docks in it is merged rather
+     * than refused. Import is a merge by its own definition above, and kicking
+     * the user's music player off the screen to install one from a file is the
+     * destructive version of it: the lane arrives in the strip instead, where
+     * it is one keystroke from being docked on purpose.
      */
     func importStrip(json: String) throws  -> StripState
     
@@ -781,6 +830,18 @@ public protocol CoreProtocol: AnyObject, Sendable {
     
     /**
      * Swap a lane with its neighbour (⌘⇧← / ⌘⇧→).
+     *
+     * Over the lanes the *strip* shows. A docked lane still holds an ordinal
+     * somewhere in the middle of the order — that is the whole mechanism by
+     * which it returns to the same spot — and swapping with it would move the
+     * lane past something invisible, twice, to no visible effect. The user
+     * would press ⌘⇧→ and watch nothing happen.
+     *
+     * Nudging a *docked* lane is a no-op for the same reason from the other
+     * side. It would move the spot the lane returns to when it is undocked,
+     * which is a real change with nothing on screen to show for it — and a
+     * keystroke that silently rearranges a strip you cannot see it rearrange
+     * is worse than a keystroke that does nothing.
      */
     func nudgeLane(laneId: String, right: Bool) throws  -> StripState
     
@@ -888,6 +949,33 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func setDefaultLaneWidth(widthPt: UInt32) 
     
     /**
+     * Overlay ↔ inset for a lane that is already docked.
+     *
+     * Errors rather than docking the lane, so that a keystroke aimed at the
+     * wrong lane cannot silently take an edge of the screen.
+     */
+    func setDockMode(laneId: String, mode: DockMode) throws  -> StripState
+    
+    /**
+     * How wide the dock is, in points. Clamped; see [`DOCK_MIN_PT`].
+     */
+    func setDockWidth(laneId: String, widthPt: UInt32) throws  -> StripState
+    
+    /**
+     * Protect a lane's web panes from the eviction policy (⇧⌘P).
+     *
+     * This is `set_pinned` under the name the word "pinned" had to give up
+     * when the owner said docking is what he means by pinning. Same flag, same
+     * key, same behaviour; ADR-0010 records why it survived the rename instead
+     * of being folded into docking.
+     *
+     * Nothing needs to call this for a *docked* lane: protection is derived
+     * from the dock rather than written alongside it, so undocking cannot
+     * quietly clear a flag the user set by hand.
+     */
+    func setKeepLive(laneId: String, keepLive: Bool) throws  -> StripState
+    
+    /**
      * How many lane-widths a lane may occupy (PRD §13 Phase 3).
      *
      * Clamped to 1..=2. §1's invariant is that a lane is a portrait column, and
@@ -951,8 +1039,6 @@ public protocol CoreProtocol: AnyObject, Sendable {
      */
     func setPaneZoom(paneId: String, zoom: Double) throws 
     
-    func setPinned(laneId: String, pinned: Bool) throws  -> StripState
-    
     /**
      * Persist the strip's horizontal scroll. Called on a debounce, not per
      * frame: it is a write, and 120 Hz of writes would be absurd.
@@ -963,6 +1049,21 @@ public protocol CoreProtocol: AnyObject, Sendable {
      * The current strip. Call this on launch and render whatever comes back.
      */
     func state() throws  -> StripState
+    
+    /**
+     * Give the edge back. The lane resumes scrolling with the strip between
+     * the same two neighbours it left, because its ordinal never moved.
+     *
+     * A no-op on a lane that is not docked, rather than an error: the one
+     * caller is a toggle, and a toggle that throws on the half of its range
+     * that is already correct is a toggle with a bug in every call site.
+     *
+     * The lane's own `width_pt` is untouched throughout, so it returns to the
+     * strip at the width it had there however narrow it was dragged while
+     * docked. `span` is the same: it describes how many lane-widths this lane
+     * may take *in the strip*, which is not a question while it is at an edge.
+     */
+    func undockLane(laneId: String) throws  -> StripState
     
     /**
      * Leave the gather view (Esc). The strip is exactly as it was.
@@ -1124,6 +1225,66 @@ open func createLane(placement: Placement, kind: PaneKind, relaySessionId: Strin
 }
     
     /**
+     * Hold a lane at one edge of the window instead of letting it scroll with
+     * the strip.
+     *
+     * The unit is the lane, which the owner settled directly — *"when a lane
+     * is docked all its panes are inherently docked with it"* — so this takes
+     * a lane id and a stack of three docks as one thing. The brief argued both
+     * sides; it is not an open question any more, and nothing here should be
+     * rebuilt around panes without him saying so.
+     *
+     * **The lane keeps its ordinal and stays in `StripState.lanes`.** It is
+     * not removed from the order and re-inserted on undock, because a
+     * remembered ordinal is a fact that goes stale: lanes created either side
+     * of it, both its neighbours closed, or a [`Ledger::renormalize`] rewriting
+     * every ordinal underneath it, and the remembered number no longer names
+     * the place it came from. A lane that never left the order cannot be put
+     * back in the wrong place, so *"the order of the docked lane is remembered
+     * so it returns to the same spot"* costs nothing to guarantee and survives
+     * all four of those cases and a restart. The price is one filter in the
+     * strip's layout, which is stated in the contract and is one predicate.
+     *
+     * `width_pt` of `None` means "the width this lane already has", clamped
+     * into [`DOCK_MIN_PT`]..=[`DOCK_MAX_PT`]. Docking must not reflow the page:
+     * if the act of docking re-laid a running web app out at some default
+     * width, every dock would begin with the thing you docked jumping.
+     *
+     * Docking a lane to an edge another lane holds displaces the incumbent
+     * back into the strip. See [`Ledger::set_dock`] for why that is not an
+     * error.
+     */
+open func dockLane(laneId: String, side: DockSide, mode: DockMode, widthPt: UInt32?)throws  -> StripState  {
+    return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_dock_lane(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(laneId),
+        FfiConverterTypeDockSide_lower(side),
+        FfiConverterTypeDockMode_lower(mode),
+        FfiConverterOptionUInt32.lower(widthPt),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Which lane holds an edge, if any.
+     *
+     * Cheap enough to call per frame — it is one lane, not the strip — but the
+     * shell should read `StripState.lanes` it already has instead. This exists
+     * for the CLI and for tests, which have no snapshot in hand.
+     */
+open func dockedLane(side: DockSide)throws  -> Lane?  {
+    return try  FfiConverterOptionTypeLane.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_docked_lane(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeDockSide_lower(side),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * The whole strip as JSON. Order, widths, titles, tags, URLs, and which
      * Relay session each terminal was on.
      *
@@ -1251,6 +1412,14 @@ open func historySearchableCount()throws  -> UInt32  {
      * machine that session will not exist, and the lane renders "reconnecting"
      * with its ordinal and tag intact — which is the same thing that happens
      * when Relay is down (PRD §11).
+     *
+     * **Import never displaces a dock.** An imported lane takes an edge only
+     * if that edge is free — including free of an earlier lane in the same
+     * file, so a hand-edited strip with two left docks in it is merged rather
+     * than refused. Import is a merge by its own definition above, and kicking
+     * the user's music player off the screen to install one from a file is the
+     * destructive version of it: the lane arrives in the strip instead, where
+     * it is one keystroke from being docked on purpose.
      */
 open func importStrip(json: String)throws  -> StripState  {
     return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
@@ -1367,6 +1536,18 @@ open func noteRecent(kind: RecentKind, value: String, cwd: String?)throws   {try
     
     /**
      * Swap a lane with its neighbour (⌘⇧← / ⌘⇧→).
+     *
+     * Over the lanes the *strip* shows. A docked lane still holds an ordinal
+     * somewhere in the middle of the order — that is the whole mechanism by
+     * which it returns to the same spot — and swapping with it would move the
+     * lane past something invisible, twice, to no visible effect. The user
+     * would press ⌘⇧→ and watch nothing happen.
+     *
+     * Nudging a *docked* lane is a no-op for the same reason from the other
+     * side. It would move the spot the lane returns to when it is undocked,
+     * which is a real change with nothing on screen to show for it — and a
+     * keystroke that silently rearranges a strip you cannot see it rearrange
+     * is worse than a keystroke that does nothing.
      */
 open func nudgeLane(laneId: String, right: Bool)throws  -> StripState  {
     return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
@@ -1589,6 +1770,60 @@ open func setDefaultLaneWidth(widthPt: UInt32)  {try! rustCall() {
 }
     
     /**
+     * Overlay ↔ inset for a lane that is already docked.
+     *
+     * Errors rather than docking the lane, so that a keystroke aimed at the
+     * wrong lane cannot silently take an edge of the screen.
+     */
+open func setDockMode(laneId: String, mode: DockMode)throws  -> StripState  {
+    return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_set_dock_mode(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(laneId),
+        FfiConverterTypeDockMode_lower(mode),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * How wide the dock is, in points. Clamped; see [`DOCK_MIN_PT`].
+     */
+open func setDockWidth(laneId: String, widthPt: UInt32)throws  -> StripState  {
+    return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_set_dock_width(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(laneId),
+        FfiConverterUInt32.lower(widthPt),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Protect a lane's web panes from the eviction policy (⇧⌘P).
+     *
+     * This is `set_pinned` under the name the word "pinned" had to give up
+     * when the owner said docking is what he means by pinning. Same flag, same
+     * key, same behaviour; ADR-0010 records why it survived the rename instead
+     * of being folded into docking.
+     *
+     * Nothing needs to call this for a *docked* lane: protection is derived
+     * from the dock rather than written alongside it, so undocking cannot
+     * quietly clear a flag the user set by hand.
+     */
+open func setKeepLive(laneId: String, keepLive: Bool)throws  -> StripState  {
+    return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_set_keep_live(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(laneId),
+        FfiConverterBool.lower(keepLive),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * How many lane-widths a lane may occupy (PRD §13 Phase 3).
      *
      * Clamped to 1..=2. §1's invariant is that a lane is a portrait column, and
@@ -1736,17 +1971,6 @@ open func setPaneZoom(paneId: String, zoom: Double)throws   {try rustCallWithErr
 }
 }
     
-open func setPinned(laneId: String, pinned: Bool)throws  -> StripState  {
-    return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
-        uniffiCallStatus in
-    uniffi_laned_core_fn_method_core_set_pinned(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(laneId),
-        FfiConverterBool.lower(pinned),uniffiCallStatus
-    )
-})
-}
-    
     /**
      * Persist the strip's horizontal scroll. Called on a debounce, not per
      * frame: it is a write, and 120 Hz of writes would be absurd.
@@ -1768,6 +1992,29 @@ open func state()throws  -> StripState  {
         uniffiCallStatus in
     uniffi_laned_core_fn_method_core_state(
             self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Give the edge back. The lane resumes scrolling with the strip between
+     * the same two neighbours it left, because its ordinal never moved.
+     *
+     * A no-op on a lane that is not docked, rather than an error: the one
+     * caller is a toggle, and a toggle that throws on the half of its range
+     * that is already correct is a toggle with a bug in every call site.
+     *
+     * The lane's own `width_pt` is untouched throughout, so it returns to the
+     * strip at the width it had there however narrow it was dragged while
+     * docked. `span` is the same: it describes how many lane-widths this lane
+     * may take *in the strip*, which is not a question while it is at an edge.
+     */
+open func undockLane(laneId: String)throws  -> StripState  {
+    return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_undock_lane(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(laneId),uniffiCallStatus
     )
 })
 }
@@ -1840,6 +2087,79 @@ public func FfiConverterTypeCore_lower(_ value: Core) -> UInt64 {
 }
 
 
+
+
+/**
+ * Where a docked lane sits, and how wide.
+ *
+ * `Option<Dock>` on the lane rather than a `docked: bool` beside three fields:
+ * "docked with no side" is a lane the layout cannot place, and the cheapest
+ * way to never handle that case is to make it unrepresentable.
+ */
+public struct Dock: Equatable, Hashable {
+    public var side: DockSide
+    public var mode: DockMode
+    /**
+     * Points. Bounded by `DOCK_MIN_PT`/`DOCK_MAX_PT`, which are not the lane
+     * bounds — a dock is not a reading column.
+     */
+    public var widthPt: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(side: DockSide, mode: DockMode, 
+        /**
+         * Points. Bounded by `DOCK_MIN_PT`/`DOCK_MAX_PT`, which are not the lane
+         * bounds — a dock is not a reading column.
+         */widthPt: UInt32) {
+        self.side = side
+        self.mode = mode
+        self.widthPt = widthPt
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension Dock: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDock: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Dock {
+        return
+            try Dock(
+                side: FfiConverterTypeDockSide.read(from: &buf), 
+                mode: FfiConverterTypeDockMode.read(from: &buf), 
+                widthPt: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: Dock, into buf: inout [UInt8]) {
+        FfiConverterTypeDockSide.write(value.side, into: &buf)
+        FfiConverterTypeDockMode.write(value.mode, into: &buf)
+        FfiConverterUInt32.write(value.widthPt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDock_lift(_ buf: RustBuffer) throws -> Dock {
+    return try FfiConverterTypeDock.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDock_lower(_ value: Dock) -> RustBuffer {
+    return FfiConverterTypeDock.lower(value)
+}
 
 
 /**
@@ -1989,9 +2309,25 @@ public struct Lane: Equatable, Hashable {
      */
     public var lastFocusAt: Int64
     /**
-     * Pinned lanes are never evicted.
+     * Never destroy this lane's web panes to reclaim memory.
+     *
+     * This is the flag that used to be called `pinned`, before the owner said
+     * plainly that pinning means docking. It kept its meaning and its key
+     * (⇧⌘P) and lost only the word; ADR-0010 is why it was not
+     * simply folded into `dock` instead.
      */
-    public var pinned: Bool
+    public var keepLive: Bool
+    /**
+     * `Some` while this lane is held at an edge of the window instead of
+     * scrolling with the strip. Every pane in the lane is docked with it — the
+     * unit is the lane, which the owner settled directly: *"when a lane is
+     * docked all its panes are inherently docked with it."*
+     *
+     * A docked lane keeps its `ordinal` and stays in `StripState.lanes`, so
+     * undocking returns it to the same place in the order it left. It is *not*
+     * laid out by the strip; the shell filters on this field. See the contract.
+     */
+    public var dock: Dock?
     /**
      * How many lane-widths this lane may occupy. 1 almost always.
      *
@@ -2023,8 +2359,23 @@ public struct Lane: Equatable, Hashable {
          * Epoch milliseconds. Drives eviction ranking.
          */lastFocusAt: Int64, 
         /**
-         * Pinned lanes are never evicted.
-         */pinned: Bool, 
+         * Never destroy this lane's web panes to reclaim memory.
+         *
+         * This is the flag that used to be called `pinned`, before the owner said
+         * plainly that pinning means docking. It kept its meaning and its key
+         * (⇧⌘P) and lost only the word; ADR-0010 is why it was not
+         * simply folded into `dock` instead.
+         */keepLive: Bool, 
+        /**
+         * `Some` while this lane is held at an edge of the window instead of
+         * scrolling with the strip. Every pane in the lane is docked with it — the
+         * unit is the lane, which the owner settled directly: *"when a lane is
+         * docked all its panes are inherently docked with it."*
+         *
+         * A docked lane keeps its `ordinal` and stays in `StripState.lanes`, so
+         * undocking returns it to the same place in the order it left. It is *not*
+         * laid out by the strip; the shell filters on this field. See the contract.
+         */dock: Dock?, 
         /**
          * How many lane-widths this lane may occupy. 1 almost always.
          *
@@ -2045,7 +2396,8 @@ public struct Lane: Equatable, Hashable {
         self.projectSource = projectSource
         self.createdAt = createdAt
         self.lastFocusAt = lastFocusAt
-        self.pinned = pinned
+        self.keepLive = keepLive
+        self.dock = dock
         self.span = span
         self.panes = panes
     }
@@ -2074,7 +2426,8 @@ public struct FfiConverterTypeLane: FfiConverterRustBuffer {
                 projectSource: FfiConverterTypeProjectSource.read(from: &buf), 
                 createdAt: FfiConverterInt64.read(from: &buf), 
                 lastFocusAt: FfiConverterInt64.read(from: &buf), 
-                pinned: FfiConverterBool.read(from: &buf), 
+                keepLive: FfiConverterBool.read(from: &buf), 
+                dock: FfiConverterOptionTypeDock.read(from: &buf), 
                 span: FfiConverterUInt32.read(from: &buf), 
                 panes: FfiConverterSequenceTypePane.read(from: &buf)
         )
@@ -2089,7 +2442,8 @@ public struct FfiConverterTypeLane: FfiConverterRustBuffer {
         FfiConverterTypeProjectSource.write(value.projectSource, into: &buf)
         FfiConverterInt64.write(value.createdAt, into: &buf)
         FfiConverterInt64.write(value.lastFocusAt, into: &buf)
-        FfiConverterBool.write(value.pinned, into: &buf)
+        FfiConverterBool.write(value.keepLive, into: &buf)
+        FfiConverterOptionTypeDock.write(value.dock, into: &buf)
         FfiConverterUInt32.write(value.span, into: &buf)
         FfiConverterSequenceTypePane.write(value.panes, into: &buf)
     }
@@ -2569,7 +2923,12 @@ public func FfiConverterTypePaneHeight_lower(_ value: PaneHeight) -> RustBuffer 
  */
 public struct PortableLane: Equatable, Hashable {
     public var widthPt: UInt32
-    public var pinned: Bool
+    public var keepLive: Bool
+    /**
+     * Where this lane was docked on the machine it came from, if it was.
+     * Honoured on import only when that edge is free; see `Core::import_strip`.
+     */
+    public var dock: Dock?
     /**
      * 1 unless the user widened this lane for landscape content.
      */
@@ -2581,12 +2940,17 @@ public struct PortableLane: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(widthPt: UInt32, pinned: Bool, 
+    public init(widthPt: UInt32, keepLive: Bool, 
+        /**
+         * Where this lane was docked on the machine it came from, if it was.
+         * Honoured on import only when that edge is free; see `Core::import_strip`.
+         */dock: Dock?, 
         /**
          * 1 unless the user widened this lane for landscape content.
          */span: UInt32, title: String?, projectRoot: String?, projectSource: ProjectSource, panes: [PortablePane]) {
         self.widthPt = widthPt
-        self.pinned = pinned
+        self.keepLive = keepLive
+        self.dock = dock
         self.span = span
         self.title = title
         self.projectRoot = projectRoot
@@ -2611,7 +2975,8 @@ public struct FfiConverterTypePortableLane: FfiConverterRustBuffer {
         return
             try PortableLane(
                 widthPt: FfiConverterUInt32.read(from: &buf), 
-                pinned: FfiConverterBool.read(from: &buf), 
+                keepLive: FfiConverterBool.read(from: &buf), 
+                dock: FfiConverterOptionTypeDock.read(from: &buf), 
                 span: FfiConverterUInt32.read(from: &buf), 
                 title: FfiConverterOptionString.read(from: &buf), 
                 projectRoot: FfiConverterOptionString.read(from: &buf), 
@@ -2622,7 +2987,8 @@ public struct FfiConverterTypePortableLane: FfiConverterRustBuffer {
 
     public static func write(_ value: PortableLane, into buf: inout [UInt8]) {
         FfiConverterUInt32.write(value.widthPt, into: &buf)
-        FfiConverterBool.write(value.pinned, into: &buf)
+        FfiConverterBool.write(value.keepLive, into: &buf)
+        FfiConverterOptionTypeDock.write(value.dock, into: &buf)
         FfiConverterUInt32.write(value.span, into: &buf)
         FfiConverterOptionString.write(value.title, into: &buf)
         FfiConverterOptionString.write(value.projectRoot, into: &buf)
@@ -2913,7 +3279,16 @@ public func FfiConverterTypeSearchHit_lower(_ value: SearchHit) -> RustBuffer {
  */
 public struct StripState: Equatable, Hashable {
     /**
-     * In ordinal order. Already filtered when a gather filter is active.
+     * In ordinal order, **docked lanes included**. Already filtered when a
+     * gather filter is active.
+     *
+     * Docked lanes stay in this list rather than being split into one of their
+     * own, because everything that is not the strip's layout — ⌘P, gather,
+     * the sidebar, `maxpane ls`, export — wants them. A lane drawn twice
+     * because a view forgot to filter is a bug you see the instant it happens;
+     * a lane missing from search because a list forgot to union is a hole
+     * nobody notices. The strip's layout is the one consumer that must skip
+     * them, and it is the one consumer that is told to, loudly.
      */
     public var lanes: [Lane]
     /**
@@ -2935,7 +3310,16 @@ public struct StripState: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * In ordinal order. Already filtered when a gather filter is active.
+         * In ordinal order, **docked lanes included**. Already filtered when a
+         * gather filter is active.
+         *
+         * Docked lanes stay in this list rather than being split into one of their
+         * own, because everything that is not the strip's layout — ⌘P, gather,
+         * the sidebar, `maxpane ls`, export — wants them. A lane drawn twice
+         * because a view forgot to filter is a bug you see the instant it happens;
+         * a lane missing from search because a list forgot to union is a hole
+         * nobody notices. The strip's layout is the one consumer that must skip
+         * them, and it is the one consumer that is told to, loudly.
          */lanes: [Lane], 
         /**
          * Horizontal scroll offset in points, restored across launches.
@@ -3004,7 +3388,16 @@ public func FfiConverterTypeStripState_lower(_ value: StripState) -> RustBuffer 
 
 
 /**
- * Where the strip is right now, in lane indices into `StripState.lanes`.
+ * Where the strip is right now, in lane indices.
+ *
+ * **Indices into the lanes the strip lays out — `StripState.lanes` with the
+ * docked ones removed** — and not into `StripState.lanes` itself. The shell
+ * computes these by walking the array it laid out, so this is the array it
+ * already has; [`plan`] removes docked lanes the same way before indexing, so
+ * the two agree by construction rather than by everyone remembering to. A
+ * docked lane sitting at ordinal 0 while the strip is scrolled to lane 40 is
+ * exactly the off-by-a-lane this spells out, and the consequence of getting it
+ * wrong is evicting somebody else's pane.
  */
 public struct Viewport: Equatable, Hashable {
     /**
@@ -3184,6 +3577,158 @@ public func FfiConverterTypeCoreError_lift(_ buf: RustBuffer) throws -> CoreErro
 public func FfiConverterTypeCoreError_lower(_ value: CoreError) -> RustBuffer {
     return FfiConverterTypeCoreError.lower(value)
 }
+
+
+/**
+ * What a docked lane does to the strip beside it. The owner asked for both:
+ * *"another option should allow the pinned pane to hover over the strip, or
+ * reduce the space of the strip."*
+ */
+
+public enum DockMode: Equatable, Hashable {
+    
+    /**
+     * The dock floats above the strip. The strip keeps the whole window's
+     * width, so nothing about its arithmetic changes — and the lane beneath
+     * the dock is *occluded*, which is the one thing the edge-peek work exists
+     * to prevent. The shell owes the reader some other evidence that the strip
+     * continues under there; see `docs/work/docked-panes-contract.md`.
+     */
+    case overlay
+    /**
+     * The dock takes its width out of the strip's viewport. Nothing is ever
+     * hidden, at the price of every viewport computation in the shell having
+     * to agree about what the viewport now is.
+     */
+    case inset
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension DockMode: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDockMode: FfiConverterRustBuffer {
+    typealias SwiftType = DockMode
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DockMode {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .overlay
+        
+        case 2: return .inset
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DockMode, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .overlay:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .inset:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDockMode_lift(_ buf: RustBuffer) throws -> DockMode {
+    return try FfiConverterTypeDockMode.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDockMode_lower(_ value: DockMode) -> RustBuffer {
+    return FfiConverterTypeDockMode.lower(value)
+}
+
+
+
+/**
+ * Which edge of the window a docked lane holds.
+ */
+
+public enum DockSide: Equatable, Hashable {
+    
+    case left
+    case right
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension DockSide: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDockSide: FfiConverterRustBuffer {
+    typealias SwiftType = DockSide
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DockSide {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .left
+        
+        case 2: return .right
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DockSide, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .left:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .right:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDockSide_lift(_ buf: RustBuffer) throws -> DockSide {
+    return try FfiConverterTypeDockSide.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDockSide_lower(_ value: DockSide) -> RustBuffer {
+    return FfiConverterTypeDockSide.lower(value)
+}
+
 
 
 /**
@@ -3772,6 +4317,30 @@ public func FfiConverterTypeSearchField_lower(_ value: SearchField) -> RustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionUInt32: FfiConverterRustBuffer {
+    typealias SwiftType = UInt32?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt32.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt32.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionDouble: FfiConverterRustBuffer {
     typealias SwiftType = Double?
 
@@ -3836,6 +4405,54 @@ fileprivate struct FfiConverterOptionData: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterData.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeDock: FfiConverterRustBuffer {
+    typealias SwiftType = Dock?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeDock.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeDock.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeLane: FfiConverterRustBuffer {
+    typealias SwiftType = Lane?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeLane.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeLane.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -4121,6 +4738,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_create_lane() != 9560) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_dock_lane() != 57766) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_docked_lane() != 45518) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_export_strip() != 42494) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4145,7 +4768,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_history_searchable_count() != 9026) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_laned_core_checksum_method_core_import_strip() != 55913) {
+    if (uniffi_laned_core_checksum_method_core_import_strip() != 44112) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_lane() != 31148) {
@@ -4169,7 +4792,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_note_recent() != 54080) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_laned_core_checksum_method_core_nudge_lane() != 39243) {
+    if (uniffi_laned_core_checksum_method_core_nudge_lane() != 50960) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_observe_cwd() != 36) {
@@ -4211,6 +4834,15 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_set_default_lane_width() != 59748) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_set_dock_mode() != 22700) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_set_dock_width() != 12169) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_set_keep_live() != 52968) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_set_lane_span() != 29040) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4241,13 +4873,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_set_pane_zoom() != 8269) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_laned_core_checksum_method_core_set_pinned() != 43959) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_laned_core_checksum_method_core_set_scroll_x() != 34624) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_state() != 13882) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_undock_lane() != 28235) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_ungather() != 28091) {

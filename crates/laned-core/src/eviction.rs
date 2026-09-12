@@ -25,6 +25,22 @@
 
 use crate::model::{Lane, PaneKind, PaneState};
 
+/// Whether the policy may destroy this lane's web panes.
+///
+/// Two independent reasons to say no, kept as one predicate so a third can be
+/// added in one place rather than three:
+///
+/// * **Docked.** The lane is on screen permanently. Evicting it replaces a page
+///   the user can see with a snapshot, which is visibly broken in a way no
+///   memory saving pays for — and for the owner's stated case, a page playing
+///   background music, it is also silence.
+/// * **`keep_live`.** The flag formerly called `pinned`. Unchanged in meaning:
+///   ADR-0010 kept protection and position as two concepts, so this is still
+///   the way to protect a lane you are *not* giving an edge of the screen to.
+fn may_evict(lane: &Lane) -> bool {
+    lane.dock.is_none() && !lane.keep_live
+}
+
 /// What the shell measured just before asking.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct MemoryReport {
@@ -56,7 +72,16 @@ pub struct PaneFootprint {
     pub bytes: u64,
 }
 
-/// Where the strip is right now, in lane indices into `StripState.lanes`.
+/// Where the strip is right now, in lane indices.
+///
+/// **Indices into the lanes the strip lays out — `StripState.lanes` with the
+/// docked ones removed** — and not into `StripState.lanes` itself. The shell
+/// computes these by walking the array it laid out, so this is the array it
+/// already has; [`plan`] removes docked lanes the same way before indexing, so
+/// the two agree by construction rather than by everyone remembering to. A
+/// docked lane sitting at ordinal 0 while the strip is scrolled to lane 40 is
+/// exactly the off-by-a-lane this spells out, and the consequence of getting it
+/// wrong is evicting somebody else's pane.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Viewport {
     /// First lane index at least partly on screen.
@@ -169,7 +194,8 @@ enum Pressure {
 ///    reaches `target_bytes`. Value is distance first, then least-recently
 ///    focused, then largest footprint where the shell could measure one.
 ///
-/// pty panes and pinned lanes never appear with `Evict`.
+/// pty panes, docked lanes and `keep_live` lanes never appear with `Evict`; a
+/// docked lane never appears with `Unparent` either.
 pub fn plan(
     lanes: &[Lane],
     viewport: &Viewport,
@@ -180,9 +206,27 @@ pub fn plan(
     let mut directives: Vec<PaneDirective> = Vec::new();
     // (distance, lane index, pane index) for things we are allowed to evict.
     let mut candidates: Vec<(u32, usize, usize)> = Vec::new();
+    // Position among the lanes the strip actually lays out, which is what
+    // `viewport` indexes. Docked lanes hold an ordinal but occupy no slot, so
+    // they must not advance it.
+    let mut strip_index: u32 = 0;
 
     for (li, lane) in lanes.iter().enumerate() {
-        let d = distance(li as u32, viewport);
+        let d = if lane.dock.is_some() {
+            // A docked lane is on screen wherever its ordinal sits, so its
+            // distance from the scrolled viewport is not merely zero — it is
+            // not a question that applies. Computing one is the whole bug this
+            // feature could have shipped with: a music lane docked at the left
+            // edge, ordinal 0, while the strip is scrolled to lane 40, measures
+            // 40 lanes away, gets `Unparent` on the next scroll and `Evict` on
+            // the next memory sample. The page the user is looking at goes grey
+            // and the music stops.
+            0
+        } else {
+            let d = distance(strip_index, viewport);
+            strip_index += 1;
+            d
+        };
         for (pi, pane) in lane.panes.iter().enumerate() {
             let action = match (pane.kind, pane.state) {
                 // Terminals are cheap and hold live process state; never
@@ -201,7 +245,7 @@ pub fn plan(
                     // Anything off screen may be evicted under pressure, not
                     // only what is past RELEASE_DISTANCE: at the hard mark there
                     // may not be six lanes' worth of slack to give.
-                    if d > 0 && !lane.pinned {
+                    if d > 0 && may_evict(lane) {
                         candidates.push((d, li, pi));
                     }
                     if d > RELEASE_DISTANCE {
@@ -273,11 +317,11 @@ fn distance(index: u32, vp: &Viewport) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Pane, ProjectSource};
+    use crate::model::{Dock, DockMode, DockSide, Pane, ProjectSource};
 
     const GB: u64 = 1024 * 1024 * 1024;
 
-    fn lane(id: &str, panes: Vec<Pane>, pinned: bool, last_focus_at: i64) -> Lane {
+    fn lane(id: &str, panes: Vec<Pane>, keep_live: bool, last_focus_at: i64) -> Lane {
         Lane {
             id: id.into(),
             ordinal: 0.0,
@@ -287,7 +331,8 @@ mod tests {
             project_source: ProjectSource::Inherited,
             created_at: 0,
             last_focus_at,
-            pinned,
+            keep_live,
+            dock: None,
             span: 1,
             panes,
         }
@@ -374,13 +419,127 @@ mod tests {
         assert_eq!(plan[0].action, PaneAction::Keep);
     }
 
+    /// The old `pinned` behaviour, unchanged but for the name: protection from
+    /// *eviction* only. A `keep_live` lane six lanes off screen is still
+    /// unparented, because that was true before docking existed and changing
+    /// two things at once is how you cannot tell which one fixed the music.
     #[test]
-    fn pinned_lanes_are_never_evicted() {
+    fn keep_live_lanes_are_never_evicted() {
         let mut lanes = strip(30);
-        lanes[0].pinned = true;
+        lanes[0].keep_live = true;
         let vp = Viewport { first_visible: 25, last_visible: 27 };
         let plan = plan_under_sustained_pressure(&lanes, &vp, &budgets(100 * GB));
-        assert_eq!(plan[0].action, PaneAction::Unparent, "pinned lane must not be evicted");
+        assert_eq!(plan[0].action, PaneAction::Unparent, "a keep_live lane must not be evicted");
+    }
+
+    // ---- docking ----------------------------------------------------------
+
+    fn dock(mode: DockMode, side: DockSide) -> Option<Dock> {
+        Some(Dock { side, mode, width_pt: 420 })
+    }
+
+    /// The acceptance test for the whole feature, stated in the core: the
+    /// owner's music page is docked at the left edge with ordinal 0, the strip
+    /// is scrolled thirty lanes away, and WebKit is three times over the hard
+    /// mark. Nothing may touch that pane.
+    ///
+    /// `Unparent` is as fatal here as `Evict`. It takes the view out of the
+    /// window, which is a docked lane rendering nothing — and whether a page
+    /// with no window keeps making noise is WebKit's business, not ours, which
+    /// is a bet the core refuses to place.
+    #[test]
+    fn a_docked_lane_is_untouchable_however_far_the_strip_has_scrolled() {
+        let mut lanes = strip(31);
+        lanes[0].dock = dock(DockMode::Overlay, DockSide::Left);
+        // The strip lays out 30 lanes once the docked one is removed, so this
+        // is the far end of it — and the docked lane's own index, 0, is
+        // precisely the number that used to look like "thirty lanes away".
+        let vp = Viewport { first_visible: 27, last_visible: 29 };
+
+        let mut memory = budgets(100 * GB);
+        memory.target_bytes = 1;
+        let plan = plan_under_sustained_pressure(&lanes, &vp, &memory);
+
+        assert_eq!(plan[0].action, PaneAction::Keep, "the docked lane's pane was not left alone");
+        assert!(
+            plan.iter().skip(1).any(|d| d.action == PaneAction::Evict),
+            "the test proved nothing: nothing was under enough pressure to be evicted"
+        );
+    }
+
+    #[test]
+    fn a_docked_lane_in_the_middle_of_the_strip_is_untouchable_too() {
+        // The docked lane's *ordinal* is in the middle, which is where it
+        // returns to when it is undocked. Nothing about that is a position on
+        // screen.
+        let mut lanes = strip(31);
+        lanes[15].dock = dock(DockMode::Inset, DockSide::Right);
+        let vp = Viewport { first_visible: 0, last_visible: 2 };
+        let mut memory = budgets(100 * GB);
+        memory.target_bytes = 1;
+        let plan = plan_under_sustained_pressure(&lanes, &vp, &memory);
+        assert_eq!(plan[15].action, PaneAction::Keep);
+    }
+
+    /// Every pane in a docked lane is docked with it — the owner's words. A
+    /// stack of three is one docked thing, not one protected pane and two
+    /// strays.
+    #[test]
+    fn every_pane_of_a_docked_lane_is_protected() {
+        let mut lanes = strip(20);
+        let lid = lanes[0].id.clone();
+        lanes[0].dock = dock(DockMode::Inset, DockSide::Left);
+        for i in 1..3 {
+            lanes[0].panes.push(pane(&format!("p0_{i}"), &lid, PaneKind::Web, PaneState::Live));
+        }
+        let vp = Viewport { first_visible: 16, last_visible: 18 };
+        let mut memory = budgets(100 * GB);
+        memory.target_bytes = 1;
+        let plan = plan_under_sustained_pressure(&lanes, &vp, &memory);
+
+        let docked: Vec<PaneAction> =
+            plan.iter().filter(|d| d.lane_id == lid).map(|d| d.action).collect();
+        assert_eq!(docked, vec![PaneAction::Keep; 3]);
+    }
+
+    /// A docked lane occupies no slot in the strip, so it must not consume an
+    /// index either. If it did, every lane to its right would be planned
+    /// against its neighbour's distance — and the pane the user is looking at
+    /// would be the one that goes.
+    #[test]
+    fn a_docked_lane_does_not_shift_the_indices_of_the_lanes_behind_it() {
+        let mut lanes = strip(11);
+        lanes[0].dock = dock(DockMode::Inset, DockSide::Left);
+        // Ten laid-out lanes, l1..l10; the shell is looking at the middle one.
+        let vp = Viewport { first_visible: 5, last_visible: 5 };
+        let mut h = Hysteresis::default();
+        let mut memory = budgets(30 * GB);
+        memory.target_bytes = 1;
+        let plan = plan(&lanes, &vp, &memory, &mut h, 0);
+
+        let survivors: Vec<&str> = plan
+            .iter()
+            .filter(|d| d.action != PaneAction::Evict)
+            .map(|d| d.pane_id.as_str())
+            .collect();
+        // p0 is the dock; p6 is strip index 5, the lane on screen. Anything else
+        // means the docked lane ate an index on its way past.
+        assert_eq!(survivors, vec!["p0", "p6"]);
+    }
+
+    /// An evicted pane in a lane that is then docked comes back, immediately:
+    /// it is on screen now, and a docked snapshot is a dead rectangle at the
+    /// edge of the window.
+    #[test]
+    fn an_evicted_pane_in_a_docked_lane_rehydrates() {
+        let mut lanes = strip(30);
+        lanes[0].dock = dock(DockMode::Overlay, DockSide::Right);
+        lanes[0].panes[0].kind = PaneKind::Placeholder;
+        lanes[0].panes[0].state = PaneState::Evicted;
+        let vp = Viewport { first_visible: 20, last_visible: 22 };
+        let mut h = Hysteresis::default();
+        let plan = plan(&lanes, &vp, &budgets(1), &mut h, 0);
+        assert_eq!(plan[0].action, PaneAction::Rehydrate);
     }
 
     #[test]

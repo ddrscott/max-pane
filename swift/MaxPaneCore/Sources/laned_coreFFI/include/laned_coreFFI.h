@@ -289,6 +289,16 @@ RustBuffer uniffi_laned_core_fn_method_core_close_pane(uint64_t ptr, RustBuffer 
 RustBuffer uniffi_laned_core_fn_method_core_create_lane(uint64_t ptr, RustBuffer placement, RustBuffer kind, RustBuffer relay_session_id, RustBuffer url, RustBuffer inherit_tag_from_lane, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_DOCK_LANE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_DOCK_LANE
+RustBuffer uniffi_laned_core_fn_method_core_dock_lane(uint64_t ptr, RustBuffer lane_id, RustBuffer side, RustBuffer mode, RustBuffer width_pt, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_DOCKED_LANE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_DOCKED_LANE
+RustBuffer uniffi_laned_core_fn_method_core_docked_lane(uint64_t ptr, RustBuffer side, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_EXPORT_STRIP
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_EXPORT_STRIP
 RustBuffer uniffi_laned_core_fn_method_core_export_strip(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -439,6 +449,21 @@ RustBuffer uniffi_laned_core_fn_method_core_search(uint64_t ptr, RustBuffer quer
 void uniffi_laned_core_fn_method_core_set_default_lane_width(uint64_t ptr, uint32_t width_pt, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_DOCK_MODE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_DOCK_MODE
+RustBuffer uniffi_laned_core_fn_method_core_set_dock_mode(uint64_t ptr, RustBuffer lane_id, RustBuffer mode, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_DOCK_WIDTH
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_DOCK_WIDTH
+RustBuffer uniffi_laned_core_fn_method_core_set_dock_width(uint64_t ptr, RustBuffer lane_id, uint32_t width_pt, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_KEEP_LIVE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_KEEP_LIVE
+RustBuffer uniffi_laned_core_fn_method_core_set_keep_live(uint64_t ptr, RustBuffer lane_id, int8_t keep_live, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_LANE_SPAN
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_LANE_SPAN
 RustBuffer uniffi_laned_core_fn_method_core_set_lane_span(uint64_t ptr, RustBuffer lane_id, uint32_t span, RustCallStatus *_Nonnull out_status
@@ -489,11 +514,6 @@ void uniffi_laned_core_fn_method_core_set_pane_url(uint64_t ptr, RustBuffer pane
 void uniffi_laned_core_fn_method_core_set_pane_zoom(uint64_t ptr, RustBuffer pane_id, double zoom, RustCallStatus *_Nonnull out_status
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PINNED
-#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PINNED
-RustBuffer uniffi_laned_core_fn_method_core_set_pinned(uint64_t ptr, RustBuffer lane_id, int8_t pinned, RustCallStatus *_Nonnull out_status
-);
-#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_SCROLL_X
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_SCROLL_X
 void uniffi_laned_core_fn_method_core_set_scroll_x(uint64_t ptr, double scroll_x, RustCallStatus *_Nonnull out_status
@@ -502,6 +522,11 @@ void uniffi_laned_core_fn_method_core_set_scroll_x(uint64_t ptr, double scroll_x
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_STATE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_STATE
 RustBuffer uniffi_laned_core_fn_method_core_state(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_UNDOCK_LANE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_UNDOCK_LANE
+RustBuffer uniffi_laned_core_fn_method_core_undock_lane(uint64_t ptr, RustBuffer lane_id, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_UNGATHER
@@ -804,6 +829,18 @@ uint16_t uniffi_laned_core_checksum_method_core_create_lane(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_DOCK_LANE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_DOCK_LANE
+uint16_t uniffi_laned_core_checksum_method_core_dock_lane(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_DOCKED_LANE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_DOCKED_LANE
+uint16_t uniffi_laned_core_checksum_method_core_docked_lane(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_EXPORT_STRIP
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_EXPORT_STRIP
 uint16_t uniffi_laned_core_checksum_method_core_export_strip(void
@@ -984,6 +1021,24 @@ uint16_t uniffi_laned_core_checksum_method_core_set_default_lane_width(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_DOCK_MODE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_DOCK_MODE
+uint16_t uniffi_laned_core_checksum_method_core_set_dock_mode(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_DOCK_WIDTH
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_DOCK_WIDTH
+uint16_t uniffi_laned_core_checksum_method_core_set_dock_width(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_KEEP_LIVE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_KEEP_LIVE
+uint16_t uniffi_laned_core_checksum_method_core_set_keep_live(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_LANE_SPAN
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_LANE_SPAN
 uint16_t uniffi_laned_core_checksum_method_core_set_lane_span(void
@@ -1044,12 +1099,6 @@ uint16_t uniffi_laned_core_checksum_method_core_set_pane_zoom(void
     
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_PINNED
-#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_PINNED
-uint16_t uniffi_laned_core_checksum_method_core_set_pinned(void
-    
-);
-#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_SCROLL_X
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_SCROLL_X
 uint16_t uniffi_laned_core_checksum_method_core_set_scroll_x(void
@@ -1059,6 +1108,12 @@ uint16_t uniffi_laned_core_checksum_method_core_set_scroll_x(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_STATE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_STATE
 uint16_t uniffi_laned_core_checksum_method_core_state(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_UNDOCK_LANE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_UNDOCK_LANE
+uint16_t uniffi_laned_core_checksum_method_core_undock_lane(void
     
 );
 #endif
