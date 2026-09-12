@@ -131,9 +131,17 @@ Press **⌘/** for every shortcut. The three that matter:
 
 | | |
 |---|---|
-| **⌘R** | run a command in a new terminal lane |
-| **⌘L** | a web lane (`google.com` is enough — no scheme needed) |
+| **⌘T** / **⌘D** | a new lane to the right — pick a command or a URL |
 | **⌘[** / **⌘]** | move focus between lanes |
+| **⌘P** | find a lane by title, URL or something it printed |
+
+⌘T opens one picker for both halves of the app, because "something goes to the
+right of this" is a single decision. It lists what you launched before, most
+recent first, each with a number: **⌘4** runs the fourth one. Anything you type
+is offered both ways — as a command and as a URL — so a wrong guess about
+`localhost:3000` never hides the other reading.
+
+A terminal whose process exits takes its lane with it, after a beat.
 
 An empty strip says the same thing, so a fresh launch is not a blank rectangle.
 
@@ -164,6 +172,29 @@ terminal that asked. For a terminal you started yourself:
 ```sh
 export BROWSER="$PWD/build/MaxPane.app/Contents/Helpers/maxpane-open"
 ```
+
+### Preferences
+
+`~/.config/maxpane/config.json`. Set only what you want to change; everything
+else keeps its default.
+
+```json
+{
+  "snapToLanes": true,
+  "laneDefaultPt": 656,
+  "fontName": "JetBrains Mono",
+  "fontSize": 13
+}
+```
+
+`snapToLanes` settles a horizontal scroll with the nearest lane centred, rather
+than leaving two lanes half-readable. It is on by default; set it to `false` to
+have the scroll stop exactly where the gesture put it. `snapSeconds` (default
+`0.18`) is how long that takes.
+
+Every field of `Config` is a key here. A value of the wrong type is skipped —
+with a line on stderr saying which — rather than taking the rest of the file
+down with it.
 
 ### Debugging
 
