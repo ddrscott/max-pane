@@ -122,7 +122,7 @@ public final class MemoryDashboard: NSPanel {
                     stateText = "live"
                 }
             }
-            return Row(lane: lane, state: stateText, distance: lane.pinned ? "pinned" : "")
+            return Row(lane: lane, state: stateText, distance: lane.keepLive ? "kept" : "")
         }
 
         bar.update(used: used, soft: config.webMemorySoftBytes,

@@ -570,7 +570,7 @@ fn a_strip_exports_and_imports_through_the_ledger() {
         source.set_lane_width(id.clone(), 500 + i * 60).unwrap();
         ids.push(id);
     }
-    source.set_pinned(ids[2].clone(), true).unwrap();
+    source.set_keep_live(ids[2].clone(), true).unwrap();
 
     let json = source.export_strip().unwrap();
 
@@ -583,7 +583,7 @@ fn a_strip_exports_and_imports_through_the_ledger() {
         assert_eq!(lane.title.as_deref(), Some(format!("lane {i}").as_str()));
         assert_eq!(lane.project_root.as_deref(), Some(format!("/src/p{i}").as_str()));
         assert_eq!(lane.width_pt, 500 + i as u32 * 60);
-        assert_eq!(lane.pinned, i == 2);
+        assert_eq!(lane.keep_live, i == 2);
         // Ids are regenerated, so a strip can be imported next to an existing one.
         assert_ne!(lane.id, ids[i]);
     }
@@ -758,7 +758,7 @@ fn an_old_ledger_gains_span_without_losing_anything() {
     assert_eq!(st.lanes[0].title.as_deref(), Some("from before"));
     assert_eq!(st.lanes[0].project_root.as_deref(), Some("/src/old"));
     assert_eq!(st.lanes[0].width_pt, 700);
-    assert!(st.lanes[0].pinned);
+    assert!(st.lanes[0].keep_live);
     assert_eq!(st.lanes[0].span, 1, "existing lanes must default to span 1");
     assert_eq!(st.lanes[0].panes[0].url.as_deref(), Some("https://old"));
     // The layout a pre-0005 ledger described was `.fillEqually`, and equal

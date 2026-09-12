@@ -17,6 +17,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("0004_history", include_str!("../migrations/0004_history.sql")),
     ("0005_pane_height", include_str!("../migrations/0005_pane_height.sql")),
     ("0006_pane_zoom", include_str!("../migrations/0006_pane_zoom.sql")),
+    ("0007_lane_dock", include_str!("../migrations/0007_lane_dock.sql")),
 ];
 
 pub struct Ledger {
@@ -79,7 +80,8 @@ impl Ledger {
     pub fn lanes(&self) -> Result<Vec<Lane>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, ordinal, width_pt, title, project_root, project_source,
-                    created_at, last_focus_at, pinned, span
+                    created_at, last_focus_at, keep_live, span,
+                    dock_side, dock_mode, dock_width_pt
              FROM lane ORDER BY ordinal ASC",
         )?;
         let mut lanes: Vec<Lane> = stmt.query_map([], row_to_lane)?.collect::<rusqlite::Result<_>>()?;
@@ -109,7 +111,8 @@ impl Ledger {
             .conn
             .query_row(
                 "SELECT id, ordinal, width_pt, title, project_root, project_source,
-                        created_at, last_focus_at, pinned, span FROM lane WHERE id = ?1",
+                        created_at, last_focus_at, keep_live, span,
+                        dock_side, dock_mode, dock_width_pt FROM lane WHERE id = ?1",
                 [id],
                 row_to_lane,
             )
@@ -188,8 +191,9 @@ impl Ledger {
     pub fn insert_lane(&self, lane: &Lane) -> Result<()> {
         self.conn.execute(
             "INSERT INTO lane (id, ordinal, width_pt, title, project_root, project_source,
-                               created_at, last_focus_at, pinned, span)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                               created_at, last_focus_at, keep_live, span,
+                               dock_side, dock_mode, dock_width_pt)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 lane.id,
                 lane.ordinal,
@@ -199,8 +203,11 @@ impl Ledger {
                 project_source_str(lane.project_source),
                 lane.created_at,
                 lane.last_focus_at,
-                lane.pinned as i32,
+                lane.keep_live as i32,
                 lane.span,
+                lane.dock.map(|d| dock_side_str(d.side)),
+                lane.dock.map(|d| dock_mode_str(d.mode)),
+                lane.dock.map(|d| d.width_pt),
             ],
         )?;
         Ok(())
@@ -297,8 +304,43 @@ impl Ledger {
         Ok(())
     }
 
-    pub fn set_pinned(&self, lane_id: &str, pinned: bool) -> Result<()> {
-        self.conn.execute("UPDATE lane SET pinned = ?2 WHERE id = ?1", params![lane_id, pinned as i32])?;
+    pub fn set_keep_live(&self, lane_id: &str, keep_live: bool) -> Result<()> {
+        self.conn
+            .execute("UPDATE lane SET keep_live = ?2 WHERE id = ?1", params![lane_id, keep_live as i32])?;
+        Ok(())
+    }
+
+    /// Claim an edge for `lane_id`, or release the one it holds.
+    ///
+    /// One transaction, with the incumbent's release inside it. The unique
+    /// index in migration 0007 makes two lanes on one edge impossible, which
+    /// means the two-statement version of this does not produce a wrong strip —
+    /// it produces a *failure*, on the second press of dock-left, which is
+    /// worse. The user pressed dock-left on this lane and meant it, so whoever
+    /// held the edge gives it up and goes back to scrolling with the strip at
+    /// the ordinal it never stopped holding.
+    pub fn set_dock(&mut self, lane_id: &str, dock: Option<Dock>) -> Result<()> {
+        const CLEAR: &str = "UPDATE lane SET dock_side = NULL, dock_mode = NULL, dock_width_pt = NULL";
+        let tx = self.conn.transaction()?;
+        match dock {
+            None => {
+                tx.execute(&format!("{CLEAR} WHERE id = ?1"), params![lane_id])?;
+            }
+            Some(d) => {
+                tx.execute(
+                    &format!("{CLEAR} WHERE dock_side = ?1 AND id <> ?2"),
+                    params![dock_side_str(d.side), lane_id],
+                )?;
+                let n = tx.execute(
+                    "UPDATE lane SET dock_side = ?2, dock_mode = ?3, dock_width_pt = ?4 WHERE id = ?1",
+                    params![lane_id, dock_side_str(d.side), dock_mode_str(d.mode), d.width_pt],
+                )?;
+                if n == 0 {
+                    return Err(CoreError::NotFound { kind: "lane".into(), id: lane_id.into() });
+                }
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -635,8 +677,29 @@ fn row_to_lane(r: &Row) -> rusqlite::Result<Lane> {
         project_source: parse_project_source(&r.get::<_, String>(5)?),
         created_at: r.get(6)?,
         last_focus_at: r.get(7)?,
-        pinned: r.get::<_, i64>(8)? != 0,
+        keep_live: r.get::<_, i64>(8)? != 0,
         span: r.get::<_, i64>(9)? as u32,
+        // `dock_side` alone decides whether there is a dock; the other two
+        // columns are read only once it says yes. A row someone hand-edited to
+        // carry a side and nothing else therefore gets the defaults a fresh
+        // dock would, rather than a strip that refuses to load.
+        dock: r.get::<_, Option<String>>(10)?.and_then(|side| {
+            parse_dock_side(&side).map(|side| Dock {
+                side,
+                mode: r
+                    .get::<_, Option<String>>(11)
+                    .ok()
+                    .flatten()
+                    .map(|m| parse_dock_mode(&m))
+                    .unwrap_or(DockMode::Inset),
+                width_pt: r
+                    .get::<_, Option<i64>>(12)
+                    .ok()
+                    .flatten()
+                    .map(|w| w as u32)
+                    .unwrap_or(crate::LANE_MIN_PT),
+            })
+        }),
         panes: Vec::new(),
     })
 }
@@ -717,6 +780,39 @@ pub fn project_source_str(s: ProjectSource) -> &'static str {
         ProjectSource::Cwd => "cwd",
         ProjectSource::Inherited => "inherited",
         ProjectSource::Manual => "manual",
+    }
+}
+
+pub fn dock_side_str(s: DockSide) -> &'static str {
+    match s {
+        DockSide::Left => "left",
+        DockSide::Right => "right",
+    }
+}
+
+/// `None` for anything this build does not recognise, which makes an
+/// unreadable value an undocked lane rather than a strip that will not open.
+fn parse_dock_side(s: &str) -> Option<DockSide> {
+    match s {
+        "left" => Some(DockSide::Left),
+        "right" => Some(DockSide::Right),
+        _ => None,
+    }
+}
+
+pub fn dock_mode_str(m: DockMode) -> &'static str {
+    match m {
+        DockMode::Overlay => "overlay",
+        DockMode::Inset => "inset",
+    }
+}
+
+/// Inset is the fallback, not overlay. An unreadable mode should not silently
+/// start covering a lane the user cannot see is there.
+pub fn parse_dock_mode(s: &str) -> DockMode {
+    match s {
+        "overlay" => DockMode::Overlay,
+        _ => DockMode::Inset,
     }
 }
 

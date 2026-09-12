@@ -1,5 +1,19 @@
 # Dock a pane to the left or right of the strip
 
+> **Status: the model half is built.** Migration 0007, `Lane.dock`, the dock API
+> on `Core` and `StripStore`, the eviction guarantee and the keymap are in;
+> 33 tests in `crates/laned-core/tests/docking.rs` and 5 in
+> `DockStoreTests.swift`. The layout half is built against
+> [`docked-panes-contract.md`](docked-panes-contract.md), which supersedes the
+> open questions below wherever they disagree.
+>
+> Settled since this page was written, by the owner directly:
+> **the unit is the lane**, not the pane; **the ordinal is kept** and undocking
+> returns the lane to it; **two docks, one per side**; **the dock's width is
+> resizable and persisted**, separately from the lane's own; and **⌘[ / ⌘] skip
+> the docks**. The `pinned` collision is resolved in
+> [ADR-0010](../decisions/0010-docking-takes-the-word-pinned.md).
+
 ## What the owner asked for
 
 > "another major feature is like is pinning a pane to the left or right. another

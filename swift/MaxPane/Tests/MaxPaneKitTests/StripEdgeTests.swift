@@ -20,7 +20,7 @@ struct StripEdgeTests {
         widths.enumerated().map { index, width in
             Lane(id: "lane-\(index)", ordinal: Double(index), widthPt: width, title: nil,
                  projectRoot: nil, projectSource: .cwd, createdAt: 0, lastFocusAt: 0,
-                 pinned: false, span: 1, panes: [])
+                 keepLive: false, dock: nil, span: 1, panes: [])
         }
     }
 
@@ -184,7 +184,7 @@ struct StripEdgeCountTests {
         widths.enumerated().map { index, width in
             Lane(id: "lane-\(index)", ordinal: Double(index), widthPt: width, title: nil,
                  projectRoot: nil, projectSource: .cwd, createdAt: 0, lastFocusAt: 0,
-                 pinned: false, span: 1, panes: [])
+                 keepLive: false, dock: nil, span: 1, panes: [])
         }
     }
 

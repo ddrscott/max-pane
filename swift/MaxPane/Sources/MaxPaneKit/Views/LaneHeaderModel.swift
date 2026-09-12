@@ -105,6 +105,14 @@ protocol LaneHeaderSource {
 }
 
 extension Lane: LaneHeaderSource {
+    /// The header's marker still says "pinned" because that is what the *view*
+    /// calls the glyph it draws. The ledger's field is `keepLive` now — the
+    /// word went to docking, where the owner has always meant it to be. The
+    /// two names meet here rather than in the header, which the docking view
+    /// work owns and will rename along with the marker it adds for a docked
+    /// lane.
+    var pinned: Bool { keepLive }
+
     var kind: PaneGlyph {
         switch panes.first?.kind {
         case .pty: return .pty

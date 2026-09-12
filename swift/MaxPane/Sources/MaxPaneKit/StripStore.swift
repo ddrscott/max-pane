@@ -162,8 +162,61 @@ public final class StripStore {
         publish(try core.setLaneSpan(laneId: laneId, span: span))
     }
 
-    func setPinned(_ laneId: String, _ pinned: Bool) throws {
-        publish(try core.setPinned(laneId: laneId, pinned: pinned))
+    /// Protect a lane's web panes from eviction. ⇧⌘P, formerly "Pin Lane".
+    ///
+    /// The word "pinned" went to docking, because that is what it means to the
+    /// person using the app. This flag kept its meaning and its key and lost
+    /// only the name; ADR-0010 is why it did not simply disappear into docking.
+    func setKeepLive(_ laneId: String, _ keepLive: Bool) throws {
+        publish(try core.setKeepLive(laneId: laneId, keepLive: keepLive))
+    }
+
+    // MARK: - docking
+
+    /// The lanes the strip lays out: everything except what is held at an edge.
+    ///
+    /// **Every index the strip computes is an index into this array** — the
+    /// materialisation window, the visible range, the snap targets, the edge
+    /// rails' counts, and the `Viewport` handed to `planEviction`. A docked
+    /// lane keeps its ordinal in `state.lanes` so that undocking returns it to
+    /// the spot it left, which means `state.lanes` and the laid-out strip are
+    /// not the same list any more. Indexing one with the other's numbers is the
+    /// bug this property exists to make hard: at worst it evicts a pane the
+    /// user is looking at.
+    var stripLanes: [Lane] { state.lanes.filter { $0.dock == nil } }
+
+    /// The lane holding an edge, if any.
+    func dockedLane(_ side: DockSide) -> Lane? {
+        state.lanes.first { $0.dock?.side == side }
+    }
+
+    /// Hold a lane at one edge of the window. Every pane in it comes along.
+    ///
+    /// `widthPt` of nil means "the width this lane already has": docking must
+    /// not reflow the page, or every dock begins with the thing you docked
+    /// jumping. The core clamps to the dock bounds, which are not the lane
+    /// bounds — a dock is not a reading column.
+    ///
+    /// Docking to an edge another lane holds displaces that lane back into the
+    /// strip, at the ordinal it never stopped holding.
+    func dockLane(_ laneId: String, side: DockSide, mode: DockMode, widthPt: UInt32? = nil) throws {
+        publish(try core.dockLane(laneId: laneId, side: side, mode: mode, widthPt: widthPt))
+    }
+
+    /// Give the edge back. The lane resumes scrolling with the strip between
+    /// the same two neighbours it left. A no-op on a lane that is not docked.
+    func undockLane(_ laneId: String) throws {
+        publish(try core.undockLane(laneId: laneId))
+    }
+
+    func setDockMode(_ laneId: String, _ mode: DockMode) throws {
+        publish(try core.setDockMode(laneId: laneId, mode: mode))
+    }
+
+    /// Persisted, and separate from the lane's own `widthPt` — dragging a dock
+    /// narrow must not overwrite a strip width the user chose deliberately.
+    func setDockWidth(_ laneId: String, _ widthPt: UInt32) throws {
+        publish(try core.setDockWidth(laneId: laneId, widthPt: widthPt))
     }
 
     func setManualTag(_ laneId: String, _ projectRoot: String?) throws {
@@ -332,6 +385,9 @@ public final class StripStore {
 
     // MARK: - eviction (§10.3)
 
+    /// `viewport` indexes ``stripLanes``, not `state.lanes`. The core removes
+    /// docked lanes the same way before indexing, so the two agree as long as
+    /// the caller measured the array it laid out.
     func planEviction(viewport: Viewport, memory: MemoryReport) -> [PaneDirective] {
         (try? core.planEviction(viewport: viewport, memory: memory)) ?? []
     }
