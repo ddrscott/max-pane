@@ -238,25 +238,30 @@ final class TerminalPaneController: NSObject, PaneController {
     }
 
     private func pushScrollback() {
-        // SwiftTerm keeps `buffer.lines` internal, so the only public way to the
-        // scrollback is the whole buffer at once. That is more allocation than
-        // the 200 lines we keep, which is why this runs on a 1.5 s debounce and
-        // only while output is actually flowing. If M2's 30-session numbers say
-        // it matters, the fix is a public tail accessor upstream, not a private
-        // reach-around here.
-        let data = terminal.getTerminal().getBufferAsData()
-        guard let text = String(data: data, encoding: .utf8) else { return }
+        // Walk back from the bottom of the scrollback, taking only the lines we
+        // keep. `getScrollInvariantLine` indexes from the start of the scroll
+        // buffer including what has already been trimmed off the top, so the
+        // last real row is `totalLinesTrimmed + topVisibleRow + rows - 1`.
+        //
+        // All public API, and M2 measured the whole 200-line walk at 0.48 ms.
+        // The obvious alternative, `getBufferAsData()`, materialises the entire
+        // buffer — for 20 terminals with deep scrollback that is megabytes of
+        // allocation to keep 200 lines.
+        let term = terminal.getTerminal()
+        var row = term.buffer.totalLinesTrimmed + term.getTopVisibleRow() + term.rows - 1
 
         var lines: [String] = []
         lines.reserveCapacity(Self.scrollbackLines)
-        for line in text.split(separator: "\n", omittingEmptySubsequences: false).reversed() {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty { continue }
-            lines.append(String(line))
-            if lines.count == Self.scrollbackLines { break }
+        while row >= 0, lines.count < Self.scrollbackLines {
+            guard let line = term.getScrollInvariantLine(row: row) else { break }
+            let text = line.translateToString(trimRight: true)
+            if !text.trimmingCharacters(in: .whitespaces).isEmpty {
+                lines.append(text)
+            }
+            row -= 1
         }
         guard !lines.isEmpty else { return }
-        // Oldest first, matching what the index expects.
+        // Oldest first, which is the order the index expects.
         store.pushScrollback(paneId, lines.reversed())
     }
 
