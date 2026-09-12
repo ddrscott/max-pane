@@ -1,0 +1,89 @@
+# Dock a pane to the left or right of the strip
+
+## What the owner asked for
+
+> "another major feature is like is pinning a pane to the left or right. another
+> option should allow the pinned pane to hover over the strip, or reduce the
+> space of the strip. i often have a page that's for background music."
+
+So: a pane that stays put at one edge while the strip scrolls behind or beside
+it, in one of two modes — **overlay** (floats above the strip) or **inset** (the
+strip gets a narrower viewport and nothing is ever hidden).
+
+The stated use case is the acceptance test. **A music page must keep playing,
+audibly, while the strip is scrolled, while other lanes are focused, and while
+memory pressure is high enough to evict things.** A dock that looks right and
+goes silent is a failure.
+
+## The name is already taken, and that has to be settled first
+
+`Lane.pinned` exists today and means **"never evict this lane's web panes"** —
+`eviction.rs:204` skips pinned lanes — reachable on ⇧⌘P as "Pin Lane". It is a
+memory flag with no position in it. Two different meanings of "pinned" in one
+app is how a user ends up pinning a lane and wondering why it did not move.
+
+Resolve it deliberately. The most promising reading is that **docking subsumes
+pinning**: a docked pane is on screen permanently, so it must never be evicted,
+which makes today's flag an implementation detail of the new feature rather than
+a second concept. If that holds, `pinned` should stop being user-facing. If it
+does not hold — if there is a real reason to protect a lane you are *not*
+docking — then the two need different names in the UI and in the model, and the
+ADR should say why both exist.
+
+## The design questions that decide whether this is any good
+
+- **Is the docked thing a lane or a pane?** The owner said "pane". A lane is the
+  unit of everything else — ordinal, width, span, the stack, the header. Docking
+  a lane is consistent and probably cheaper; docking a single pane out of a
+  stack needs an answer for what happens to its siblings. Pick one and say why.
+- **Does the docked lane leave the strip's order?** If it keeps its ordinal,
+  scrolling to that position shows a gap where it used to be. If it leaves,
+  undocking has to put it back somewhere and "where" needs a rule.
+- **Everything that reads the viewport width has to agree with inset mode.**
+  `LaneSnap.offset`, `LanePeek`, `StripEdgeRail`'s counts, `materializationWindow`
+  and `visibleLaneRange` all compute against the clip view today. In inset mode
+  the strip's usable width is smaller; in overlay mode it is not, but the lane
+  *under* the overlay is occluded, which the edge rails and the "can I tell
+  there is more" work exist to prevent. Overlay mode arguably needs the peek to
+  treat the covered strip as an edge.
+- **Two docks at once** — one left, one right? Different modes on each?
+- **Width.** Resizable like a lane? Persisted? Does it obey `laneMinPt`?
+- **Keyboard.** Do ⌘[ / ⌘] skip the docked lane, or does it join the cycle at
+  one end? Focus has to be reachable and escapable without the mouse.
+- **Overlay needs to say it is floating**, or it reads as a lane that will not
+  scroll. A shadow, an edge, something.
+
+## Acceptance criteria
+
+- A lane can be docked left or right, in either mode, from the keyboard and from
+  the lane's ⋯ menu, and the choice survives a restart.
+- **Audio from a docked page keeps playing** while the strip scrolls, while
+  another pane has focus, and after the eviction policy has run a pass with the
+  memory budget exceeded. Prove it with `maxpane ls` plus something audible, not
+  by reading the eviction code.
+- In inset mode, no lane is ever hidden behind the dock: the strip's arithmetic
+  uses the reduced width everywhere, and the edge rails still tell the truth.
+- In overlay mode, it is visually obvious the dock is floating, and there is
+  still evidence of strip continuing underneath.
+- Undocking returns the lane to the strip at a defined place.
+- The `pinned` collision is resolved, with the decision recorded.
+
+## Relevant files
+
+- `crates/laned-core/src/model.rs`, `lib.rs`, `eviction.rs` (the `pinned` skip),
+  a new migration.
+- `swift/MaxPane/Sources/MaxPaneKit/Views/StripViewController.swift` — layout,
+  the clip view, materialisation, snapping.
+- `Views/StripEdges.swift` — `LanePeek`, `StripEdgeRail`.
+- `Views/LaneView.swift` — the ⋯ menu.
+- `Commands.swift` — ⇧⌘P today is "Pin Lane".
+
+## Constraints
+
+- Blocked on the motion round-2 work merging: it owns `StripViewController`,
+  `StripMotion`, `StripEdges`, `LaneView` and `WebPaneController` right now, and
+  two builders rewriting the strip's layout at once produces a merge nobody can
+  verify.
+- A docked web pane must never be unparented by the eviction policy. Read
+  ADR-0003 and `eviction.rs` before assuming `pinned` already guarantees that —
+  it prevents *eviction*, and unparenting is a separate action.
