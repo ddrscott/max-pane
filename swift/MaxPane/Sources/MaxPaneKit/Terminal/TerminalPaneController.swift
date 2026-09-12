@@ -540,17 +540,13 @@ enum TerminalControllerPool {
         func controller(for config: Config) -> TerminalController {
             if let controller { return controller }
             let made = TerminalController(
+                theme: theme,
                 terminalConfiguration: TerminalConfiguration { builder in
                     builder.withFontFamily(config.fontName)
                     builder.withFontSize(Float(config.fontSize))
                     // The lane paints its own background; a terminal painting a
                     // second one on top shows a seam under the header.
                     builder.withBackgroundOpacity(0)
-                    builder.withBackground(hex(Theme.laneBackground))
-                    builder.withForeground(hex(NSColor.labelColor))
-                    builder.withSelectionBackground(hex(Theme.accent))
-                    builder.withSelectionForeground(hex(Theme.laneBackground))
-                    builder.withCursorColor(hex(Theme.accent))
                     // Ghostty ships a full set of app keybindings — ⇧⌘W closes
                     // a window, ⌘T opens a tab — and claims them in
                     // `performKeyEquivalent`, which runs before the menu. In
@@ -561,6 +557,10 @@ enum TerminalControllerPool {
                     // Copy, paste and select-all are unaffected: those are
                     // responder-chain actions, driven by our Edit menu.
                     builder.withCustom("keybind", "clear")
+                    // Selecting text puts it on the clipboard, as it did before
+                    // the migration and as it does in Relay. Ghostty's own
+                    // default is off.
+                    builder.withCustom("copy-on-select", "true")
                     // Matching the lane's own gutter, so text does not start
                     // hard against the divider.
                     builder.withWindowPaddingX(Int(TerminalPaneController.terminalPadding.x))
@@ -571,10 +571,37 @@ enum TerminalControllerPool {
         }
     }
 
+    /// Afterglow and Alabaster, with the two colours that are ours.
+    ///
+    /// The theme is rendered *after* the configuration, so a colour set in the
+    /// config is overwritten by whatever the theme says — which is why these
+    /// belong here and not beside the font. Starting from Ghostty's defaults
+    /// keeps a full, legible ANSI palette; overriding the background makes the
+    /// pane the same colour as the lane around it, and the cursor is Signal
+    /// Orange because a cursor marks where the focus is.
+    static var theme: TerminalTheme {
+        TerminalTheme(
+            light: TerminalConfiguration(startingFrom: .alabaster) { builder in
+                builder.withBackground(hex(Theme.laneBackground, in: .aqua))
+                builder.withCursorColor(hex(Theme.accent, in: .aqua))
+            },
+            dark: TerminalConfiguration(startingFrom: .afterglow) { builder in
+                builder.withBackground(hex(Theme.laneBackground, in: .darkAqua))
+                builder.withCursorColor(hex(Theme.accent, in: .darkAqua))
+            })
+    }
+
     /// `#rrggbb`, which is how Ghostty takes colours — so the theme is
     /// converted here rather than duplicated as literals.
-    static func hex(_ color: NSColor) -> String {
-        let resolved = color.usingColorSpace(.sRGB) ?? .black
+    ///
+    /// Resolved in a named appearance rather than the current one: the theme is
+    /// built once, and a dynamic colour read at launch would otherwise freeze
+    /// whichever mode the Mac happened to be in.
+    static func hex(_ color: NSColor, in appearance: NSAppearance.Name) -> String {
+        var resolved = color
+        NSAppearance(named: appearance)?.performAsCurrentDrawingAppearance {
+            resolved = color.usingColorSpace(.sRGB) ?? .black
+        }
         let channels = [resolved.redComponent, resolved.greenComponent, resolved.blueComponent]
         return "#" + channels.map { String(format: "%02x", Int(($0 * 255).rounded())) }.joined()
     }

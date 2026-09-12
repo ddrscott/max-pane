@@ -57,6 +57,13 @@ guessed at.
 - **The resize callback's cell size is zero** on the first report and then goes
   quiet, so the ⌘-click geometry works the cell size back out of the grid. See
   `ClickableTerminalView.cell(at:columns:rows:viewSize:padding:)`.
+- **Colours belong in the theme, not the config.** The theme is rendered after
+  the configuration, so a `background` or `selection-background` set beside the
+  font is silently overwritten by the default theme. Max Pane's palette is a
+  `TerminalTheme` built on top of Ghostty's Afterglow and Alabaster.
+- **Ghostty's app keybindings had to be cleared.** It claims ⇧⌘W, ⌘T and the
+  rest in `performKeyEquivalent`, which runs ahead of the menu — so the strip's
+  own shortcuts worked from the menu bar and did nothing from the keyboard.
 - **Scrollback is viewport-only.** `readViewportText()` reads the visible rows
   by design and ignores history, so the §7.5 search index is fed from the live
   stream plus whatever is on screen — where SwiftTerm could be walked backwards
