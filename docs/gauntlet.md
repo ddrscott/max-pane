@@ -131,9 +131,33 @@ critic that looks at screenshots of the running app beside the bar.
 
 ## Rounds
 
-| Round | Piece | Builder | Critic verdict | Biggest remaining gap |
-|---|---|---|---|---|
-| 0 | — | — | baseline recorded above | everything in the gap table |
+| Round | Piece | Result | Biggest remaining gap |
+|---|---|---|---|
+| 0 | — | baseline recorded above | everything in the gap table |
+| 1 | Session telemetry | `SessionRegistry` merges the ≤5 s session file with the live wire (`SESSION_METRICS` 0x14) | the state model was wrong — see below |
+| 1 | Status footer | `2 lanes · 9 sessions · N BLOCKED` | — |
+| 2 | Agent state, corrected | `blocked` was missing entirely; `active` should have been `working`. Both parsed as `unknown`, so the headline signal was silently absent | — |
+| 2 | pty-host selection | Max Pane was spawning the **March** binary, which has no classifier at all | — |
+| 3 | Sidebar | session browser: every session, grouped by cwd, counts, dots, throughput, age, blocked-first under every sort | width capped by the split's 220pt minimum; controls do not persist |
+| 3 | Lane header | liveness square, kind glyph, state chip, title, throughput, path, `⋯` menu | `WORKING`/`DONE` chips never seen on live data |
+| 3 | Palettes | ⌘O grouped picker with quick-launch; ⌘P two-line rows | ⌘P still ranks by the Rust core's loose scorer |
+| 3 | New-session sizing | sessions are born at the lane's size, using SwiftTerm's own cell metric | — |
+
+### Two failures worth remembering
+
+**The state model was built from a screenshot and was wrong.** `blocked` — the
+single most valuable thing RelayTTY does — did not exist in the enum, and
+`working` was called `active`. Both fell through to `unknown`. Nothing errored;
+the information simply was not there. Reading `crates/pty-host/src/agent_state.rs`
+would have caught it on day one, and the screenshot never could have.
+
+**Three builders each reported "I never saw a BLOCKED chip" and all three blamed
+pty-host.** The real cause was a line in Max Pane's own spawner: a RelayTTY
+checkout carries two `relay-pty-host` binaries, `bin/` (March, no classifier) and
+`crates/pty-host/target/release/` (September, has it), and we picked the first.
+Every session Max Pane created was blind by construction. The lesson is not about
+binaries — it is that three independent agents converging on the same wrong
+explanation is a signal to go and measure, not to accept the consensus.
 
 ---
 
