@@ -381,7 +381,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     }
 
     private func showPalette() {
-        let controller = SearchPaletteController(store: store) { [weak self] hit in
+        let controller = SearchPaletteController(store: store, registry: sessions) { [weak self] hit in
             guard let self, let hit else { return }
             // PRD §7.5: focus the pane, centre its lane, flash the border.
             try? self.store.focusPane(hit.paneId)
@@ -392,11 +392,31 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     }
 
     private func showSessionPicker() {
-        let sessions = RelaySessionDirectory().attachable(excluding: attachedSessionIDs())
-        let controller = SessionPickerController(sessions: sessions) { [weak self] session in
-            guard let self, let session else { return }
-            // PRD §7.1: attaching an existing session creates a lane at the end.
-            try? self.store.attachSessionAtEnd(relaySessionId: session.id)
+        // Every session Relay knows about, not just the unattached ones: the
+        // picker marks what is already on the strip and reveals it rather than
+        // attaching a second copy of it.
+        let controller = SessionPickerController(registry: sessions) { [weak self] choice in
+            guard let self, let choice else { return }
+            switch choice {
+            case .attach(let picked):
+                if let pane = self.store.state.lanes.lazy.flatMap(\.panes)
+                    .first(where: { $0.relaySessionId == picked.sessionId }),
+                    let lane = self.store.lane(containing: pane.id) {
+                    try? self.store.focusPane(pane.id)
+                    self.strip.reveal(laneId: lane.id, flash: true)
+                } else {
+                    // PRD §7.1: attaching an existing session creates a lane at the end.
+                    try? self.store.attachSessionAtEnd(relaySessionId: picked.sessionId)
+                }
+            case .launch(let command, let cwd):
+                do {
+                    let id = try RelaySessionSpawner(config: self.config)
+                        .spawn(cwd: cwd, command: command)
+                    try self.store.newTerminalLane(relaySessionId: id, near: nil)
+                } catch {
+                    self.showError(error)
+                }
+            }
         }
         palette = nil
         controller.present(over: window)
