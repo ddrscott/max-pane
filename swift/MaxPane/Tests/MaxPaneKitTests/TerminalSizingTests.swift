@@ -232,3 +232,47 @@ struct AgentStateTests {
         #expect(SessionTelemetry.abbreviate("") == "~")
     }
 }
+
+/// Choosing the `relay-pty-host` binary.
+///
+/// This has one failure mode and it is silent: pick a build without the
+/// agent-state classifier and every session starts fine, output flows fine, and
+/// `agentState` is simply never written — so the sidebar, picker and status bar
+/// all go quiet about the one thing they exist for, with no error anywhere.
+@Suite("pty-host selection")
+struct PtyHostSelectionTests {
+    @Test("a binary with the classifier is recognised, one without is not")
+    func detectsClassifier() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ptyhost-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let withIt = dir.appendingPathComponent("new")
+        let without = dir.appendingPathComponent("old")
+        try Data("...binary...Do you want to proceed...more".utf8).write(to: withIt)
+        try Data("...binary...nothing of interest...".utf8).write(to: without)
+
+        #expect(RelaySessionSpawner.hasAgentClassifier(at: withIt.path))
+        #expect(!RelaySessionSpawner.hasAgentClassifier(at: without.path))
+        // A path that is not there must not throw or crash — it is the common
+        // case on a machine with no RelayTTY checkout.
+        #expect(!RelaySessionSpawner.hasAgentClassifier(at: dir.appendingPathComponent("absent").path))
+    }
+
+    @Test("an explicit override always wins")
+    func overrideWins() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ptyhost-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let mine = dir.appendingPathComponent("mine")
+        try Data("anything".utf8).write(to: mine)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: mine.path)
+
+        #expect(RelaySessionSpawner.locatePtyHost(override: mine.path) == mine.path)
+        // A non-executable override is ignored rather than used and failing later.
+        #expect(RelaySessionSpawner.locatePtyHost(override: "/nope/nothing") != "/nope/nothing")
+    }
+}

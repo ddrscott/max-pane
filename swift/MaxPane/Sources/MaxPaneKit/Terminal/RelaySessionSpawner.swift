@@ -118,24 +118,80 @@ public struct RelaySessionSpawner {
 
     // MARK: - discovery
 
-    /// Find `relay-pty-host`. There is no stable well-known path, so this walks
-    /// from the `relay` launcher on `PATH` to the package's `bin/` directory.
+    /// Find a `relay-pty-host` that can classify agent state.
+    ///
+    /// There is usually more than one on a machine and **they are not
+    /// equivalent.** A RelayTTY checkout ships a prebuilt `bin/relay-pty-host`
+    /// and also builds one into `crates/pty-host/target/release/`; only the
+    /// newer of the two runs the agent-state classifier that decides whether a
+    /// session is `blocked`.
+    ///
+    /// Picking the wrong one fails in the worst possible way: sessions start
+    /// fine, output flows fine, and `agentState` is simply never written — so
+    /// the sidebar, the picker and the status bar all go quiet about the one
+    /// thing they exist to tell you, with nothing anywhere reporting an error.
+    /// That is exactly what happened: three separate builders reported "I never
+    /// saw a BLOCKED chip" before anyone thought to compare the binaries.
+    ///
+    /// So: gather every candidate and take the one that actually has the
+    /// classifier, newest first. An explicit `relayPtyHostPath` still wins, for
+    /// the case where the user knows better than this heuristic.
     static func locatePtyHost(override: String?) -> String? {
         let fm = FileManager.default
         if let override, fm.isExecutableFile(atPath: override) { return override }
 
-        guard let relay = which("relay") else { return nil }
-        // …/lib/node_modules/relay-tty/dist/cli/index.js → up three → relay-tty/
-        let resolved = URL(fileURLWithPath: relay).resolvingSymlinksInPath()
-        var dir = resolved.deletingLastPathComponent()
-        for _ in 0..<4 {
-            let candidate = dir.appendingPathComponent("bin/relay-pty-host").path
-            if fm.isExecutableFile(atPath: candidate) { return candidate }
-            let built = dir.appendingPathComponent("crates/pty-host/target/release/relay-pty-host").path
-            if fm.isExecutableFile(atPath: built) { return built }
-            dir = dir.deletingLastPathComponent()
+        let candidates = candidatePtyHosts()
+        guard !candidates.isEmpty else { return nil }
+
+        // Prefer one that can classify; among those, the newest.
+        let classifying = candidates.filter { hasAgentClassifier(at: $0) }
+        let pool = classifying.isEmpty ? candidates : classifying
+        if classifying.isEmpty, let first = candidates.first {
+            Log.warn("""
+                no relay-pty-host on this machine has the agent-state classifier                 (using \(first)) — sessions will start, but nothing will ever                 report BLOCKED. Build one:                 cargo build --release --manifest-path <relay-tty>/crates/pty-host/Cargo.toml
+                """)
         }
-        return nil
+        return pool.max(by: { modified($0) < modified($1) })
+    }
+
+    /// Every `relay-pty-host` worth considering, in no particular order.
+    static func candidatePtyHosts() -> [String] {
+        let fm = FileManager.default
+        var found: [String] = []
+
+        func consider(_ path: String) {
+            guard fm.isExecutableFile(atPath: path), !found.contains(path) else { return }
+            found.append(path)
+        }
+
+        // Walk up from wherever `relay` resolves — an npm global install, or a
+        // source checkout whose CLI is `dist/cli/index.js`.
+        if let relay = which("relay") {
+            var dir = URL(fileURLWithPath: relay).resolvingSymlinksInPath().deletingLastPathComponent()
+            for _ in 0..<5 {
+                consider(dir.appendingPathComponent("crates/pty-host/target/release/relay-pty-host").path)
+                consider(dir.appendingPathComponent("bin/relay-pty-host").path)
+                dir = dir.deletingLastPathComponent()
+            }
+        }
+        consider("/usr/local/bin/relay-pty-host")
+        if let onPath = which("relay-pty-host") { consider(onPath) }
+        return found
+    }
+
+    /// Whether a binary contains the agent-state classifier.
+    ///
+    /// Sniffed by looking for one of the prompt patterns the classifier matches
+    /// on, which is crude but decisive and costs one read of a 700 KB file at
+    /// launch. There is no version flag that would answer this.
+    static func hasAgentClassifier(at path: String) -> Bool {
+        guard let data = FileManager.default.contents(atPath: path) else { return false }
+        return data.range(of: Data("Do you want to proceed".utf8)) != nil
+    }
+
+    private static func modified(_ path: String) -> Date {
+        (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date)
+            .flatMap { $0 } ?? .distantPast
     }
 
     private static func which(_ name: String) -> String? {
