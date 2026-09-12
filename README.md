@@ -131,15 +131,24 @@ Press **⌘/** for every shortcut. The three that matter:
 
 | | |
 |---|---|
-| **⌘T** / **⌘D** | a new lane to the right — pick a command or a URL |
+| **⌘O** (also **⌘T**, **⌘D**) | start anything — a command, a URL, a page you have been to, a session that is already running |
 | **⌘[** / **⌘]** | move focus between lanes |
 | **⌘P** | find a lane by title, URL or something it printed |
 
-⌘T opens one picker for both halves of the app, because "something goes to the
-right of this" is a single decision. It lists what you launched before, most
-recent first, each with a number: **⌘4** runs the fourth one. Anything you type
-is offered both ways — as a command and as a URL — so a wrong guess about
-`localhost:3000` never hides the other reading.
+⌘O is the only door into the strip, because "something goes to the right of
+this" is a single decision — and until recently it was three keys that each saw
+a third of the answer. It searches everything you have ever started at once:
+commands, pages, and Relay sessions that are running but not on the strip. Most
+recent first when you have typed nothing, each with a number: **⌘4** starts the
+fourth one. Anything you type is offered both ways — as a command and as a URL,
+always the first two rows — so a wrong guess about `localhost:3000` never hides
+the other reading and ⌘O ↩ always does what you said.
+
+**⇥** narrows to pages, commands or sessions; **⌘Y** and **⌥⌘O** open the same
+picker with those scopes already chosen. **⌘⌫** forgets the selected row.
+
+⌘P stays separate on purpose: it finds what is *already on the strip* and
+scrolls to it, where every ⌘O row spends something to create a pane.
 
 A terminal whose process exits takes its lane with it, after a beat.
 

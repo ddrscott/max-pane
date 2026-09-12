@@ -185,6 +185,102 @@ const TITLE_BIAS: i32 = 200;
 /// explained by the one that is actually on screen.
 const ALIAS_PENALTY: i32 = 5;
 
+/// How much of a row the query explains.
+///
+/// # Why a tier and not just a score
+///
+/// [`fuzzy_score`] is a subsequence scorer, and a subsequence scorer over
+/// thousands of rows is a machine for surfacing coincidences. Measured against
+/// the owner's real corpus: `hop` returned sixty "matches" led by *Checker
+/// notes* and *Launchd notes* — h, o and p scattered across a sentence — while
+/// the page whose URL literally contains `hop` did not make the visible list at
+/// all. `TITLE_BIAS` made it worse rather than better: a flat bonus on a
+/// subsequence score means *any* title coincidence outranks *any* real URL
+/// match.
+///
+/// The bar is Vivaldi, whose history search is a substring search: type `hop`,
+/// get rows containing `hop`. So the tier is decided first and the score only
+/// orders rows inside it. `TITLE_BIAS` keeps its job — which of two equally
+/// literal matches to lead with — and loses the one it should never have had.
+///
+/// Subsequence survives as the last tier rather than being deleted: it is what
+/// makes `mxp` find `max-pane`, and over ten sessions (where `Fuzzy` lives) it
+/// is exactly right. It is only wrong when it is allowed to outrank a literal
+/// hit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MatchTier {
+    /// The field starts with what was typed.
+    Prefix,
+    /// A word inside it starts with what was typed.
+    WordPrefix,
+    /// It contains what was typed, mid-word.
+    Substring,
+    /// The letters are in there, in order, apart.
+    Scattered,
+}
+
+impl MatchTier {
+    /// Far enough apart that nothing inside a tier can climb out of it:
+    /// [`fuzzy_score`] tops out in the low thousands for a query long enough to
+    /// type, and `TITLE_BIAS` is 200.
+    fn base(self) -> i32 {
+        match self {
+            MatchTier::Prefix => 30_000,
+            MatchTier::WordPrefix => 20_000,
+            MatchTier::Substring => 10_000,
+            MatchTier::Scattered => 0,
+        }
+    }
+}
+
+/// Characters after which the next one reads as the start of a word. The same
+/// set [`fuzzy_score`] uses, plus the punctuation that separates the parts of a
+/// URL — `?`, `&`, `=` and `#` are word boundaries in an address and nowhere
+/// else, and an address is half of what this corpus is.
+fn is_boundary(c: char) -> bool {
+    matches!(c, ' ' | '/' | '-' | '_' | '.' | ':' | '~' | '@' | '?' | '&' | '=' | '#')
+}
+
+/// The best tier `needle` reaches in `hay`. Both must already be lowercase.
+///
+/// Every occurrence is considered, not just the first: `oo` in `google` is
+/// mid-word at offset 1 and nothing else, but `com` in `example.com/compare` is
+/// a word start on its second occurrence and mid-word on its first, and taking
+/// the first would rank it as the worse of the two matches it actually has.
+pub fn tier(needle: &str, hay: &str) -> Option<MatchTier> {
+    if needle.is_empty() {
+        return Some(MatchTier::Prefix);
+    }
+    let mut best: Option<MatchTier> = None;
+    for (at, _) in hay.match_indices(needle) {
+        let here = if at == 0 {
+            MatchTier::Prefix
+        } else if hay[..at].chars().next_back().is_some_and(is_boundary) {
+            MatchTier::WordPrefix
+        } else {
+            MatchTier::Substring
+        };
+        if best.map_or(true, |b| here < b) {
+            best = Some(here);
+        }
+        if best == Some(MatchTier::Prefix) {
+            break;
+        }
+    }
+    best.or_else(|| fuzzy_score(needle, hay).map(|_| MatchTier::Scattered))
+}
+
+/// A URL with the parts nobody types stripped off, for matching only.
+///
+/// `http` as a query used to be a prefix of every row in the table, which is
+/// how `http://git` came back with *SQLite — Wikipedia*. The scheme and `www.`
+/// are noise the user is not distinguishing pages by, so neither side of the
+/// comparison carries them.
+pub fn search_handle(url: &str) -> &str {
+    let rest = url.find("://").map_or(url, |i| &url[i + 3..]);
+    rest.strip_prefix("www.").unwrap_or(rest)
+}
+
 /// Score and rank. `query` empty means "most recent first", which is what the
 /// palette shows before anything is typed.
 ///
@@ -197,37 +293,48 @@ const ALIAS_PENALTY: i32 = 5;
 /// new-pane picker. Two rows that match your typing equally well are separated
 /// by which you saw last; a row that matches it better wins outright.
 pub fn rank(candidates: &[Candidate], query: &str, limit: usize) -> Vec<HistoryEntry> {
-    let needle = query.trim().to_lowercase();
+    let raw = query.trim().to_lowercase();
+    // The query is stripped the same way the URLs are, so that pasting an
+    // address back in finds the page it came from rather than nothing.
+    let needle = search_handle(&raw);
 
     // Paired with its place in the recency order, which is the tie-break and
     // nothing the shell needs — so it is a local, not a field on the record
     // that crosses the FFI.
-    let mut out: Vec<(HistoryEntry, usize)> = Vec::new();
+    let mut out: Vec<(HistoryEntry, usize, MatchTier)> = Vec::new();
     for (recency, c) in candidates.iter().enumerate() {
-        let (score, field) = if needle.is_empty() {
-            (0, SearchField::Url)
+        let (score, field, matched) = if needle.is_empty() {
+            (0, SearchField::Url, MatchTier::Prefix)
         } else {
-            let mut best: Option<(i32, SearchField)> = None;
-            let mut offer = |s: i32, f: SearchField| {
-                if best.map_or(true, |(b, _)| s > b) {
-                    best = Some((s, f));
+            let mut best: Option<(i32, SearchField, MatchTier)> = None;
+            let mut offer = |tier: MatchTier, s: i32, f: SearchField| {
+                let total = tier.base() + s;
+                if best.map_or(true, |(b, _, _)| total > b) {
+                    best = Some((total, f, tier));
                 }
             };
             if let Some(t) = &c.title {
-                if let Some(s) = fuzzy_score(&needle, &t.to_lowercase()) {
-                    offer(s + TITLE_BIAS, SearchField::Title);
+                let lower = t.to_lowercase();
+                if let Some(tier) = tier(needle, &lower) {
+                    let s = fuzzy_score(needle, &lower).unwrap_or(0);
+                    offer(tier, s + TITLE_BIAS, SearchField::Title);
                 }
             }
-            if let Some(s) = fuzzy_score(&needle, &c.url.to_lowercase()) {
-                offer(s, SearchField::Url);
+            let url = c.url.to_lowercase();
+            let handle = search_handle(&url);
+            if let Some(tier) = tier(needle, handle) {
+                offer(tier, fuzzy_score(needle, handle).unwrap_or(0), SearchField::Url);
             }
             for alias in &c.aliases {
-                if let Some(s) = fuzzy_score(&needle, &alias.to_lowercase()) {
+                let lower = alias.to_lowercase();
+                let handle = search_handle(&lower);
+                if let Some(t) = tier(needle, handle) {
                     // Folded into `Url` rather than given a `SearchField` case
                     // of its own: the enum crosses the FFI into exhaustive
                     // Swift switches that other palettes own, and a redirect
                     // source is a URL in every sense the reader cares about.
-                    offer(s - ALIAS_PENALTY, SearchField::Url);
+                    let s = fuzzy_score(needle, handle).unwrap_or(0);
+                    offer(t, s - ALIAS_PENALTY, SearchField::Url);
                 }
             }
             match best {
@@ -246,11 +353,24 @@ pub fn rank(candidates: &[Candidate], query: &str, limit: usize) -> Vec<HistoryE
                 score,
             },
             recency,
+            matched,
         ));
+    }
+    // A guess is only worth showing when there is nothing better.
+    //
+    // `git` is a subsequence of *SQLite — Wikipedia* (the g of `org`, the i of
+    // `wiki`, the t of `sqlite`) and always will be; over two thousand rows
+    // there are dozens like it, and they are what made the old list read as
+    // noise even once the real hit was on top. So the two kinds of match never
+    // share a list: if anything matched literally, the coincidences go. If
+    // nothing did, they are all there is — which is what keeps `mxp` finding
+    // `max-pane`.
+    if out.iter().any(|(_, _, t)| *t < MatchTier::Scattered) {
+        out.retain(|(_, _, t)| *t < MatchTier::Scattered);
     }
     out.sort_by(|a, b| b.0.score.cmp(&a.0.score).then_with(|| a.1.cmp(&b.1)));
     out.truncate(limit);
-    out.into_iter().map(|(entry, _)| entry).collect()
+    out.into_iter().map(|(entry, _, _)| entry).collect()
 }
 
 #[cfg(test)]
@@ -351,9 +471,14 @@ mod tests {
     }
 
     #[test]
-    fn a_title_match_outranks_a_url_match() {
+    fn a_title_match_outranks_a_url_match_of_the_same_kind() {
+        // `TITLE_BIAS` decides between two matches that are equally literal —
+        // both of these are a word start — and no longer reaches across tiers.
+        // It used to: a flat bonus on a subsequence score meant a title
+        // coincidence beat a real URL hit, which is the failure
+        // `a_literal_hit_outranks_a_title_coincidence` pins.
         let c = vec![
-            candidate("https://rust-lang.example/x", None),
+            candidate("https://x.example/docs/rust", None),
             candidate("https://b.example/q", Some("The Rust Programming Language")),
         ];
         let hits = rank(&c, "rust", 10);
@@ -384,5 +509,80 @@ mod tests {
     #[test]
     fn nothing_matching_returns_nothing() {
         assert!(rank(&[candidate("https://example.com", None)], "zzqq", 10).is_empty());
+    }
+
+    // ---- tiers: a literal hit always beats a scattered one -------------------
+
+    #[test]
+    fn a_literal_hit_outranks_a_title_coincidence() {
+        // The measured failure: `hop` led with titles whose h, o and p are
+        // three unrelated letters, and the page whose URL says `hop` was not
+        // on screen at all.
+        let hits = rank(
+            &[
+                candidate("https://developer.mozilla.org/x", Some("Checker notes 4805")),
+                candidate("https://launchd.info/y", Some("Launchd notes 4520")),
+                candidate("https://shop.example.com/hoppers", None),
+            ],
+            "hop",
+            10,
+        );
+        assert_eq!(hits[0].url, "https://shop.example.com/hoppers");
+    }
+
+    #[test]
+    fn a_scheme_is_not_a_prefix_of_the_whole_table() {
+        // `http://git` used to return SQLite — Wikipedia, because every URL is
+        // a subsequence match for a scheme plus three letters.
+        let hits = rank(
+            &[
+                candidate("https://en.wikipedia.org/wiki/SQLite", Some("SQLite - Wikipedia")),
+                candidate("https://github.com/anthropics", Some("GitHub")),
+            ],
+            "http://git",
+            10,
+        );
+        assert_eq!(hits.len(), 1, "the scheme matched rows it has nothing to do with");
+        assert_eq!(hits[0].url, "https://github.com/anthropics");
+    }
+
+    #[test]
+    fn a_word_start_beats_the_middle_of_a_word() {
+        let hits = rank(
+            &[
+                candidate("https://example.com/deployment-notes", None),
+                candidate("https://example.com/deploy", None),
+            ],
+            "deploy",
+            10,
+        );
+        // Both contain it; both are word starts, so the tie-break is recency —
+        // and the ordering that matters here is that neither lost to a
+        // scattered match, tested above. What this pins is the tier itself.
+        assert_eq!(tier("ploy", "deployment"), Some(MatchTier::Substring));
+        assert_eq!(tier("deploy", "deployment"), Some(MatchTier::Prefix));
+        assert_eq!(tier("notes", "deployment-notes"), Some(MatchTier::WordPrefix));
+        assert_eq!(hits.len(), 2);
+    }
+
+    #[test]
+    fn the_best_occurrence_decides_the_tier() {
+        // `com` is mid-word in `example.com` and a word start in `/compare`.
+        assert_eq!(tier("com", "example.com/compare"), Some(MatchTier::WordPrefix));
+    }
+
+    #[test]
+    fn a_subsequence_still_matches_when_nothing_literal_does() {
+        // `mxp` finding `max-pane` is the reason the last tier exists.
+        assert_eq!(tier("mxp", "max-pane"), Some(MatchTier::Scattered));
+        assert_eq!(tier("zzq", "max-pane"), None);
+    }
+
+    #[test]
+    fn www_is_not_something_anyone_types() {
+        assert_eq!(search_handle("https://www.example.com/en"), "example.com/en");
+        assert_eq!(search_handle("example.com"), "example.com");
+        let hits = rank(&[candidate("https://www.example.com/en", None)], "example.com", 10);
+        assert_eq!(hits.len(), 1);
     }
 }

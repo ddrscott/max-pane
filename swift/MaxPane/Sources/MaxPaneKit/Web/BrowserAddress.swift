@@ -128,7 +128,7 @@ enum BrowserAddress {
 
     /// A portrait lane has room for one text field, so this one has to be both
     /// Vivaldi's address bar and its search box. The rule for telling them apart
-    /// is *not* written fresh here: `NewPaneEntries.looksLikeURL` already
+    /// is *not* written fresh here: `OmniText.looksLikeURL` already
     /// decides what a URL looks like for ⌘T, and an app where `make` means a
     /// command in one field and a website in another is an app that has to be
     /// learned twice.
@@ -140,7 +140,7 @@ enum BrowserAddress {
         // refuses what it will not load, which is a better answer than this
         // function guessing on its behalf.
         if explicitScheme(text) != nil { return .url(text) }
-        guard NewPaneEntries.looksLikeURL(text) else { return .search(text) }
+        guard OmniText.looksLikeURL(text) else { return .search(text) }
         // A bare host gets a scheme. https, except on the loopback — a dev
         // server almost never has a certificate, and https://localhost:3000
         // fails in a way that looks like the server is down.

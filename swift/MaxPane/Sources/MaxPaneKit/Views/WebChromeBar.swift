@@ -40,7 +40,7 @@ import AppKit
 /// Never: a bookmark star and a bookmarks bar — the strip is the bookmarks bar
 /// and a pinned lane is the star; and a separate search box — the address field
 /// takes a question as readily as an address, because a portrait column has
-/// room for one field and `NewPaneEntries.looksLikeURL` already knows the
+/// room for one field and `OmniText.looksLikeURL` already knows the
 /// difference.
 @MainActor
 final class WebChromeBar: NSView {

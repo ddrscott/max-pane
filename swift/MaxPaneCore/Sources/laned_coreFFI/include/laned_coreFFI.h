@@ -324,6 +324,11 @@ RustBuffer uniffi_laned_core_fn_method_core_history(uint64_t ptr, RustBuffer que
 uint32_t uniffi_laned_core_fn_method_core_history_count(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_HISTORY_SEARCHABLE_COUNT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_HISTORY_SEARCHABLE_COUNT
+uint32_t uniffi_laned_core_fn_method_core_history_searchable_count(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_IMPORT_STRIP
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_IMPORT_STRIP
 RustBuffer uniffi_laned_core_fn_method_core_import_strip(uint64_t ptr, RustBuffer json, RustCallStatus *_Nonnull out_status
@@ -838,6 +843,12 @@ uint16_t uniffi_laned_core_checksum_method_core_history(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_HISTORY_COUNT
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_HISTORY_COUNT
 uint16_t uniffi_laned_core_checksum_method_core_history_count(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_HISTORY_SEARCHABLE_COUNT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_HISTORY_SEARCHABLE_COUNT
+uint16_t uniffi_laned_core_checksum_method_core_history_searchable_count(void
     
 );
 #endif

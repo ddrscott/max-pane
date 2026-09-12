@@ -125,7 +125,7 @@ struct BrowserAddressTests {
     @Test("the URL rule is the picker's rule")
     func sameRuleAsThePicker() {
         for text in ["example.com", "make", "localhost:3000", "main.rs", "docs.rs/tokio", "git status"] {
-            let isURL = NewPaneEntries.looksLikeURL(text)
+            let isURL = OmniText.looksLikeURL(text)
             let isSearch = BrowserAddress.destination(for: text).map {
                 if case .search = $0 { return true } else { return false }
             } ?? false

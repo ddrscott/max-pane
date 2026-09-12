@@ -14,8 +14,8 @@ final class SquarePanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
-/// A floating list over the strip, used by both ⌘P (search) and ⌘O (attach a
-/// session). Both are "type, filter, pick one, dismiss".
+/// A floating list over the strip, used by ⌘P (find what is on the strip) and
+/// by ⌘O (start something). Both are "type, filter, pick one, dismiss".
 ///
 /// The list is not flat: both palettes interleave `// SECTION` headers with
 /// rows, so the controller knows which rows can be selected and how tall each
@@ -108,6 +108,10 @@ class PaletteController: NSWindowController, NSTextFieldDelegate, NSWindowDelega
             label.font = Theme.mono(10, weight: .medium)
             label.textColor = Theme.dimText
             label.lineBreakMode = .byTruncatingTail
+            // Without this the footer wraps instead of truncating, and a
+            // two-line footer pushes the bottom row of the list off the panel —
+            // the status line eating the thing it describes.
+            label.usesSingleLineMode = true
         }
 
         for v in [field, rule, scroll, footerRule, footerLeft, footerRight] {
@@ -821,144 +825,6 @@ final class SearchPaletteController: PaletteController {
             : "\(hits.count) \(hits.count == 1 ? "hit" : "hits") · \(store.state.lanes.count) lanes"
         footerLeft.attributedStringValue = PaletteStyle.caps(summary)
         footerRight.stringValue = "▪ focused    ↩ jump    esc"
-    }
-}
-
-/// ⌘O — PRD §7.1's picker of Relay sessions, grouped the way the bar groups
-/// them: every session Relay knows about, under its directory, with the ones
-/// already on the strip marked rather than hidden. Hiding them is what made the
-/// old picker lie about how many sessions there are.
-@MainActor
-final class SessionPickerController: PaletteController {
-    /// What ⌘O can hand back. Two cases, because "the session I want is not
-    /// running" is the other half of finding one.
-    enum Choice {
-        /// An existing session — already attached or not; the caller decides
-        /// whether that means reveal or attach.
-        case attach(SessionTelemetry)
-        /// Start `command` in `cwd` and put the new session on the strip.
-        case launch(command: String, cwd: String)
-    }
-
-    private let registry: SessionRegistry
-    private var entries: [PaletteEntry] = []
-    private var token: UUID?
-    private let completion: (Choice?) -> Void
-
-    init(registry: SessionRegistry, completion: @escaping (Choice?) -> Void) {
-        self.registry = registry
-        self.completion = completion
-        super.init(placeholder: "Attach a Relay session…",
-                   size: NSSize(width: 760, height: 520))
-    }
-
-    /// The old picker took a pre-filtered `[RelaySessionInfo]`, which is why it
-    /// could not say what was already attached, how fast anything was running
-    /// or how long ago it last moved. Taking the registry is the whole point.
-    @available(*, unavailable,
-        message: "pass the SessionRegistry instead: SessionPickerController(registry: sessions) { choice in switch choice { case .attach(let t): … case .launch(let command, let cwd): … } }")
-    init(sessions: [RelaySessionInfo], completion: @escaping (RelaySessionInfo?) -> Void) {
-        fatalError("unavailable")
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("not a nib") }
-
-    override func present(over parent: NSWindow?) {
-        // Throughput and ages are live while the picker is open: the session
-        // that starts moving while you are looking for it is the one you want.
-        token = registry.observe { [weak self] _ in
-            guard let self, self.window?.isVisible == true else { return }
-            self.rebuild()
-            self.refreshKeepingSelection()
-            self.updateFooter()
-        }
-        super.present(over: parent)
-    }
-
-    override func dismiss(selected: Int) {
-        if let token { registry.stopObserving(token) }
-        token = nil
-        super.dismiss(selected: selected)
-    }
-
-    override func reload() {
-        rebuild()
-        super.reload()
-        updateFooter()
-    }
-
-    private func rebuild() {
-        entries = PaletteFilter.entries(groups: registry.grouped(), query: query)
-    }
-
-    override func numberOfRows() -> Int { entries.count }
-
-    override func isSelectable(row: Int) -> Bool {
-        row < entries.count && entries[row].isSelectable
-    }
-
-    override func height(forRow row: Int) -> CGFloat {
-        guard row < entries.count else { return 30 }
-        switch entries[row] {
-        case .group, .section: return 26
-        case .session, .launch: return 30
-        }
-    }
-
-    override func rowIdentity(_ row: Int) -> String? {
-        guard row < entries.count else { return nil }
-        switch entries[row] {
-        case .session(let s): return s.telemetry.sessionId
-        case .launch(let l): return "launch:" + l.command
-        default: return nil
-        }
-    }
-
-    override func view(forRow row: Int) -> NSView? {
-        guard row < entries.count else { return nil }
-        switch entries[row] {
-        case .group(let group): return PaletteGroupRow(group: group)
-        case .session(let session): return PaletteSessionRow(session)
-        case .section(let title, let note): return PaletteSectionRow(title: title, note: note)
-        case .launch(let launch): return PaletteLaunchRow(launch)
-        }
-    }
-
-    override func deliver(selected: Int) {
-        guard selected >= 0, selected < entries.count else { return completion(nil) }
-        switch entries[selected] {
-        case .session(let picked): completion(.attach(picked.telemetry))
-        case .launch(let launch): completion(.launch(command: launch.command, cwd: launch.cwd))
-        case .group, .section: completion(nil)
-        }
-    }
-
-    private func updateFooter() {
-        let all = registry.sessions.values
-        let attached = all.filter(\.isAttached).count
-        var summary = "\(all.count) sessions · \(registry.runningCount) running · \(attached) on strip"
-        var keys = "▪ on strip    ↩ attach    esc"
-        let sessionRows = entries.filter { if case .session = $0 { return true } else { return false } }
-        if sessionRows.count != all.count {
-            summary = "\(sessionRows.count) of \(summary)"
-        }
-        if sessionRows.isEmpty, entries.contains(where: { if case .launch = $0 { return true } else { return false } }) {
-            keys = "↩ launch    esc"
-        }
-        let line = PaletteStyle.caps(summary)
-        // The blocked count is the one number here that is an instruction
-        // rather than a statistic, so it is the only one in the accent.
-        if registry.blockedCount > 0 {
-            let mutable = NSMutableAttributedString(attributedString: line)
-            mutable.append(NSAttributedString(
-                string: "  ·  \(registry.blockedCount) BLOCKED",
-                attributes: [.foregroundColor: Theme.accent, .font: Theme.mono(10, weight: .bold)]))
-            footerLeft.attributedStringValue = mutable
-        } else {
-            footerLeft.attributedStringValue = line
-        }
-        footerRight.stringValue = keys
     }
 }
 
