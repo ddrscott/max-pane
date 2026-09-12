@@ -160,10 +160,21 @@ func run() {
     let t0 = now()
     let lines = lastLines(probe.getTerminal(), 200)
     let dt = (now() - t0) * 1000
-    emit("- pulled \(lines.count) lines from SwiftTerm's buffer in **\(String(format: "%.3f ms", dt))**")
+    emit("- `translateToString` path: \(lines.count) lines in **\(String(format: "%.3f ms", dt))**")
+    let t1 = now()
+    let lines2 = lastLinesPerCell(probe.getTerminal(), 200)
+    let dt2 = (now() - t1) * 1000
+    emit("- per-cell `getCharacter(col:row:)` path: \(lines2.count) lines in **\(String(format: "%.3f ms", dt2))**")
     emit("- last line: `\(lines.last ?? "")`")
     emit("- first of the 200: `\(lines.first ?? "")`")
     emit("- API used: `Terminal.buffer.totalLinesTrimmed` + `Terminal.getScrollInvariantLine(row:)` + `BufferLine.translateToString(trimRight:)` — all public")
+    // astral-plane correctness of the two extraction paths
+    let (probeT, _) = (probe.getTerminal(), 0)
+    probeT.feed(buffer: Array("\r\nEMOJI A\u{1F600}B \u{1F1FA}\u{1F1F8} \u{65E5}\u{672C}\r\n".utf8)[...])
+    let viaTranslate = lastLines(probeT, 3).first(where: { $0.hasPrefix("EMOJI") }) ?? "(not found)"
+    let viaCells = lastLinesPerCell(probeT, 3).first(where: { $0.hasPrefix("EMOJI") }) ?? "(not found)"
+    emit("- `translateToString` renders `EMOJI A😀B 🇺🇸 日本` as: `\(viaTranslate)`")
+    emit("- per-cell `getCharacter` renders it as: `\(viaCells)`")
     keep.removeAll()
     pump(0.5)
 
@@ -239,51 +250,59 @@ func run() {
         }
 
         // ---- 5. narrow-lane rendering options -----------------------------
-        emit("\n## Narrow portrait lane: an 80-column host in a 50-column lane\n")
+        emit("\n## Narrow portrait lane: a wide host screen inside a 420pt column\n")
         // Use real captured content if the observe step produced it, else the ruler.
         var content = [UInt8]()
-        let capture = outDir + "/capture-80col.bin"
+        var hostCols = 80
+        let capture = outDir + "/capture-real.bin"
         if let d = FileManager.default.contents(atPath: capture) { content = [UInt8](d) }
+        if let cs = try? String(contentsOfFile: outDir + "/capture-real.cols", encoding: .utf8),
+           let v = Int(cs.trimmingCharacters(in: .whitespacesAndNewlines)) { hostCols = v }
         if content.isEmpty {
             for i in 0..<40 {
                 content.append(contentsOf: Array("\u{1b}[36m●\u{1b}[0m row \(i) — a Claude Code style line that runs to about seventy-six columns wide \r\n".utf8))
             }
         }
+        emit("Content: a real, live Claude Code session captured read-only (\(hostCols) columns, \(content.count) B of replay).\n")
         let laneW: CGFloat = 420, laneH: CGFloat = 860
         struct Opt { let name: String; let font: CGFloat; let hscroll: Bool }
-        let opts = [Opt(name: "A-truncate-42col", font: 12, hscroll: false),
+        let opts = [Opt(name: "A-clip-12pt", font: 12, hscroll: false),
                     Opt(name: "B-hscroll-12pt", font: 12, hscroll: true),
-                    Opt(name: "C-shrink-to-fit", font: 0, hscroll: false)]
+                    Opt(name: "C-shrink-to-fit", font: 0, hscroll: false),
+                    Opt(name: "D-900pt-lane-12pt", font: 12, hscroll: false)]
         emit("| option | font pt | cell w | cols visible in a 420pt lane | host cols | fits? |")
         emit("|---|---|---|---|---|---|")
         for o in opts {
+            let lw: CGFloat = o.name.hasPrefix("D") ? 900 : laneW
             var size = o.font
             if size == 0 {
-                // shrink until 80 columns fit in 420pt
                 size = 12
                 while size > 4 {
                     let f = NSFont(name: "Menlo", size: size)!
-                    let probe = makeView(NSRect(x: 0, y: 0, width: laneW, height: laneH), font: f)
-                    if probe.cellSize().width * 80 <= laneW { break }
+                    let probe = makeView(NSRect(x: 0, y: 0, width: lw, height: laneH), font: f)
+                    if probe.cellSize().width * CGFloat(hostCols) <= lw { break }
                     size -= 0.25
                 }
             }
             let f = NSFont(name: "Menlo", size: size)!
-            let v = makeView(NSRect(x: 0, y: 0, width: o.hscroll ? laneW * 80.0 / 42.0 : laneW, height: laneH), font: f)
-            let cell = v.cellSize()
-            let visible = Int(laneW / cell.width)
-            v.getTerminal().resize(cols: 80, rows: Int(laneH / cell.height))
+            let probe = makeView(NSRect(x: 0, y: 0, width: lw, height: laneH), font: f)
+            let cell = probe.cellSize()
+            let fullW = cell.width * CGFloat(hostCols) + 4
+            let v = makeView(NSRect(x: 0, y: 0, width: o.hscroll ? fullW : lw, height: laneH), font: f)
+            let visible = Int(lw / cell.width)
+            v.getTerminal().resize(cols: hostCols, rows: Int(laneH / cell.height))
             v.feed(byteArray: content[...])
-            let clip = NSView(frame: NSRect(x: 0, y: 0, width: laneW, height: laneH))
+            let clip = NSView(frame: NSRect(x: 0, y: 0, width: lw, height: laneH))
             clip.addSubview(v)
             root.addSubview(clip)
-            pump(0.5)
+            pump(0.6)
             png(clip, "lane-\(o.name).png")
-            emit(String(format: "| %@ | %.2f | %.2f | %d | 80 | %@ |", o.name, size, cell.width,
-                        visible, visible >= 80 ? "yes" : "no — \(80 - visible) columns off the right edge"))
+            emit(String(format: "| %@ | %.2f | %.2f | %d | %d | %@ |", o.name, size, cell.width,
+                        visible, hostCols,
+                        visible >= hostCols ? "yes" : "no — \(hostCols - visible) columns off the right edge"))
             clip.removeFromSuperview()
         }
-        emit("\nScreenshots: out/lane-A-truncate-42col.png, out/lane-B-hscroll-12pt.png, out/lane-C-shrink-to-fit.png")
+        emit("\nScreenshots in out/: lane-A-clip-12pt.png, lane-B-hscroll-12pt.png, lane-C-shrink-to-fit.png, lane-D-900pt-lane-12pt.png")
     } catch {
         emit("ERROR: \(error)")
     }
@@ -291,6 +310,28 @@ func run() {
     cleanup()
     flushLog("harness.md")
     exit(0)
+}
+
+/// Same walk, but reading each cell through Terminal.getCharacter(col:row:), which
+/// resolves the side-table payload that holds astral-plane scalars.
+func lastLinesPerCell(_ t: Terminal, _ n: Int) -> [String] {
+    var out = [String]()
+    var row = t.buffer.totalLinesTrimmed + t.getTopVisibleRow() + t.rows - 1
+    let bottom = row
+    while out.count < n, row >= 0 {
+        guard let l = t.getScrollInvariantLine(row: row) else { break }
+        var sbuf = ""
+        for c in 0..<min(l.count, t.cols) {
+            let cd = l[c]
+            if cd.width == 0 { continue }
+            sbuf.append(t.getCharacter(for: cd))
+        }
+        while sbuf.hasSuffix(" ") { sbuf.removeLast() }
+        out.append(sbuf)
+        row -= 1
+    }
+    _ = bottom
+    return out.reversed()
 }
 
 func lastLines(_ t: Terminal, _ n: Int) -> [String] {

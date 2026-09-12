@@ -1,0 +1,344 @@
+import AppKit
+import LanedCore
+import WebKit
+
+/// A web pane: one `WKWebView`, or the dimmed snapshot standing in for one that
+/// has been evicted.
+///
+/// The lifecycle here is the whole of PRD §10.2 and §10.3 from the shell's side.
+/// `laned-core` decides *what* should happen; this does it and reports back.
+///
+/// Three states, and the difference between the middle two is the entire memory
+/// strategy:
+///
+/// - **parented** — in the view hierarchy, rendering.
+/// - **unparented** — still alive, out of the hierarchy. WebKit stops rendering
+///   an unparented view, so this costs almost nothing to undo. Re-parenting is
+///   instant and the page keeps its scroll, its form state and its session.
+/// - **evicted** — snapshotted and destroyed. Coming back is a reload.
+@MainActor
+final class WebPaneController: NSObject, PaneController {
+    let paneId: String
+    private let store: StripStore
+    private let config: Config
+    private let container = NSView()
+
+    private var webView: WKWebView?
+    private var placeholder: PlaceholderView?
+    private var pane: Pane
+    private var laneWidth: CGFloat
+    private var isParented = false
+    private var scrollObservation: Timer?
+
+    var view: NSView { container }
+
+    init(pane: Pane, lane: Lane, store: StripStore, config: Config) {
+        self.paneId = pane.id
+        self.pane = pane
+        self.store = store
+        self.config = config
+        self.laneWidth = CGFloat(lane.widthPt)
+        super.init()
+
+        container.wantsLayer = true
+        container.layer?.backgroundColor = Theme.laneBackground.cgColor
+
+        // A pane that is already evicted comes back as a placeholder, not as a
+        // web view that immediately gets torn down again.
+        if pane.state == .evicted || pane.kind == .placeholder {
+            showPlaceholder()
+        } else {
+            buildWebView(dataStoreId: pane.dataStoreId ?? Self.shard(for: lane.projectRoot, of: config))
+        }
+    }
+
+    // MARK: - PaneController
+
+    func apply(_ pane: Pane) {
+        self.pane = pane
+        placeholder?.apply(pane)
+        // A URL change from the ledger (not from navigation) means something
+        // outside asked for a different page.
+        if let url = pane.url, let webView, webView.url?.absoluteString != url,
+           webView.isLoading == false, pane.state == .live {
+            load(url)
+        }
+    }
+
+    func takeFocus() {
+        if let webView {
+            container.window?.makeFirstResponder(webView)
+        }
+    }
+
+    func tearDown() {
+        scrollObservation?.invalidate()
+        scrollObservation = nil
+        webView?.stopLoading()
+        webView?.navigationDelegate = nil
+        webView?.uiDelegate = nil
+        webView?.removeFromSuperview()
+        webView = nil
+        placeholder?.removeFromSuperview()
+        placeholder = nil
+    }
+
+    func unparent() {
+        guard isParented, let webView else { return }
+        // Record where the page is before it stops being able to tell us.
+        captureScroll()
+        webView.removeFromSuperview()
+        isParented = false
+    }
+
+    func reparentIfNeeded() {
+        guard !isParented, let webView else {
+            if webView == nil && placeholder == nil { showPlaceholder() }
+            return
+        }
+        install(webView)
+    }
+
+    func evict() {
+        guard let webView else { return }
+        captureScroll()
+        let paneId = self.paneId
+        let scrollY = pane.scrollY
+
+        // Snapshot at the lane's width in points, not backing pixels: ADR-0006.
+        let cfg = WKSnapshotConfiguration()
+        cfg.snapshotWidth = NSNumber(value: Double(laneWidth))
+        webView.takeSnapshot(with: cfg) { [weak self] image, _ in
+            guard let self else { return }
+            // Encoding is ~1.2 ms and eviction comes in batches, under memory
+            // pressure. Off the main thread.
+            if let image {
+                DispatchQueue.global(qos: .utility).async {
+                    let path = SnapshotStore.write(image, for: paneId)
+                    DispatchQueue.main.async {
+                        try? self.store.markEvicted(paneId, snapshotPath: path, scrollY: scrollY)
+                        self.destroyWebView()
+                    }
+                }
+            } else {
+                // No snapshot is not a reason to keep the memory.
+                try? self.store.markEvicted(paneId, snapshotPath: nil, scrollY: scrollY)
+                self.destroyWebView()
+            }
+        }
+    }
+
+    func rehydrate() {
+        guard webView == nil, let url = pane.url else { return }
+        placeholder?.removeFromSuperview()
+        placeholder = nil
+        buildWebView(dataStoreId: pane.dataStoreId ?? DataStorePool.defaultShardId)
+        load(url)
+        try? store.markLive(paneId)
+    }
+
+    func laneWidthChanged(to width: CGFloat) { laneWidth = width }
+
+    // MARK: - building
+
+    private func buildWebView(dataStoreId: String) {
+        let configuration = WKWebViewConfiguration()
+        // PRD §9: one process pool for the whole app, and a small fixed number
+        // of data stores so a project's panes share cookies and logins.
+        configuration.processPool = DataStorePool.shared.processPool
+        configuration.websiteDataStore = DataStorePool.shared.store(dataStoreId)
+        configuration.suppressesIncrementalRendering = false
+
+        let webView = WKWebView(frame: container.bounds, configuration: configuration)
+        webView.navigationDelegate = self
+        webView.uiDelegate = self
+        webView.allowsBackForwardNavigationGestures = true
+        // PRD §9: default desktop UA. Portrait-width desktop reflow is the point;
+        // a mobile UA would get us mobile layouts, which is not what a lane is.
+        webView.autoresizingMask = [.width, .height]
+
+        self.webView = webView
+        store.setPaneDataStore(paneId, dataStoreId)
+        install(webView)
+
+        if let url = pane.url { load(url) }
+        startScrollTracking()
+    }
+
+    private func install(_ view: NSView) {
+        view.frame = container.bounds
+        view.autoresizingMask = [.width, .height]
+        container.addSubview(view)
+        isParented = true
+    }
+
+    private func destroyWebView() {
+        scrollObservation?.invalidate()
+        scrollObservation = nil
+        webView?.navigationDelegate = nil
+        webView?.uiDelegate = nil
+        webView?.removeFromSuperview()
+        webView = nil
+        isParented = false
+        showPlaceholder()
+    }
+
+    private func showPlaceholder() {
+        guard placeholder == nil else { return }
+        let view = PlaceholderView(pane: pane)
+        view.frame = container.bounds
+        view.autoresizingMask = [.width, .height]
+        container.addSubview(view)
+        placeholder = view
+    }
+
+    private func load(_ url: String) {
+        guard let webView, let parsed = URL(string: url) else { return }
+        webView.load(URLRequest(url: parsed))
+        if let y = pane.scrollY, y > 0 {
+            pendingScrollRestore = y
+        }
+    }
+
+    // MARK: - scroll
+
+    private var pendingScrollRestore: Double?
+
+    /// Poll rather than observe: `WKWebView` gives no scroll delegate on macOS,
+    /// and injecting a scroll listener into every page costs a message per frame
+    /// on 130 panes. Two seconds is plenty for something only read on eviction.
+    private func startScrollTracking() {
+        scrollObservation?.invalidate()
+        scrollObservation = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.captureScroll() }
+        }
+    }
+
+    private func captureScroll() {
+        guard let webView, isParented else { return }
+        webView.evaluateJavaScript("window.scrollY") { [weak self] value, _ in
+            guard let self, let y = value as? Double else { return }
+            guard abs((self.pane.scrollY ?? 0) - y) > 1 else { return }
+            self.pane.scrollY = y
+            self.store.setPaneScroll(self.paneId, y)
+        }
+    }
+
+    /// Which data-store shard a project's panes live in.
+    ///
+    /// Hashed rather than assigned in order so that adding a project does not
+    /// reshuffle everyone else's cookies — a project keeps its shard for the
+    /// life of the ledger. See ADR-0003.
+    static func shard(for projectRoot: String?, of config: Config) -> String {
+        DataStorePool.shardId(for: projectRoot, count: config.dataStoreCount)
+    }
+}
+
+// MARK: - navigation
+
+extension WebPaneController: WKNavigationDelegate {
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // PRD §9: keep pane.url and the lane title current as the user navigates.
+        if let url = webView.url?.absoluteString {
+            pane.url = url
+            store.setPaneUrl(paneId, url)
+        }
+        if let title = webView.title, !title.isEmpty,
+           let laneId = store.lane(containing: paneId)?.id {
+            try? store.setLaneTitle(laneId, title)
+        }
+        if let y = pendingScrollRestore {
+            pendingScrollRestore = nil
+            webView.evaluateJavaScript("window.scrollTo(0, \(y))")
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        // A failed load leaves the pane where it was rather than blanking it;
+        // the URL in the ledger is still the right thing to retry.
+    }
+}
+
+// MARK: - popups
+
+extension WebPaneController: WKUIDelegate {
+    func webView(_ webView: WKWebView,
+                 createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction,
+                 windowFeatures: WKWindowFeatures) -> WKWebView? {
+        // PRD §9: a popup or target=_blank becomes a new web pane right of this
+        // one, not a window and not a tab. Returning nil and opening it
+        // ourselves keeps the new page in the same lane ordering rules as
+        // everything else.
+        if let url = navigationAction.request.url?.absoluteString,
+           let laneId = store.lane(containing: paneId)?.id {
+            try? store.newWebLane(url: url, near: laneId)
+        }
+        return nil
+    }
+}
+
+/// The app's single `WKProcessPool` and its handful of data stores (PRD §9).
+@MainActor
+final class DataStorePool {
+    static let shared = DataStorePool()
+
+    let processPool = WKProcessPool()
+    private var stores: [String: WKWebsiteDataStore] = [:]
+
+    static let defaultShardId = "shard-0"
+
+    /// Stable shard for a project. A project keeps its shard forever, because
+    /// moving one means losing the logins in it.
+    static func shardId(for projectRoot: String?, count: Int) -> String {
+        guard let root = projectRoot, count > 1 else { return defaultShardId }
+        // FNV-1a: stable across launches, unlike Swift's seeded `hashValue`,
+        // which would reshuffle every project's cookies on every restart.
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in root.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        return "shard-\(hash % UInt64(count))"
+    }
+
+    func store(_ id: String) -> WKWebsiteDataStore {
+        if let existing = stores[id] { return existing }
+        // `WKWebsiteDataStore.default()` would hand every shard the same store
+        // and quietly undo the sharding. The identifier-based initialiser
+        // (macOS 14+) is what actually gives separate persistent cookie jars.
+        let store = WKWebsiteDataStore(forIdentifier: Self.uuid(for: id))
+        stores[id] = store
+        return store
+    }
+
+    /// A stable UUID for a shard name.
+    ///
+    /// It must be identical on every launch — WebKit keys the on-disk store by
+    /// it, so a different UUID means a new empty store and every login gone.
+    /// Built deterministically from the shard name rather than generated and
+    /// stored, so there is no extra file to lose.
+    static func uuid(for shardId: String) -> UUID {
+        var bytes = [UInt8](repeating: 0, count: 16)
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in ("maxpane." + shardId).utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        // Two rounds so the high and low halves differ.
+        var second = hash
+        for byte in shardId.utf8.reversed() {
+            second ^= UInt64(byte)
+            second = second &* 0x0000_0100_0000_01b3
+        }
+        for i in 0..<8 {
+            bytes[i] = UInt8((hash >> (8 * UInt64(i))) & 0xff)
+            bytes[8 + i] = UInt8((second >> (8 * UInt64(i))) & 0xff)
+        }
+        // Stamp version 4 / variant RFC 4122 so it is a well-formed UUID.
+        bytes[6] = (bytes[6] & 0x0f) | 0x40
+        bytes[8] = (bytes[8] & 0x3f) | 0x80
+        return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                           bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
+    }
+}

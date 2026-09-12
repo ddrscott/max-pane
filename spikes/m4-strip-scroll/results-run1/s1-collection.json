@@ -1,0 +1,217 @@
+{
+  "appActive" : false,
+  "cleanScroll" : {
+    "droppedFrames" : 1946,
+    "droppedFramesWallClock" : 1961,
+    "droppedPct" : 98.83189436262062,
+    "durationSeconds" : 32.83267808333039,
+    "frames" : 1969,
+    "framesWorkOverBudget" : 15,
+    "intervalMs" : {
+      "count" : 1969,
+      "max" : 35.40141670964658,
+      "mean" : 16.679030683932822,
+      "min" : 7.7636666828766465,
+      "p50" : 16.666666720993817,
+      "p95" : 19.013791577890515,
+      "p99" : 20.660708309151232
+    },
+    "layoutCallsPerFrameMax" : 1,
+    "layoutCallsPerFrameMean" : 0.14931437277805992,
+    "layoutCallsTotal" : 294,
+    "peakLiveLaneViews" : 5,
+    "scrollXEnd" : 0,
+    "scrollXMax" : 98515,
+    "scrollXStart" : 0,
+    "severeDrops" : 18,
+    "wallIntervalMs" : {
+      "count" : 1969,
+      "max" : 33.309999969787896,
+      "mean" : 16.679569345726915,
+      "min" : 7.769500021822751,
+      "p50" : 16.667374991811812,
+      "p95" : 16.721666674129665,
+      "p99" : 17.352124908939004
+    },
+    "workMs" : {
+      "count" : 1969,
+      "max" : 23.661458282731473,
+      "mean" : 4.032990477440918,
+      "min" : 0.8654582779854536,
+      "p50" : 3.4904582425951958,
+      "p95" : 6.782041629776359,
+      "p99" : 7.641333271749318
+    }
+  },
+  "collectionItemsInstantiated" : 5,
+  "displayLinkNominalIntervalMs" : 8.333333333333336,
+  "events" : [
+    {
+      "atLaneIndex" : 89,
+      "frameIndex" : 180,
+      "frameIntervalMs" : 16.666666604578495,
+      "kind" : "insert-mid-strip",
+      "layoutCallsThisFrame" : 0,
+      "maxIntervalNext10Ms" : 22.29487500153482,
+      "visibleHitch" : true,
+      "workMs" : 3.4227916039526463
+    },
+    {
+      "atLaneIndex" : 123,
+      "frameIndex" : 420,
+      "frameIntervalMs" : 18.181166611611843,
+      "kind" : "resize-mid-scroll",
+      "layoutCallsThisFrame" : 0,
+      "maxIntervalNext10Ms" : 21.35225001256913,
+      "visibleHitch" : true,
+      "workMs" : 3.2934999326243997
+    }
+  ],
+  "forceDisplayEachFrame" : true,
+  "frameBudgetMs" : 8.333333333333334,
+  "framesAppInactive" : 2810,
+  "framesDisplayAsleep" : 0,
+  "framesScreenLocked" : 2810,
+  "framesWindowNotVisible" : 2810,
+  "fullscreen" : false,
+  "fullscreenMode" : "borderless",
+  "fullscreenTransitionMs" : 17.832958372309804,
+  "idleCpuMaxPct" : 0.1079027740014317,
+  "idleCpuMeanPct" : 0.03776402612562735,
+  "idleCpuSamplesPctOfOneCore" : [
+    0.07421764933583347,
+    0.02810505071213463,
+    0.014000754289279056,
+    0.015501144502010167,
+    0.011196311748309547,
+    0.03312904727187638,
+    0.008193022617416189,
+    0.007399881910398079,
+    0.1079027740014317,
+    0.07799462486758423
+  ],
+  "idleRssBytes" : 76152832,
+  "idleSeconds" : 10,
+  "laneConfiguresDuringRun" : 388,
+  "laneConfiguresTotal" : 406,
+  "laneViewsInstantiatedDuringRun" : 5,
+  "laneViewsInstantiatedTotal" : 5,
+  "laneWidthMaxPt" : 894,
+  "laneWidthMeanPt" : 660.2866666666666,
+  "laneWidthMinPt" : 421,
+  "lanes" : 150,
+  "os" : "Version 26.6.2 (Build 25G83)",
+  "peakLiveLaneViews" : 5,
+  "perturbScroll" : {
+    "droppedFrames" : 640,
+    "droppedFramesWallClock" : 656,
+    "droppedPct" : 97.11684370257967,
+    "durationSeconds" : 10.97185462503694,
+    "frames" : 659,
+    "framesWorkOverBudget" : 6,
+    "intervalMs" : {
+      "count" : 659,
+      "max" : 26.435958337970078,
+      "mean" : 16.661893715281145,
+      "min" : 6.897374987602234,
+      "p50" : 16.666666720993817,
+      "p95" : 20.189541624858975,
+      "p99" : 22.387291654013097
+    },
+    "layoutCallsPerFrameMax" : 3,
+    "layoutCallsPerFrameMean" : 0.13960546282245828,
+    "layoutCallsTotal" : 92,
+    "peakLiveLaneViews" : 5,
+    "scrollXEnd" : 99207,
+    "scrollXMax" : 99207,
+    "scrollXStart" : 0,
+    "severeDrops" : 20,
+    "wallIntervalMs" : {
+      "count" : 659,
+      "max" : 28.065499966032803,
+      "mean" : 16.67008712685436,
+      "min" : 5.921708303503692,
+      "p50" : 16.666249954141676,
+      "p95" : 16.985458321869373,
+      "p99" : 18.00483325496316
+    },
+    "workMs" : {
+      "count" : 659,
+      "max" : 17.015583347529173,
+      "mean" : 3.8917216109126036,
+      "min" : 0.6981249898672104,
+      "p50" : 3.1726666493341327,
+      "p95" : 6.929374998435378,
+      "p99" : 7.6818750239908695
+    }
+  },
+  "physFootprintAfterScrollBytes" : 20366128,
+  "physFootprintAtRestBytes" : 16352048,
+  "recyclingBuffer" : 2,
+  "requestedFrameRateHz" : 120,
+  "restore" : [
+    {
+      "afterRebuildRestore" : 12345,
+      "afterSet" : 12345,
+      "exact" : true,
+      "requested" : 12345
+    },
+    {
+      "afterRebuildRestore" : 21734.25,
+      "afterSet" : 21734.25,
+      "exact" : true,
+      "requested" : 21734.25
+    },
+    {
+      "afterRebuildRestore" : 99207,
+      "afterSet" : 99207,
+      "exact" : true,
+      "requested" : 99207
+    }
+  ],
+  "rssAfterScrollBytes" : 78102528,
+  "rssAtRestBytes" : 74760192,
+  "screenLockedAtEnd" : true,
+  "screenLockedAtStart" : true,
+  "screens" : [
+    {
+      "backingScale" : 1,
+      "index" : 0,
+      "maximumFramesPerSecond" : 60,
+      "maximumRefreshInterval" : 0.016666875,
+      "minimumRefreshInterval" : 0.016666875,
+      "name" : "LG HDR WQHD",
+      "pointSize" : [
+        3840,
+        1600
+      ]
+    },
+    {
+      "backingScale" : 2,
+      "index" : 1,
+      "maximumFramesPerSecond" : 120,
+      "maximumRefreshInterval" : 0.041666667,
+      "minimumRefreshInterval" : 0.008333333,
+      "name" : "Built-in Retina Display",
+      "pointSize" : [
+        1728,
+        1117
+      ]
+    }
+  ],
+  "stripContentWidthPt" : 100243,
+  "swift" : "6.3.3",
+  "totalMeasuredFrames" : 2628,
+  "ttiFromExecMs" : 403.3658504486084,
+  "ttiFromMainEntryMs" : 366.73593521118164,
+  "updateConstraintsTotal" : 5,
+  "variant" : "collection",
+  "velocityPtPerSec" : 6000,
+  "viewportHeightPt" : 1117,
+  "viewportWidthPt" : 1728,
+  "windowCoversScreen" : true,
+  "windowLevel" : 3,
+  "windowScreen" : "Built-in Retina Display",
+  "windowScreenMaxFPS" : 120,
+  "windowVisibleOcclusion" : false
+}

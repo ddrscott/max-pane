@@ -4,7 +4,7 @@ import LanedCore
 /// The one window. PRD §3 rules out multi-window and multi-display for v1, and
 /// §5.2 wants it fullscreen with the menu bar auto-hidden.
 @MainActor
-final class StripWindowController: NSWindowController, CommandHandling {
+public final class StripWindowController: NSWindowController, CommandHandling {
     private let store: StripStore
     private let config: Config
     private let split = NSSplitViewController()
@@ -12,7 +12,7 @@ final class StripWindowController: NSWindowController, CommandHandling {
     private let strip: StripViewController
     private var palette: SearchPaletteController?
 
-    init(store: StripStore, config: Config) {
+    public init(store: StripStore, config: Config) {
         self.store = store
         self.config = config
         self.sidebar = SidebarViewController(store: store)
@@ -44,7 +44,7 @@ final class StripWindowController: NSWindowController, CommandHandling {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not a nib") }
 
-    override func showWindow(_ sender: Any?) {
+    override public func showWindow(_ sender: Any?) {
         super.showWindow(sender)
         window?.makeKeyAndOrderFront(sender)
         // Enter fullscreen after the window exists, so the strip lays out once
@@ -56,7 +56,7 @@ final class StripWindowController: NSWindowController, CommandHandling {
 
     // MARK: - CommandHandling
 
-    func canPerform(_ command: Command) -> Bool {
+    public func canPerform(_ command: Command) -> Bool {
         switch command {
         case .ungather:
             return store.isGathered
@@ -70,7 +70,7 @@ final class StripWindowController: NSWindowController, CommandHandling {
         }
     }
 
-    func perform(_ command: Command) {
+    public func perform(_ command: Command) {
         guard canPerform(command) else { return }
         let focusedLane = store.focusedLane
 
@@ -150,7 +150,7 @@ final class StripWindowController: NSWindowController, CommandHandling {
                 window?.toggleFullScreen(nil)
             }
         } catch {
-            presentError(error)
+            showError(error)
         }
     }
 
@@ -217,7 +217,7 @@ final class StripWindowController: NSWindowController, CommandHandling {
         return "https://\(trimmed)"
     }
 
-    private func presentError(_ error: Error) {
+    private func showError(_ error: Error) {
         let alert = NSAlert()
         alert.messageText = "That didn't work"
         alert.informativeText = "\(error)"

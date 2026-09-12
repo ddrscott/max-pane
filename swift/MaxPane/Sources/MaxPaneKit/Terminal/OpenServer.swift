@@ -12,15 +12,15 @@ import Foundation
 /// One line of JSON per request, one line of reply. Requests are accepted only
 /// over a Unix socket in the user's own Application Support directory, so the
 /// only thing that can reach it is something already running as the user.
-final class OpenServer {
-    struct Request {
-        let url: String
+public final class OpenServer: @unchecked Sendable {
+    public struct Request: Sendable {
+        public let url: String
         /// Empty when the URL came from somewhere that is not a Relay session.
-        let sessionId: String
-        let cwd: String
+        public let sessionId: String
+        public let cwd: String
     }
 
-    static var socketPath: String {
+    public static var socketPath: String {
         if let override = ProcessInfo.processInfo.environment["MAXPANE_SOCKET"] { return override }
         let dir = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -32,18 +32,18 @@ final class OpenServer {
     private var fd: Int32 = -1
     private var source: DispatchSourceRead?
     private let queue = DispatchQueue(label: "maxpane.open-server")
-    private let handler: (Request) -> Bool
+    private let handler: @Sendable (Request) -> Bool
 
     /// `handler` returns whether the URL was accepted; the shim falls back to
     /// the system browser when it was not.
-    init(handler: @escaping (Request) -> Bool) throws {
+    public init(handler: @escaping @Sendable (Request) -> Bool) throws {
         self.handler = handler
         try listen()
     }
 
     deinit { stop() }
 
-    func stop() {
+    public func stop() {
         source?.cancel()
         source = nil
         if fd >= 0 { close(fd); fd = -1 }
@@ -114,24 +114,24 @@ final class OpenServer {
 
         // The handler touches the ledger and the view hierarchy, so it runs on
         // the main actor; the shim is waiting on the reply, so we wait for it.
-        var accepted = false
+        let outcome = Outcome()
         let done = DispatchSemaphore(value: 0)
         DispatchQueue.main.async { [handler] in
-            accepted = handler(request)
+            outcome.set(handler(request))
             done.signal()
         }
         // If the app is wedged, answer anyway so the shim can fall back rather
         // than hanging the user's terminal.
         _ = done.wait(timeout: .now() + 2)
 
-        let reply = accepted ? #"{"ok":true}"# : #"{"ok":false,"error":"not handled"}"#
+        let reply = outcome.get() ? #"{"ok":true}"# : #"{"ok":false,"error":"not handled"}"#
         _ = reply.withCString { write(client, $0, strlen($0)) }
         _ = "\n".withCString { write(client, $0, 1) }
     }
 
     /// The shim's request line. Decoded with `JSONSerialization` rather than
     /// `Codable` because the shape is three strings and an op.
-    static func parse(_ line: String) -> Request? {
+    public static func parse(_ line: String) -> Request? {
         guard let data = line.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               object["op"] as? String == "open",
@@ -147,5 +147,25 @@ final class OpenServer {
             url: url,
             sessionId: object["session"] as? String ?? "",
             cwd: object["cwd"] as? String ?? "")
+    }
+}
+
+/// A `Bool` handed back from the main actor to the socket's own queue. The
+/// semaphore orders the two accesses; the lock is what makes that legible to the
+/// compiler.
+private final class Outcome: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+
+    func set(_ v: Bool) {
+        lock.lock()
+        value = v
+        lock.unlock()
+    }
+
+    func get() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
     }
 }

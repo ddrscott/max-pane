@@ -12,15 +12,15 @@ import LanedCore
 /// on screen is still the truth, which is the whole point of committing before
 /// animating.
 @MainActor
-final class StripStore {
+public final class StripStore {
     /// The snapshot currently on screen.
-    private(set) var state: StripState
+    public private(set) var state: StripState
 
     private let core: Core
     private var observers: [UUID: (StripState) -> Void] = [:]
 
     /// Where the ledger lives. PRD §6.
-    static var defaultLedgerPath: String {
+    public static var defaultLedgerPath: String {
         let dir = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("MaxPane", isDirectory: true)
@@ -28,7 +28,7 @@ final class StripStore {
         return dir.appendingPathComponent("ledger.db").path
     }
 
-    init(ledgerPath: String = StripStore.defaultLedgerPath) throws {
+    public init(ledgerPath: String = StripStore.defaultLedgerPath) throws {
         core = try Core.open(path: ledgerPath)
         state = try core.state()
     }

@@ -12,7 +12,7 @@ import LanedCore
 /// coloured rail bent around a radius.
 @MainActor
 final class LaneView: NSView {
-    private(set) var laneId: String
+    var laneId: String
     private let header = LaneHeaderView()
     private let stack = NSStackView()
     private let resizeHandle = LaneResizeHandle()
@@ -167,7 +167,7 @@ final class LaneView: NSView {
 final class LaneHeaderView: NSView {
     private let glyph = NSTextField(labelWithString: "")
     private let title = NSTextField(labelWithString: "")
-    private let tag = NSTextField(labelWithString: "")
+    private let tagChip = NSTextField(labelWithString: "")
     private let pin = NSTextField(labelWithString: "")
 
     var onDoubleClick: (() -> Void)?
@@ -186,14 +186,14 @@ final class LaneHeaderView: NSView {
         title.font = Theme.mono(11)
         title.lineBreakMode = .byTruncatingTail
         title.textColor = Theme.dimText
-        tag.font = Theme.mono(10)
-        tag.textColor = Theme.dimText
-        tag.alignment = .right
-        tag.lineBreakMode = .byTruncatingHead
+        tagChip.font = Theme.mono(10)
+        tagChip.textColor = Theme.dimText
+        tagChip.alignment = .right
+        tagChip.lineBreakMode = .byTruncatingHead
         pin.font = Theme.mono(10)
         pin.textColor = Theme.accent
 
-        for v in [glyph, pin, title, tag] {
+        for v in [glyph, pin, title, tagChip] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -209,12 +209,12 @@ final class LaneHeaderView: NSView {
             title.leadingAnchor.constraint(equalTo: pin.trailingAnchor, constant: 4),
             title.centerYAnchor.constraint(equalTo: centerYAnchor),
 
-            tag.leadingAnchor.constraint(greaterThanOrEqualTo: title.trailingAnchor, constant: 8),
-            tag.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            tag.centerYAnchor.constraint(equalTo: centerYAnchor),
+            tagChip.leadingAnchor.constraint(greaterThanOrEqualTo: title.trailingAnchor, constant: 8),
+            tagChip.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            tagChip.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
         title.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
-        tag.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        tagChip.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     }
 
     @available(*, unavailable)
@@ -248,7 +248,7 @@ final class LaneHeaderView: NSView {
             ?? lane.panes.first?.url.flatMap { URL(string: $0)?.host }
             ?? "untitled"
 
-        tag.stringValue = lane.projectRoot.map { ($0 as NSString).lastPathComponent } ?? ""
+        tagChip.stringValue = lane.projectRoot.map { ($0 as NSString).lastPathComponent } ?? ""
         pin.stringValue = lane.pinned ? "▪" : ""
     }
 }

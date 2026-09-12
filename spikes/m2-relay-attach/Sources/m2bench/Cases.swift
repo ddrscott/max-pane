@@ -201,7 +201,7 @@ func runLoad(_ n: Int, rate: Int) throws {
     print("## \(n) concurrent sessions\n")
     var ids = [String]()
     for _ in 0..<n { ids.append(try spawnOwn("/bin/zsh", cols: 80, rows: 40)) }
-    print("spawned \(n) zsh sessions")
+    print("spawned \(n) zsh sessions; SwiftTerm scrollback = \(ProcessInfo.processInfo.environment["M2_SCROLLBACK"] ?? "500") lines/pane")
     usleep(3_000_000)
 
     var sessions = [RelaySession]()
@@ -343,4 +343,131 @@ func lastLines(_ t: Terminal, _ n: Int) -> [String] {
         row -= 1
     }
     return out.reversed()
+}
+
+/// Proves the client never corrupts the byte stream: multi-byte UTF-8 sequences and
+/// escape sequences are split across 64 KiB PTY reads and across socket reads, and the
+/// gzip replay path adds another seam. The fixture writes the identical bytes to a file,
+/// which is the ground truth.
+func runUTF8() throws {
+    print("## Byte-exactness across frame and UTF-8 boundaries\n")
+    let truth = FileManager.default.currentDirectoryPath + "/out/utf8-truth.bin"
+    try? FileManager.default.removeItem(atPath: truth)
+
+    // (a) LIVE path: attach first, then let the generator run, capture DATA frames.
+    let id = try spawnOwn(fixtures + "/utf8gen.pl", [truth, "6000"], cols: 100, rows: 40)
+    var live = [UInt8]()
+    let lk = NSLock()
+    let s = RelaySession(id: id)
+    s.onData = { d in lk.lock(); live.append(contentsOf: d); lk.unlock() }
+    s.onReplay = { p, _ in lk.lock(); live.append(contentsOf: p); lk.unlock() }
+    let sem = DispatchSemaphore(value: 0); s.onHandshake = { _ in sem.signal() }
+    try s.connect()
+    _ = sem.wait(timeout: .now() + 10)
+    _ = waitUntil(60) {
+        guard let a = try? FileManager.default.attributesOfItem(atPath: truth),
+              let sz = a[.size] as? Int else { return false }
+        return sz > 0 && (RelaySessionMeta.read(id: id)?.totalBytesWritten ?? 0) >= Double(sz)
+    }
+    usleep(1_500_000)
+    var expect = [UInt8]((try? Data(contentsOf: URL(fileURLWithPath: truth))) ?? Data())
+    // The PTY line discipline has ONLCR set, so every LF the program writes reaches the
+    // client as CRLF. Apply the same translation to the ground truth.
+    var crlf = [UInt8](); crlf.reserveCapacity(expect.count + 8192)
+    for b in expect { if b == 0x0a { crlf.append(0x0d) }; crlf.append(b) }
+    expect = crlf
+    lk.lock(); let got = live; lk.unlock()
+    print("- ground truth: \(expect.count) bytes (after ONLCR LF->CRLF); client received \(got.count) bytes over \(s.dataFrames) DATA frames")
+    print("- live stream contains the ground truth verbatim: **\(contains(got, expect) ? "YES" : "NO")**")
+    s.close()
+
+    // (b) REPLAY path (this one is >4 KiB so it comes back gzipped).
+    let r = try attachAndWait(id) { rs in
+        rs.onReplay = { _, _ in }
+    }
+    var replayBytes = [UInt8]()
+    let r2 = RelaySession(id: id)
+    let sem2 = DispatchSemaphore(value: 0)
+    r2.onReplay = { p, _ in replayBytes = p }
+    r2.onHandshake = { _ in sem2.signal() }
+    try r2.connect()
+    _ = sem2.wait(timeout: .now() + 20)
+    print("- replay: wire \(r2.timings.replayWireBytes) B -> inflated \(r2.timings.replayPlainBytes) B (gzip=\(r2.timings.replayWasGz))")
+    print("- inflated replay contains the ground truth verbatim: **\(contains(replayBytes, expect) ? "YES" : "NO")**")
+
+    // (c) the emulator's own view: are the wide/combining characters where they should be?
+    let (term, d) = headlessTerminal(cols: 100, rows: 40)
+    delegates.append(d)
+    term.feed(buffer: replayBytes[...])
+    let rows = screenText(term)
+    let rows2 = (0..<term.rows).map { term.getLine(row: $0)?.translateToString(trimRight: true, skipNullCellsFollowingWide: true) ?? "" }
+    _ = rows
+    let lastLine = rows2.reversed().first { $0.hasPrefix("L0") } ?? ""
+    print("- SwiftTerm renders the tail line as: `\(lastLine)`")
+    // focused glyph check
+    let (t2, d2) = headlessTerminal(cols: 40, rows: 4)
+    delegates.append(d2)
+    t2.feed(buffer: Array("A\u{1F600}B\u{65E5}C\u{0301}e\u{1F1FA}\u{1F1F8}D\r\n".utf8)[...])
+    var cells = [String]()
+    for c in 0..<14 {
+        let ch = t2.getCharacter(col: c, row: 0)
+        cells.append(ch.map { $0 == " " ? "_" : String($0) } ?? "?")
+    }
+    print("- per-cell decode of `A😀B日C\u{0301}e🇺🇸D`: \(cells.joined(separator: "|"))")
+    print("- translateToString: `\(t2.getLine(row: 0)?.translateToString(trimRight: true, skipNullCellsFollowingWide: true) ?? "")`")
+    r.close(); r2.close()
+    cleanup()
+}
+
+func contains(_ hay: [UInt8], _ needle: [UInt8]) -> Bool {
+    guard !needle.isEmpty, hay.count >= needle.count else { return false }
+    let n = needle.count
+    let first = needle[0]
+    var i = 0
+    while i <= hay.count - n {
+        if hay[i] == first {
+            var ok = true
+            var k = 1
+            while k < n { if hay[i + k] != needle[k] { ok = false; break }; k += 1 }
+            if ok { return true }
+        }
+        i += 1
+    }
+    return false
+}
+
+/// Deliberately stall a reader to prove the Lagged(n) hazard is real AND that the
+/// detector used in `load` would catch it. Without this, "0 gaps" is unfalsifiable.
+func runLagged() throws {
+    print("## Lagged(n): the 256-frame broadcast channel, and whether we can see a drop\n")
+    for (label, stallMs) in [("prompt reader (drain every readable event)", 0),
+                             ("stalled reader (50 ms sleep per DATA frame)", 50)] {
+        // endless flat-out generator, a fresh session per reader
+        let id = try spawnOwn(fixtures + "/gen.pl", ["0", "0"], cols: 200, rows: 50)
+        usleep(1_500_000)
+        let tr = SeqTracker(); tr.armed = true
+        let s = RelaySession(id: id)
+        var frames = 0
+        s.onReplay = { _, _ in }
+        s.onData = { d in
+            tr.feed(d); frames += 1
+            if stallMs > 0 { usleep(UInt32(stallMs) * 1000) }
+        }
+        var closed = false
+        s.onClosed = { closed = true }
+        var syncAt = 0.0
+        s.onSync = { v in if syncAt == 0 { syncAt = v } }
+        let sem = DispatchSemaphore(value: 0); s.onHandshake = { _ in sem.signal() }
+        try s.connect()
+        _ = sem.wait(timeout: .now() + 15)
+        usleep(15_000_000)
+        // stop the generator and let the metadata flush catch up before comparing
+        RelaySpawn.kill(id: id); spawned.removeAll { $0 == id }
+        usleep(7_000_000)
+        let host = RelaySessionMeta.read(id: id)?.totalBytesWritten ?? 0
+        print("- **\(label)**: handshake SYNC=\(Int(syncAt)); \(frames) DATA frames / \(s.dataBytes) B in 15 s; \(tr.count) SEQ lines; SEQ gaps=\(tr.gaps) (\(tr.gapLines) lines); socket closed by host=\(closed); client offset=\(Int(s.offset)) vs host total_written=\(Int(host)) -> **behind by \(Int(host - s.offset)) B (\(String(format: "%.1f", (host - s.offset) / max(host,1) * 100))% of the session)**")
+        s.close()
+        usleep(500_000)
+    }
+    cleanup()
 }

@@ -10,7 +10,7 @@ import LanedCore
 final class SidebarLaneView: NSTableCellView {
     private let glyph = NSTextField(labelWithString: "")
     private let title = NSTextField(labelWithString: "")
-    private let tag = NSTextField(labelWithString: "")
+    private let tagChip = NSTextField(labelWithString: "")
     private let marker = NSTextField(labelWithString: "")
 
     init(lane: Lane, isLive: Bool) {
@@ -35,17 +35,17 @@ final class SidebarLaneView: NSTableCellView {
         title.lineBreakMode = .byTruncatingTail
         title.textColor = isLive ? .labelColor : Theme.dimText
 
-        tag.stringValue = lane.projectRoot.map { ($0 as NSString).lastPathComponent } ?? ""
-        tag.font = Theme.mono(10)
-        tag.textColor = Theme.dimText
-        tag.alignment = .right
-        tag.lineBreakMode = .byTruncatingHead
+        tagChip.stringValue = lane.projectRoot.map { ($0 as NSString).lastPathComponent } ?? ""
+        tagChip.font = Theme.mono(10)
+        tagChip.textColor = Theme.dimText
+        tagChip.alignment = .right
+        tagChip.lineBreakMode = .byTruncatingHead
 
         marker.stringValue = lane.pinned ? "▪" : ""
         marker.font = Theme.mono(10)
         marker.textColor = Theme.accent
 
-        for v in [glyph, title, tag, marker] {
+        for v in [glyph, title, tagChip, marker] {
             v.translatesAutoresizingMaskIntoConstraints = false
             v.isBezeled = false
             v.drawsBackground = false
@@ -64,13 +64,13 @@ final class SidebarLaneView: NSTableCellView {
             title.leadingAnchor.constraint(equalTo: marker.trailingAnchor, constant: 4),
             title.centerYAnchor.constraint(equalTo: centerYAnchor),
 
-            tag.leadingAnchor.constraint(greaterThanOrEqualTo: title.trailingAnchor, constant: 8),
-            tag.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            tag.centerYAnchor.constraint(equalTo: centerYAnchor),
+            tagChip.leadingAnchor.constraint(greaterThanOrEqualTo: title.trailingAnchor, constant: 8),
+            tagChip.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            tagChip.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
         // The tag yields before the title does when the sidebar is narrow.
         title.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
-        tag.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        tagChip.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     }
 
     @available(*, unavailable)

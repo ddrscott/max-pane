@@ -186,6 +186,6 @@ extension SidebarViewController: NSOutlineViewDelegate {
     }
 
     func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
-        !outlineView(outlineView, isGroupItem: item)
+        !self.outlineView(outlineView, isGroupItem: item)
     }
 }

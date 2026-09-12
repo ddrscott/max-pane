@@ -1,0 +1,31 @@
+cleaned up 30 spawned sessions
+## 30 concurrent sessions
+
+spawned 30 zsh sessions
+attached 30 sessions; all handshakes complete
+
+### idle (30 shells at a prompt, nothing running)
+- CPU: **0.03% of one core**
+- RSS: 27.6 MB (baseline before attach 14.7 MB, delta 13.0 MB)
+- phys_footprint: 18.7 MB
+- DATA bytes received so far: 0
+
+### under load (30 sessions x ~200 lines/s each)
+- CPU: **6.89% of one core**
+- RSS: 337.0 MB
+- phys_footprint: 328.1 MB
+- aggregate throughput: 0.30 MB/s (317460 bytes/s)
+
+### correctness — client offset vs host total_written, and SEQ continuity
+| session | client offset | host totalBytesWritten | delta | SEQ lines | gaps | lines lost | dupes |
+|---|---|---|---|---|---|---|---|
+| c0e57f77 | 302851 | 302851 | 0 | 4628 | 0 | 0 | 0 |
+| f5f4f77e | 356013 | 356013 | 0 | 5444 | 0 | 0 | 0 |
+| 54852b1d | 352237 | 352237 | 0 | 5388 | 0 | 0 | 0 |
+| 66ab0b96 | 337936 | 337936 | 0 | 5168 | 0 | 0 | 0 |
+| 79a3650e | 351812 | 351812 | 0 | 5380 | 0 | 0 | 0 |
+| cbbaa4f1 | 346596 | 346596 | 0 | 5296 | 0 | 0 | 0 |
+
+- sessions whose client offset != host total_written: **0 / 30**
+- total SEQ lines observed: 155736; sequence gaps (Lagged evidence): **0** (0 lines); duplicates: 0
+EXIT=0

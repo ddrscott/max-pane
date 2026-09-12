@@ -5,7 +5,7 @@ import AppKit
 /// PRD §8: "Keyboard-first: every action has a shortcut; the mouse is optional."
 /// Keeping the whole map in one enum is how that stays true — a new action has
 /// to declare its key here or it does not exist.
-enum Command: String, CaseIterable {
+public enum Command: String, CaseIterable {
     case newTerminalLane
     case newWebLane
     case splitDown
@@ -27,7 +27,7 @@ enum Command: String, CaseIterable {
     case widenLane
     case narrowLane
 
-    var title: String {
+    public var title: String {
         switch self {
         case .newTerminalLane: return "New Terminal Lane"
         case .newWebLane: return "New Web Lane…"
@@ -54,7 +54,7 @@ enum Command: String, CaseIterable {
 
     /// (key equivalent, modifier mask). AppKit wants the lowercase character and
     /// an explicit `.shift` when the binding is shifted.
-    var shortcut: (String, NSEvent.ModifierFlags) {
+    public var shortcut: (String, NSEvent.ModifierFlags) {
         switch self {
         case .newTerminalLane: return ("t", [.command])
         case .newWebLane:      return ("l", [.command])
@@ -83,7 +83,7 @@ enum Command: String, CaseIterable {
     }
 
     /// Which menu this belongs under.
-    var menu: MenuSection {
+    public var menu: MenuSection {
         switch self {
         case .newTerminalLane, .newWebLane, .splitDown, .attachSession: return .file
         case .closePane, .closeLane: return .file
@@ -94,7 +94,7 @@ enum Command: String, CaseIterable {
     }
 }
 
-enum MenuSection: String, CaseIterable {
+public enum MenuSection: String, CaseIterable {
     case file = "File"
     case navigate = "Navigate"
     case view = "View"
@@ -103,7 +103,7 @@ enum MenuSection: String, CaseIterable {
 /// What handles a `Command`. One method, so adding a command is one `case` in
 /// the switch and one entry above — never a new delegate protocol.
 @MainActor
-protocol CommandHandling: AnyObject {
+public protocol CommandHandling: AnyObject {
     func perform(_ command: Command)
     /// Grey out what cannot be done right now (e.g. Leave Gather View when not
     /// gathered).

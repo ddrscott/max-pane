@@ -9,7 +9,7 @@ import Foundation
 /// the phone client like any other.
 ///
 /// Nothing about the wire protocol is touched. This is the documented argv.
-struct RelaySessionSpawner {
+public struct RelaySessionSpawner {
     enum SpawnError: LocalizedError {
         case binaryNotFound
         case exitedBeforeReady(String)

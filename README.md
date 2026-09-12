@@ -63,10 +63,17 @@ symbols at all, which fails at link time in a thoroughly unhelpful way.
 ## Test
 
 ```sh
+./scripts/test.sh                             # Rust + Swift, everything
+
 source scripts/env.sh
 cargo test                                    # unit + durability acceptance tests
 cargo test --release --test snapshot_cost -- --nocapture   # the M3 timing split
 ```
+
+Use `scripts/test.sh` rather than a bare `swift test`: swift-testing ships inside
+Command Line Tools but SwiftPM does not look for it there, and the fix is a
+framework search path plus two rpaths pointing at two different directories. The
+failure without them is a `dlopen` error that names neither.
 
 `crates/laned-core/tests/durability.rs` holds the half of PRD §15's acceptance
 tests that the core owns — mostly "the strip is identical after a `kill -9`",

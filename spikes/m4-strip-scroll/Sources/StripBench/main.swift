@@ -119,6 +119,13 @@ struct PhaseResult: Encodable {
     var layoutCallsPerFrameMean: Double
     var layoutCallsPerFrameMax: Int
     var peakLiveLaneViews: Int
+    /// Drop accounting against the cadence the display link actually delivered
+    /// (median interval), which on a ProMotion panel may not be the advertised max.
+    var deliveredCadenceMs: Double
+    var droppedVsDeliveredCadence: Int
+    var droppedVsDeliveredCadencePct: Double
+    var intervalsMs: [Double]
+    var workMsRaw: [Double]
     var scrollXStart: Double
     var scrollXEnd: Double
     var scrollXMax: Double
@@ -196,6 +203,7 @@ struct Results: Encodable {
     var idleCpuMeanPct: Double
     var idleCpuMaxPct: Double
     var idleSeconds: Double
+    var loadAverage1min: Double
     var idleRssBytes: UInt64
     var restore: [RestoreResult]
 }
@@ -418,6 +426,8 @@ final class Bench: NSObject {
         let dropped = dts.filter { $0 > budgetMs * 1.5 }.count
         let severe = dts.filter { $0 > budgetMs * 2.5 }.count
         let layouts = s.map(\.layoutCalls)
+        let delivered = Stats(dts).p50
+        let dropDelivered = dts.filter { $0 > delivered * 1.5 }.count
         let dur = (s.last.map(\.ts) ?? 0) - (s.first.map(\.ts) ?? 0)
         return PhaseResult(
             frames: s.count,
@@ -434,6 +444,11 @@ final class Bench: NSObject {
             layoutCallsPerFrameMean: s.isEmpty ? 0 : Double(layouts.reduce(0, +)) / Double(s.count),
             layoutCallsPerFrameMax: layouts.max() ?? 0,
             peakLiveLaneViews: s.map(\.live).max() ?? 0,
+            deliveredCadenceMs: delivered,
+            droppedVsDeliveredCadence: dropDelivered,
+            droppedVsDeliveredCadencePct: s.isEmpty ? 0 : Double(dropDelivered) / Double(s.count) * 100,
+            intervalsMs: dts.map { ($0 * 1000).rounded() / 1000 },
+            workMsRaw: s.map { ($0.work * 1000).rounded() / 1000 },
             scrollXStart: 0, scrollXEnd: Double(strip.scrollX), scrollXMax: Double(strip.maxScrollX))
     }
 
@@ -559,6 +574,10 @@ final class Bench: NSObject {
             idleCpuMeanPct: idleSamples.isEmpty ? 0 : idleSamples.reduce(0,+)/Double(idleSamples.count),
             idleCpuMaxPct: idleSamples.max() ?? 0,
             idleSeconds: opts.idleSeconds,
+            loadAverage1min: {
+                var la = [Double](repeating: 0, count: 3)
+                return getloadavg(&la, 3) > 0 ? la[0] : -1
+            }(),
             idleRssBytes: idleRss,
             restore: restoreResults)
 

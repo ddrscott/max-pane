@@ -41,7 +41,8 @@ func attachAndWait(_ id: String, offset: Double = 0, timeout: Double = 10,
 func headlessTerminal(cols: Int, rows: Int) -> (Terminal, NullTermDelegate) {
     let d = NullTermDelegate()
     var opts = TerminalOptions.default
-    opts.cols = cols; opts.rows = rows; opts.scrollback = 5000
+    opts.cols = cols; opts.rows = rows
+    opts.scrollback = Int(ProcessInfo.processInfo.environment["M2_SCROLLBACK"] ?? "") ?? 500
     return (Terminal(delegate: d, options: opts), d)
 }
 
@@ -217,9 +218,15 @@ case "load":
     try runLoad(Int(argv.count > 1 ? argv[1] : "30") ?? 30,
                 rate: Int(argv.count > 2 ? argv[2] : "200") ?? 200)
 
+case "lagged":
+    try runLagged()
+
+case "utf8":
+    try runUTF8()
+
 case "observe":
     try runObserve(argv.count > 1 ? argv[1] : "")
 
 default:
-    print("usage: m2bench <smoke|attach|echo|resize|conflict|load|observe>")
+    print("usage: m2bench <smoke|attach|echo|resize|conflict|load|utf8|observe>")
 }

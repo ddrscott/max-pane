@@ -1,0 +1,4 @@
+## Lagged(n): the 256-frame broadcast channel, and whether we can see a drop
+
+- **prompt reader (drain every readable event)**: handshake SYNC=22928252; 87875 DATA frames / 89820174 B in 15 s; 1377490 SEQ lines; SEQ gaps=0 (0 lines); socket closed by host=true; client offset=111534647 vs host total_written=111508023 -> **behind by -26624 B (-0.0% of the session)**
+- **stalled reader (50 ms sleep per DATA frame)**: handshake SYNC=21627549; 13 DATA frames / 13312 B in 15 s; 203 SEQ lines; SEQ gaps=0 (0 lines); socket closed by host=true; client offset=21637789 vs host total_written=113485996 -> **behind by 91848207 B (80.9% of the session)**

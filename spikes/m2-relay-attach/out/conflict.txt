@@ -1,0 +1,38 @@
+## The resize conflict: two clients, one PTY, last writer wins
+
+
+### ruler fixture — session f21a9b73
+| flip | who | requested | host broadcast | DATA bytes to the innocent 3rd client |
+|---|---|---|---|---|
+| 0 | MaxPane lane | 50x50 | 50x50 | 931 |
+| 1 | phone | 100x30 | 100x30 | 719 |
+| 2 | MaxPane lane | 50x50 | 50x50 | 931 |
+| 3 | phone | 100x30 | 100x30 | 719 |
+| 4 | MaxPane lane | 50x50 | 50x50 | 931 |
+| 5 | phone | 100x30 | 100x30 | 719 |
+| 6 | MaxPane lane | 50x50 | 50x50 | 931 |
+| 7 | phone | 100x30 | 100x30 | 719 |
+
+mean redraw traffic forced on every other attached client per flip: **825 bytes**
+live PTY winsize after the fight (last inbound RESIZE broadcast): **100x30** — the phone wrote last, so it owns the PTY for everyone
+session JSON still says 50x50 — the metadata flush is on a 5 s timer, so NEVER read live size from the JSON
+client A (the MaxPane lane) asked for 50x50 and is now being fed a 100-column screen it has no room for
+mitigation check — a client that never sends RESIZE: learned host size ["72x36", "100x30"] purely from inbound RESIZE frames, received 1459 B of redraw, and caused 0 SIGWINCHs itself
+
+### htop (real full-screen TUI) — session 3fa1ec3c
+| flip | who | requested | host broadcast | DATA bytes to the innocent 3rd client |
+|---|---|---|---|---|
+| 0 | MaxPane lane | 50x50 | 50x50 | 6671 |
+| 1 | phone | 100x30 | 100x30 | 5872 |
+| 2 | MaxPane lane | 50x50 | 50x50 | 6671 |
+| 3 | phone | 100x30 | 100x30 | 5872 |
+| 4 | MaxPane lane | 50x50 | 50x50 | 6671 |
+| 5 | phone | 100x30 | 100x30 | 5872 |
+| 6 | MaxPane lane | 50x50 | 50x50 | 6670 |
+| 7 | phone | 100x30 | 100x30 | 5872 |
+
+mean redraw traffic forced on every other attached client per flip: **6271 bytes**
+live PTY winsize after the fight (last inbound RESIZE broadcast): **100x30** — the phone wrote last, so it owns the PTY for everyone
+session JSON still says 50x50 — the metadata flush is on a 5 s timer, so NEVER read live size from the JSON
+client A (the MaxPane lane) asked for 50x50 and is now being fed a 100-column screen it has no room for
+mitigation check — a client that never sends RESIZE: learned host size ["72x36", "100x30"] purely from inbound RESIZE frames, received 12175 B of redraw, and caused 0 SIGWINCHs itself

@@ -1,0 +1,1678 @@
+{
+  "display_asleep_at_end" : false,
+  "eviction" : {
+    "after_footprint_mb" : 212.95957946777344,
+    "after_rss_mb" : 409.25,
+    "after_webcontent" : 5,
+    "before_footprint_mb" : 2560.6230239868164,
+    "before_rss_mb" : 4408.203125,
+    "before_webcontent" : 100,
+    "reclaimed_mb_per_view" : 24.712246784410979
+  },
+  "final_webcontent_footprints_mb" : [
+    19.235038757324219,
+    21.656959533691406,
+    27.688163757324219,
+    30.016357421875,
+    32.360107421875
+  ],
+  "idle_quiescent" : {
+    "max_pct_one_core" : 0.08421157464834976,
+    "mean_pct_one_core" : 0.072046896260911306,
+    "min_pct_one_core" : 0.057753500175498074,
+    "per_window_pct" : [
+      0.078889057772578583,
+      0.073642925544097904,
+      0.074168790160009962,
+      0.08421157464834976,
+      0.077576994387115766,
+      0.071911927067307813,
+      0.077290237133407408,
+      0.059378970316614418,
+      0.057753500175498074,
+      0.074694281798065171,
+      0.069716966706126177,
+      0.065327529421764799
+    ],
+    "window_secs" : 5,
+    "windows" : 12
+  },
+  "idle_with_animating_pages" : {
+    "max_pct_one_core" : 0.069391639677734263,
+    "mean_pct_one_core" : 0.050330307023255805,
+    "min_pct_one_core" : 0.041952556218753226,
+    "per_window_pct" : [
+      0.069391639677734263,
+      0.044708770064313431,
+      0.041952556218753226,
+      0.042819987383977194,
+      0.042693012537835993,
+      0.042772429499773709,
+      0.045485599242363298,
+      0.04985176154209274,
+      0.045955448777565064,
+      0.056045370651784762,
+      0.055625440862017289,
+      0.066661667820858653
+    ],
+    "window_secs" : 5,
+    "windows" : 12
+  },
+  "latency_summary" : {
+    "addsubview_return_ms" : {
+      "max" : 4.0134999435395002,
+      "mean" : 1.8503699963912368,
+      "median" : 1.874208333902061,
+      "min" : 0.94695831649005413,
+      "n" : 25,
+      "p95" : 3.6421666154637933
+    },
+    "catransaction_commit_ms" : {
+      "max" : 4.4237499823793769,
+      "mean" : 2.0971699897199869,
+      "median" : 2.0252083195373416,
+      "min" : 1.0367082431912422,
+      "n" : 25,
+      "p95" : 3.9386666612699628
+    },
+    "displaylink_ms" : {
+      "max" : 399.92687501944602,
+      "mean" : 22.525214999914169,
+      "median" : 6.3479166710749269,
+      "min" : 1.2937083374708891,
+      "n" : 25,
+      "p95" : 21.705541643314064
+    },
+    "first_web_frame_ms" : {
+      "n" : 0
+    }
+  },
+  "latency_trials" : [
+    {
+      "addsubview_return_ms" : 1.2797917006537318,
+      "catransaction_commit_ms" : 1.7014583572745323,
+      "displaylink_ms" : 9.7362500382587314,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 5,
+      "outgoing_view" : 0,
+      "trial" : 0
+    },
+    {
+      "addsubview_return_ms" : 1.1150416685268283,
+      "catransaction_commit_ms" : 1.3442083727568388,
+      "displaylink_ms" : 3.6151250824332237,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 6,
+      "outgoing_view" : 5,
+      "trial" : 1
+    },
+    {
+      "addsubview_return_ms" : 2.0434582838788629,
+      "catransaction_commit_ms" : 2.3650416405871511,
+      "displaylink_ms" : 7.7760416315868497,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 7,
+      "outgoing_view" : 6,
+      "trial" : 2
+    },
+    {
+      "addsubview_return_ms" : 1.2553333071991801,
+      "catransaction_commit_ms" : 1.3849165989086032,
+      "displaylink_ms" : 14.828666695393622,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 8,
+      "outgoing_view" : 7,
+      "trial" : 3
+    },
+    {
+      "addsubview_return_ms" : 1.1898332741111517,
+      "catransaction_commit_ms" : 1.3322916347533464,
+      "displaylink_ms" : 1.2937083374708891,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 9,
+      "outgoing_view" : 8,
+      "trial" : 4
+    },
+    {
+      "addsubview_return_ms" : 1.1136250104755163,
+      "catransaction_commit_ms" : 1.3130833394825459,
+      "displaylink_ms" : 3.6280000349506736,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 10,
+      "outgoing_view" : 9,
+      "trial" : 5
+    },
+    {
+      "addsubview_return_ms" : 1.9694999791681767,
+      "catransaction_commit_ms" : 2.3979999823495746,
+      "displaylink_ms" : 2.2884166100993752,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 11,
+      "outgoing_view" : 10,
+      "trial" : 6
+    },
+    {
+      "addsubview_return_ms" : 2.4386666482314467,
+      "catransaction_commit_ms" : 2.7822499396279454,
+      "displaylink_ms" : 8.5503750015050173,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 12,
+      "outgoing_view" : 11,
+      "trial" : 7
+    },
+    {
+      "addsubview_return_ms" : 1.8162083579227328,
+      "catransaction_commit_ms" : 1.9956666510552168,
+      "displaylink_ms" : 9.5701250247657299,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 13,
+      "outgoing_view" : 12,
+      "trial" : 8
+    },
+    {
+      "addsubview_return_ms" : 2.0967916352674365,
+      "catransaction_commit_ms" : 2.344749984331429,
+      "displaylink_ms" : 8.7512499885633588,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 14,
+      "outgoing_view" : 13,
+      "trial" : 9
+    },
+    {
+      "addsubview_return_ms" : 2.4172916309908032,
+      "catransaction_commit_ms" : 2.8786666225641966,
+      "displaylink_ms" : 2.7692499570548534,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 15,
+      "outgoing_view" : 14,
+      "trial" : 10
+    },
+    {
+      "addsubview_return_ms" : 1.9302082946524024,
+      "catransaction_commit_ms" : 2.3376250173896551,
+      "displaylink_ms" : 10.452999966219068,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 16,
+      "outgoing_view" : 15,
+      "trial" : 11
+    },
+    {
+      "addsubview_return_ms" : 1.0054584126919508,
+      "catransaction_commit_ms" : 1.1067084269598126,
+      "displaylink_ms" : 399.92687501944602,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 17,
+      "outgoing_view" : 16,
+      "trial" : 12
+    },
+    {
+      "addsubview_return_ms" : 1.9509583944454789,
+      "catransaction_commit_ms" : 2.2902083583176136,
+      "displaylink_ms" : 9.9298333516344428,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 18,
+      "outgoing_view" : 17,
+      "trial" : 13
+    },
+    {
+      "addsubview_return_ms" : 2.0049583399668336,
+      "catransaction_commit_ms" : 2.2871249821037054,
+      "displaylink_ms" : 21.705541643314064,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 19,
+      "outgoing_view" : 18,
+      "trial" : 14
+    },
+    {
+      "addsubview_return_ms" : 3.6421666154637933,
+      "catransaction_commit_ms" : 3.9386666612699628,
+      "displaylink_ms" : 3.8455416215583682,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 20,
+      "outgoing_view" : 19,
+      "trial" : 15
+    },
+    {
+      "addsubview_return_ms" : 1.7218750435858965,
+      "catransaction_commit_ms" : 1.8975000130012631,
+      "displaylink_ms" : 3.7423333851620555,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 21,
+      "outgoing_view" : 20,
+      "trial" : 16
+    },
+    {
+      "addsubview_return_ms" : 1.2119583552703261,
+      "catransaction_commit_ms" : 1.3284999877214432,
+      "displaylink_ms" : 6.289375014603138,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 22,
+      "outgoing_view" : 21,
+      "trial" : 17
+    },
+    {
+      "addsubview_return_ms" : 1.0500834323465824,
+      "catransaction_commit_ms" : 1.1571666691452265,
+      "displaylink_ms" : 8.0345000606030226,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 23,
+      "outgoing_view" : 22,
+      "trial" : 18
+    },
+    {
+      "addsubview_return_ms" : 0.94695831649005413,
+      "catransaction_commit_ms" : 1.0367082431912422,
+      "displaylink_ms" : 3.0475415987893939,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 24,
+      "outgoing_view" : 23,
+      "trial" : 19
+    },
+    {
+      "addsubview_return_ms" : 2.25424999371171,
+      "catransaction_commit_ms" : 2.4622916243970394,
+      "displaylink_ms" : 7.4433749541640282,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 25,
+      "outgoing_view" : 24,
+      "trial" : 20
+    },
+    {
+      "addsubview_return_ms" : 2.1295832702890038,
+      "catransaction_commit_ms" : 2.3494999622926116,
+      "displaylink_ms" : 2.2917916066944599,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 26,
+      "outgoing_view" : 25,
+      "trial" : 21
+    },
+    {
+      "addsubview_return_ms" : 1.874208333902061,
+      "catransaction_commit_ms" : 2.0252083195373416,
+      "displaylink_ms" : 6.3479166710749269,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 27,
+      "outgoing_view" : 26,
+      "trial" : 22
+    },
+    {
+      "addsubview_return_ms" : 1.7875416669994593,
+      "catransaction_commit_ms" : 1.9479583716019988,
+      "displaylink_ms" : 2.9977500671520829,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 28,
+      "outgoing_view" : 27,
+      "trial" : 23
+    },
+    {
+      "addsubview_return_ms" : 4.0134999435395002,
+      "catransaction_commit_ms" : 4.4237499823793769,
+      "displaylink_ms" : 4.2677916353568435,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 29,
+      "outgoing_view" : 28,
+      "trial" : 24
+    }
+  ],
+  "load_failed" : 0,
+  "load_ok" : 100,
+  "load_state" : [
+    {
+      "index" : 26,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8807\/repo\/26"
+    },
+    {
+      "index" : 74,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8815\/repo\/74"
+    },
+    {
+      "index" : 57,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8818\/doc\/57"
+    },
+    {
+      "index" : 34,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8815\/feed\/34"
+    },
+    {
+      "index" : 60,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8801\/doc\/60"
+    },
+    {
+      "index" : 24,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8805\/doc\/24"
+    },
+    {
+      "index" : 62,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8803\/repo\/62"
+    },
+    {
+      "index" : 28,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8809\/feed\/28"
+    },
+    {
+      "index" : 39,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8820\/doc\/39"
+    },
+    {
+      "index" : 40,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8801\/feed\/40"
+    },
+    {
+      "index" : 44,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8805\/repo\/44"
+    },
+    {
+      "index" : 81,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8802\/doc\/81"
+    },
+    {
+      "index" : 96,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8817\/doc\/96"
+    },
+    {
+      "index" : 45,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8806\/doc\/45"
+    },
+    {
+      "index" : 27,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8808\/doc\/27"
+    },
+    {
+      "index" : 65,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8806\/repo\/65"
+    },
+    {
+      "index" : 50,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8811\/anim\/50"
+    },
+    {
+      "index" : 99,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8820\/anim\/99"
+    },
+    {
+      "index" : 80,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8801\/repo\/80"
+    },
+    {
+      "index" : 93,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8814\/doc\/93"
+    },
+    {
+      "index" : 30,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8811\/doc\/30"
+    },
+    {
+      "index" : 92,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8813\/repo\/92"
+    },
+    {
+      "index" : 20,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8801\/repo\/20"
+    },
+    {
+      "index" : 72,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8813\/doc\/72"
+    },
+    {
+      "index" : 21,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8802\/doc\/21"
+    },
+    {
+      "index" : 67,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8808\/feed\/67"
+    },
+    {
+      "index" : 78,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8819\/doc\/78"
+    },
+    {
+      "index" : 90,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8811\/doc\/90"
+    },
+    {
+      "index" : 69,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8810\/doc\/69"
+    },
+    {
+      "index" : 77,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8818\/repo\/77"
+    },
+    {
+      "index" : 6,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8807\/doc\/6"
+    },
+    {
+      "index" : 35,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8816\/repo\/35"
+    },
+    {
+      "index" : 10,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8811\/feed\/10"
+    },
+    {
+      "index" : 55,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8816\/feed\/55"
+    },
+    {
+      "index" : 15,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8816\/doc\/15"
+    },
+    {
+      "index" : 98,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8819\/repo\/98"
+    },
+    {
+      "index" : 0,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8801\/doc\/0"
+    },
+    {
+      "index" : 25,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8806\/feed\/25"
+    },
+    {
+      "index" : 12,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8813\/doc\/12"
+    },
+    {
+      "index" : 86,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8807\/repo\/86"
+    },
+    {
+      "index" : 88,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8809\/feed\/88"
+    },
+    {
+      "index" : 1,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8802\/anim\/1"
+    },
+    {
+      "index" : 23,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8804\/repo\/23"
+    },
+    {
+      "index" : 33,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8814\/doc\/33"
+    },
+    {
+      "index" : 38,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8819\/repo\/38"
+    },
+    {
+      "index" : 87,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8808\/doc\/87"
+    },
+    {
+      "index" : 61,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8802\/feed\/61"
+    },
+    {
+      "index" : 94,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8815\/feed\/94"
+    },
+    {
+      "index" : 66,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8807\/doc\/66"
+    },
+    {
+      "index" : 95,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8816\/repo\/95"
+    },
+    {
+      "index" : 75,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8816\/doc\/75"
+    },
+    {
+      "index" : 9,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8810\/doc\/9"
+    },
+    {
+      "index" : 36,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8817\/doc\/36"
+    },
+    {
+      "index" : 91,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8812\/feed\/91"
+    },
+    {
+      "index" : 54,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8815\/doc\/54"
+    },
+    {
+      "index" : 71,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8812\/repo\/71"
+    },
+    {
+      "index" : 37,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8818\/feed\/37"
+    },
+    {
+      "index" : 64,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8805\/feed\/64"
+    },
+    {
+      "index" : 56,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8817\/repo\/56"
+    },
+    {
+      "index" : 8,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8809\/repo\/8"
+    },
+    {
+      "index" : 59,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8820\/repo\/59"
+    },
+    {
+      "index" : 11,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8812\/repo\/11"
+    },
+    {
+      "index" : 97,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8818\/feed\/97"
+    },
+    {
+      "index" : 63,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8804\/doc\/63"
+    },
+    {
+      "index" : 2,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8803\/repo\/2"
+    },
+    {
+      "index" : 29,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8810\/repo\/29"
+    },
+    {
+      "index" : 73,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8814\/feed\/73"
+    },
+    {
+      "index" : 89,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8810\/repo\/89"
+    },
+    {
+      "index" : 31,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8812\/feed\/31"
+    },
+    {
+      "index" : 83,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8804\/repo\/83"
+    },
+    {
+      "index" : 13,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8814\/feed\/13"
+    },
+    {
+      "index" : 68,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8809\/repo\/68"
+    },
+    {
+      "index" : 5,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8806\/anim\/5"
+    },
+    {
+      "index" : 22,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8803\/feed\/22"
+    },
+    {
+      "index" : 41,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8802\/repo\/41"
+    },
+    {
+      "index" : 76,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8817\/feed\/76"
+    },
+    {
+      "index" : 3,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8804\/doc\/3"
+    },
+    {
+      "index" : 7,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8808\/feed\/7"
+    },
+    {
+      "index" : 43,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8804\/feed\/43"
+    },
+    {
+      "index" : 82,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8803\/feed\/82"
+    },
+    {
+      "index" : 58,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8819\/feed\/58"
+    },
+    {
+      "index" : 70,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8811\/feed\/70"
+    },
+    {
+      "index" : 46,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8807\/feed\/46"
+    },
+    {
+      "index" : 14,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8815\/repo\/14"
+    },
+    {
+      "index" : 48,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8809\/doc\/48"
+    },
+    {
+      "index" : 18,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8819\/doc\/18"
+    },
+    {
+      "index" : 53,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8814\/repo\/53"
+    },
+    {
+      "index" : 32,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8813\/repo\/32"
+    },
+    {
+      "index" : 79,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8820\/feed\/79"
+    },
+    {
+      "index" : 17,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8818\/repo\/17"
+    },
+    {
+      "index" : 49,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8810\/feed\/49"
+    },
+    {
+      "index" : 19,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8820\/feed\/19"
+    },
+    {
+      "index" : 16,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8817\/feed\/16"
+    },
+    {
+      "index" : 84,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8805\/doc\/84"
+    },
+    {
+      "index" : 42,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8803\/doc\/42"
+    },
+    {
+      "index" : 85,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8806\/feed\/85"
+    },
+    {
+      "index" : 51,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8812\/doc\/51"
+    },
+    {
+      "index" : 52,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8813\/feed\/52"
+    },
+    {
+      "index" : 4,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8805\/feed\/4"
+    },
+    {
+      "index" : 47,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8808\/repo\/47"
+    }
+  ],
+  "meta" : {
+    "baseline_webkit_pids" : 11,
+    "date" : "2026-09-12T11:19:22Z",
+    "display_asleep_at_start" : false,
+    "idle_secs" : 60,
+    "lane_h" : 1000,
+    "lane_w" : 560,
+    "mode" : "fixtures",
+    "parented" : 5,
+    "pid" : 62060,
+    "screen_locked_at_start" : true,
+    "store_count" : 3,
+    "store_kind" : "persistent(forIdentifier:)",
+    "trials" : 25,
+    "views" : 100
+  },
+  "screen_locked_at_end" : true,
+  "snapshots" : [
+    {
+      "by_kind" : {
+        "app" : {
+          "count" : 1,
+          "footprint_mb" : 28.797859191894531,
+          "pids" : [
+            62060
+          ],
+          "rss_mb" : 99.296875
+        },
+        "GPU" : {
+          "count" : 1,
+          "footprint_mb" : 23.657394409179688,
+          "pids" : [
+            62086
+          ],
+          "rss_mb" : 73.65625
+        },
+        "Networking" : {
+          "count" : 1,
+          "footprint_mb" : 12.90679931640625,
+          "pids" : [
+            62087
+          ],
+          "rss_mb" : 35.3125
+        },
+        "WebContent" : {
+          "count" : 25,
+          "footprint_mb" : 606.65877532958984,
+          "pids" : [
+            62112,
+            62111,
+            62110,
+            62109,
+            62108,
+            62107,
+            62106,
+            62105,
+            62104,
+            62103,
+            62102,
+            62101,
+            62100,
+            62099,
+            62098,
+            62097,
+            62096,
+            62095,
+            62094,
+            62093,
+            62092,
+            62091,
+            62090,
+            62089,
+            62088
+          ],
+          "rss_mb" : 1515.984375
+        }
+      },
+      "helper_count" : 27,
+      "label" : "parented_25",
+      "total_footprint_mb" : 672.02082824707031,
+      "total_rss_mb" : 1724.25,
+      "wall" : 1789211977.078531,
+      "webcontent_count" : 25
+    },
+    {
+      "by_kind" : {
+        "app" : {
+          "count" : 1,
+          "footprint_mb" : 37.797904968261719,
+          "pids" : [
+            62060
+          ],
+          "rss_mb" : 111.390625
+        },
+        "GPU" : {
+          "count" : 1,
+          "footprint_mb" : 25.345283508300781,
+          "pids" : [
+            62086
+          ],
+          "rss_mb" : 79.53125
+        },
+        "Networking" : {
+          "count" : 1,
+          "footprint_mb" : 14.938026428222656,
+          "pids" : [
+            62087
+          ],
+          "rss_mb" : 37.109375
+        },
+        "WebContent" : {
+          "count" : 50,
+          "footprint_mb" : 1209.4580612182617,
+          "pids" : [
+            62426,
+            62427,
+            62425,
+            62424,
+            62423,
+            62422,
+            62421,
+            62420,
+            62419,
+            62418,
+            62417,
+            62416,
+            62415,
+            62414,
+            62413,
+            62412,
+            62411,
+            62410,
+            62409,
+            62408,
+            62407,
+            62406,
+            62405,
+            62404,
+            62403,
+            62112,
+            62111,
+            62110,
+            62109,
+            62108,
+            62107,
+            62106,
+            62105,
+            62104,
+            62103,
+            62102,
+            62101,
+            62100,
+            62099,
+            62098,
+            62097,
+            62096,
+            62095,
+            62094,
+            62093,
+            62092,
+            62091,
+            62090,
+            62089,
+            62088
+          ],
+          "rss_mb" : 3029.03125
+        }
+      },
+      "helper_count" : 52,
+      "label" : "parented_50",
+      "total_footprint_mb" : 1287.5392761230469,
+      "total_rss_mb" : 3257.0625,
+      "wall" : 1789211990.4200721,
+      "webcontent_count" : 50
+    },
+    {
+      "by_kind" : {
+        "app" : {
+          "count" : 1,
+          "footprint_mb" : 57.141769409179688,
+          "pids" : [
+            62060
+          ],
+          "rss_mb" : 122.609375
+        },
+        "GPU" : {
+          "count" : 1,
+          "footprint_mb" : 41.877357482910156,
+          "pids" : [
+            62086
+          ],
+          "rss_mb" : 99.953125
+        },
+        "Networking" : {
+          "count" : 1,
+          "footprint_mb" : 23.063026428222656,
+          "pids" : [
+            62087
+          ],
+          "rss_mb" : 35.53125
+        },
+        "WebContent" : {
+          "count" : 100,
+          "footprint_mb" : 2640.3066787719727,
+          "pids" : [
+            63083,
+            63082,
+            63081,
+            63080,
+            63079,
+            63078,
+            63077,
+            63076,
+            63074,
+            63073,
+            63072,
+            63070,
+            63071,
+            63069,
+            63068,
+            63067,
+            63066,
+            63065,
+            63064,
+            63062,
+            63058,
+            63057,
+            63056,
+            63055,
+            63054,
+            63053,
+            63052,
+            63051,
+            63050,
+            63049,
+            63047,
+            63048,
+            63046,
+            63045,
+            63044,
+            63043,
+            63042,
+            63041,
+            63040,
+            63038,
+            63035,
+            63034,
+            63033,
+            63032,
+            63031,
+            63029,
+            63030,
+            63028,
+            63027,
+            63026,
+            62426,
+            62427,
+            62425,
+            62424,
+            62423,
+            62422,
+            62421,
+            62420,
+            62419,
+            62418,
+            62417,
+            62416,
+            62415,
+            62414,
+            62413,
+            62412,
+            62411,
+            62410,
+            62409,
+            62408,
+            62407,
+            62406,
+            62405,
+            62404,
+            62403,
+            62112,
+            62111,
+            62110,
+            62109,
+            62108,
+            62107,
+            62106,
+            62105,
+            62104,
+            62103,
+            62102,
+            62101,
+            62100,
+            62099,
+            62098,
+            62097,
+            62096,
+            62095,
+            62094,
+            62093,
+            62092,
+            62091,
+            62090,
+            62089,
+            62088
+          ],
+          "rss_mb" : 4548.328125
+        }
+      },
+      "helper_count" : 102,
+      "label" : "parented_100",
+      "total_footprint_mb" : 2762.3888320922852,
+      "total_rss_mb" : 4806.421875,
+      "wall" : 1789212004.7264709,
+      "webcontent_count" : 100
+    },
+    {
+      "by_kind" : {
+        "app" : {
+          "count" : 1,
+          "footprint_mb" : 57.188621520996094,
+          "pids" : [
+            62060
+          ],
+          "rss_mb" : 124
+        },
+        "GPU" : {
+          "count" : 1,
+          "footprint_mb" : 41.689857482910156,
+          "pids" : [
+            62086
+          ],
+          "rss_mb" : 102.890625
+        },
+        "Networking" : {
+          "count" : 1,
+          "footprint_mb" : 21.26617431640625,
+          "pids" : [
+            62087
+          ],
+          "rss_mb" : 35.59375
+        },
+        "WebContent" : {
+          "count" : 100,
+          "footprint_mb" : 2307.4315643310547,
+          "pids" : [
+            63083,
+            63082,
+            63081,
+            63080,
+            63079,
+            63078,
+            63077,
+            63076,
+            63074,
+            63073,
+            63072,
+            63070,
+            63071,
+            63069,
+            63068,
+            63067,
+            63066,
+            63065,
+            63064,
+            63062,
+            63058,
+            63057,
+            63056,
+            63055,
+            63054,
+            63053,
+            63052,
+            63051,
+            63050,
+            63049,
+            63047,
+            63048,
+            63046,
+            63045,
+            63044,
+            63043,
+            63042,
+            63041,
+            63040,
+            63038,
+            63035,
+            63034,
+            63033,
+            63032,
+            63031,
+            63029,
+            63030,
+            63028,
+            63027,
+            63026,
+            62426,
+            62427,
+            62425,
+            62424,
+            62423,
+            62422,
+            62421,
+            62420,
+            62419,
+            62418,
+            62417,
+            62416,
+            62415,
+            62414,
+            62413,
+            62412,
+            62411,
+            62410,
+            62409,
+            62408,
+            62407,
+            62406,
+            62405,
+            62404,
+            62403,
+            62112,
+            62111,
+            62110,
+            62109,
+            62108,
+            62107,
+            62106,
+            62105,
+            62104,
+            62103,
+            62102,
+            62101,
+            62100,
+            62099,
+            62098,
+            62097,
+            62096,
+            62095,
+            62094,
+            62093,
+            62092,
+            62091,
+            62090,
+            62089,
+            62088
+          ],
+          "rss_mb" : 4634.984375
+        }
+      },
+      "helper_count" : 102,
+      "label" : "parented_5_unparented_95",
+      "total_footprint_mb" : 2427.5762176513672,
+      "total_rss_mb" : 4897.46875,
+      "wall" : 1789212025.84919,
+      "webcontent_count" : 100
+    },
+    {
+      "by_kind" : {
+        "app" : {
+          "count" : 1,
+          "footprint_mb" : 55.891769409179688,
+          "pids" : [
+            62060
+          ],
+          "rss_mb" : 123.84375
+        },
+        "GPU" : {
+          "count" : 1,
+          "footprint_mb" : 154.76789093017578,
+          "pids" : [
+            62086
+          ],
+          "rss_mb" : 91.0625
+        },
+        "Networking" : {
+          "count" : 1,
+          "footprint_mb" : 19.32867431640625,
+          "pids" : [
+            62087
+          ],
+          "rss_mb" : 33.765625
+        },
+        "WebContent" : {
+          "count" : 100,
+          "footprint_mb" : 2330.6346893310547,
+          "pids" : [
+            63083,
+            63082,
+            63081,
+            63080,
+            63079,
+            63078,
+            63077,
+            63076,
+            63074,
+            63073,
+            63072,
+            63070,
+            63071,
+            63069,
+            63068,
+            63067,
+            63066,
+            63065,
+            63064,
+            63062,
+            63058,
+            63057,
+            63056,
+            63055,
+            63054,
+            63053,
+            63052,
+            63051,
+            63050,
+            63049,
+            63047,
+            63048,
+            63046,
+            63045,
+            63044,
+            63043,
+            63042,
+            63041,
+            63040,
+            63038,
+            63035,
+            63034,
+            63033,
+            63032,
+            63031,
+            63029,
+            63030,
+            63028,
+            63027,
+            63026,
+            62426,
+            62427,
+            62425,
+            62424,
+            62423,
+            62422,
+            62421,
+            62420,
+            62419,
+            62418,
+            62417,
+            62416,
+            62415,
+            62414,
+            62413,
+            62412,
+            62411,
+            62410,
+            62409,
+            62408,
+            62407,
+            62406,
+            62405,
+            62404,
+            62403,
+            62112,
+            62111,
+            62110,
+            62109,
+            62108,
+            62107,
+            62106,
+            62105,
+            62104,
+            62103,
+            62102,
+            62101,
+            62100,
+            62099,
+            62098,
+            62097,
+            62096,
+            62095,
+            62094,
+            62093,
+            62092,
+            62091,
+            62090,
+            62089,
+            62088
+          ],
+          "rss_mb" : 4159.53125
+        }
+      },
+      "helper_count" : 102,
+      "label" : "before_evict",
+      "total_footprint_mb" : 2560.6230239868164,
+      "total_rss_mb" : 4408.203125,
+      "wall" : 1789212241.519228,
+      "webcontent_count" : 100
+    },
+    {
+      "by_kind" : {
+        "app" : {
+          "count" : 1,
+          "footprint_mb" : 49.907394409179688,
+          "pids" : [
+            62060
+          ],
+          "rss_mb" : 125.359375
+        },
+        "GPU" : {
+          "count" : 1,
+          "footprint_mb" : 21.845008850097656,
+          "pids" : [
+            62086
+          ],
+          "rss_mb" : 76.171875
+        },
+        "Networking" : {
+          "count" : 1,
+          "footprint_mb" : 10.25054931640625,
+          "pids" : [
+            62087
+          ],
+          "rss_mb" : 34.90625
+        },
+        "WebContent" : {
+          "count" : 5,
+          "footprint_mb" : 130.95662689208984,
+          "pids" : [
+            62092,
+            62091,
+            62090,
+            62089,
+            62088
+          ],
+          "rss_mb" : 172.8125
+        }
+      },
+      "helper_count" : 7,
+      "label" : "after_evict_to_5",
+      "total_footprint_mb" : 212.95957946777344,
+      "total_rss_mb" : 409.25,
+      "wall" : 1789212272.699332,
+      "webcontent_count" : 5
+    },
+    {
+      "by_kind" : {
+        "app" : {
+          "count" : 1,
+          "footprint_mb" : 49.954269409179688,
+          "pids" : [
+            62060
+          ],
+          "rss_mb" : 125.40625
+        },
+        "GPU" : {
+          "count" : 1,
+          "footprint_mb" : 21.845008850097656,
+          "pids" : [
+            62086
+          ],
+          "rss_mb" : 76.171875
+        },
+        "Networking" : {
+          "count" : 1,
+          "footprint_mb" : 10.25054931640625,
+          "pids" : [
+            62087
+          ],
+          "rss_mb" : 34.90625
+        },
+        "WebContent" : {
+          "count" : 5,
+          "footprint_mb" : 130.95662689208984,
+          "pids" : [
+            62092,
+            62091,
+            62090,
+            62089,
+            62088
+          ],
+          "rss_mb" : 172.8125
+        }
+      },
+      "helper_count" : 7,
+      "label" : "final",
+      "total_footprint_mb" : 213.00645446777344,
+      "total_rss_mb" : 409.296875,
+      "wall" : 1789212272.7375779,
+      "webcontent_count" : 5
+    }
+  ],
+  "suspension" : [
+    {
+      "document_hidden" : true,
+      "phase" : "unparented_window",
+      "raf_delta" : 0,
+      "raf_fps" : 0,
+      "role" : "control(parented,visible)",
+      "seconds" : 15.763999999999999,
+      "tick_delta" : 4,
+      "ticks_per_sec" : 0.25374270489723422,
+      "view" : 1,
+      "visibility_state" : "hidden"
+    },
+    {
+      "document_hidden" : true,
+      "phase" : "unparented_window",
+      "raf_delta" : 0,
+      "raf_fps" : 0,
+      "role" : "subject(unparented)",
+      "seconds" : 15.757999999999999,
+      "tick_delta" : 2,
+      "ticks_per_sec" : 0.12691965985531159,
+      "view" : 5,
+      "visibility_state" : "hidden"
+    },
+    {
+      "document_hidden" : true,
+      "phase" : "unparented_window",
+      "raf_delta" : 0,
+      "raf_fps" : 0,
+      "role" : "subject(unparented)",
+      "seconds" : 15.757,
+      "tick_delta" : 2,
+      "ticks_per_sec" : 0.12692771466649744,
+      "view" : 50,
+      "visibility_state" : "hidden"
+    },
+    {
+      "document_hidden" : true,
+      "phase" : "after_swap",
+      "raf_delta" : 0,
+      "raf_fps" : 0,
+      "role" : "was-parented, NOW UNPARENTED",
+      "seconds" : 15.757999999999999,
+      "tick_delta" : 5,
+      "view" : 1,
+      "visibility_state" : "hidden"
+    },
+    {
+      "document_hidden" : true,
+      "phase" : "after_swap",
+      "raf_delta" : 0,
+      "raf_fps" : 0,
+      "role" : "was-unparented, NOW PARENTED+VISIBLE",
+      "seconds" : 15.756,
+      "tick_delta" : 5,
+      "view" : 5,
+      "visibility_state" : "hidden"
+    }
+  ],
+  "urls" : [
+    "http:\/\/127.0.0.1:8801\/doc\/0",
+    "http:\/\/127.0.0.1:8802\/anim\/1",
+    "http:\/\/127.0.0.1:8803\/repo\/2",
+    "http:\/\/127.0.0.1:8804\/doc\/3",
+    "http:\/\/127.0.0.1:8805\/feed\/4",
+    "http:\/\/127.0.0.1:8806\/anim\/5",
+    "http:\/\/127.0.0.1:8807\/doc\/6",
+    "http:\/\/127.0.0.1:8808\/feed\/7",
+    "http:\/\/127.0.0.1:8809\/repo\/8",
+    "http:\/\/127.0.0.1:8810\/doc\/9",
+    "http:\/\/127.0.0.1:8811\/feed\/10",
+    "http:\/\/127.0.0.1:8812\/repo\/11",
+    "http:\/\/127.0.0.1:8813\/doc\/12",
+    "http:\/\/127.0.0.1:8814\/feed\/13",
+    "http:\/\/127.0.0.1:8815\/repo\/14",
+    "http:\/\/127.0.0.1:8816\/doc\/15",
+    "http:\/\/127.0.0.1:8817\/feed\/16",
+    "http:\/\/127.0.0.1:8818\/repo\/17",
+    "http:\/\/127.0.0.1:8819\/doc\/18",
+    "http:\/\/127.0.0.1:8820\/feed\/19",
+    "http:\/\/127.0.0.1:8801\/repo\/20",
+    "http:\/\/127.0.0.1:8802\/doc\/21",
+    "http:\/\/127.0.0.1:8803\/feed\/22",
+    "http:\/\/127.0.0.1:8804\/repo\/23",
+    "http:\/\/127.0.0.1:8805\/doc\/24",
+    "http:\/\/127.0.0.1:8806\/feed\/25",
+    "http:\/\/127.0.0.1:8807\/repo\/26",
+    "http:\/\/127.0.0.1:8808\/doc\/27",
+    "http:\/\/127.0.0.1:8809\/feed\/28",
+    "http:\/\/127.0.0.1:8810\/repo\/29",
+    "http:\/\/127.0.0.1:8811\/doc\/30",
+    "http:\/\/127.0.0.1:8812\/feed\/31",
+    "http:\/\/127.0.0.1:8813\/repo\/32",
+    "http:\/\/127.0.0.1:8814\/doc\/33",
+    "http:\/\/127.0.0.1:8815\/feed\/34",
+    "http:\/\/127.0.0.1:8816\/repo\/35",
+    "http:\/\/127.0.0.1:8817\/doc\/36",
+    "http:\/\/127.0.0.1:8818\/feed\/37",
+    "http:\/\/127.0.0.1:8819\/repo\/38",
+    "http:\/\/127.0.0.1:8820\/doc\/39",
+    "http:\/\/127.0.0.1:8801\/feed\/40",
+    "http:\/\/127.0.0.1:8802\/repo\/41",
+    "http:\/\/127.0.0.1:8803\/doc\/42",
+    "http:\/\/127.0.0.1:8804\/feed\/43",
+    "http:\/\/127.0.0.1:8805\/repo\/44",
+    "http:\/\/127.0.0.1:8806\/doc\/45",
+    "http:\/\/127.0.0.1:8807\/feed\/46",
+    "http:\/\/127.0.0.1:8808\/repo\/47",
+    "http:\/\/127.0.0.1:8809\/doc\/48",
+    "http:\/\/127.0.0.1:8810\/feed\/49",
+    "http:\/\/127.0.0.1:8811\/anim\/50",
+    "http:\/\/127.0.0.1:8812\/doc\/51",
+    "http:\/\/127.0.0.1:8813\/feed\/52",
+    "http:\/\/127.0.0.1:8814\/repo\/53",
+    "http:\/\/127.0.0.1:8815\/doc\/54",
+    "http:\/\/127.0.0.1:8816\/feed\/55",
+    "http:\/\/127.0.0.1:8817\/repo\/56",
+    "http:\/\/127.0.0.1:8818\/doc\/57",
+    "http:\/\/127.0.0.1:8819\/feed\/58",
+    "http:\/\/127.0.0.1:8820\/repo\/59",
+    "http:\/\/127.0.0.1:8801\/doc\/60",
+    "http:\/\/127.0.0.1:8802\/feed\/61",
+    "http:\/\/127.0.0.1:8803\/repo\/62",
+    "http:\/\/127.0.0.1:8804\/doc\/63",
+    "http:\/\/127.0.0.1:8805\/feed\/64",
+    "http:\/\/127.0.0.1:8806\/repo\/65",
+    "http:\/\/127.0.0.1:8807\/doc\/66",
+    "http:\/\/127.0.0.1:8808\/feed\/67",
+    "http:\/\/127.0.0.1:8809\/repo\/68",
+    "http:\/\/127.0.0.1:8810\/doc\/69",
+    "http:\/\/127.0.0.1:8811\/feed\/70",
+    "http:\/\/127.0.0.1:8812\/repo\/71",
+    "http:\/\/127.0.0.1:8813\/doc\/72",
+    "http:\/\/127.0.0.1:8814\/feed\/73",
+    "http:\/\/127.0.0.1:8815\/repo\/74",
+    "http:\/\/127.0.0.1:8816\/doc\/75",
+    "http:\/\/127.0.0.1:8817\/feed\/76",
+    "http:\/\/127.0.0.1:8818\/repo\/77",
+    "http:\/\/127.0.0.1:8819\/doc\/78",
+    "http:\/\/127.0.0.1:8820\/feed\/79",
+    "http:\/\/127.0.0.1:8801\/repo\/80",
+    "http:\/\/127.0.0.1:8802\/doc\/81",
+    "http:\/\/127.0.0.1:8803\/feed\/82",
+    "http:\/\/127.0.0.1:8804\/repo\/83",
+    "http:\/\/127.0.0.1:8805\/doc\/84",
+    "http:\/\/127.0.0.1:8806\/feed\/85",
+    "http:\/\/127.0.0.1:8807\/repo\/86",
+    "http:\/\/127.0.0.1:8808\/doc\/87",
+    "http:\/\/127.0.0.1:8809\/feed\/88",
+    "http:\/\/127.0.0.1:8810\/repo\/89",
+    "http:\/\/127.0.0.1:8811\/doc\/90",
+    "http:\/\/127.0.0.1:8812\/feed\/91",
+    "http:\/\/127.0.0.1:8813\/repo\/92",
+    "http:\/\/127.0.0.1:8814\/doc\/93",
+    "http:\/\/127.0.0.1:8815\/feed\/94",
+    "http:\/\/127.0.0.1:8816\/repo\/95",
+    "http:\/\/127.0.0.1:8817\/doc\/96",
+    "http:\/\/127.0.0.1:8818\/feed\/97",
+    "http:\/\/127.0.0.1:8819\/repo\/98",
+    "http:\/\/127.0.0.1:8820\/anim\/99"
+  ],
+  "valid_for_visibility_measurements" : false,
+  "window_diag" : "window: isVisible=true occlusion=OCCLUDED isKey=false NSApp.isActive=false screen=true display_asleep=false screen_locked=true",
+  "window_ever_occluded" : true,
+  "window_ever_visible" : false
+}

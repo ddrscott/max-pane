@@ -1,7 +1,9 @@
 import AppKit
 import LanedCore
+import MaxPaneKit
 
 @main
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     static func main() {
         let app = NSApplication.shared
