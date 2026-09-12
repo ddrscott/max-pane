@@ -80,6 +80,8 @@ final class TerminalPaneController: NSObject, PaneController {
 
     /// Set by the strip so a newly opened lane can be scrolled to.
     var onRevealLane: ((String?) -> Void)?
+    /// The session ended, with this exit status. The strip takes the pane away.
+    var onSessionExit: ((Int32) -> Void)?
 
     var view: NSView { container }
 
@@ -202,6 +204,7 @@ final class TerminalPaneController: NSObject, PaneController {
             // leaving the surface alive keeps the scrollback readable.
             self?.status.isHidden = false
             self?.status.setState(.exited(code))
+            self?.onSessionExit?(code)
         }
         attachment.connect()
     }

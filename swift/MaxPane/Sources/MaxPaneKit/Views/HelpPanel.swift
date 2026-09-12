@@ -43,8 +43,17 @@ public final class HelpPanel: NSPanel {
     }
 
     /// A `Command`'s shortcut as a human reads it: ⌘⇧T, not `("t", [.command, .shift])`.
+    ///
+    /// A command with a second key shows both — `⌘T ⌘D` — because a shortcut
+    /// nobody can see is a shortcut nobody uses.
     public static func describe(_ command: Command) -> String {
-        let (key, mods) = command.shortcut
+        let primary = render(command.shortcut)
+        guard let alternate = command.alternateShortcut else { return primary }
+        return primary + " " + render(alternate)
+    }
+
+    private static func render(_ shortcut: (String, NSEvent.ModifierFlags)) -> String {
+        let (key, mods) = shortcut
         var out = ""
         if mods.contains(.control) { out += "⌃" }
         if mods.contains(.option) { out += "⌥" }

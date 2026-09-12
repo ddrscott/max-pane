@@ -33,6 +33,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+    /// Layout is already durable — every mutation commits before it animates —
+    /// but a web pane's session is only in WebKit's head until it is asked for.
+    func applicationWillTerminate(_ notification: Notification) {
+        windowController?.flushPaneState()
+    }
+
     // MARK: - menu
 
     /// Built from `Command`, so the menu and the key map cannot drift apart.

@@ -53,6 +53,17 @@ public struct Config: Codable {
     public var fontName: String = "JetBrains Mono"
     public var fontSize: Double = 13
 
+    /// Settle a horizontal scroll with the nearest lane centred.
+    ///
+    /// A strip is a row of columns, and a scroll that stops between two of them
+    /// leaves both half-readable — you then nudge it by hand, every time. On by
+    /// default; `"snapToLanes": false` in the config file leaves the scroll
+    /// exactly where the gesture put it.
+    public var snapToLanes: Bool = true
+    /// How long that settle takes. Short enough not to feel like a delay, long
+    /// enough to read as the strip moving rather than jumping.
+    public var snapSeconds: Double = 0.18
+
     public static var path: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/maxpane/config.json")
@@ -67,6 +78,44 @@ public struct Config: Codable {
                 Data("maxpane: ignoring \(path.path): \(error)\n".utf8))
             return Config()
         }
+    }
+
+    /// Decoded key by key, each one falling back to its default.
+    ///
+    /// Swift's synthesised decoder does not do this: a default value on a
+    /// property is used when you construct one in code and ignored when
+    /// decoding, so a missing key throws and the *whole file* is discarded.
+    /// That made this file all-or-nothing — writing `{"snapToLanes": false}`
+    /// silently reverted every other setting to its default — which is not a
+    /// config file anyone can use. A bad value is skipped the same way, and
+    /// says so on stderr rather than taking the app's settings down with it.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func read<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
+            do {
+                return try c.decodeIfPresent(T.self, forKey: key) ?? fallback
+            } catch {
+                Log.warn("config: ignoring \(key.stringValue) — \(error.localizedDescription)")
+                return fallback
+            }
+        }
+        let d = Config()
+        laneMinPt = read(.laneMinPt, d.laneMinPt)
+        laneMaxPt = read(.laneMaxPt, d.laneMaxPt)
+        laneDefaultPt = read(.laneDefaultPt, d.laneDefaultPt)
+        releaseDistance = read(.releaseDistance, d.releaseDistance)
+        rehydrateDistance = read(.rehydrateDistance, d.rehydrateDistance)
+        dataStoreCount = read(.dataStoreCount, d.dataStoreCount)
+        webMemorySoftFraction = read(.webMemorySoftFraction, d.webMemorySoftFraction)
+        webMemoryHardFraction = read(.webMemoryHardFraction, d.webMemoryHardFraction)
+        webMemoryTargetFraction = read(.webMemoryTargetFraction, d.webMemoryTargetFraction)
+        memorySampleSeconds = read(.memorySampleSeconds, d.memorySampleSeconds)
+        sessionPollSeconds = read(.sessionPollSeconds, d.sessionPollSeconds)
+        relayPtyHostPath = read(.relayPtyHostPath, d.relayPtyHostPath)
+        fontName = read(.fontName, d.fontName)
+        fontSize = read(.fontSize, d.fontSize)
+        snapToLanes = read(.snapToLanes, d.snapToLanes)
+        snapSeconds = read(.snapSeconds, d.snapSeconds)
     }
 
     /// The lane width bounds, already ordered, so a config with min > max does

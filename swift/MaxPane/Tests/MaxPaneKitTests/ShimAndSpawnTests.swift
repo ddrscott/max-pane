@@ -230,4 +230,63 @@ struct ConfigTests {
         #expect(config.widthRange == 420...900)
         #expect(config.clampWidth(600) == 600)
     }
+
+    // MARK: - reading the file
+
+    private func load(_ json: String) throws -> Config {
+        try JSONDecoder().decode(Config.self, from: Data(json.utf8))
+    }
+
+    @Test("a file that sets one key keeps the defaults for the rest")
+    func partialFilesWork() throws {
+        // This is the whole point. Swift's synthesised decoder throws on a
+        // missing key, which made the file all-or-nothing.
+        let config = try load(#"{"snapToLanes": false}"#)
+        #expect(config.snapToLanes == false)
+        #expect(config.laneDefaultPt == Config().laneDefaultPt)
+        #expect(config.fontName == Config().fontName)
+    }
+
+    @Test("an empty object is all defaults")
+    func emptyObject() throws {
+        let config = try load("{}")
+        #expect(config.laneMinPt == Config().laneMinPt)
+        #expect(config.snapToLanes == true)
+    }
+
+    @Test("snapping is on unless it is turned off")
+    func snapDefaultsOn() {
+        #expect(Config().snapToLanes)
+        #expect(Config().snapSeconds > 0)
+    }
+
+    @Test("a value of the wrong type is skipped, not fatal")
+    func oneBadValueDoesNotSinkTheFile() throws {
+        // A typo in one setting must not revert every other setting.
+        let config = try load(#"{"laneMinPt": "wide", "fontName": "Menlo"}"#)
+        #expect(config.laneMinPt == Config().laneMinPt)
+        #expect(config.fontName == "Menlo")
+    }
+
+    @Test("an unknown key is ignored")
+    func unknownKeysAreIgnored() throws {
+        let config = try load(#"{"colourScheme": "dracula", "fontSize": 15}"#)
+        #expect(config.fontSize == 15)
+    }
+
+    @Test("every key round-trips")
+    func roundTrip() throws {
+        var config = Config()
+        config.snapToLanes = false
+        config.snapSeconds = 0.5
+        config.laneMinPt = 500
+        config.relayPtyHostPath = "/opt/relay-pty-host"
+
+        let encoded = try JSONEncoder().encode(config)
+        let decoded = try JSONDecoder().decode(Config.self, from: encoded)
+        #expect(decoded.snapToLanes == false)
+        #expect(decoded.snapSeconds == 0.5)
+        #expect(decoded.laneMinPt == 500)
+        #expect(decoded.relayPtyHostPath == "/opt/relay-pty-host")
+    }
 }

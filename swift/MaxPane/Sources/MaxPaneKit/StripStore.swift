@@ -160,6 +160,34 @@ public final class StripStore {
     func setPaneScroll(_ paneId: String, _ y: Double) { try? core.setPaneScroll(paneId: paneId, scrollY: y) }
     func setPaneDataStore(_ paneId: String, _ id: String) { try? core.setPaneDataStore(paneId: paneId, dataStoreId: id) }
 
+    /// A web pane's whole session — history, scroll, form state — as WebKit's
+    /// own opaque blob. Deliberately not part of `Pane`: it is read once, when
+    /// the view is built, and carrying it in every snapshot would copy every
+    /// pane's history across the FFI on every layout change.
+    func setPaneSession(_ paneId: String, _ state: Data?) {
+        try? core.setPaneInteractionState(paneId: paneId, state: state)
+    }
+
+    func paneSession(_ paneId: String) -> Data? {
+        try? core.paneInteractionState(paneId: paneId)
+    }
+
+    // MARK: - recents
+
+    /// Remember something the user launched, for the new-pane picker.
+    func noteRecent(_ kind: RecentKind, _ value: String, cwd: String? = nil) {
+        try? core.noteRecent(kind: kind, value: value, cwd: cwd)
+    }
+
+    /// Most recently used first.
+    func recents(limit: UInt32 = 24) -> [Recent] {
+        (try? core.recents(limit: limit)) ?? []
+    }
+
+    func forgetRecent(_ kind: RecentKind, _ value: String) {
+        try? core.forgetRecent(kind: kind, value: value)
+    }
+
     // MARK: - focus and scroll
 
     /// Focus, without marshalling the strip. Focus does not change the shape of

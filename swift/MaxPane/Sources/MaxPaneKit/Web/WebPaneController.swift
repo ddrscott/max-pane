@@ -96,7 +96,12 @@ final class WebPaneController: NSObject, PaneController {
         }
     }
 
+    func flushState() { captureSession() }
+
     func tearDown() {
+        // Last chance: a quit tears every pane down, and a pane whose session
+        // was never written comes back as a fresh page.
+        captureSession()
         scrollObservation?.invalidate()
         scrollObservation = nil
         titleObservation?.invalidate()
@@ -114,6 +119,7 @@ final class WebPaneController: NSObject, PaneController {
         guard isParented, let webView else { return }
         // Record where the page is before it stops being able to tell us.
         captureScroll()
+        captureSession()
         webView.removeFromSuperview()
         isParented = false
     }
@@ -215,7 +221,31 @@ final class WebPaneController: NSObject, PaneController {
         store.setPaneDataStore(paneId, dataStoreId)
         install(webView)
 
-        if let url = pane.url { load(url) }
+        // The session, if this pane has one, in place of a bare load. It
+        // carries the back/forward list, the scroll offset and form state, so
+        // the pane comes back as the page you left rather than as its address:
+        // reloading `url` alone lands at the top with an empty history, which
+        // is why a restarted strip used to feel like a different strip.
+        if let session = store.paneSession(paneId) {
+            webView.interactionState = session
+            Log.debug("pane \(paneId) restoring a \(session.count)-byte session")
+            // WebKit restores asynchronously and, for a page it cannot restore
+            // (a cleared cache, a blob that predates a WebKit update), lands on
+            // about:blank with no error. The URL is the fallback.
+            let url = pane.url
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let self, let webView = self.webView, let url else { return }
+                let restored = webView.url?.absoluteString ?? ""
+                guard restored.isEmpty || restored == "about:blank" else {
+                    Log.debug("pane \(self.paneId) restored to \(restored)")
+                    return
+                }
+                Log.warn("pane \(self.paneId) could not restore its session; reloading \(url)")
+                self.load(url)
+            }
+        } else if let url = pane.url {
+            load(url)
+        }
         startScrollTracking()
     }
 
@@ -267,6 +297,9 @@ final class WebPaneController: NSObject, PaneController {
     // MARK: - scroll
 
     private var pendingScrollRestore: Double?
+    /// What was last written, so an idle pane is not rewritten every two
+    /// seconds. The blob is tens of kilobytes and the ledger is on disk.
+    private var lastSavedSession: Data?
 
     /// Poll rather than observe: `WKWebView` gives no scroll delegate on macOS,
     /// and injecting a scroll listener into every page costs a message per frame
@@ -278,7 +311,22 @@ final class WebPaneController: NSObject, PaneController {
         }
     }
 
+    /// Save what the pane is doing, on the same cadence as the scroll sample.
+    ///
+    /// `interactionState` is a synchronous read of WebKit's own serialisation,
+    /// so there is nothing to wait for and no JavaScript hop. It is skipped
+    /// while a load is in flight, because a half-loaded page serialises as a
+    /// half-loaded page and that is what would come back.
+    private func captureSession() {
+        guard let webView, webView.isLoading == false else { return }
+        guard let state = webView.interactionState as? Data else { return }
+        guard state != lastSavedSession else { return }
+        lastSavedSession = state
+        store.setPaneSession(paneId, state)
+    }
+
     private func captureScroll() {
+        captureSession()
         guard let webView, isParented else { return }
         webView.evaluateJavaScript("window.scrollY") { [weak self] value, _ in
             guard let self, let y = value as? Double else { return }
@@ -314,6 +362,9 @@ extension WebPaneController: WKNavigationDelegate {
             pendingScrollRestore = nil
             webView.evaluateJavaScript("window.scrollTo(0, \(y))")
         }
+        // A navigation is exactly when the history changed, so do not wait for
+        // the next sample to record it.
+        captureSession()
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {

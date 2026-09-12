@@ -6,6 +6,7 @@ import AppKit
 /// Keeping the whole map in one enum is how that stays true — a new action has
 /// to declare its key here or it does not exist.
 public enum Command: String, CaseIterable {
+    case newPane
     case newTerminalLane
     case runCommand
     case newWebLane
@@ -37,6 +38,7 @@ public enum Command: String, CaseIterable {
 
     public var title: String {
         switch self {
+        case .newPane: return "New Pane…"
         case .newTerminalLane: return "New Terminal Lane"
         case .runCommand: return "Run Command…"
         case .newWebLane: return "New Web Lane…"
@@ -72,10 +74,14 @@ public enum Command: String, CaseIterable {
     /// an explicit `.shift` when the binding is shifted.
     public var shortcut: (String, NSEvent.ModifierFlags) {
         switch self {
-        case .newTerminalLane: return ("t", [.command])
+        // ⌘T, with ⌘D as its twin: the decision is "something goes to the
+        // right of this", and which half of the app it lands in is the
+        // picker's question, not a question about which key to press.
+        case .newPane:         return ("t", [.command])
+        case .newTerminalLane: return ("t", [.command, .shift])
         case .runCommand:      return ("r", [.command])
         case .newWebLane:      return ("l", [.command])
-        case .splitDown:       return ("d", [.command])
+        case .splitDown:       return ("d", [.command, .shift])
         case .closePane:       return ("w", [.command])
         case .closeLane:       return ("w", [.command, .shift])
         case .focusLeft:       return ("[", [.command])
@@ -109,10 +115,23 @@ public enum Command: String, CaseIterable {
         }
     }
 
+    /// A second key for the same action, for the ones muscle memory has two
+    /// names for. AppKit gives a menu item exactly one key equivalent, so these
+    /// are matched in the window's key monitor — but they are declared here,
+    /// because a shortcut that is not in this file is a shortcut nobody can
+    /// find.
+    public var alternateShortcut: (String, NSEvent.ModifierFlags)? {
+        switch self {
+        // ⌘D is "split" everywhere else a developer works.
+        case .newPane: return ("d", [.command])
+        default: return nil
+        }
+    }
+
     /// Which menu this belongs under.
     public var menu: MenuSection {
         switch self {
-        case .newTerminalLane, .newWebLane, .runCommand, .splitDown, .attachSession: return .file
+        case .newPane, .newTerminalLane, .newWebLane, .runCommand, .splitDown, .attachSession: return .file
         case .closePane, .closeLane: return .file
         case .focusLeft, .focusRight, .focusUp, .focusDown, .search, .gather, .ungather: return .navigate
         case .moveLaneLeft, .moveLaneRight, .toggleSidebar, .togglePinned,

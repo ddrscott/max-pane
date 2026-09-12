@@ -612,6 +612,24 @@ fileprivate struct FfiConverterString: FfiConverter {
     }
 }
 
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterData: FfiConverterRustBuffer {
+    typealias SwiftType = Data
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Data {
+        let len: Int32 = try readInt(&buf)
+        return Data(try readBytes(&buf, count: Int(len)))
+    }
+
+    public static func write(_ value: Data, into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        writeBytes(&buf, value)
+    }
+}
+
 
 
 
@@ -656,6 +674,12 @@ public protocol CoreProtocol: AnyObject, Sendable {
      * effect of something structural, like search-to-scroll.
      */
     func focusPane(paneId: String) throws  -> StripState
+    
+    /**
+     * Drop one entry — the picker's way of pruning a typo you will never run
+     * again but which keeps taking a numeric shortcut.
+     */
+    func forgetRecent(kind: RecentKind, value: String) throws 
     
     /**
      * Show only lanes tagged with `project_root`, in true ordinal order (⌘G).
@@ -709,6 +733,11 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func noteFocus(paneId: String) throws 
     
     /**
+     * Remember a launch for the new-pane picker.
+     */
+    func noteRecent(kind: RecentKind, value: String, cwd: String?) throws 
+    
+    /**
      * Swap a lane with its neighbour (⌘⇧← / ⌘⇧→).
      */
     func nudgeLane(laneId: String, right: Bool) throws  -> StripState
@@ -725,6 +754,11 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func pair(ptyPaneId: String, webPaneId: String) throws 
     
     func pairsOf(paneId: String) throws  -> [String]
+    
+    /**
+     * Read back what a web pane was doing, for the one call that rebuilds it.
+     */
+    func paneInteractionState(paneId: String) throws  -> Data?
     
     /**
      * What the shell should do with every pane, given what it just measured.
@@ -745,6 +779,11 @@ public protocol CoreProtocol: AnyObject, Sendable {
      * Pushed from the shell on a debounce; capped at 200 lines per pane.
      */
     func pushScrollback(paneId: String, lines: [String]) 
+    
+    /**
+     * What to offer, most recent first.
+     */
+    func recents(limit: UInt32) throws  -> [Recent]
     
     /**
      * The current revision, without marshalling a snapshot.
@@ -779,6 +818,14 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func setManualTag(laneId: String, projectRoot: String?) throws  -> StripState
     
     func setPaneDataStore(paneId: String, dataStoreId: String) throws 
+    
+    /**
+     * Store (or clear, with `None`) a web pane's `WKWebView.interactionState`.
+     *
+     * No `StripState` is published: the blob is not part of the layout, and
+     * republishing on every navigation would redraw the strip for a scroll.
+     */
+    func setPaneInteractionState(paneId: String, state: Data?) throws 
     
     func setPaneScroll(paneId: String, scrollY: Double) throws 
     
@@ -979,6 +1026,20 @@ open func focusPane(paneId: String)throws  -> StripState  {
 }
     
     /**
+     * Drop one entry — the picker's way of pruning a typo you will never run
+     * again but which keeps taking a numeric shortcut.
+     */
+open func forgetRecent(kind: RecentKind, value: String)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_forget_recent(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeRecentKind_lower(kind),
+        FfiConverterString.lower(value),uniffiCallStatus
+    )
+}
+}
+    
+    /**
      * Show only lanes tagged with `project_root`, in true ordinal order (⌘G).
      * A filter over the snapshot; it writes nothing.
      */
@@ -1088,6 +1149,20 @@ open func noteFocus(paneId: String)throws   {try rustCallWithError(FfiConverterT
 }
     
     /**
+     * Remember a launch for the new-pane picker.
+     */
+open func noteRecent(kind: RecentKind, value: String, cwd: String?)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_note_recent(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeRecentKind_lower(kind),
+        FfiConverterString.lower(value),
+        FfiConverterOptionString.lower(cwd),uniffiCallStatus
+    )
+}
+}
+    
+    /**
      * Swap a lane with its neighbour (⌘⇧← / ⌘⇧→).
      */
 open func nudgeLane(laneId: String, right: Bool)throws  -> StripState  {
@@ -1140,6 +1215,19 @@ open func pairsOf(paneId: String)throws  -> [String]  {
 }
     
     /**
+     * Read back what a web pane was doing, for the one call that rebuilds it.
+     */
+open func paneInteractionState(paneId: String)throws  -> Data?  {
+    return try  FfiConverterOptionData.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_pane_interaction_state(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(paneId),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * What the shell should do with every pane, given what it just measured.
      * Pure: calling it changes nothing. The shell reports back with
      * [`Core::mark_evicted`] / [`Core::mark_live`] once it has acted.
@@ -1182,6 +1270,19 @@ open func pushScrollback(paneId: String, lines: [String])  {try! rustCall() {
         FfiConverterSequenceString.lower(lines),uniffiCallStatus
     )
 }
+}
+    
+    /**
+     * What to offer, most recent first.
+     */
+open func recents(limit: UInt32)throws  -> [Recent]  {
+    return try  FfiConverterSequenceTypeRecent.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_recents(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(limit),uniffiCallStatus
+    )
+})
 }
     
     /**
@@ -1274,6 +1375,22 @@ open func setPaneDataStore(paneId: String, dataStoreId: String)throws   {try rus
             self.uniffiCloneHandle(),
         FfiConverterString.lower(paneId),
         FfiConverterString.lower(dataStoreId),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Store (or clear, with `None`) a web pane's `WKWebView.interactionState`.
+     *
+     * No `StripState` is published: the blob is not part of the layout, and
+     * republishing on every navigation would redraw the strip for a scroll.
+     */
+open func setPaneInteractionState(paneId: String, state: Data?)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_set_pane_interaction_state(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(paneId),
+        FfiConverterOptionData.lower(state),uniffiCallStatus
     )
 }
 }
@@ -2046,6 +2163,99 @@ public func FfiConverterTypePortablePane_lift(_ buf: RustBuffer) throws -> Porta
 #endif
 public func FfiConverterTypePortablePane_lower(_ value: PortablePane) -> RustBuffer {
     return FfiConverterTypePortablePane.lower(value)
+}
+
+
+/**
+ * Something the user launched before, for the new-pane picker.
+ *
+ * The picker's whole value is that the thing you want is usually the thing you
+ * ran last, so this is ordered by `last_used_at` and nothing else. `use_count`
+ * is carried for display, not for ranking: a frecency score would keep a
+ * command you ran fifty times last week above the one you ran a minute ago,
+ * which is the opposite of what a strip full of half-finished work needs.
+ */
+public struct Recent: Equatable, Hashable {
+    public var kind: RecentKind
+    /**
+     * The command line, or the URL.
+     */
+    public var value: String
+    /**
+     * `Command` only: the directory it last ran in.
+     */
+    public var cwd: String?
+    /**
+     * Epoch ms.
+     */
+    public var lastUsedAt: Int64
+    public var useCount: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: RecentKind, 
+        /**
+         * The command line, or the URL.
+         */value: String, 
+        /**
+         * `Command` only: the directory it last ran in.
+         */cwd: String?, 
+        /**
+         * Epoch ms.
+         */lastUsedAt: Int64, useCount: UInt32) {
+        self.kind = kind
+        self.value = value
+        self.cwd = cwd
+        self.lastUsedAt = lastUsedAt
+        self.useCount = useCount
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension Recent: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRecent: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Recent {
+        return
+            try Recent(
+                kind: FfiConverterTypeRecentKind.read(from: &buf), 
+                value: FfiConverterString.read(from: &buf), 
+                cwd: FfiConverterOptionString.read(from: &buf), 
+                lastUsedAt: FfiConverterInt64.read(from: &buf), 
+                useCount: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: Recent, into buf: inout [UInt8]) {
+        FfiConverterTypeRecentKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.value, into: &buf)
+        FfiConverterOptionString.write(value.cwd, into: &buf)
+        FfiConverterInt64.write(value.lastUsedAt, into: &buf)
+        FfiConverterUInt32.write(value.useCount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecent_lift(_ buf: RustBuffer) throws -> Recent {
+    return try FfiConverterTypeRecent.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecent_lower(_ value: Recent) -> RustBuffer {
+    return FfiConverterTypeRecent.lower(value)
 }
 
 
@@ -2846,6 +3056,81 @@ public func FfiConverterTypeProjectSource_lower(_ value: ProjectSource) -> RustB
 
 
 
+/**
+ * What a remembered entry launches.
+ */
+
+public enum RecentKind: Equatable, Hashable {
+    
+    /**
+     * A command line, run in a terminal lane.
+     */
+    case command
+    /**
+     * A URL, opened in a web lane.
+     */
+    case url
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension RecentKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRecentKind: FfiConverterRustBuffer {
+    typealias SwiftType = RecentKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RecentKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .command
+        
+        case 2: return .url
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: RecentKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .command:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .url:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecentKind_lift(_ buf: RustBuffer) throws -> RecentKind {
+    return try FfiConverterTypeRecentKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRecentKind_lower(_ value: RecentKind) -> RustBuffer {
+    return FfiConverterTypeRecentKind.lower(value)
+}
+
+
+
 
 public enum SearchField: Equatable, Hashable {
     
@@ -2968,6 +3253,30 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionData: FfiConverterRustBuffer {
+    typealias SwiftType = Data?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterData.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterData.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -3126,6 +3435,31 @@ fileprivate struct FfiConverterSequenceTypePortablePane: FfiConverterRustBuffer 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeRecent: FfiConverterRustBuffer {
+    typealias SwiftType = [Recent]
+
+    public static func write(_ value: [Recent], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeRecent.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Recent] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Recent]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeRecent.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeSearchHit: FfiConverterRustBuffer {
     typealias SwiftType = [SearchHit]
 
@@ -3181,6 +3515,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_focus_pane() != 18867) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_forget_recent() != 59469) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_gather() != 60520) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3202,6 +3539,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_note_focus() != 58566) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_note_recent() != 54080) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_nudge_lane() != 39243) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3214,6 +3554,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_pairs_of() != 9513) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_pane_interaction_state() != 34891) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_plan_eviction() != 2727) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3221,6 +3564,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_push_scrollback() != 4856) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_recents() != 56922) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_revision() != 56367) {
@@ -3242,6 +3588,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_set_pane_data_store() != 42955) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_set_pane_interaction_state() != 65254) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_set_pane_scroll() != 54727) {

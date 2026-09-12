@@ -10,6 +10,10 @@ use std::path::Path;
 const MIGRATIONS: &[(&str, &str)] = &[
     ("0001_initial", include_str!("../migrations/0001_initial.sql")),
     ("0002_lane_span", include_str!("../migrations/0002_lane_span.sql")),
+    (
+        "0003_session_and_recents",
+        include_str!("../migrations/0003_session_and_recents.sql"),
+    ),
 ];
 
 pub struct Ledger {
@@ -308,6 +312,76 @@ impl Ledger {
         Ok(())
     }
 
+    /// `WKWebView.interactionState`, deliberately not part of `Pane`.
+    ///
+    /// It is tens of kilobytes per pane and it is read exactly once, when the
+    /// web view is built. Carrying it in the record would copy every pane's
+    /// blob across the FFI on every layout mutation — at 150 lanes, megabytes
+    /// per keystroke — to serve a read that happens once per pane per launch.
+    pub fn update_pane_interaction_state(&self, pane_id: &str, state: Option<&[u8]>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE pane SET interaction_state = ?2 WHERE id = ?1",
+            params![pane_id, state],
+        )?;
+        Ok(())
+    }
+
+    pub fn pane_interaction_state(&self, pane_id: &str) -> Result<Option<Vec<u8>>> {
+        Ok(self
+            .conn
+            .query_row("SELECT interaction_state FROM pane WHERE id = ?1", [pane_id], |r| {
+                r.get::<_, Option<Vec<u8>>>(0)
+            })
+            .optional()?
+            .flatten())
+    }
+
+    // ---- recents -----------------------------------------------------------
+
+    /// Record a launch, or bump the one already there.
+    pub fn note_recent(
+        &self,
+        kind: RecentKind,
+        value: &str,
+        cwd: Option<&str>,
+        now_ms: i64,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO recent (kind, value, cwd, seq, last_used_at, use_count)
+             VALUES (?1, ?2, ?3, (SELECT COALESCE(MAX(seq), 0) + 1 FROM recent), ?4, 1)
+             ON CONFLICT(kind, value) DO UPDATE SET
+                 seq = excluded.seq,
+                 last_used_at = excluded.last_used_at,
+                 use_count = use_count + 1,
+                 -- The directory follows the command: running `npm test` in a
+                 -- different repo should offer that repo next time, not the one
+                 -- it first ran in a month ago.
+                 cwd = COALESCE(excluded.cwd, cwd)",
+            params![recent_kind_str(kind), value, cwd, now_ms],
+        )?;
+        Ok(())
+    }
+
+    /// Most recent first.
+    pub fn recents(&self, limit: u32) -> Result<Vec<Recent>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT kind, value, cwd, last_used_at, use_count
+             FROM recent ORDER BY seq DESC LIMIT ?1",
+        )?;
+        let rows: Vec<Recent> = stmt
+            .query_map([limit], row_to_recent)?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    pub fn forget_recent(&self, kind: RecentKind, value: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM recent WHERE kind = ?1 AND value = ?2",
+            params![recent_kind_str(kind), value],
+        )?;
+        Ok(())
+    }
+
     pub fn set_pane_evicted(
         &self,
         pane_id: &str,
@@ -410,6 +484,30 @@ fn row_to_pane(r: &Row) -> rusqlite::Result<Pane> {
         snapshot_path: r.get(8)?,
         state: parse_state(&r.get::<_, String>(9)?),
     })
+}
+
+fn row_to_recent(r: &Row) -> rusqlite::Result<Recent> {
+    Ok(Recent {
+        kind: parse_recent_kind(&r.get::<_, String>(0)?),
+        value: r.get(1)?,
+        cwd: r.get(2)?,
+        last_used_at: r.get(3)?,
+        use_count: r.get::<_, i64>(4)? as u32,
+    })
+}
+
+pub fn recent_kind_str(k: RecentKind) -> &'static str {
+    match k {
+        RecentKind::Command => "command",
+        RecentKind::Url => "url",
+    }
+}
+
+fn parse_recent_kind(s: &str) -> RecentKind {
+    match s {
+        "url" => RecentKind::Url,
+        _ => RecentKind::Command,
+    }
 }
 
 pub fn kind_str(k: PaneKind) -> &'static str {

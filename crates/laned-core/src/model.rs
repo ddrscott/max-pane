@@ -24,6 +24,34 @@ pub enum ProjectSource {
     Manual,
 }
 
+/// What a remembered entry launches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum RecentKind {
+    /// A command line, run in a terminal lane.
+    Command,
+    /// A URL, opened in a web lane.
+    Url,
+}
+
+/// Something the user launched before, for the new-pane picker.
+///
+/// The picker's whole value is that the thing you want is usually the thing you
+/// ran last, so this is ordered by `last_used_at` and nothing else. `use_count`
+/// is carried for display, not for ranking: a frecency score would keep a
+/// command you ran fifty times last week above the one you ran a minute ago,
+/// which is the opposite of what a strip full of half-finished work needs.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct Recent {
+    pub kind: RecentKind,
+    /// The command line, or the URL.
+    pub value: String,
+    /// `Command` only: the directory it last ran in.
+    pub cwd: Option<String>,
+    /// Epoch ms.
+    pub last_used_at: i64,
+    pub use_count: u32,
+}
+
 /// Whether the shell should be holding a live view for this pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum PaneState {

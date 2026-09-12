@@ -353,6 +353,52 @@ impl Core {
         inner.ledger.update_pane_scroll(&pane_id, scroll_y)
     }
 
+    /// Store (or clear, with `None`) a web pane's `WKWebView.interactionState`.
+    ///
+    /// No `StripState` is published: the blob is not part of the layout, and
+    /// republishing on every navigation would redraw the strip for a scroll.
+    pub fn set_pane_interaction_state(&self, pane_id: String, state: Option<Vec<u8>>) -> Result<()> {
+        let inner = self.inner.lock();
+        inner.ledger.update_pane_interaction_state(&pane_id, state.as_deref())
+    }
+
+    /// Read back what a web pane was doing, for the one call that rebuilds it.
+    pub fn pane_interaction_state(&self, pane_id: String) -> Result<Option<Vec<u8>>> {
+        let inner = self.inner.lock();
+        inner.ledger.pane_interaction_state(&pane_id)
+    }
+
+    // ---- recents -----------------------------------------------------------
+
+    /// Remember a launch for the new-pane picker.
+    pub fn note_recent(
+        &self,
+        kind: RecentKind,
+        value: String,
+        cwd: Option<String>,
+    ) -> Result<()> {
+        let trimmed = value.trim();
+        // An empty entry would take a numeric shortcut and launch nothing.
+        if trimmed.is_empty() {
+            return Ok(());
+        }
+        let inner = self.inner.lock();
+        inner.ledger.note_recent(kind, trimmed, cwd.as_deref(), now_ms())
+    }
+
+    /// What to offer, most recent first.
+    pub fn recents(&self, limit: u32) -> Result<Vec<Recent>> {
+        let inner = self.inner.lock();
+        inner.ledger.recents(limit)
+    }
+
+    /// Drop one entry — the picker's way of pruning a typo you will never run
+    /// again but which keeps taking a numeric shortcut.
+    pub fn forget_recent(&self, kind: RecentKind, value: String) -> Result<()> {
+        let inner = self.inner.lock();
+        inner.ledger.forget_recent(kind, &value)
+    }
+
     pub fn set_pane_data_store(&self, pane_id: String, data_store_id: String) -> Result<()> {
         let inner = self.inner.lock();
         inner.ledger.set_pane_data_store(&pane_id, &data_store_id)

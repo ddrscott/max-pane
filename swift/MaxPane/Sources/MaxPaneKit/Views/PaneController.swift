@@ -21,6 +21,13 @@ protocol PaneController: AnyObject {
     /// Release everything; the pane is gone for good.
     func tearDown()
 
+    /// Write anything the pane would otherwise lose, without tearing it down.
+    ///
+    /// Called on quit. A terminal has nothing to save — the session lives in
+    /// Relay and the ledger already has the layout — but a web pane's history
+    /// and scroll are only in WebKit's head until someone asks for them.
+    func flushState()
+
     // Eviction actions (PRD §10.2, §10.3). Each must be idempotent: the plan is
     // recomputed on every scroll settle and will re-issue whatever is still true.
 
@@ -32,6 +39,10 @@ protocol PaneController: AnyObject {
     func evict()
     /// Rebuild and restore URL and scroll.
     func rehydrate()
+}
+
+extension PaneController {
+    func flushState() {}
 }
 
 /// What WebKit's content processes actually weigh, right now.

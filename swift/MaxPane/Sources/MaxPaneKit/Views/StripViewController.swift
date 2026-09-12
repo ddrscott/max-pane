@@ -28,6 +28,16 @@ public final class StripViewController: NSViewController {
     /// Who owns the live object inside each pane. Survives a lane view being
     /// recycled: unparenting a `WKWebView` is cheap, destroying it is not.
     private var paneControllers: [String: PaneController] = [:]
+    /// Panes on their way out, so a second exit frame does not start a second
+    /// animation on a pane that is already leaving.
+    private var exiting: Set<String> = []
+    private var snapDebounce: DispatchWorkItem?
+    /// True while the snap animation is running, so the bounds changes it
+    /// causes do not schedule another snap.
+    private var isSnapping = false
+    /// Programmatic scrolls run past this moment; snapping stays out of their
+    /// way until then.
+    private var suppressSnapUntil: CFAbsoluteTime = 0
 
     private var observer: UUID?
     private var scrollDebounce: DispatchWorkItem?
@@ -378,6 +388,149 @@ public final class StripViewController: NSViewController {
         }
     }
 
+    // MARK: - a session that ended
+
+    /// The shell in this pane exited, so the pane goes.
+    ///
+    /// A terminal whose process is gone is a rectangle of dead text taking a
+    /// column: you close it by hand every single time, which is a chore the app
+    /// can do for you. It animates out rather than blinking away — the lane
+    /// beside it is about to move, and a strip where columns teleport is a strip
+    /// you lose your place in.
+    ///
+    /// The beat before it starts is deliberate. An exit is often the last line
+    /// of output, and a pane that vanishes the instant a command finishes takes
+    /// the answer with it.
+    private func paneDidExit(_ paneId: String) {
+        guard exiting.insert(paneId).inserted else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.exitHold) { [weak self] in
+            self?.animateAwayAndClose(paneId)
+        }
+    }
+
+    /// How long a finished pane stays legible before it starts to go.
+    private static let exitHold: TimeInterval = 0.45
+    /// How long it takes to go.
+    private static let exitCollapse: TimeInterval = 0.22
+
+    private func animateAwayAndClose(_ paneId: String) {
+        // Gone already — closed by hand during the hold, or the lane went with
+        // a sibling.
+        guard let lane = store.lane(containing: paneId) else {
+            exiting.remove(paneId)
+            return
+        }
+        // A lane with a stack loses one pane and keeps its column; there is no
+        // width to collapse, so it fades and the stack re-lays out under it.
+        let isLastPane = lane.panes.count == 1
+        guard let laneView = laneViews[lane.id], isLastPane else {
+            fade(paneControllers[paneId]?.view) { [weak self] in
+                guard let self else { return }
+                self.exiting.remove(paneId)
+                self.focusNeighbourIfNeeded(closing: paneId)
+                try? self.store.closePane(paneId)
+            }
+            return
+        }
+
+        let full = CGFloat(lane.widthPt)
+        animate(duration: Self.exitCollapse) { [weak self] t in
+            guard let self else { return }
+            // Ease-out: most of the travel happens immediately, so the eye
+            // reads "that one left" rather than watching a column shrink.
+            let eased = 1 - pow(1 - t, 3)
+            laneView.alphaValue = 1 - eased
+            self.liveResize = (lane.id, max(0, full * (1 - eased)))
+            self.content.layOut(
+                lanes: self.store.state.lanes,
+                viewFor: { [weak self] l in self?.laneViews[l.id] },
+                widthOverride: self.liveResize)
+        } completion: { [weak self] in
+            guard let self else { return }
+            self.liveResize = nil
+            laneView.alphaValue = 1
+            self.exiting.remove(paneId)
+            self.focusNeighbourIfNeeded(closing: paneId)
+            // The ledger last, per PRD §6: the strip has already shown the
+            // result, but nothing is true until it commits.
+            try? self.store.closePane(paneId)
+        }
+    }
+
+    /// Keep the keyboard somewhere real when the focused pane is the one going.
+    private func focusNeighbourIfNeeded(closing paneId: String) {
+        guard store.state.focusedPaneId == paneId,
+              let lane = store.lane(containing: paneId),
+              let index = store.state.lanes.firstIndex(where: { $0.id == lane.id })
+        else { return }
+        // The lane to the right inherits the column the closing one is leaving,
+        // so it is the one the eye is already on.
+        let neighbours = [index + 1, index - 1].compactMap { i -> Lane? in
+            guard i >= 0, i < store.state.lanes.count else { return nil }
+            let candidate = store.state.lanes[i]
+            return candidate.id == lane.id ? nil : candidate
+        }
+        guard let next = neighbours.first, let pane = next.panes.first else { return }
+        try? store.focusPane(pane.id)
+    }
+
+    private func fade(_ view: NSView?, completion: @escaping () -> Void) {
+        guard let view else { return completion() }
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = Self.exitCollapse
+            view.animator().alphaValue = 0
+        } completionHandler: {
+            view.alphaValue = 1
+            completion()
+        }
+    }
+
+    /// Run `step` with eased progress 0…1 over `duration`, then `completion`.
+    ///
+    /// A timer rather than Core Animation because what is being animated is not
+    /// a view property: the strip's layout is computed from lane widths, and the
+    /// collapse has to run through that same layout or the lanes to the right
+    /// would not move with it.
+    private func animate(
+        duration: TimeInterval,
+        step: @escaping @MainActor (CGFloat) -> Void,
+        completion: @escaping @MainActor () -> Void
+    ) {
+        let start = CACurrentMediaTime()
+        // Scheduled on the main run loop in `.common`, so the block is already
+        // on the main thread — `assumeIsolated` states that rather than hopping
+        // through a Task, which would deliver frames a run loop late and let the
+        // timer fire again before the last frame drew.
+        let running = RunningAnimation()
+        running.timer = Timer(timeInterval: 1.0 / 60, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                let t = min(1, (CACurrentMediaTime() - start) / duration)
+                step(CGFloat(t))
+                if t >= 1 {
+                    running.timer?.invalidate()
+                    completion()
+                }
+            }
+        }
+        RunLoop.main.add(running.timer!, forMode: .common)
+    }
+
+    /// Holds the timer so the block can stop the thing that is running it —
+    /// the block's own `Timer` argument is not main-actor isolated.
+    @MainActor
+    private final class RunningAnimation {
+        var timer: Timer?
+    }
+
+    /// Ask every live pane to write down what it would otherwise lose.
+    ///
+    /// Only web panes have anything to say — their history and scroll live in
+    /// WebKit until someone asks — and only the ones that were built: a pane
+    /// scrolled far off the strip has no controller and nothing in flight.
+    public func flushPaneState() {
+        for controller in paneControllers.values { controller.flushState() }
+    }
+
     private func retire(_ laneView: LaneView, laneId: String, destroyPanes: Bool) {
         if destroyPanes {
             for paneId in laneView.installedPaneIds {
@@ -403,6 +556,9 @@ public final class StripViewController: NSViewController {
             controller.onRevealLane = { [weak self] laneId in
                 guard let self, let laneId else { return }
                 self.reveal(laneId: laneId, flash: true)
+            }
+            controller.onSessionExit = { [weak self] _ in
+                self?.paneDidExit(pane.id)
             }
             if let sessionId = pane.relaySessionId {
                 controller.attach(RelayAttachmentAdapter(sessionId: sessionId))
@@ -555,7 +711,63 @@ public final class StripViewController: NSViewController {
         let work = DispatchWorkItem { [weak self] in self?.store.setScrollX(x) }
         scrollDebounce = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+        scheduleSnap()
     }
+
+    // MARK: - snapping
+
+    /// Settle the scroll with a lane centred, once the gesture stops.
+    ///
+    /// A strip is a row of columns and a scroll that stops between two of them
+    /// leaves both half-readable, so you nudge it by hand — every time. The
+    /// delay is what makes this feel like settling rather than fighting: it has
+    /// to be longer than the gap between momentum events, or the strip would
+    /// pull against a gesture that is still going.
+    private func scheduleSnap() {
+        guard config.snapToLanes, !isSnapping else { return }
+        // A scroll the app asked for has already decided where to stop.
+        // `reveal` centres deliberately, and `ensureVisible` deliberately does
+        // not — arrow-key focus moves the strip as little as it can, and a snap
+        // chasing it would undo exactly that.
+        guard CFAbsoluteTimeGetCurrent() > suppressSnapUntil else { return }
+        snapDebounce?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.snapToNearestLane() }
+        snapDebounce = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.14, execute: work)
+    }
+
+    private func snapToNearestLane() {
+        guard config.snapToLanes, !isSnapping else { return }
+        let clip = scrollView.contentView
+        let viewport = clip.bounds.width
+        // Nothing to snap to when the whole strip fits.
+        guard viewport > 0, content.frame.width > viewport else { return }
+
+        guard let target = LaneSnap.offset(
+            forCentre: clip.bounds.origin.x + viewport / 2,
+            viewport: viewport,
+            lanes: store.state.lanes)
+        else { return }
+
+        // Within a couple of points is centred; moving anyway would look like a
+        // twitch at the end of every scroll.
+        guard abs(target - clip.bounds.origin.x) > 2 else { return }
+
+        isSnapping = true
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = config.snapSeconds
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            clip.animator().setBoundsOrigin(NSPoint(x: target, y: clip.bounds.origin.y))
+        } completionHandler: { [weak self] in
+            guard let self else { return }
+            self.isSnapping = false
+            self.scrollView.reflectScrolledClipView(self.scrollView.contentView)
+            self.updateMaterialization()
+        }
+    }
+
+    // The arithmetic lives in `LaneSnap`, below: it needs no view and no
+    // store, and clamping is worth testing on its own.
 
     /// Centre a lane and optionally flash its border — PRD §7.5's
     /// search-to-scroll, and what the sidebar does on click.
@@ -570,6 +782,7 @@ public final class StripViewController: NSViewController {
         let maxX = max(0, content.frame.width - viewportWidth)
         let target = NSPoint(x: min(max(0, centred), maxX), y: 0)
 
+        suppressSnapUntil = CFAbsoluteTimeGetCurrent() + 0.6
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.25
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
@@ -637,6 +850,7 @@ public final class StripViewController: NSViewController {
         else if right > viewport.maxX { x = right - viewport.width }
         guard x != viewport.origin.x else { return }
 
+        suppressSnapUntil = CFAbsoluteTimeGetCurrent() + 0.6
         scrollView.contentView.animator().setBoundsOrigin(NSPoint(x: max(0, x), y: 0))
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
@@ -752,5 +966,32 @@ final class StripContentView: NSView {
         if frame.width != totalWidth || frame.height != height {
             frame = NSRect(x: 0, y: 0, width: totalWidth, height: height)
         }
+    }
+}
+
+
+/// Where a horizontal scroll should come to rest.
+///
+/// Separated from the view because it is all arithmetic, and because clamping
+/// is where an off-by-a-lane hides: the first and last lanes cannot be centred,
+/// and pretending otherwise scrolls past the end of the strip.
+enum LaneSnap {
+    /// The scroll offset that centres whichever lane is nearest `centre`, or
+    /// nil when there are no lanes.
+    static func offset(forCentre centre: CGFloat, viewport: CGFloat, lanes: [Lane]) -> CGFloat? {
+        var x: CGFloat = 0
+        var best: (distance: CGFloat, origin: CGFloat, width: CGFloat)?
+        for lane in lanes {
+            let width = CGFloat(lane.widthPt)
+            let distance = abs((x + width / 2) - centre)
+            if distance < (best?.distance ?? .greatestFiniteMagnitude) {
+                best = (distance, x, width)
+            }
+            x += width + Theme.borderWidth
+        }
+        guard let best else { return nil }
+
+        let centred = best.origin - (viewport - best.width) / 2
+        return min(max(0, centred), max(0, x - viewport))
     }
 }

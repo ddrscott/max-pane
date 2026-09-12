@@ -12,7 +12,11 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private let sidebar: SidebarViewController
     private let strip: StripViewController
     private var palette: SearchPaletteController?
+    /// Held while it is on screen, like `palette` — for the same reason: the
+    /// table's data source is weak.
+    private var newPanePicker: NewPanePicker?
     private var openServer: OpenServer?
+    private var alternateMonitor: Any?
     private var memoryDashboard: MemoryDashboard?
     private var helpPanel: HelpPanel?
     private let statusBar = StatusBar()
@@ -93,6 +97,31 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             try? self?.store.attachSessionAtEnd(relaySessionId: sessionId)
         }
         startSideChannels()
+        installAlternateShortcuts()
+    }
+
+    /// Keys a command has besides its menu one.
+    ///
+    /// A menu item carries exactly one key equivalent, and ⌘T and ⌘D are the
+    /// same thought — so the second one is matched here, ahead of the responder
+    /// chain, and declared in `Command.alternateShortcut` so the map in
+    /// `Commands.swift` is still the whole truth about what the keyboard does.
+    private func installAlternateShortcuts() {
+        alternateMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.window?.isKeyWindow == true else { return event }
+            // A palette on screen owns the keyboard; ⌘D while typing a command
+            // into the picker must not open a second picker.
+            guard NSApp.keyWindow === self.window else { return event }
+            for command in Command.allCases {
+                guard let (key, mask) = command.alternateShortcut,
+                      event.charactersIgnoringModifiers?.lowercased() == key,
+                      event.modifierFlags.intersection(.deviceIndependentFlagsMask) == mask
+                else { continue }
+                self.perform(command)
+                return nil
+            }
+            return event
+        }
     }
 
     /// The two things that talk to the world outside the window: the shim's
@@ -157,6 +186,10 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         let near = sessionId.isEmpty ? nil : strip.lane(forRelaySession: sessionId)
         do {
             try store.newWebLane(url: url, near: near)
+            // Everything deliberately launched joins the picker's memory,
+            // whichever door it came in by — the shim's whole point is that
+            // `open` from a terminal is the same act as ⌘T.
+            store.noteRecent(.url, url)
             if let laneId = store.state.lanes.last?.id, near == nil {
                 strip.reveal(laneId: laneId, flash: true)
             }
@@ -187,6 +220,10 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 args: args,
                 cols: size.cols, rows: size.rows)
             try store.newTerminalLane(relaySessionId: session, near: near)
+            if !command.isEmpty {
+                store.noteRecent(
+                    .command, ([command] + args).joined(separator: " "), cwd: workingDirectory)
+            }
             if let laneId = store.state.lanes.last?.id {
                 strip.reveal(laneId: laneId, flash: true)
             }
@@ -233,6 +270,10 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         }
     }
 
+    /// Called on quit, so a web pane's session reaches the ledger before the
+    /// process stops existing.
+    public func flushPaneState() { strip.flushPaneState() }
+
     // MARK: - CommandHandling
 
     public func canPerform(_ command: Command) -> Bool {
@@ -262,6 +303,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
         do {
             switch command {
+            case .newPane:
+                showNewPanePicker(near: focusedLane)
+
             case .newTerminalLane:
                 try newTerminal(near: focusedLane)
 
@@ -283,6 +327,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 promptForURL { [weak self] url in
                     guard let self, let url else { return }
                     try? self.store.newWebLane(url: url, near: focusedLane?.id)
+                    self.store.noteRecent(.url, url)
                 }
 
             case .splitDown:
@@ -394,6 +439,48 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         let session = try RelaySessionSpawner(config: config)
             .spawn(cwd: cwd, cols: size.cols, rows: size.rows)
         try store.newTerminalLane(relaySessionId: session, near: lane?.id)
+    }
+
+    /// ⌘T / ⌘D — the picker, and what to do with what it hands back.
+    private func showNewPanePicker(near lane: Lane?) {
+        let controller = NewPanePicker(store: store) { [weak self] choice in
+            guard let self, let choice else { return }
+            self.launch(choice, near: lane)
+        }
+        newPanePicker = controller
+        controller.present(over: window)
+    }
+
+    /// Put a choice on the strip, immediately right of `lane`.
+    func launch(_ choice: NewPaneChoice, near lane: Lane?) {
+        do {
+            switch choice {
+            case .url(let raw):
+                guard let url = normalizeURL(raw) else { return }
+                try store.newWebLane(url: url, near: lane?.id)
+                store.noteRecent(.url, url)
+
+            case .command(let line, let remembered):
+                let parts = line.split(separator: " ").map(String.init)
+                guard let program = parts.first else { return }
+                // A remembered command carries the directory it last ran in,
+                // which is usually the only place it makes sense — `npm test`
+                // in the wrong repo is a failure, not a command. It loses to
+                // the focused lane only when that directory is gone.
+                let cwd = remembered.flatMap { path in
+                    FileManager.default.fileExists(atPath: path) ? path : nil
+                } ?? store.state.focusedPaneId.flatMap { strip.cwd(ofPane: $0) }
+                    ?? FileManager.default.homeDirectoryForCurrentUser.path
+                let size = newSessionSize()
+                let session = try RelaySessionSpawner(config: config)
+                    .spawn(cwd: cwd, command: program, args: Array(parts.dropFirst()),
+                           cols: size.cols, rows: size.rows)
+                try store.newTerminalLane(relaySessionId: session, near: lane?.id)
+                store.noteRecent(.command, line, cwd: cwd)
+            }
+        } catch {
+            showError(error)
+        }
     }
 
     private func showPalette() {

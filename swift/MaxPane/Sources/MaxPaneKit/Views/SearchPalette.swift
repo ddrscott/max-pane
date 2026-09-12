@@ -168,6 +168,10 @@ class PaletteController: NSWindowController, NSTextFieldDelegate, NSWindowDelega
     private func installKeyMonitor() {
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.window?.isKeyWindow == true else { return event }
+            // Subclasses get first refusal, so a palette with its own keys —
+            // ⌘1…⌘0 on the new-pane picker — does not have to install a second
+            // monitor and race this one for the event.
+            if self.handleKey(event) { return nil }
             switch event.keyCode {
             case 125: self.move(by: 1); return nil    // down
             case 126: self.move(by: -1); return nil   // up
@@ -276,6 +280,10 @@ class PaletteController: NSWindowController, NSTextFieldDelegate, NSWindowDelega
     }
 
     // MARK: - subclass hooks
+
+    /// A key the subclass wants before the palette's own navigation sees it.
+    /// Return true to swallow it.
+    func handleKey(_ event: NSEvent) -> Bool { false }
 
     func numberOfRows() -> Int { 0 }
     func view(forRow row: Int) -> NSView? { nil }

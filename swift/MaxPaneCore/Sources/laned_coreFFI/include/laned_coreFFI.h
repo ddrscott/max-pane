@@ -294,6 +294,11 @@ RustBuffer uniffi_laned_core_fn_method_core_export_strip(uint64_t ptr, RustCallS
 RustBuffer uniffi_laned_core_fn_method_core_focus_pane(uint64_t ptr, RustBuffer pane_id, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_FORGET_RECENT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_FORGET_RECENT
+void uniffi_laned_core_fn_method_core_forget_recent(uint64_t ptr, RustBuffer kind, RustBuffer value, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_GATHER
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_GATHER
 RustBuffer uniffi_laned_core_fn_method_core_gather(uint64_t ptr, RustBuffer project_root, RustCallStatus *_Nonnull out_status
@@ -329,6 +334,11 @@ RustBuffer uniffi_laned_core_fn_method_core_move_lane(uint64_t ptr, RustBuffer l
 void uniffi_laned_core_fn_method_core_note_focus(uint64_t ptr, RustBuffer pane_id, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_NOTE_RECENT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_NOTE_RECENT
+void uniffi_laned_core_fn_method_core_note_recent(uint64_t ptr, RustBuffer kind, RustBuffer value, RustBuffer cwd, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_NUDGE_LANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_NUDGE_LANE
 RustBuffer uniffi_laned_core_fn_method_core_nudge_lane(uint64_t ptr, RustBuffer lane_id, int8_t right, RustCallStatus *_Nonnull out_status
@@ -349,6 +359,11 @@ void uniffi_laned_core_fn_method_core_pair(uint64_t ptr, RustBuffer pty_pane_id,
 RustBuffer uniffi_laned_core_fn_method_core_pairs_of(uint64_t ptr, RustBuffer pane_id, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PANE_INTERACTION_STATE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PANE_INTERACTION_STATE
+RustBuffer uniffi_laned_core_fn_method_core_pane_interaction_state(uint64_t ptr, RustBuffer pane_id, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PLAN_EVICTION
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PLAN_EVICTION
 RustBuffer uniffi_laned_core_fn_method_core_plan_eviction(uint64_t ptr, RustBuffer viewport, RustBuffer memory, RustCallStatus *_Nonnull out_status
@@ -362,6 +377,11 @@ RustBuffer uniffi_laned_core_fn_method_core_project_root_of(uint64_t ptr, RustBu
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PUSH_SCROLLBACK
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PUSH_SCROLLBACK
 void uniffi_laned_core_fn_method_core_push_scrollback(uint64_t ptr, RustBuffer pane_id, RustBuffer lines, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECENTS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECENTS
+RustBuffer uniffi_laned_core_fn_method_core_recents(uint64_t ptr, uint32_t limit, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_REVISION
@@ -397,6 +417,11 @@ RustBuffer uniffi_laned_core_fn_method_core_set_manual_tag(uint64_t ptr, RustBuf
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PANE_DATA_STORE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PANE_DATA_STORE
 void uniffi_laned_core_fn_method_core_set_pane_data_store(uint64_t ptr, RustBuffer pane_id, RustBuffer data_store_id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PANE_INTERACTION_STATE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PANE_INTERACTION_STATE
+void uniffi_laned_core_fn_method_core_set_pane_interaction_state(uint64_t ptr, RustBuffer pane_id, RustBuffer state, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PANE_SCROLL
@@ -730,6 +755,12 @@ uint16_t uniffi_laned_core_checksum_method_core_focus_pane(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_FORGET_RECENT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_FORGET_RECENT
+uint16_t uniffi_laned_core_checksum_method_core_forget_recent(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_GATHER
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_GATHER
 uint16_t uniffi_laned_core_checksum_method_core_gather(void
@@ -772,6 +803,12 @@ uint16_t uniffi_laned_core_checksum_method_core_note_focus(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_NOTE_RECENT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_NOTE_RECENT
+uint16_t uniffi_laned_core_checksum_method_core_note_recent(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_NUDGE_LANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_NUDGE_LANE
 uint16_t uniffi_laned_core_checksum_method_core_nudge_lane(void
@@ -796,6 +833,12 @@ uint16_t uniffi_laned_core_checksum_method_core_pairs_of(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PANE_INTERACTION_STATE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PANE_INTERACTION_STATE
+uint16_t uniffi_laned_core_checksum_method_core_pane_interaction_state(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PLAN_EVICTION
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PLAN_EVICTION
 uint16_t uniffi_laned_core_checksum_method_core_plan_eviction(void
@@ -811,6 +854,12 @@ uint16_t uniffi_laned_core_checksum_method_core_project_root_of(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PUSH_SCROLLBACK
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PUSH_SCROLLBACK
 uint16_t uniffi_laned_core_checksum_method_core_push_scrollback(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RECENTS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RECENTS
+uint16_t uniffi_laned_core_checksum_method_core_recents(void
     
 );
 #endif
@@ -853,6 +902,12 @@ uint16_t uniffi_laned_core_checksum_method_core_set_manual_tag(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_PANE_DATA_STORE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_PANE_DATA_STORE
 uint16_t uniffi_laned_core_checksum_method_core_set_pane_data_store(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_PANE_INTERACTION_STATE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_PANE_INTERACTION_STATE
+uint16_t uniffi_laned_core_checksum_method_core_set_pane_interaction_state(void
     
 );
 #endif
