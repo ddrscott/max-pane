@@ -56,13 +56,13 @@ running app — never the builder's account of it.
 |---|---|---|---|---|
 | 1 | OAuth, popups, `window.opener` | `Web/WebPaneController.swift` | done, committed | **PASSES** (3 fixes routed) |
 | 2 | History: record, search, surface | `crates/laned-core`, a new palette | round 1 committed | **THE BAR WINS** → [round 2](work/history-round-2.md) |
-| 3 | Appear/disappear animations, and the split-down reconcile | `Views/StripViewController.swift`, `Views/LaneView.swift` | building | — |
-| 4 | Browser chrome: URL, nav, security, find, zoom readout | a new chrome view + `Web/WebPaneController.swift` | building (worktree) | — |
+| 3 | Appear/disappear animations, and the split-down reconcile | `Views/StripViewController.swift`, `Views/LaneView.swift` | round 1 merged | **THE BAR WINS** → round 2 building |
+| 4 | Browser chrome: URL, nav, security, find, zoom readout | a new chrome view + `Web/WebPaneController.swift` | merged | judging |
 | 5 | Terminal zoom | `Terminal/TerminalPaneController.swift` | lead, done | pending |
 | 6 | Copy/paste between panes | `Terminal/TerminalPaneController.swift`, `RelayAttachmentAdapter.swift`, `AppDelegate.swift` | done, committed | — |
-| 7 | Lane widths: one configurable default, and always visible evidence of more | `Views/StripViewController.swift`, `Config.swift`, `crates/laned-core` | building (worktree) | — |
-| 8 | Horizontal splits: a visible seam, draggable to resize heights | `Views/LaneView.swift`, `crates/laned-core` | building (worktree) | — |
-| 9 | ⌘O: one place anything starts | `Commands.swift`, the palettes | building (worktree) | — |
+| 7 | Lane widths: one configurable default, and always visible evidence of more | `Views/StripViewController.swift`, `Config.swift`, `crates/laned-core` | merged | — |
+| 8 | Horizontal splits: a visible seam, draggable to resize heights | `Views/LaneView.swift`, `crates/laned-core` | merged | — |
+| 9 | ⌘O: one place anything starts | `Commands.swift`, the palettes | merged | — |
 
 Pieces 1 and 4 both own `WebPaneController`, so they run in different waves.
 The **seams are the lead's**, already in place before any builder starts:
@@ -122,6 +122,18 @@ Two bugs found while writing those briefs, before any builder started:
   "lives in the responder chain" — but nothing handles it. A keymap that lists a
   key nobody listens for is worse than one that omits it. Queued with the
   configurable-hotkeys work.
+
+## Round 2, running
+
+- **Motion**, against the critic's frame measurements: a lane arriving off the
+  right edge scrolls 276px and never reveals itself, ⇧⌘D's arriving pane has no
+  entrance of its own, and every web lane strobes white (luminance 253 against
+  a background of 16) before its first paint.
+- **Chrome** is under a fresh critic now.
+- Queued, not started: [history round 2](work/history-round-2.md),
+  [configurable hotkeys](work/configurable-hotkeys.md), and a silent failure the
+  motion critic found — `maxpane run "yes 'X' | head | less"` returns a session
+  id, logs that it materialised a lane, and produces no lane.
 
 ## Log
 
