@@ -224,6 +224,14 @@ down with it.
 
 ### Debugging
 
+`MAXPANE_CONFIG`, `MAXPANE_LEDGER`, `MAXPANE_SOCKET` and `MAXPANE_DATA_SALT`
+point a launch at its own config file, strip, control socket and cookie jars —
+which is how you drive the app to test it without disturbing the instance you
+are working in. `MAXPANE_APP=build/mine.app ./scripts/build-app.sh` builds
+somewhere else; the script refuses to rebuild a bundle that has a live process,
+because `rm -rf`-ing a bundle out from under a running app kills it with no
+message at all.
+
 `MAXPANE_WINDOWED=1` skips fullscreen and `MAXPANE_DEBUG=1` turns on the chatty
 logging. Both write to stderr, which you only see by running the executable
 inside the bundle directly rather than through `open`:

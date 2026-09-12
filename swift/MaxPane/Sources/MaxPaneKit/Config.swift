@@ -95,7 +95,15 @@ public struct Config: Codable {
     public var snapSeconds: Double = 0.18
 
     public static var path: URL {
-        FileManager.default.homeDirectoryForCurrentUser
+        // `MAXPANE_CONFIG` points a launch at a different file. Without it the
+        // only way to exercise a preference at runtime is to edit the config
+        // of whoever is using the app — which is why the lane-rail and
+        // default-width settings shipped covered by unit tests and never once
+        // tried in a running instance.
+        if let override = ProcessInfo.processInfo.environment["MAXPANE_CONFIG"] {
+            return URL(fileURLWithPath: (override as NSString).expandingTildeInPath)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/maxpane/config.json")
     }
 
