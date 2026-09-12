@@ -1,11 +1,28 @@
 # Gauntlet — functional parity with the RelayTTY web app
 
-**Goal (Scott, verbatim):** "We should be at least as functional as Relay TTY web app."
+**Goal (Scott, verbatim):** "We should be at least as functional as Relay TTY
+web app." And, on what it is *for*: "I do use it every day already and want to
+make it Mac native so I can have browser panes with the shell panes."
 
-**The bar:** `~/Downloads/SCR-20260912-hups.png` — RelayTTY web app v1.21.0,
-ten live sessions, three terminal columns. Every round is judged against it.
+That second sentence is the product. Max Pane is not a new thing competing with
+RelayTTY — it is **RelayTTY's daily workflow, native, with web panes as peers**.
+Which sets the acceptance test: Scott moves over and does not miss anything.
+
+**The bar, in two parts:**
+
+1. `docs/bar-relaytty.png` — his *actual* workspace: ten live sessions, three
+   terminal columns. What matters in practice, not in principle.
+2. **`~/code/relay-tty` itself** — Scott has opened the source as reference. The
+   bar is therefore not "what one screenshot shows" but **every capability that
+   app has**, inventoried in
+   [`reference/relaytty-web-features.md`](reference/relaytty-web-features.md).
 
 **Stop condition:** Scott stops the run. Not a round count.
+
+**Why the daily-driver framing changes the ranking:** a feature Scott touches
+every day and a feature that exists are not the same weight. The inventory ranks
+by "what would a heavy user notice missing within a day", and rounds are ordered
+by that ranking, not by what is easy.
 
 ---
 
@@ -35,6 +52,25 @@ status dot · agent glyph · title · **full cwd path, right-aligned** · **over
 The focused pane carries a coloured border.
 
 ---
+
+## Judging while the screen is locked
+
+The method wants critics to judge pixels. macOS will not composite windows while
+the screen is locked — `screencapture` returns black and the accessibility API
+reports zero windows, even though the app is running fine and answering
+`maxpane ls`. Verified, not assumed.
+
+So a critic has two modes, and must say which it used:
+
+- **Visual** (screen unlocked): screenshot the running app beside the bar, blind
+  A/B, pick the better one. The real thing.
+- **Functional** (screen locked): drive the app through `maxpane` and the
+  ledger, read the code, and judge against the *inventory* — can the capability
+  be reached at all, with what metadata, in how many keystrokes. This catches
+  missing function but says nothing about whether it looks right.
+
+A functional pass is never a substitute for a visual one. It is what can be done
+meanwhile.
 
 ## What this parity means — and what it does not
 

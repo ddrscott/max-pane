@@ -15,6 +15,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private var openServer: OpenServer?
     private var memoryDashboard: MemoryDashboard?
     private var helpPanel: HelpPanel?
+    private let statusBar = StatusBar()
+    private var statusTimer: Timer?
     /// Every session Relay knows about, attached or not. The sidebar, the
     /// picker and the status bar all read this one registry so they cannot
     /// disagree about how many sessions exist.
@@ -43,7 +45,27 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         sidebarItem.maximumThickness = 380
         sidebarItem.canCollapse = true
         split.addSplitViewItem(sidebarItem)
-        split.addSplitViewItem(NSSplitViewItem(viewController: strip))
+        // The strip with a footer under it. A footer rather than a toolbar
+        // because the strip is the interface, and chrome across the top would
+        // eat the lane headers' room.
+        let stripSide = NSViewController()
+        stripSide.view = NSView()
+        strip.view.translatesAutoresizingMaskIntoConstraints = false
+        statusBar.translatesAutoresizingMaskIntoConstraints = false
+        stripSide.addChild(strip)
+        stripSide.view.addSubview(strip.view)
+        stripSide.view.addSubview(statusBar)
+        NSLayoutConstraint.activate([
+            strip.view.topAnchor.constraint(equalTo: stripSide.view.topAnchor),
+            strip.view.leadingAnchor.constraint(equalTo: stripSide.view.leadingAnchor),
+            strip.view.trailingAnchor.constraint(equalTo: stripSide.view.trailingAnchor),
+            strip.view.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
+            statusBar.leadingAnchor.constraint(equalTo: stripSide.view.leadingAnchor),
+            statusBar.trailingAnchor.constraint(equalTo: stripSide.view.trailingAnchor),
+            statusBar.bottomAnchor.constraint(equalTo: stripSide.view.bottomAnchor),
+            statusBar.heightAnchor.constraint(equalToConstant: StatusBar.height),
+        ])
+        split.addSplitViewItem(NSSplitViewItem(viewController: stripSide))
         window.contentViewController = split
 
         // Setting `contentViewController` makes AppKit resize the window to the
@@ -82,11 +104,22 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             FileHandle.standardError.write(Data("maxpane: open socket unavailable: \(error)\n".utf8))
         }
 
-        store.observe { [weak self] _ in self?.syncAttachedSessions() }
+        store.observe { [weak self] _ in
+            self?.syncAttachedSessions()
+            self?.refreshStatus()
+        }
         sessions.observe { [weak self] telemetry in
             guard let self else { return }
             self.strip.sessionsChanged(telemetry)
             self.sidebar.sessionsChanged(telemetry)
+            self.refreshStatus()
+        }
+        statusBar.onClickSessions = { [weak self] in self?.perform(.attachSession) }
+        statusBar.onClickMemory = { [weak self] in self?.perform(.showMemory) }
+        // WebKit's footprint is sampled, not pushed, so the footer needs its own
+        // slow tick to stay honest about it.
+        statusTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refreshStatus() }
         }
     }
 
@@ -367,6 +400,13 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         }
         palette = nil
         controller.present(over: window)
+    }
+
+    private func refreshStatus() {
+        statusBar.update(
+            state: store.state,
+            telemetry: sessions.sessions,
+            webBytes: WebProcessMemory.currentBytes())
     }
 
     /// Tell the registry which sessions have lanes, so the picker can hide them
