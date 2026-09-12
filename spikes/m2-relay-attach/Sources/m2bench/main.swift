@@ -79,10 +79,14 @@ case "attach":
     let smallID = try spawnOwn("/bin/zsh", cols: 80, rows: 24)
     usleep(1_500_000)
     // (b) big-scrollback session: ~targetMB of output, then idle
-    let bigID = try spawnOwn(fixtures + "/gen.pl", ["0", "70000"], cols: 80, rows: 24)
+    let bigID = try spawnOwn(fixtures + "/gen.pl", ["0", "85000"], cols: 80, rows: 24)
     print("small=\(smallID) big=\(bigID); filling scrollback to \(targetMB) MB ...")
-    let filled = waitUntil(120) {
-        (RelaySessionMeta.read(id: bigID)?.totalBytesWritten ?? 0) >= targetMB * 1_048_576
+    var lastSeen = -1.0, stable = 0
+    let filled = waitUntil(180) {
+        let v = RelaySessionMeta.read(id: bigID)?.totalBytesWritten ?? 0
+        if v >= targetMB * 1_048_576 { if v == lastSeen { stable += 1 } else { stable = 0 } }
+        lastSeen = v
+        return stable >= 3
     }
     let bigBytes = RelaySessionMeta.read(id: bigID)?.totalBytesWritten ?? 0
     print(String(format: "  big session totalBytesWritten = %.0f (%.2f MB) filled=%@",
@@ -90,6 +94,19 @@ case "attach":
     usleep(1_000_000)
 
     for (label, id) in [("small", smallID), ("big", bigID)] {
+        // Pass 1: protocol only — the replay is received and inflated but NOT fed to an
+        // emulator, so connect->SYNC is the pure wire+decode cost.
+        var pureSync = [Double]()
+        for _ in 0..<n {
+            let s = RelaySession(id: id)
+            let sem = DispatchSemaphore(value: 0)
+            s.onReplay = { _, _ in }
+            s.onHandshake = { _ in sem.signal() }
+            try s.connect()
+            _ = sem.wait(timeout: .now() + 30)
+            pureSync.append((s.timings.tSync - s.timings.tStart) * 1000)
+            s.close(); usleep(40_000)
+        }
         var toSync = [Double](), toReplay = [Double](), toDecoded = [Double]()
         var toFed = [Double](), inflate = [Double](), feedOnly = [Double]()
         var wire = 0, plain = 0, gz = false
@@ -122,7 +139,8 @@ case "attach":
         }
         print("\n### \(label) session (\(id)) — replay wire=\(wire)B plain=\(plain)B gz=\(gz)")
         print(Stats.header)
-        print(Stats("connect -> SYNC (handshake)", toSync).row)
+        print(Stats("connect -> SYNC, protocol only (no emulator)", pureSync).row)
+        print(Stats("connect -> SYNC, replay fed inline", toSync).row)
         if !toReplay.isEmpty {
             print(Stats("connect -> replay frame", toReplay).row)
             print(Stats("gzip inflate", inflate).row)

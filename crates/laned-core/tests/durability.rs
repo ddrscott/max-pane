@@ -369,3 +369,44 @@ fn single_lane_read_matches_the_snapshot() {
     let direct = core.lane(id).unwrap();
     assert_eq!(direct, from_snapshot);
 }
+
+/// The eviction plan is expressed in terms of the lanes the shell is showing.
+/// While gathered, that is the filtered list — planning against the full strip
+/// would aim the viewport indices at the wrong lanes entirely.
+#[test]
+fn eviction_planning_follows_the_gather_filter() {
+    use laned_core::eviction::{MemoryReport, PaneAction, Viewport};
+
+    let core = Core::open_in_memory().unwrap();
+    // 40 lanes, alternating between two projects.
+    for i in 0..40 {
+        let st = core
+            .create_lane(Placement::End, PaneKind::Web, None, Some(format!("https://{i}")), None)
+            .unwrap();
+        let id = st.lanes.last().unwrap().id.clone();
+        core.set_manual_tag(id, Some(if i % 2 == 0 { "/src/foo".into() } else { "/src/bar".into() }))
+            .unwrap();
+    }
+
+    let gathered = core.gather("/src/foo".into()).unwrap();
+    assert_eq!(gathered.lanes.len(), 20);
+
+    // The shell is looking at indices 0..2 of the *filtered* strip.
+    let vp = Viewport { first_visible: 0, last_visible: 2 };
+    let plenty = MemoryReport { web_content_rss_bytes: 1, budget_bytes: u64::MAX };
+    let plan = core.plan_eviction(vp, plenty).unwrap();
+
+    // Exactly the gathered lanes get directives, and the first three are on
+    // screen and therefore kept.
+    assert_eq!(plan.len(), 20, "planned for lanes the shell is not showing");
+    let visible_ids: Vec<&str> = gathered.lanes[0..3].iter().map(|l| l.id.as_str()).collect();
+    for d in plan.iter().filter(|d| visible_ids.contains(&d.lane_id.as_str())) {
+        assert_eq!(d.action, PaneAction::Keep);
+    }
+    // The far end of the gathered strip is unparented, as it should be.
+    let last_id = gathered.lanes.last().unwrap().id.as_str();
+    assert_eq!(
+        plan.iter().find(|d| d.lane_id == last_id).unwrap().action,
+        PaneAction::Unparent
+    );
+}

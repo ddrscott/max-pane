@@ -99,6 +99,7 @@ struct FrameSample {
     var ts: Double        // CADisplayLink vsync timestamp
     var dt: Double        // ms since previous callback
     var work: Double      // ms spent inside our callback
+    var wallDt: Double    // ms wall clock since previous callback entry
     var layoutCalls: Int  // LaneView.layout() calls attributed to this frame
     var live: Int         // attached lane views
 }
@@ -107,7 +108,10 @@ struct PhaseResult: Encodable {
     var frames: Int
     var durationSeconds: Double
     var intervalMs: Stats
+    var wallIntervalMs: Stats
     var workMs: Stats
+    var framesWorkOverBudget: Int
+    var droppedFramesWallClock: Int
     var droppedFrames: Int
     var droppedPct: Double
     var severeDrops: Int          // dt > 2.5x budget
@@ -178,6 +182,8 @@ struct Results: Encodable {
     var physFootprintAtRestBytes: UInt64
     var rssAfterScrollBytes: UInt64
     var physFootprintAfterScrollBytes: UInt64
+    var laneViewsInstantiatedDuringRun: Int
+    var laneConfiguresDuringRun: Int
     var laneViewsInstantiatedTotal: Int
     var laneConfiguresTotal: Int
     var collectionItemsInstantiated: Int
@@ -207,6 +213,7 @@ final class Bench: NSObject {
     var phaseStart: Double = 0
     var frames: [FrameSample] = []
     var lastTs: Double = 0
+    var lastWall: Double = 0
     var lastLayoutCount = 0
     var events: [EventResult] = []
     var peakLive = 0
@@ -230,6 +237,8 @@ final class Bench: NSObject {
     var idleSamples: [Double] = []
     var idleRss: UInt64 = 0
     var restoreResults: [RestoreResult] = []
+    var laneInstDuringRun = 0
+    var laneConfDuringRun = 0
 
     // scripted scroll state
     var scrollDirection: CGFloat = 1
@@ -264,6 +273,7 @@ final class Bench: NSObject {
         phase = p
         phaseStart = CACurrentMediaTime()
         lastTs = 0
+        lastWall = 0
     }
 
     @objc func tick(_ l: CADisplayLink) {
@@ -274,6 +284,8 @@ final class Bench: NSObject {
         let ts = l.timestamp
         let dt = lastTs == 0 ? nominalInterval : (ts - lastTs)
         lastTs = ts
+        let wallDt = lastWall == 0 ? nominalInterval : (t0 - lastWall)
+        lastWall = t0
         let elapsed = t0 - phaseStart
 
         var eventThisFrame: (String, Int)? = nil
@@ -349,7 +361,8 @@ final class Bench: NSObject {
         if !NSApp.isActive { framesAppInactive += 1 }
         let work = (CACurrentMediaTime() - t0) * 1000.0
         frames.append(FrameSample(phase: phase.rawValue, ts: ts, dt: dt * 1000.0,
-                                  work: work, layoutCalls: layoutDelta, live: live))
+                                  work: work, wallDt: wallDt * 1000.0,
+                                  layoutCalls: layoutDelta, live: live))
 
         if let (kind, lane) = eventThisFrame {
             eventLog.append((kind: kind, lane: lane, frameIdx: frames.count - 1,
@@ -410,7 +423,10 @@ final class Bench: NSObject {
             frames: s.count,
             durationSeconds: dur,
             intervalMs: Stats(dts),
+            wallIntervalMs: Stats(s.map(\.wallDt)),
             workMs: Stats(s.map(\.work)),
+            framesWorkOverBudget: s.filter { $0.work > budgetMs }.count,
+            droppedFramesWallClock: s.filter { $0.wallDt > budgetMs * 1.5 }.count,
             droppedFrames: dropped,
             droppedPct: s.isEmpty ? 0 : Double(dropped) / Double(s.count) * 100,
             severeDrops: severe,
@@ -452,6 +468,8 @@ final class Bench: NSObject {
 
     func runRestoreTest() {
         elog("restore test")
+        laneInstDuringRun = Counters.laneInstantiations
+        laneConfDuringRun = Counters.laneConfigures
         let targets: [CGFloat] = [12345.0, 21734.25, strip.maxScrollX]
         for t in targets {
             strip.setScrollX(t)
@@ -527,6 +545,8 @@ final class Bench: NSObject {
             physFootprintAtRestBytes: footprintAtRest,
             rssAfterScrollBytes: rssAfterScroll,
             physFootprintAfterScrollBytes: footprintAfterScroll,
+            laneViewsInstantiatedDuringRun: laneInstDuringRun,
+            laneConfiguresDuringRun: laneConfDuringRun,
             laneViewsInstantiatedTotal: Counters.laneInstantiations,
             laneConfiguresTotal: Counters.laneConfigures,
             collectionItemsInstantiated: collectionItems,

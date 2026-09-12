@@ -440,7 +440,11 @@ impl Core {
     /// [`Core::mark_evicted`] / [`Core::mark_live`] once it has acted.
     pub fn plan_eviction(&self, viewport: eviction::Viewport, memory: eviction::MemoryReport) -> Result<Vec<eviction::PaneDirective>> {
         let inner = self.inner.lock();
-        let lanes = inner.ledger.lanes()?;
+        // The viewport is expressed as indices into the lanes the *shell* is
+        // showing, so this has to see the same list — including the gather
+        // filter. Planning against the unfiltered strip while the shell is
+        // gathered would evict whatever happens to sit at those indices.
+        let lanes = Self::snapshot(&inner)?.lanes;
         Ok(eviction::plan(&lanes, &viewport, &memory))
     }
 
