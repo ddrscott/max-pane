@@ -15,7 +15,10 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private var openServer: OpenServer?
     private var memoryDashboard: MemoryDashboard?
     private var helpPanel: HelpPanel?
-    private var sessionWatcher: RelaySessionWatcher?
+    /// Every session Relay knows about, attached or not. The sidebar, the
+    /// picker and the status bar all read this one registry so they cannot
+    /// disagree about how many sessions exist.
+    public let sessions = SessionRegistry()
 
     public init(store: StripStore, config: Config) {
         self.store = store
@@ -51,7 +54,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         window.minSize = NSSize(width: 720, height: 400)
         window.center()
 
+        sidebar.registry = sessions
         sidebar.onSelect = { [weak self] laneId in self?.strip.reveal(laneId: laneId, flash: true) }
+        sidebar.onNewSession = { [weak self] in self?.perform(.runCommand) }
+        sidebar.onAttach = { [weak self] sessionId in
+            try? self?.store.attachSessionAtEnd(relaySessionId: sessionId)
+        }
         startSideChannels()
     }
 
@@ -74,8 +82,11 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             FileHandle.standardError.write(Data("maxpane: open socket unavailable: \(error)\n".utf8))
         }
 
-        sessionWatcher = RelaySessionWatcher(pollInterval: config.sessionPollSeconds) { [weak self] sessions in
-            MainActor.assumeIsolated { self?.strip.sessionsChanged(sessions) }
+        store.observe { [weak self] _ in self?.syncAttachedSessions() }
+        sessions.observe { [weak self] telemetry in
+            guard let self else { return }
+            self.strip.sessionsChanged(telemetry)
+            self.sidebar.sessionsChanged(telemetry)
         }
     }
 
@@ -356,6 +367,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         }
         palette = nil
         controller.present(over: window)
+    }
+
+    /// Tell the registry which sessions have lanes, so the picker can hide them
+    /// and the sidebar can mark them.
+    private func syncAttachedSessions() {
+        sessions.setAttached(attachedSessionIDs())
     }
 
     private func attachedSessionIDs() -> Set<String> {

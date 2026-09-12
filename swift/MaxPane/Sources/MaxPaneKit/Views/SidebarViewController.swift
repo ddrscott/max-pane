@@ -14,8 +14,28 @@ final class SidebarViewController: NSViewController {
     private var rows: [Row] = []
     private var observer: UUID?
 
-    /// Click → search-to-scroll.
+    /// Click a lane row → search-to-scroll to it.
     var onSelect: ((String) -> Void)?
+    /// The `+ New` action.
+    var onNewSession: (() -> Void)?
+    /// Click a session that has no lane → attach it.
+    var onAttach: ((String) -> Void)?
+
+    /// Every session Relay knows about, attached or not.
+    weak var registryBox: AnyObject?
+    var registry: SessionRegistry? {
+        get { registryBox as? SessionRegistry }
+        set { registryBox = newValue }
+    }
+
+    /// Latest telemetry for every session.
+    private(set) var telemetry: [String: SessionTelemetry] = [:]
+
+    /// New session telemetry arrived.
+    func sessionsChanged(_ next: [String: SessionTelemetry]) {
+        telemetry = next
+        rebuild(store.state)
+    }
 
     /// A group header only exists once the list is long enough to need one.
     private enum Row {

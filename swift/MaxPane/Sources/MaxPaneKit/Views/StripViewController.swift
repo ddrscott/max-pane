@@ -36,6 +36,9 @@ public final class StripViewController: NSViewController {
     private var dragPreview: (laneId: String, target: Int)?
     /// True until the strip has settled after launch. See `makeController`.
     private var isColdLaunch = true
+    /// Latest session telemetry, so a lane materialised mid-stream is not blank
+    /// until the next poll.
+    private var laneTelemetry: [String: SessionTelemetry] = [:]
     /// Shown when the strip is empty, because a blank window that says nothing
     /// is indistinguishable from a broken one.
     private lazy var emptyState = EmptyStripView()
@@ -240,6 +243,7 @@ public final class StripViewController: NSViewController {
         }
 
         laneViews[lane.id] = laneView
+        laneView.applyTelemetry(laneTelemetry)
         content.addSubview(laneView)
 
         for (position, pane) in lane.panes.enumerated() {
@@ -564,8 +568,12 @@ public final class StripViewController: NSViewController {
     /// A session that has gone leaves its lane exactly where it is (PRD §11:
     /// "the lane and ordinal are unaffected"); the pane says so instead. A
     /// session that has come back is reattached.
-    public func sessionsChanged(_ sessions: [RelaySessionInfo]) {
-        let live = Set(sessions.map(\.id))
+    public func sessionsChanged(_ telemetry: [String: SessionTelemetry]) {
+        let live = Set(telemetry.values.filter(\.isRunning).map(\.sessionId))
+        laneTelemetry = telemetry
+        for (_, laneView) in laneViews {
+            laneView.applyTelemetry(telemetry)
+        }
         for (paneId, controller) in paneControllers {
             guard let terminal = controller as? TerminalPaneController,
                   let sessionId = store.pane(paneId)?.relaySessionId

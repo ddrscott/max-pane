@@ -24,6 +24,11 @@ public struct RelaySessionInfo: Codable, Identifiable, Sendable {
     public var title: String?
     public var lastActivity: Double?
     public var totalBytesWritten: Double?
+    /// Bytes/sec over the last minute — the bar's "1.7KB/s". pty-host keeps
+    /// 1, 5 and 15 minute averages; 1 is the one a human reads as "now".
+    public var bps1: Double?
+    public var bps5: Double?
+    public var bps15: Double?
     /// The `comm` name of the foreground process, absent when the session leader
     /// is in the foreground. For Claude Code this is literally the version
     /// string, so treat it as a glyph hint and nothing more.

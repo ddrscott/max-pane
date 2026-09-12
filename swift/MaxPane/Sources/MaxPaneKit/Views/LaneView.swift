@@ -99,11 +99,22 @@ final class LaneView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not a nib") }
 
+    /// Adopt the latest session telemetry, so the header can show what the
+    /// attached session is doing.
+    func applyTelemetry(_ telemetry: [String: SessionTelemetry]) {
+        let sessionId = currentSessionId
+        header.telemetry = sessionId.flatMap { telemetry[$0] }
+    }
+
+    /// The Relay session this lane's first pty pane is attached to.
+    var currentSessionId: String?
+
     /// Adopt a new snapshot of this lane. Called on every mutation that touches
     /// it, so it does the least work that produces the right result: the header
     /// is cheap to rebuild, the pane views are not and are reused by id.
     func apply(_ lane: Lane) {
         laneId = lane.id
+        currentSessionId = lane.panes.first(where: { $0.kind == .pty })?.relaySessionId
         desiredWidth = CGFloat(lane.widthPt)
         header.apply(lane)
     }
@@ -181,6 +192,8 @@ final class LaneHeaderView: NSView {
     private let pin = NSTextField(labelWithString: "")
 
     var onDoubleClick: (() -> Void)?
+    /// What the attached session is doing, when there is one.
+    var telemetry: SessionTelemetry? { didSet { needsDisplay = true } }
     /// `(x in the superview's superview, isFinal)`.
     var onDrag: ((CGFloat, Bool) -> Void)?
 

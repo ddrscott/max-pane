@@ -46,6 +46,10 @@ public final class RelaySession {
     public var onHandshake: ((AttachTimings) -> Void)?
     public var onTitle: ((String) -> Void)?
     public var onSessionState: ((Bool) -> Void)?
+    /// SESSION_METRICS (0x14): bytes/sec over 1, 5 and 15 minutes, plus the
+    /// session's lifetime byte total. This is the live throughput the RelayTTY
+    /// web app shows as "1.7KB/s".
+    public var onMetrics: ((_ bps1: Double, _ bps5: Double, _ bps15: Double, _ total: Double) -> Void)?
     public var onClearScrollback: (() -> Void)?
     public var onExit: ((Int32) -> Void)?
     public var onClosed: (() -> Void)?
@@ -190,6 +194,17 @@ public final class RelaySession {
         case WSMsg.sessionState:
             onSessionState?(body.first == 1)
 
+        case WSMsg.sessionMetrics:
+            // [bps1 f64][bps5 f64][bps15 f64][totalBytes f64], big-endian.
+            guard body.count >= 32 else { break }
+            let i = body.startIndex
+            guard let a = beF64(body[i..<(i + 8)]),
+                  let b = beF64(body[(i + 8)..<(i + 16)]),
+                  let c = beF64(body[(i + 16)..<(i + 24)]),
+                  let d = beF64(body[(i + 24)..<(i + 32)])
+            else { break }
+            onMetrics?(a, b, c, d)
+
         case WSMsg.clearScrollback:
             offset = 0                            // §3.4 / gotcha 15; the next SYNC restores it
             onClearScrollback?()
@@ -201,7 +216,7 @@ public final class RelaySession {
             onExit?(v)
 
         default:
-            break                                  // NOTIFICATION/METRICS/CLIPBOARD/IMAGE/...
+            break                                  // NOTIFICATION/CLIPBOARD/IMAGE/SPARKLINE/...
         }
     }
 }
