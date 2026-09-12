@@ -72,7 +72,7 @@ struct SidebarModelTests {
         let group = groups(rows).first!
         #expect(group.running == 2)
         #expect(group.total == 3)
-        #expect(group.header == "~/LIFE")
+        #expect(group.header == "~/life")
     }
 
     @Test("a collapsed group keeps its header and count but drops its rows")
@@ -120,7 +120,7 @@ struct SidebarModelTests {
         let t = ["a": telemetry("a", title: "agent", cwd: home + "/code/max-pane")]
         let web = lane("W1", url: "https://example.com", kind: .web)
         let rows = SidebarModel.rows(lanes: [web], telemetry: t)
-        #expect(groups(rows).map(\.header) == ["~/CODE/MAX-PANE", "WEB"])
+        #expect(groups(rows).map(\.header) == ["~/code/max-pane", "Web"])
         #expect(groups(rows).last?.path == SidebarModel.looseWebGroup)
     }
 

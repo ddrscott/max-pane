@@ -330,7 +330,7 @@ enum PaletteStyle {
     /// exists to be read at a glance.
     static func caps(_ text: String, size: CGFloat = 10, shout: Bool = true) -> NSAttributedString {
         let out = NSMutableAttributedString(
-            string: "// ",
+            string: "",
             attributes: [.foregroundColor: Theme.accent, .font: Theme.mono(size, weight: .bold)])
         out.append(NSAttributedString(
             string: shout ? text.uppercased() : text,

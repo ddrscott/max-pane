@@ -46,6 +46,9 @@ public final class StripViewController: NSViewController {
     private var scrollMonitor: Any?
     /// `(lane, width)` while its right edge is being dragged. View-only.
     private var liveResize: (laneId: String, width: CGFloat)?
+    /// Lane widths as of the last snapshot, so a change from *any* source —
+    /// drag, ⌃⌘=, span, an imported strip — reshapes the terminal.
+    private var lastLaneWidths: [String: UInt32] = [:]
     /// Shown when the strip is empty, because a blank window that says nothing
     /// is indistinguishable from a broken one.
     private lazy var emptyState = EmptyStripView()
@@ -203,6 +206,19 @@ public final class StripViewController: NSViewController {
             } ?? false
         }
 
+        // A lane that changed width owes its terminal a new shape, whatever
+        // changed it. Hooking the drag handle alone missed ⌃⌘=, span and import,
+        // which is how a keyboard-resized lane kept wrapping at its old column
+        // count.
+        for lane in state.lanes {
+            defer { lastLaneWidths[lane.id] = lane.widthPt }
+            guard let previous = lastLaneWidths[lane.id], previous != lane.widthPt else { continue }
+            for pane in lane.panes {
+                (paneControllers[pane.id] as? TerminalPaneController)?
+                    .laneWidthDidChange(to: CGFloat(lane.widthPt))
+            }
+        }
+
         // Give the keyboard to a pane the ledger says is focused but which does
         // not have it yet. Without this a lane created by `maxpane run` — or by
         // ⌘T, or by the shim — comes up drawn, attached and completely deaf:
@@ -288,6 +304,7 @@ public final class StripViewController: NSViewController {
             if isFinal {
                 self.liveResize = nil
                 try? self.store.setLaneWidth(lane.id, width)
+
             } else {
                 // Lay out live. Without this the lane only jumps to its new
                 // width on mouse-up, which reads as the drag not working at all.
@@ -476,6 +493,14 @@ public final class StripViewController: NSViewController {
     @objc private func clipViewResized() {
         content.layOut(lanes: store.state.lanes, viewFor: { [weak self] lane in self?.laneViews[lane.id] })
         updateMaterialization()
+        // The strip got shorter or taller, so every terminal has a different
+        // number of rows now. Same debounce as a width drag.
+        for lane in store.state.lanes {
+            for pane in lane.panes {
+                (paneControllers[pane.id] as? TerminalPaneController)?
+                    .laneWidthDidChange(to: CGFloat(lane.widthPt))
+            }
+        }
     }
 
     @objc private func didScroll() {

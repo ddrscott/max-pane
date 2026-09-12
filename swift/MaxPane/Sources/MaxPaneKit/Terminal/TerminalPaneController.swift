@@ -60,6 +60,9 @@ final class TerminalPaneController: NSObject, PaneController {
     private var attachment: RelayAttachment?
     private var pane: Pane
     private var scrollbackDebounce: DispatchWorkItem?
+    private var resizeDebounce: DispatchWorkItem?
+    /// The lane's width as last seen, for when the ledger has not caught up.
+    private var lastLaneWidth: CGFloat = 0
     private var isSessionAvailable = true
     /// Lines seen on the wire, so the index survives a `clear`. See pushScrollback.
     private var seenLines: [String] = []
@@ -127,8 +130,15 @@ final class TerminalPaneController: NSObject, PaneController {
             guard let self else { return }
             self.hostCols = cols
             self.hostRows = rows
+            // Keep the emulator's grid in step with the PTY, always — this is
+            // the frame that precedes every replay, and ignoring it renders the
+            // buffer at the wrong width.
             self.terminal.getTerminal().resize(cols: cols, rows: rows)
-            self.fitLaneToSession()
+            // Deliberately NOT resizing the lane to match. Max Pane now drives
+            // the PTY from the lane's width, so deriving the lane back from the
+            // PTY would fight the user's drag on every frame. If another client
+            // reshapes the session the terminal simply renders at the new size
+            // inside the lane the user chose.
         }
         attachment.onTitle = { [weak self] title in
             guard let self, let laneId = self.store.lane(containing: self.paneId)?.id else { return }
@@ -254,10 +264,42 @@ final class TerminalPaneController: NSObject, PaneController {
     /// other attached client, including Scott's phone, which is why it is a
     /// command and never a side effect.
     func claimSessionAtLaneWidth() {
-        guard let lane = store.lane(containing: paneId) else { return }
-        let available = Double(lane.widthPt) - Self.gutter
-        let cols = max(20, Int(available / cellWidth(at: config.fontSize)))
-        let rows = max(10, Int((terminal.bounds.height - Theme.laneHeaderHeight) / terminal.font.boundingRectForFont.height))
+        sendSize(for: currentLaneWidth())
+    }
+
+    /// The lane was resized — reshape the PTY so the text actually reflows.
+    ///
+    /// This is Max Pane telling Relay the new size, which reshapes the terminal
+    /// for **every** client attached to that session, the phone included. That
+    /// is a deliberate reversal of what ADR-0007 originally decided, made by
+    /// Scott: dragging a lane wider and getting no more columns is not a
+    /// terminal, and the app he is replacing resizes too.
+    ///
+    /// Debounced, because a drag produces one of these per frame and each costs
+    /// every other client a full redraw. Only the size you settle on is sent.
+    func laneWidthDidChange(to width: CGFloat) {
+        lastLaneWidth = width
+        resizeDebounce?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.sendSize(for: width) }
+        resizeDebounce = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
+    }
+
+    private func currentLaneWidth() -> CGFloat {
+        store.lane(containing: paneId).map { CGFloat($0.widthPt) } ?? lastLaneWidth
+    }
+
+    /// Columns and rows for a given lane width, then the RESIZE.
+    private func sendSize(for width: CGFloat) {
+        let cols = max(20, Int((Double(width) - Self.gutter) / cellWidth(at: terminal.font.pointSize)))
+        // Measure rows from SwiftTerm's own cell metric, not the font's bounding
+        // box, which is several points taller and costs a row or two a lane.
+        let ctFont = terminal.font as CTFont
+        let cellHeight = ceil(CTFontGetAscent(ctFont) + CTFontGetDescent(ctFont) + CTFontGetLeading(ctFont))
+        let usable = Double(container.bounds.height) - Double(Theme.laneHeaderHeight)
+        let rows = max(10, Int(usable / max(cellHeight, 1)))
+
+        guard cols != hostCols || rows != hostRows else { return }
         attachment?.claimSize(cols: cols, rows: rows)
     }
 

@@ -267,7 +267,6 @@ final class SidebarEntryView: NSTableCellView {
 /// projects is exactly when a flat list stops being a browser.
 final class SidebarGroupView: NSTableCellView {
     private let triangle = NSTextField(labelWithString: "")
-    private let slashes = NSTextField(labelWithString: "//")
     private let label = NSTextField(labelWithString: "")
     private let count = NSTextField(labelWithString: "")
     private let rule = NSView()
@@ -284,8 +283,6 @@ final class SidebarGroupView: NSTableCellView {
 
         // The `//` is its own label so that a deep worktree path truncates
         // without eating the house mark that makes this a section header.
-        slashes.font = Theme.mono(10, weight: .bold)
-        slashes.textColor = Theme.accent
 
         label.stringValue = group.header
         label.font = Theme.mono(10, weight: .bold)
@@ -307,7 +304,7 @@ final class SidebarGroupView: NSTableCellView {
         rule.wantsLayer = true
         rule.layer?.backgroundColor = Theme.laneBorder.cgColor
 
-        for v in [triangle, slashes, label, count] {
+        for v in [triangle, label, count] {
             v.isBezeled = false
             v.drawsBackground = false
             v.usesSingleLineMode = true
@@ -315,7 +312,7 @@ final class SidebarGroupView: NSTableCellView {
         }
         // Set after `usesSingleLineMode`, which would otherwise reset it.
         label.lineBreakMode = .byTruncatingHead
-        for v: NSView in [triangle, slashes, label, count, rule] {
+        for v: NSView in [triangle, label, count, rule] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -330,10 +327,8 @@ final class SidebarGroupView: NSTableCellView {
             triangle.widthAnchor.constraint(equalToConstant: 10),
             triangle.centerYAnchor.constraint(equalTo: centerYAnchor, constant: 2),
 
-            slashes.leadingAnchor.constraint(equalTo: triangle.trailingAnchor, constant: 2),
-            slashes.centerYAnchor.constraint(equalTo: triangle.centerYAnchor),
 
-            label.leadingAnchor.constraint(equalTo: slashes.trailingAnchor, constant: 4),
+            label.leadingAnchor.constraint(equalTo: triangle.trailingAnchor, constant: 6),
             label.centerYAnchor.constraint(equalTo: triangle.centerYAnchor),
 
             count.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 6),

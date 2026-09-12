@@ -82,7 +82,10 @@ enum SidebarModel {
 
         /// `~/code/max-pane` → `~/CODE/MAX-PANE`; the loose-web sentinel → `WEB`.
         var header: String {
-            path == SidebarModel.looseWebGroup ? "WEB" : path.uppercased()
+            // The path as it really is. Upper-casing it was treating a
+            // directory as a label, and paths are case-sensitive data — a group
+            // called ~/CODE/MAX-PANE names nothing on this disk.
+            path == SidebarModel.looseWebGroup ? "Web" : path
         }
 
         /// A collapsed group hides its rows, so the header has to carry the one

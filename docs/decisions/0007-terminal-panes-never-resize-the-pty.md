@@ -1,6 +1,22 @@
 # ADR 0007 — Terminal panes never resize the PTY
 
-**Status:** Accepted · 2026-09-12
+**Status:** **Superseded on the central point · 2026-09-12.** Scott, using it:
+*"resizing a terminal pane should notify the xterm of the size so the text can
+reflow."* Max Pane now reshapes the PTY when a lane's width changes. Everything
+below about *what that costs* still holds and is why it was worth asking about —
+the cost was real, it was just the wrong trade for the person who has to use it.
+A lane you drag wider that gives you no more columns is not a terminal.
+
+Still true, and still load-bearing:
+- The size a session is *born* at is chosen from the lane, where we are the only
+  client and take nothing from anyone.
+- Inbound `RESIZE` is always honoured for the emulator's grid — it precedes
+  every replay, and ignoring it renders the buffer at the wrong width.
+- The lane is **not** derived back from the session. Doing both directions is a
+  fight; the lane is the user's choice and the PTY follows it.
+- Never read the live size from the session JSON; it lags by seconds.
+
+**Original status:** Accepted · 2026-09-12
 **Amends:** PRD §11 — "Resize → propagate to Relay; verify cell-accurate reflow."
 **Evidence:** [Spike M2](../spikes/02-m2-relay-attach.md),
 [RelayTTY integration reference](../reference/relay-integration.md).
