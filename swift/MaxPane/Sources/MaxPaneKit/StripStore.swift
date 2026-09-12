@@ -186,6 +186,28 @@ public final class StripStore {
 
     // MARK: - search (§7.5)
 
+    // MARK: - pairing (§6, §13 Phase 2)
+
+    /// Link a terminal and a web pane so each can find the other.
+    ///
+    /// The PRD calls this optional and never lets it affect layout — a pairing
+    /// is a fact about two panes, not a container. Nothing about ordinals,
+    /// gather or eviction consults it.
+    func pair(pty: String, web: String) throws {
+        try core.pair(ptyPaneId: pty, webPaneId: web)
+        publish(try core.state())
+    }
+
+    func unpair(pty: String, web: String) throws {
+        try core.unpair(ptyPaneId: pty, webPaneId: web)
+        publish(try core.state())
+    }
+
+    /// Pane ids linked to `paneId`, in either direction.
+    func pairs(of paneId: String) -> [String] {
+        (try? core.pairsOf(paneId: paneId)) ?? []
+    }
+
     func pushScrollback(_ paneId: String, _ lines: [String]) {
         core.pushScrollback(paneId: paneId, lines: lines)
     }

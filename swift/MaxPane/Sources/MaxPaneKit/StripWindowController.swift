@@ -12,6 +12,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private let strip: StripViewController
     private var palette: SearchPaletteController?
     private var openServer: OpenServer?
+    private var memoryDashboard: MemoryDashboard?
     private var sessionWatcher: RelaySessionWatcher?
 
     public init(store: StripStore, config: Config) {
@@ -114,6 +115,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         case .claimSession:
             // Only meaningful for a terminal pane.
             return store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .pty
+        case .pairWithNext:
+            return pairCandidates() != nil
         case .closePane, .closeLane, .splitDown, .togglePinned,
              .moveLaneLeft, .moveLaneRight, .widenLane, .narrowLane:
             return store.focusedLane != nil
@@ -203,6 +206,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .claimSession:
                 confirmClaimSession()
+
+            case .showMemory:
+                showMemoryDashboard()
+
+            case .pairWithNext:
+                try pairFocusedWithNeighbour()
             }
         } catch {
             showError(error)
@@ -270,6 +279,50 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return "https://duckduckgo.com/?q=\(q)"
         }
         return "https://\(trimmed)"
+    }
+
+    /// The focused pane and its right-hand neighbour, when one is a terminal
+    /// and the other a web pane. `nil` when there is nothing sensible to pair.
+    private func pairCandidates() -> (pty: String, web: String)? {
+        let state = store.state
+        guard let focused = state.focusedPaneId,
+              let index = state.lanes.firstIndex(where: { $0.panes.contains { $0.id == focused } }),
+              index + 1 < state.lanes.count,
+              let here = store.pane(focused),
+              let next = state.lanes[index + 1].panes.first
+        else { return nil }
+
+        switch (here.kind, next.kind) {
+        case (.pty, .web), (.pty, .placeholder): return (pty: here.id, web: next.id)
+        case (.web, .pty), (.placeholder, .pty): return (pty: next.id, web: here.id)
+        default: return nil
+        }
+    }
+
+    /// ⌘⌥P — link a terminal to the web pane beside it, or unlink them if they
+    /// are already linked. PRD §7.1's "explicit terminal↔web link (optional)".
+    private func pairFocusedWithNeighbour() throws {
+        guard let pair = pairCandidates() else { return }
+        if store.pairs(of: pair.pty).contains(pair.web) {
+            try store.unpair(pty: pair.pty, web: pair.web)
+        } else {
+            try store.pair(pty: pair.pty, web: pair.web)
+        }
+    }
+
+    /// PRD §13 Phase 2's memory dashboard. Floating, so it can sit beside the
+    /// strip while scrolling changes what it reports.
+    private func showMemoryDashboard() {
+        if let existing = memoryDashboard {
+            existing.orderFront(nil)
+            return
+        }
+        let panel = MemoryDashboard(store: store, config: config)
+        memoryDashboard = panel
+        if let frame = window?.frame {
+            panel.setFrameOrigin(NSPoint(x: frame.maxX - 600, y: frame.maxY - 520))
+        }
+        panel.orderFront(nil)
     }
 
     /// ADR-0007 §5: the one path that sends `RESIZE`. It reshapes the PTY for

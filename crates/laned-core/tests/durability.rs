@@ -476,3 +476,74 @@ fn a_lane_can_be_dragged_to_either_end() {
     assert_eq!(order.last().unwrap(), &ids[2], "should be at the far right");
     assert_eq!(order.len(), 4, "a move must not duplicate or lose a lane");
 }
+
+/// Pairing is a fact about two panes and never a container (§6, §13 Phase 2).
+/// The thing to prove is that it changes nothing about layout.
+#[test]
+fn pairing_links_two_panes_without_touching_layout() {
+    let core = Core::open_in_memory().unwrap();
+    let st = core.create_lane(Placement::End, PaneKind::Pty, Some("s1".into()), None, None).unwrap();
+    let pty = st.lanes[0].panes[0].id.clone();
+    let st =
+        core.create_lane(Placement::End, PaneKind::Web, None, Some("https://docs".into()), None).unwrap();
+    let web = st.lanes[1].panes[0].id.clone();
+
+    let before: Vec<(String, f64)> = st.lanes.iter().map(|l| (l.id.clone(), l.ordinal)).collect();
+
+    core.pair(pty.clone(), web.clone()).unwrap();
+
+    // Visible from either end.
+    assert_eq!(core.pairs_of(pty.clone()).unwrap(), vec![web.clone()]);
+    assert_eq!(core.pairs_of(web.clone()).unwrap(), vec![pty.clone()]);
+
+    let after: Vec<(String, f64)> =
+        core.state().unwrap().lanes.iter().map(|l| (l.id.clone(), l.ordinal)).collect();
+    assert_eq!(after, before, "pairing moved something");
+
+    core.unpair(pty.clone(), web.clone()).unwrap();
+    assert!(core.pairs_of(pty).unwrap().is_empty());
+    assert!(core.pairs_of(web).unwrap().is_empty());
+}
+
+/// Closing a paired pane takes the pairing with it, rather than leaving a row
+/// pointing at a pane that no longer exists.
+#[test]
+fn closing_a_paired_pane_removes_the_pairing() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("ledger.db").to_string_lossy().into_owned();
+
+    let (pty, web) = {
+        let core = Core::open(db.clone()).unwrap();
+        let st = core.create_lane(Placement::End, PaneKind::Pty, Some("s1".into()), None, None).unwrap();
+        let pty = st.lanes[0].panes[0].id.clone();
+        let st =
+            core.create_lane(Placement::End, PaneKind::Web, None, Some("https://docs".into()), None).unwrap();
+        let web = st.lanes[1].panes[0].id.clone();
+        core.pair(pty.clone(), web.clone()).unwrap();
+        core.close_pane(web.clone()).unwrap();
+        (pty, web)
+    };
+
+    let core = Core::open(db).unwrap();
+    assert!(core.pairs_of(pty).unwrap().is_empty(), "a pairing outlived the pane it pointed at");
+    assert!(core.pairs_of(web).unwrap().is_empty());
+}
+
+/// Pairing does not confuse the gather filter, which is a tag question.
+#[test]
+fn pairing_does_not_affect_gather() {
+    let core = Core::open_in_memory().unwrap();
+    let st = core.create_lane(Placement::End, PaneKind::Pty, Some("s1".into()), None, None).unwrap();
+    let pty_lane = st.lanes[0].id.clone();
+    let pty = st.lanes[0].panes[0].id.clone();
+    let st =
+        core.create_lane(Placement::End, PaneKind::Web, None, Some("https://docs".into()), None).unwrap();
+    let web = st.lanes[1].panes[0].id.clone();
+
+    core.set_manual_tag(pty_lane, Some("/src/foo".into())).unwrap();
+    core.pair(pty, web).unwrap();
+
+    // The web lane is paired but untagged, so gather must not pull it in.
+    let gathered = core.gather("/src/foo".into()).unwrap();
+    assert_eq!(gathered.lanes.len(), 1);
+}
