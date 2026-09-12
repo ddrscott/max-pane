@@ -31,6 +31,30 @@ public final class StripViewController: NSViewController {
     /// Panes on their way out, so a second exit frame does not start a second
     /// animation on a pane that is already leaving.
     private var exiting: Set<String> = []
+    /// The lanes as of the last snapshot, in order.
+    ///
+    /// Every transition in this file is a difference between this and the next
+    /// snapshot. Nothing else in the strip knows what *changed* — `apply` is
+    /// handed a whole new world each time — so without this the app can only
+    /// cut.
+    private var lastLanes: [Lane] = []
+    /// Lanes the ledger no longer has, whose columns are still closing. They
+    /// keep their slot in the layout until the collapse ends; see `laneLayout`.
+    private var departingLanes: [(index: Int, lane: Lane)] = []
+    /// Panes the ledger no longer has, whose views are still fading out of a
+    /// stack. Reconciling ignores them until they are gone for real.
+    private var departingPanes: Set<String> = []
+    /// Lanes currently drawn differently from what the ledger says, because
+    /// something is animating them.
+    private var laneOverrides: [String: LaneOverride] = [:]
+    /// How far left or right of where the flow puts it a lane is drawn, while it
+    /// slides from the place it used to be. Purely visual: the flow position is
+    /// always the true one, so a re-layout mid-slide cannot desync it.
+    private var xOffsets: [String: CGFloat] = [:]
+    /// Transitions in flight, keyed by lane id, so a lane that changes twice in
+    /// a row animates once from where it currently is rather than having two
+    /// timers fight over its geometry.
+    private var transitions: [String: RunningAnimation] = [:]
     private var snapDebounce: DispatchWorkItem?
     /// True while the snap animation is running, so the bounds changes it
     /// causes do not schedule another snap.
@@ -56,8 +80,9 @@ public final class StripViewController: NSViewController {
     private var scrollMonitor: Any?
     /// Focuses whatever pane you click. See `startClickCapture`.
     private var clickMonitor: Any?
-    /// `(lane, width)` while its right edge is being dragged. View-only.
-    private var liveResize: (laneId: String, width: CGFloat)?
+    /// Lanes whose arrival animation is waiting for their view to exist. See
+    /// `beginArrivals`.
+    private var pendingArrivals: Set<String> = []
     /// Lane widths as of the last snapshot, so a change from *any* source —
     /// drag, ⌃⌘=, span, an imported strip — reshapes the terminal.
     private var lastLaneWidths: [String: UInt32] = [:]
@@ -238,22 +263,58 @@ public final class StripViewController: NSViewController {
     /// Diff the new snapshot against what is on screen and touch only the
     /// difference. Called after every mutation, so it must not rebuild the world.
     private func apply(_ state: StripState) {
-        emptyState.isHidden = !state.lanes.isEmpty
-        let wanted = Set(state.lanes.map(\.id))
+        let previous = lastLanes
+        lastLanes = state.lanes
+        let diff = StripDiff.between(previous.map(\.id), state.lanes.map(\.id))
 
-        // Lanes that went away take their panes with them.
-        for (id, laneView) in laneViews where !wanted.contains(id) {
-            retire(laneView, laneId: id, destroyPanes: true)
+        // What arrived, before anything is laid out: a lane whose column is
+        // about to open must never take its full slot first, not even for the
+        // one frame between here and its first animation tick.
+        beginArrivals(diff.inserted, in: state)
+
+        // Lanes that went away. A lane whose column is still closing keeps its
+        // view and its slot; one that is not animating goes now.
+        for departure in diff.removed {
+            guard let laneView = laneViews[departure.id] else { continue }
+            guard let lane = previous.first(where: { $0.id == departure.id }),
+                  shouldAnimate(laneAt: departure.index, in: previous)
+            else {
+                retire(laneView, laneId: departure.id)
+                continue
+            }
+            beginDeparture(lane, at: departure.index, view: laneView)
         }
 
-        content.layOut(lanes: state.lanes, viewFor: { [weak self] lane in self?.laneViews[lane.id] })
+        // After the departures are registered: the last lane on the strip is
+        // still closing for another fifth of a second, and "nothing here yet"
+        // printed across a column that is visibly leaving says two things at
+        // once.
+        emptyState.isHidden = !state.lanes.isEmpty || !departingLanes.isEmpty
+
+        relayout()
         updateMaterialization()
+        // Materialization is what gives an arriving lane its view, so its
+        // column can only start opening once that has run.
+        runPendingArrivals()
+
+        // Lanes that changed place. Measured in points between the two
+        // snapshots rather than in indices, because that is the distance the
+        // user's eye has to follow.
+        beginMoves(diff.moved, from: previous, to: state.lanes)
 
         for lane in state.lanes {
             laneViews[lane.id]?.apply(lane)
             laneViews[lane.id]?.isFocused = state.focusedPaneId.map { id in
                 lane.panes.contains { $0.id == id }
             } ?? false
+            // The fix for ⇧⌘D. `materialize` installs a lane's panes when the
+            // lane view is *built*; nothing used to install one into a lane that
+            // was already on screen, so a split created a real pane and a real
+            // session that never rendered — and closing one pane of a stack left
+            // its view behind for the same reason.
+            if let laneView = laneViews[lane.id] {
+                reconcilePanes(of: lane, in: laneView, animated: !isColdLaunch)
+            }
         }
 
         // A lane that changed width owes its terminal a new shape, whatever
@@ -278,6 +339,84 @@ public final class StripViewController: NSViewController {
            let controller = paneControllers[wanted] {
             focusedPaneInView = wanted
             controller.takeFocus()
+        }
+
+        reapPaneControllers(state)
+    }
+
+    // MARK: - reconciling a lane's panes
+
+    /// Make one lane's stack match the snapshot, touching only what differs.
+    ///
+    /// The single installer: `materialize` calls it for a lane that has just
+    /// been built, and `apply` calls it for every lane on screen after every
+    /// mutation. Both go through `PaneStackPlan`, so a lane built from scratch
+    /// and a lane that gained a pane end up in provably the same state — the
+    /// thing that was not true when `setPaneView` had exactly one caller.
+    private func reconcilePanes(of lane: Lane, in laneView: LaneView, animated: Bool) {
+        let wanted = lane.panes.map(\.id)
+
+        // Panes the snapshot has dropped. Started first and separately, because
+        // an animated exit *keeps its slot* — the plan below then has to be
+        // computed against a stack that still contains it.
+        for id in laneView.arrangedPaneIds
+        where !wanted.contains(id) && !departingPanes.contains(id) {
+            beginPaneDeparture(id, in: laneView, animated: animated)
+        }
+
+        let installed = laneView.arrangedPaneIds
+        let held = PaneStackPlan.holding(departingPanes, wanted: wanted, installed: installed)
+        for step in PaneStackPlan.steps(installed: installed, wanted: held) {
+            switch step {
+            case .remove(let id):
+                // Only reached when a departure was taken instantly — the
+                // animated path has already held the slot.
+                laneView.setPaneView(nil, for: id, at: 0)
+
+            case .insert(let id, let index):
+                guard let pane = lane.panes.first(where: { $0.id == id }) else { continue }
+                let controller = paneControllers[id] ?? makeController(for: pane, in: lane)
+                paneControllers[id] = controller
+                controller.apply(pane)
+                laneView.setPaneView(controller.view, for: id, at: index)
+                if animated && !Motion.isReduced {
+                    laneView.animatePaneViewIn(for: id, duration: Motion.pane)
+                }
+
+            case .move(let id, let index):
+                laneView.movePaneView(for: id, to: index)
+            }
+        }
+    }
+
+    /// A pane leaving a stack while its lane stays.
+    private func beginPaneDeparture(_ paneId: String, in laneView: LaneView, animated: Bool) {
+        guard animated, !Motion.isReduced else { return }
+        departingPanes.insert(paneId)
+        laneView.fadeOutPaneView(for: paneId, duration: Motion.pane) { [weak self] in
+            guard let self else { return }
+            laneView.setPaneView(nil, for: paneId, at: 0)
+            self.departingPanes.remove(paneId)
+            self.reapPaneControllers(self.store.state)
+        }
+    }
+
+    /// Let go of every pane controller nothing is using any more.
+    ///
+    /// The only place a controller dies. Lane views are recycled constantly and
+    /// a controller deliberately outlives them (ADR-0004), so "this lane has no
+    /// view" is never the question — "the ledger has no such pane, and nothing
+    /// on screen is still showing it" is.
+    private func reapPaneControllers(_ state: StripState) {
+        var live = Set(state.lanes.flatMap(\.panes).map(\.id))
+        for ghost in departingLanes { live.formUnion(ghost.lane.panes.map(\.id)) }
+        live.formUnion(departingPanes)
+
+        for (paneId, controller) in paneControllers where !live.contains(paneId) {
+            controller.tearDown()
+            paneControllers[paneId] = nil
+            SnapshotStore.remove(for: paneId)
+            if focusedPaneInView == paneId { focusedPaneInView = nil }
         }
     }
 
@@ -305,7 +444,7 @@ public final class StripViewController: NSViewController {
     /// measured 0.00% dropped frames with this slack and a peak of 13 live lane
     /// views out of 150.
     private func materializationWindow(for state: StripState) -> Range<Int> {
-        let visible = visibleLaneRange(in: state)
+        let visible = visibleLaneRange(in: state.lanes)
         let slack = Int(config.releaseDistance)
         let lower = max(0, visible.lowerBound - slack)
         let upper = min(state.lanes.count, visible.upperBound + slack)
@@ -318,9 +457,12 @@ public final class StripViewController: NSViewController {
         let window = materializationWindow(for: state)
         let wanted = Set(state.lanes[window].map(\.id))
 
-        for (id, laneView) in laneViews where !wanted.contains(id) {
-            // Off the window: recycle the chrome, keep the panes alive.
-            retire(laneView, laneId: id, destroyPanes: false)
+        for (id, laneView) in laneViews where !wanted.contains(id) && !isDeparting(id) {
+            // Off the window: recycle the chrome, keep the panes alive. A lane
+            // whose column is still closing is not off the window — it is not in
+            // the snapshot at all, and recycling it mid-collapse would make it
+            // vanish, which is the cut this exists to remove.
+            retire(laneView, laneId: id)
         }
         for lane in state.lanes[window] where laneViews[lane.id] == nil {
             materialize(lane)
@@ -335,7 +477,7 @@ public final class StripViewController: NSViewController {
             }
         }
 
-        content.layOut(lanes: state.lanes, viewFor: { [weak self] lane in self?.laneViews[lane.id] })
+        relayout()
         applyEvictionPlan(for: state)
     }
 
@@ -352,7 +494,7 @@ public final class StripViewController: NSViewController {
         laneView.onResize = { [weak self] width, isFinal in
             guard let self else { return }
             if isFinal {
-                self.liveResize = nil
+                self.laneOverrides[lane.id] = nil
                 try? self.store.setLaneWidth(lane.id, width)
 
             } else {
@@ -360,11 +502,8 @@ public final class StripViewController: NSViewController {
                 // width on mouse-up, which reads as the drag not working at all.
                 // Still no ledger write until the drop — §6 wants one commit per
                 // decision, not sixty a second.
-                self.liveResize = (lane.id, CGFloat(width))
-                self.content.layOut(
-                    lanes: self.store.state.lanes,
-                    viewFor: { [weak self] l in self?.laneViews[l.id] },
-                    widthOverride: self.liveResize)
+                self.laneOverrides[lane.id] = LaneOverride(slot: CGFloat(width), masked: false)
+                self.relayout()
             }
         }
         laneView.widthBounds = config.widthRange.lowerBound...(config.laneMaxPt * max(lane.span, 1))
@@ -380,12 +519,12 @@ public final class StripViewController: NSViewController {
         laneView.applyTelemetry(laneTelemetry)
         content.addSubview(laneView)
 
-        for (position, pane) in lane.panes.enumerated() {
-            let controller = paneControllers[pane.id] ?? makeController(for: pane, in: lane)
-            paneControllers[pane.id] = controller
-            controller.apply(pane)
-            laneView.setPaneView(controller.view, for: pane.id, at: position)
-        }
+        // A recycled view arrives holding another lane's panes; a fresh one
+        // holds none. Both are just "the stack does not match the snapshot", so
+        // both go through the same reconcile — never animated, because
+        // materialising is what happens when a lane scrolls *back* into range,
+        // and a lane you scrolled to has not appeared, it was always there.
+        reconcilePanes(of: lane, in: laneView, animated: false)
     }
 
     // MARK: - a session that ended
@@ -404,57 +543,31 @@ public final class StripViewController: NSViewController {
     private func paneDidExit(_ paneId: String) {
         guard exiting.insert(paneId).inserted else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.exitHold) { [weak self] in
-            self?.animateAwayAndClose(paneId)
+            self?.closeExitedPane(paneId)
         }
     }
 
     /// How long a finished pane stays legible before it starts to go.
     private static let exitHold: TimeInterval = 0.45
-    /// How long it takes to go.
-    private static let exitCollapse: TimeInterval = 0.22
 
-    private func animateAwayAndClose(_ paneId: String) {
+    /// Commit the close and let the strip's own transitions show it.
+    ///
+    /// This used to run the collapse itself and write to the ledger afterwards.
+    /// It no longer needs to: a pane leaving the snapshot is now animated
+    /// wherever it comes from, so an exited session and a ⌘W go out by exactly
+    /// the same path and look the same doing it — and the write comes first
+    /// again, which is what the README's "commit the mutation before animating
+    /// it" asks for.
+    private func closeExitedPane(_ paneId: String) {
         // Gone already — closed by hand during the hold, or the lane went with
         // a sibling.
-        guard let lane = store.lane(containing: paneId) else {
+        guard store.lane(containing: paneId) != nil else {
             exiting.remove(paneId)
             return
         }
-        // A lane with a stack loses one pane and keeps its column; there is no
-        // width to collapse, so it fades and the stack re-lays out under it.
-        let isLastPane = lane.panes.count == 1
-        guard let laneView = laneViews[lane.id], isLastPane else {
-            fade(paneControllers[paneId]?.view) { [weak self] in
-                guard let self else { return }
-                self.exiting.remove(paneId)
-                self.focusNeighbourIfNeeded(closing: paneId)
-                try? self.store.closePane(paneId)
-            }
-            return
-        }
-
-        let full = CGFloat(lane.widthPt)
-        animate(duration: Self.exitCollapse) { [weak self] t in
-            guard let self else { return }
-            // Ease-out: most of the travel happens immediately, so the eye
-            // reads "that one left" rather than watching a column shrink.
-            let eased = 1 - pow(1 - t, 3)
-            laneView.alphaValue = 1 - eased
-            self.liveResize = (lane.id, max(0, full * (1 - eased)))
-            self.content.layOut(
-                lanes: self.store.state.lanes,
-                viewFor: { [weak self] l in self?.laneViews[l.id] },
-                widthOverride: self.liveResize)
-        } completion: { [weak self] in
-            guard let self else { return }
-            self.liveResize = nil
-            laneView.alphaValue = 1
-            self.exiting.remove(paneId)
-            self.focusNeighbourIfNeeded(closing: paneId)
-            // The ledger last, per PRD §6: the strip has already shown the
-            // result, but nothing is true until it commits.
-            try? self.store.closePane(paneId)
-        }
+        exiting.remove(paneId)
+        focusNeighbourIfNeeded(closing: paneId)
+        try? store.closePane(paneId)
     }
 
     /// Keep the keyboard somewhere real when the focused pane is the one going.
@@ -474,13 +587,193 @@ public final class StripViewController: NSViewController {
         try? store.focusPane(pane.id)
     }
 
-    private func fade(_ view: NSView?, completion: @escaping () -> Void) {
-        guard let view else { return completion() }
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = Self.exitCollapse
-            view.animator().alphaValue = 0
-        } completionHandler: {
-            view.alphaValue = 1
+    // MARK: - lane transitions
+
+    /// The lanes the strip draws: the ledger's, plus any whose column is still
+    /// closing.
+    ///
+    /// A lane that has left the ledger has to keep a slot until its collapse
+    /// finishes, or the lanes to its right teleport left the instant the write
+    /// commits — which is the exact thing the collapse exists to prevent.
+    private var laneLayout: [Lane] {
+        guard !departingLanes.isEmpty else { return store.state.lanes }
+        var lanes = store.state.lanes
+        for ghost in departingLanes.sorted(by: { $0.index < $1.index }) {
+            lanes.insert(ghost.lane, at: min(ghost.index, lanes.count))
+        }
+        return lanes
+    }
+
+    private func isDeparting(_ laneId: String) -> Bool {
+        departingLanes.contains { $0.lane.id == laneId }
+    }
+
+    /// Position every lane. The one place that lays the strip out, so every
+    /// caller gets the ghosts and the in-flight offsets for free.
+    private func relayout(lanes: [Lane]? = nil) {
+        content.layOut(
+            lanes: lanes ?? laneLayout,
+            viewFor: { [weak self] lane in self?.laneViews[lane.id] },
+            overrides: laneOverrides,
+            xOffsets: xOffsets)
+    }
+
+    /// Whether a change at this index is worth animating.
+    ///
+    /// Motion off screen is not subtle, it is invisible — and worse than
+    /// invisible: a lane growing open to the left of the viewport pushes
+    /// everything the user is reading sideways for a fifth of a second, to
+    /// narrate something they cannot see. On screen or one lane past the edge
+    /// (where the eye is already heading, because that is where ⌘T puts things)
+    /// gets the motion; everything else is instant and correct.
+    private func shouldAnimate(laneAt index: Int, in lanes: [Lane]) -> Bool {
+        guard !isColdLaunch, !Motion.isReduced, view.window != nil else { return false }
+        let visible = visibleLaneRange(in: lanes)
+        return index >= visible.lowerBound - 1 && index <= visible.upperBound
+    }
+
+    /// A lane that has just joined the strip: its column opens at the place it
+    /// will live, pushing its neighbours aside, and the lane fades up inside it.
+    ///
+    /// The inverse of the collapse, deliberately — arrival and departure are the
+    /// same event seen from opposite ends, and giving them different shapes
+    /// would make the strip harder to read, not more interesting.
+    ///
+    /// The width override is set *here*, before the caller's first layout, and
+    /// the timer starts later: the view does not exist until materialization has
+    /// run, and a single frame at full width before the animation begins is the
+    /// cut this is replacing.
+    private func beginArrivals(_ laneIds: [String], in state: StripState) {
+        for id in laneIds {
+            guard let index = state.lanes.firstIndex(where: { $0.id == id }),
+                  shouldAnimate(laneAt: index, in: state.lanes)
+            else { continue }
+            laneOverrides[id] = LaneOverride(slot: 0, masked: true)
+            pendingArrivals.insert(id)
+        }
+    }
+
+    private func runPendingArrivals() {
+        let arrivals = pendingArrivals
+        pendingArrivals.removeAll()
+        for id in arrivals {
+            guard let laneView = laneViews[id], let lane = store.lane(id) else {
+                laneOverrides[id] = nil
+                continue
+            }
+            let full = CGFloat(lane.widthPt)
+            laneView.alphaValue = 0
+            startTransition(lane: id, duration: Motion.lane) { [weak self] t in
+                guard let self else { return }
+                let eased = Motion.easeOut(t)
+                laneView.alphaValue = eased
+                self.laneOverrides[id] = LaneOverride(slot: full * eased, masked: true)
+                self.relayout()
+            } completion: { [weak self] in
+                guard let self else { return }
+                laneView.alphaValue = 1
+                self.laneOverrides[id] = nil
+                self.relayout()
+            }
+        }
+    }
+
+    /// A lane that has left the ledger: its column closes where it stood, and
+    /// the strip to its right slides over the gap so you can see what took its
+    /// place.
+    private func beginDeparture(_ lane: Lane, at index: Int, view laneView: LaneView) {
+        departingLanes.append((index, lane))
+        let full = CGFloat(lane.widthPt)
+        // The first frame, now: a transition's first tick is a run loop away,
+        // and the strip must never paint the end state before the motion that
+        // explains it. This one is already correct at full width — but saying so
+        // costs nothing and stops the next person wondering.
+        laneOverrides[lane.id] = LaneOverride(slot: full, masked: true)
+        startTransition(lane: lane.id, duration: Motion.lane) { [weak self] t in
+            guard let self else { return }
+            let eased = Motion.easeOut(t)
+            laneView.alphaValue = 1 - eased
+            self.laneOverrides[lane.id] = LaneOverride(slot: max(0, full * (1 - eased)), masked: true)
+            self.relayout()
+        } completion: { [weak self] in
+            guard let self else { return }
+            self.laneOverrides[lane.id] = nil
+            self.departingLanes.removeAll { $0.lane.id == lane.id }
+            laneView.alphaValue = 1
+            self.retire(laneView, laneId: lane.id)
+            self.reapPaneControllers(self.store.state)
+            self.emptyState.isHidden =
+                !self.store.state.lanes.isEmpty || !self.departingLanes.isEmpty
+            self.relayout()
+            self.updateMaterialization()
+        }
+    }
+
+    /// A lane that changed place (⇧⌘← / ⇧⌘→, or a drop): it starts drawn where
+    /// it used to be and slides to where it now is, so the swap is something you
+    /// watched rather than something you have to reconstruct.
+    ///
+    /// The offset is visual only — the flow already has the lane at its new
+    /// position — so a scroll, a telemetry tick or another mutation during the
+    /// slide re-lays the strip out without knocking the animation off course.
+    private func beginMoves(_ laneIds: [String], from before: [Lane], to after: [Lane]) {
+        guard !laneIds.isEmpty, !isColdLaunch, !Motion.isReduced, view.window != nil else { return }
+        let was = StripGeometry.origins(of: before)
+        let now = StripGeometry.origins(of: after)
+        var slides: [(id: String, delta: CGFloat)] = []
+        for id in laneIds {
+            guard laneViews[id] != nil, let from = was[id], let to = now[id] else { continue }
+            let delta = from - to
+            guard abs(delta) > 1 else { continue }
+            xOffsets[id] = delta
+            slides.append((id, delta))
+        }
+        // Draw them back where they were *before* the first tick. A transition's
+        // first frame is a run loop away, and without this the strip paints the
+        // lanes already swapped for the three frames before the slide starts —
+        // which is the teleport this is here to remove, with a slide after it.
+        guard !slides.isEmpty else { return }
+        relayout()
+
+        for (id, delta) in slides {
+            startTransition(lane: id, duration: Motion.lane) { [weak self] t in
+                guard let self else { return }
+                self.xOffsets[id] = delta * (1 - Motion.easeOut(t))
+                self.relayout()
+            } completion: { [weak self] in
+                guard let self else { return }
+                self.xOffsets[id] = nil
+                self.relayout()
+            }
+        }
+    }
+
+    /// Start a transition on one lane, replacing whatever that lane was already
+    /// doing.
+    ///
+    /// Keyed by lane rather than by kind so the second of two quick changes
+    /// takes over from the first instead of both writing the same geometry every
+    /// frame. Each transition owns both of the lane's overrides for its
+    /// duration, so the one it is not animating is cleared rather than left at
+    /// whatever the last one got to.
+    ///
+    /// With Reduce Motion on — or with the window gone, where there is nothing
+    /// to see and a timer would just keep the controller alive — this runs the
+    /// last frame and the completion immediately. Same end state, no middle.
+    private func startTransition(
+        lane laneId: String,
+        duration: TimeInterval,
+        step: @escaping @MainActor (CGFloat) -> Void,
+        completion: @escaping @MainActor () -> Void
+    ) {
+        transitions.removeValue(forKey: laneId)?.timer?.invalidate()
+        guard !Motion.isReduced, view.window != nil else {
+            step(1)
+            completion()
+            return
+        }
+        transitions[laneId] = animate(duration: duration, step: step) { [weak self] in
+            self?.transitions[laneId] = nil
             completion()
         }
     }
@@ -491,11 +784,12 @@ public final class StripViewController: NSViewController {
     /// a view property: the strip's layout is computed from lane widths, and the
     /// collapse has to run through that same layout or the lanes to the right
     /// would not move with it.
+    @discardableResult
     private func animate(
         duration: TimeInterval,
         step: @escaping @MainActor (CGFloat) -> Void,
         completion: @escaping @MainActor () -> Void
-    ) {
+    ) -> RunningAnimation {
         let start = CACurrentMediaTime()
         // Scheduled on the main run loop in `.common`, so the block is already
         // on the main thread — `assumeIsolated` states that rather than hopping
@@ -513,6 +807,7 @@ public final class StripViewController: NSViewController {
             }
         }
         RunLoop.main.add(running.timer!, forMode: .common)
+        return running
     }
 
     /// Holds the timer so the block can stop the thing that is running it —
@@ -551,14 +846,14 @@ public final class StripViewController: NSViewController {
         for controller in paneControllers.values { controller.flushState() }
     }
 
-    private func retire(_ laneView: LaneView, laneId: String, destroyPanes: Bool) {
-        if destroyPanes {
-            for paneId in laneView.installedPaneIds {
-                paneControllers[paneId]?.tearDown()
-                paneControllers[paneId] = nil
-                SnapshotStore.remove(for: paneId)
-            }
-        }
+    /// Take a lane's chrome out of the strip.
+    ///
+    /// Never touches pane controllers. A retired lane is usually one that has
+    /// merely scrolled out of the materialization window and will be back, and
+    /// its `WKWebView` is cheap to unparent and ruinous to rebuild (PRD §10.2).
+    /// Whether a pane is *gone* is a question about the ledger, not about this
+    /// view, and `reapPaneControllers` is the one place that asks it.
+    private func retire(_ laneView: LaneView, laneId: String) {
         laneView.clearPaneViews()
         laneView.removeFromSuperview()
         laneViews[laneId] = nil
@@ -618,15 +913,14 @@ public final class StripViewController: NSViewController {
             // Live feedback without a write: slide the dragged lane's view to
             // where it would land.
             dragPreview = (laneId, target)
-            content.layOut(lanes: reordered(state.lanes, from: from, to: target),
-                           viewFor: { [weak self] lane in self?.laneViews[lane.id] })
+            relayout(lanes: reordered(state.lanes, from: from, to: target))
             return
         }
 
         dragPreview = nil
         guard target != from else {
             // Dropped where it started. Re-lay out so the preview does not stick.
-            content.layOut(lanes: state.lanes, viewFor: { [weak self] lane in self?.laneViews[lane.id] })
+            relayout()
             return
         }
 
@@ -672,21 +966,21 @@ public final class StripViewController: NSViewController {
     private func distanceFromViewport(laneId: String) -> UInt32 {
         let state = store.state
         guard let index = state.lanes.firstIndex(where: { $0.id == laneId }) else { return .max }
-        let visible = visibleLaneRange(in: state)
+        let visible = visibleLaneRange(in: state.lanes)
         if index < visible.lowerBound { return UInt32(visible.lowerBound - index) }
         if index >= visible.upperBound { return UInt32(index - visible.upperBound + 1) }
         return 0
     }
 
-    private func visibleLaneRange(in state: StripState) -> Range<Int> {
+    private func visibleLaneRange(in lanes: [Lane]) -> Range<Int> {
         let origin = scrollView.contentView.bounds.origin.x
         let width = scrollView.contentView.bounds.width
-        guard width > 0 else { return 0..<min(state.lanes.count, 1) }
+        guard width > 0 else { return 0..<min(lanes.count, 1) }
 
         var x: CGFloat = 0
         var first: Int? = nil
         var last = 0
-        for (i, lane) in state.lanes.enumerated() {
+        for (i, lane) in lanes.enumerated() {
             let right = x + CGFloat(lane.widthPt)
             if right > origin && x < origin + width {
                 if first == nil { first = i }
@@ -695,7 +989,7 @@ public final class StripViewController: NSViewController {
             x = right + Theme.borderWidth
             if x > origin + width { break }
         }
-        guard let first else { return 0..<min(state.lanes.count, 1) }
+        guard let first else { return 0..<min(lanes.count, 1) }
         return first..<(last + 1)
     }
 
@@ -711,7 +1005,7 @@ public final class StripViewController: NSViewController {
     // MARK: - scrolling
 
     @objc private func clipViewResized() {
-        content.layOut(lanes: store.state.lanes, viewFor: { [weak self] lane in self?.laneViews[lane.id] })
+        relayout()
         updateMaterialization()
         // The strip got shorter or taller, so every terminal has a different
         // number of rows now. Same debounce as a width drag.
@@ -883,7 +1177,7 @@ public final class StripViewController: NSViewController {
     /// facts only the shell knows — what WebKit actually weighs, and where the
     /// viewport is — are measured here and handed over.
     private func applyEvictionPlan(for state: StripState) {
-        let visible = visibleLaneRange(in: state)
+        let visible = visibleLaneRange(in: state.lanes)
         guard !state.lanes.isEmpty else { return }
         let viewport = Viewport(
             firstVisible: UInt32(visible.lowerBound),
@@ -964,9 +1258,16 @@ final class StripContentView: NSView {
     /// Position every materialised lane and size the document view to the whole
     /// strip, including the lanes that have no view right now — otherwise the
     /// scroller would only span what happens to be built.
+    /// `overrides` and `xOffsets` are what animation looks like from here: a
+    /// lane whose slot in the row is narrower than the ledger says because its
+    /// column is opening or closing, and a lane drawn beside its slot because it
+    /// is still sliding into it. Both are transient and neither is ever written
+    /// anywhere — the snapshot stays the only truth about how wide a lane is and
+    /// where it sits.
     func layOut(
         lanes: [Lane], viewFor: (Lane) -> LaneView?,
-        widthOverride: (laneId: String, width: CGFloat)? = nil
+        overrides: [String: LaneOverride] = [:],
+        xOffsets: [String: CGFloat] = [:]
     ) {
         var x: CGFloat = 0
         // The clip view's height, not our own: our height is what we are about
@@ -975,12 +1276,18 @@ final class StripContentView: NSView {
         let height = superview?.bounds.height ?? bounds.height
         guard height > 0 else { return }
         for lane in lanes {
-            let width = (widthOverride?.laneId == lane.id ? widthOverride?.width : nil)
-                ?? CGFloat(lane.widthPt)
+            let override = overrides[lane.id]
+            let slot = override?.slot ?? CGFloat(lane.widthPt)
+            // A masked lane keeps its real width — only its slot is narrow —
+            // so the pane inside it is never resized by a transition.
+            let drawn = (override?.masked ?? false) ? CGFloat(lane.widthPt) : slot
             if let laneView = viewFor(lane) {
-                laneView.frame = NSRect(x: x, y: 0, width: width, height: height)
+                laneView.frame = NSRect(
+                    x: x + (xOffsets[lane.id] ?? 0), y: 0, width: drawn, height: height)
+                // After the frame: the mask is in the lane's own coordinates.
+                laneView.revealWidth = (override?.masked ?? false) ? slot : nil
             }
-            x += width + Theme.borderWidth
+            x += slot + Theme.borderWidth
         }
         totalWidth = x
         if frame.width != totalWidth || frame.height != height {

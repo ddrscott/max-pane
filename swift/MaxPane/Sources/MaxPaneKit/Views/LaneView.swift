@@ -159,6 +159,101 @@ final class LaneView: NSView {
 
     var installedPaneIds: Set<String> { Set(paneViews.keys) }
 
+    /// The installed panes in the order the stack actually has them, top to
+    /// bottom.
+    ///
+    /// `installedPaneIds` answers "is this pane on screen", which is what a lane
+    /// going away needs. A reconcile needs more than that: a pane can be
+    /// installed and still be in the wrong place, and the set cannot tell you.
+    var arrangedPaneIds: [String] {
+        stack.arrangedSubviews.compactMap { view in
+            paneViews.first { $0.value === view }?.key
+        }
+    }
+
+    /// Put an already-installed pane view somewhere else in the stack.
+    ///
+    /// `removeArrangedSubview` takes a view out of the *arrangement* and leaves
+    /// it a subview, so the view never leaves the window between the two calls.
+    /// That distinction is the whole reason this is not "remove then install":
+    /// unparenting a `WKWebView`, even for one turn of the run loop, costs its
+    /// content process.
+    func movePaneView(for paneId: String, to position: Int) {
+        guard let view = paneViews[paneId],
+              let current = stack.arrangedSubviews.firstIndex(of: view)
+        else { return }
+        let index = min(position, stack.arrangedSubviews.count - 1)
+        guard index != current else { return }
+        stack.removeArrangedSubview(view)
+        stack.insertArrangedSubview(view, at: index)
+    }
+
+    /// Take a pane's view out with a bit of motion, and call back when the stack
+    /// has closed over the gap.
+    ///
+    /// The pane fades while the stack collapses its slot, so the panes that stay
+    /// grow into the space rather than jumping into it — after this you know
+    /// which of the two terminals went, which a cut cannot tell you. The view is
+    /// only unparented in the completion, so the caller's teardown still happens
+    /// exactly once and at the end.
+    ///
+    /// `NSStackView` animates the collapse itself when `isHidden` is set through
+    /// the animator proxy; `layoutSubtreeIfNeeded` inside the group is what
+    /// makes the siblings travel instead of snapping at the end.
+    func fadeOutPaneView(for paneId: String, duration: TimeInterval, completion: @escaping () -> Void) {
+        guard let view = paneViews[paneId] else { return completion() }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = duration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            context.allowsImplicitAnimation = true
+            view.animator().alphaValue = 0
+            view.animator().isHidden = true
+            self.layoutSubtreeIfNeeded()
+        } completionHandler: {
+            // Back to a usable state before it goes: a pane controller can
+            // outlive its lane view (ADR-0004) and be parented again later, and
+            // a view that comes back hidden and transparent looks like a bug in
+            // the thing that brought it back.
+            view.alphaValue = 1
+            view.isHidden = false
+            completion()
+        }
+    }
+
+    /// A pane joining the stack: the panes that were already there give up their
+    /// height and the new slot opens between them.
+    ///
+    /// What moves is deliberately *not* the new pane. A pane arriving from
+    /// ⇧⌘D is an empty shell — black text-free rectangle — so fading or sliding
+    /// it in animates nothing a person can see; the only thing on screen with
+    /// pixels in it is the pane that is making room. Watching the terminal above
+    /// shrink upward is what tells you the lane divided and where the new half
+    /// came from.
+    ///
+    /// Hidden first and shown inside the group, because that is how
+    /// `NSStackView` is asked to animate: it detaches hidden arranged subviews,
+    /// so this is a layout change from two slots to three, and
+    /// `layoutSubtreeIfNeeded` inside the group is what makes the siblings
+    /// travel rather than snap at the end.
+    ///
+    /// `isHidden` is back to `false` before this method returns — the animator
+    /// sets the model value immediately and animates only the presentation — so
+    /// the caller can still give the new pane the keyboard in the same turn. A
+    /// split that swallows its first keystroke would be worse than a split with
+    /// no animation at all.
+    func animatePaneViewIn(for paneId: String, duration: TimeInterval) {
+        guard let view = paneViews[paneId] else { return }
+        view.isHidden = true
+        layoutSubtreeIfNeeded()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = duration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            context.allowsImplicitAnimation = true
+            view.animator().isHidden = false
+            self.layoutSubtreeIfNeeded()
+        }
+    }
+
     /// Remove every pane view, for when the lane scrolls far enough off-screen
     /// that the strip is recycling it.
     func clearPaneViews() {
@@ -167,6 +262,58 @@ final class LaneView: NSView {
             view.removeFromSuperview()
         }
         paneViews.removeAll()
+    }
+
+    // MARK: - opening and closing
+
+    /// How much of this lane is currently showing, in points, while its column
+    /// is opening or closing. `nil` is the normal state: all of it.
+    ///
+    /// **This masks; it does not resize.** The obvious way to open a column is
+    /// to animate the lane's width from zero, and it is wrong: the pane inside
+    /// is live, so a 0.22s collapse walks a terminal down to one column and back
+    /// thirteen times. Ghostty tears its surface down on a zero-width view —
+    /// which is how a `maxpane run` lane arrived, logged
+    /// `invalid view size=0.00x898.00`, and closed itself again before anyone
+    /// could read it — and a terminal *does* have a far end, so re-deriving a
+    /// grid mid-animation is ADR-0007's forbidden move on a session that may
+    /// have a phone attached to it.
+    ///
+    /// The lane therefore keeps its real width the whole time and is revealed
+    /// through a mask, while the strip gives its *slot* the animated width. The
+    /// column still opens and the lanes beside it still move; nothing inside it
+    /// is told anything happened.
+    var revealWidth: CGFloat? {
+        didSet {
+            guard revealWidth != oldValue else { return }
+            applyReveal()
+        }
+    }
+
+    private func applyReveal() {
+        guard let layer else { return }
+        guard let width = revealWidth else {
+            layer.mask = nil
+            return
+        }
+        let mask = (layer.mask as? CALayer) ?? CALayer()
+        // Frames set from a timer, so implicit animation would add a second,
+        // slower animation on top of the one being driven — the mask would
+        // always be chasing the slot instead of being it.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        mask.backgroundColor = NSColor.black.cgColor
+        mask.frame = CGRect(x: 0, y: 0, width: max(0, width), height: bounds.height)
+        if layer.mask !== mask { layer.mask = mask }
+        CATransaction.commit()
+    }
+
+    override func layout() {
+        super.layout()
+        // The mask is in the lane's own coordinates, so a strip that changed
+        // height mid-transition would otherwise reveal a full-width lane through
+        // a mask that is the old height.
+        if revealWidth != nil { applyReveal() }
     }
 
     // MARK: - focus and flash
