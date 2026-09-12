@@ -211,11 +211,7 @@ pub fn plan(
                     }
                 }
             };
-            directives.push(PaneDirective {
-                pane_id: pane.id.clone(),
-                lane_id: lane.id.clone(),
-                action,
-            });
+            directives.push(PaneDirective { pane_id: pane.id.clone(), lane_id: lane.id.clone(), action });
         }
     }
 
@@ -229,13 +225,11 @@ pub fn plan(
     // footprint spanning 20–116 MB on real sites, so when the information exists
     // it is worth about 5× what ignoring it is.
     candidates.sort_by(|a, b| {
-        b.0.cmp(&a.0)
-            .then_with(|| lanes[a.1].last_focus_at.cmp(&lanes[b.1].last_focus_at))
-            .then_with(|| {
-                let fa = footprint_of(memory, &lanes[a.1].panes[a.2].id);
-                let fb = footprint_of(memory, &lanes[b.1].panes[b.2].id);
-                fb.cmp(&fa)
-            })
+        b.0.cmp(&a.0).then_with(|| lanes[a.1].last_focus_at.cmp(&lanes[b.1].last_focus_at)).then_with(|| {
+            let fa = footprint_of(memory, &lanes[a.1].panes[a.2].id);
+            let fb = footprint_of(memory, &lanes[b.1].panes[b.2].id);
+            fb.cmp(&fa)
+        })
     });
 
     // Evict until the estimate reaches the target. Where a pane's real footprint
@@ -264,11 +258,7 @@ pub fn plan(
 }
 
 fn footprint_of(memory: &MemoryReport, pane_id: &str) -> Option<u64> {
-    memory
-        .pane_footprints
-        .iter()
-        .find(|f| f.pane_id == pane_id)
-        .map(|f| f.bytes)
+    memory.pane_footprints.iter().find(|f| f.pane_id == pane_id).map(|f| f.bytes)
 }
 
 /// Lanes between `index` and the visible range. 0 when on screen.
@@ -456,10 +446,7 @@ mod tests {
         assert_eq!(h.consecutive_over_soft, 0);
 
         let plan = plan(&lanes, &vp, &budgets(10 * GB), &mut h, 30_000);
-        assert!(
-            plan.iter().all(|d| d.action != PaneAction::Evict),
-            "the count should have restarted"
-        );
+        assert!(plan.iter().all(|d| d.action != PaneAction::Evict), "the count should have restarted");
     }
 
     /// The hard mark is an emergency: no sample count, no cooldown.
@@ -502,11 +489,8 @@ mod tests {
         let mut memory = budgets(used);
         memory.target_bytes = used - used / 40;
         let plan = plan_under_sustained_pressure(&lanes, &vp, &memory);
-        let evicted: Vec<&str> = plan
-            .iter()
-            .filter(|d| d.action == PaneAction::Evict)
-            .map(|d| d.lane_id.as_str())
-            .collect();
+        let evicted: Vec<&str> =
+            plan.iter().filter(|d| d.action == PaneAction::Evict).map(|d| d.lane_id.as_str()).collect();
         assert_eq!(evicted, vec!["l0"], "furthest-from-viewport lane should go first");
     }
 
@@ -545,11 +529,8 @@ mod tests {
         ];
 
         let plan = plan_under_sustained_pressure(&lanes, &vp, &memory);
-        let evicted: Vec<&str> = plan
-            .iter()
-            .filter(|d| d.action == PaneAction::Evict)
-            .map(|d| d.pane_id.as_str())
-            .collect();
+        let evicted: Vec<&str> =
+            plan.iter().filter(|d| d.action == PaneAction::Evict).map(|d| d.pane_id.as_str()).collect();
         // p0 and p8 are both 4 lanes away; the 116 MB one clears the deficit alone.
         assert_eq!(evicted, vec!["p8"]);
     }
@@ -566,11 +547,8 @@ mod tests {
         memory.target_bytes = 1;
         let plan = plan(&lanes, &vp, &memory, &mut h, 0);
 
-        let evicted: Vec<&str> = plan
-            .iter()
-            .filter(|d| d.action == PaneAction::Evict)
-            .map(|d| d.pane_id.as_str())
-            .collect();
+        let evicted: Vec<&str> =
+            plan.iter().filter(|d| d.action == PaneAction::Evict).map(|d| d.pane_id.as_str()).collect();
         assert_eq!(evicted.len(), 9, "everything off screen should be reachable");
         assert!(!evicted.contains(&"p5"), "the visible pane must survive");
     }
