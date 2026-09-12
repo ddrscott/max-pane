@@ -24,6 +24,7 @@ public enum Command: String, CaseIterable {
     case moveLaneRight
     case toggleSidebar
     case search
+    case showHistory
     case gather
     case ungather
     case attachSession
@@ -59,6 +60,7 @@ public enum Command: String, CaseIterable {
         case .moveLaneRight: return "Move Lane Right"
         case .toggleSidebar: return "Toggle Sidebar"
         case .search: return "Search…"
+        case .showHistory: return "History…"
         case .gather: return "Gather Project"
         case .ungather: return "Leave Gather View"
         case .attachSession: return "Attach Relay Session…"
@@ -105,6 +107,8 @@ public enum Command: String, CaseIterable {
         case .moveLaneRight:   return ("\u{2192}", [.command, .shift])
         case .toggleSidebar:   return ("b", [.command])
         case .search:          return ("p", [.command])
+        // ⌘Y, because that is where a hand already goes for it.
+        case .showHistory:     return ("y", [.command])
         case .gather:          return ("g", [.command])
         // Esc, which is not a menu key equivalent — handled in the responder chain.
         case .ungather:        return ("\u{1b}", [])
@@ -146,6 +150,7 @@ public enum Command: String, CaseIterable {
         case .newPane, .newTerminalLane, .newWebLane, .runCommand, .splitDown, .attachSession: return .file
         case .closePane, .closeLane: return .file
         case .focusLeft, .focusRight, .focusUp, .focusDown, .search, .gather, .ungather: return .navigate
+        case .showHistory: return .navigate
         case .moveLaneLeft, .moveLaneRight, .toggleSidebar, .togglePinned,
              .widenLane, .narrowLane, .peekDesktop: return .view
         case .claimSession: return .file

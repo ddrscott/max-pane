@@ -14,6 +14,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0003_session_and_recents",
         include_str!("../migrations/0003_session_and_recents.sql"),
     ),
+    ("0004_history", include_str!("../migrations/0004_history.sql")),
 ];
 
 pub struct Ledger {
@@ -380,6 +381,135 @@ impl Ledger {
             params![recent_kind_str(kind), value],
         )?;
         Ok(())
+    }
+
+    // ---- history -----------------------------------------------------------
+
+    /// Record a settle, or bump the entry already there.
+    ///
+    /// `url` must already be normalized ([`crate::history::normalize_url`]);
+    /// this is the write, not the policy.
+    pub fn record_visit(&self, url: &str, title: Option<&str>, now_ms: i64) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO visit (url, title, seq, first_visit_at, last_visit_at, visit_count)
+             VALUES (?1, ?2, (SELECT COALESCE(MAX(seq), 0) + 1 FROM visit), ?3, ?3, 1)
+             ON CONFLICT(url) DO UPDATE SET
+                 seq = excluded.seq,
+                 last_visit_at = excluded.last_visit_at,
+                 visit_count = visit_count + 1,
+                 -- A page that arrives titled and then fires again before its
+                 -- <title> has parsed would otherwise blank the name the entry
+                 -- is findable by. A later title may replace an earlier one;
+                 -- nothing may replace one with nothing.
+                 title = COALESCE(NULLIF(?2, ''), title)",
+            params![url, title, now_ms],
+        )?;
+        Ok(())
+    }
+
+    /// Name an entry that already exists, without counting a visit.
+    ///
+    /// `WKWebView.title` is usually still empty when the navigation finishes —
+    /// the document's `<title>` lands a beat later — so the shell learns the
+    /// name second. That is a correction to a visit, not another one, and a
+    /// method that could insert would turn a slow title into a phantom row for
+    /// a page that was never reached.
+    pub fn name_visit(&self, url: &str, title: &str) -> Result<()> {
+        if title.is_empty() {
+            return Ok(());
+        }
+        self.conn
+            .execute("UPDATE visit SET title = ?2 WHERE url = ?1", params![url, title])?;
+        Ok(())
+    }
+
+    /// Remember that `alias` redirected to `url`.
+    ///
+    /// Silently does nothing when `url` has no entry: the foreign key would
+    /// reject it anyway, and an alias is a detail of a visit rather than a
+    /// reason to fail one.
+    pub fn note_visit_alias(&self, alias: &str, url: &str) -> Result<()> {
+        if alias == url {
+            return Ok(());
+        }
+        self.conn.execute(
+            "INSERT INTO visit_alias (alias_url, url)
+             SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM visit WHERE url = ?2)
+             ON CONFLICT(alias_url) DO UPDATE SET url = excluded.url",
+            params![alias, url],
+        )?;
+        Ok(())
+    }
+
+    /// The newest `scan` entries with their redirect sources attached, newest
+    /// first — the input [`crate::history::rank`] scores.
+    ///
+    /// One query rather than one per row: at a 2 000-row scan the per-row
+    /// version is 2 000 round trips per keystroke, which is the same mistake
+    /// `lanes()` avoids for panes.
+    pub fn history_candidates(&self, scan: u32) -> Result<Vec<crate::history::Candidate>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT v.url, v.title, v.first_visit_at, v.last_visit_at, v.visit_count,
+                    (SELECT group_concat(a.alias_url, char(10))
+                       FROM visit_alias a WHERE a.url = v.url)
+             FROM visit v ORDER BY v.seq DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map([scan], |r| {
+                Ok(crate::history::Candidate {
+                    url: r.get(0)?,
+                    title: r.get(1)?,
+                    first_visit_at: r.get(2)?,
+                    last_visit_at: r.get(3)?,
+                    visit_count: r.get::<_, i64>(4)? as u32,
+                    aliases: r
+                        .get::<_, Option<String>>(5)?
+                        .map(|s| s.split('\n').map(str::to_string).collect())
+                        .unwrap_or_default(),
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// Drop one entry and every alias pointing at it.
+    pub fn forget_visit(&self, url: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM visit WHERE url = ?1", [url])?;
+        Ok(())
+    }
+
+    pub fn clear_history(&self) -> Result<()> {
+        self.conn.execute("DELETE FROM visit", [])?;
+        Ok(())
+    }
+
+    /// Enforce the caps. Returns how many entries went.
+    ///
+    /// Age first, then count: doing it the other way round makes the row cap
+    /// decide which of the doomed rows to delete, which is wasted work on the
+    /// only call that runs while the user is navigating.
+    ///
+    /// Aliases go with their entry through the foreign key's `ON DELETE
+    /// CASCADE`, which is enforced because `open` sets `foreign_keys = ON` —
+    /// worth knowing, because the same schema in a connection without that
+    /// pragma leaks an alias table that grows forever.
+    pub fn prune_history(&self, max_rows: u32, oldest_allowed_ms: i64) -> Result<usize> {
+        let by_age = self
+            .conn
+            .execute("DELETE FROM visit WHERE last_visit_at < ?1", params![oldest_allowed_ms])?;
+        let by_count = self.conn.execute(
+            "DELETE FROM visit WHERE url NOT IN
+                 (SELECT url FROM visit ORDER BY seq DESC LIMIT ?1)",
+            params![max_rows],
+        )?;
+        Ok(by_age + by_count)
+    }
+
+    /// How many entries are on record. For the palette's footer, and for tests.
+    pub fn history_count(&self) -> Result<u32> {
+        Ok(self
+            .conn
+            .query_row("SELECT COUNT(*) FROM visit", [], |r| r.get::<_, i64>(0))? as u32)
     }
 
     pub fn set_pane_evicted(

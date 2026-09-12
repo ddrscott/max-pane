@@ -194,6 +194,44 @@ public final class StripStore {
         try? core.forgetRecent(kind: kind, value: value)
     }
 
+    // MARK: - browsing history
+
+    /// A web pane settled on a page.
+    ///
+    /// One call from the navigation delegate, with everything the web view
+    /// already knows. `requestedUrl` is `backForwardList.currentItem?.initialURL`
+    /// — the address the navigation started from, which differs from `url` only
+    /// when something redirected, and is what keeps the thing the user typed
+    /// findable after it does.
+    ///
+    /// No snapshot: a visit is not layout, so this costs a row and does not
+    /// redraw the strip.
+    func recordVisit(paneId: String, url: String, title: String?, requestedUrl: String? = nil) {
+        try? core.recordVisit(paneId: paneId, url: url, title: title, requestedUrl: requestedUrl)
+    }
+
+    /// The page's `<title>`, which lands a beat after the navigation finishes.
+    /// A correction to a visit, never another one — and a no-op for a page that
+    /// was never recorded, so it is safe to call from a KVO observer that fires
+    /// for things history does not keep.
+    func noteVisitTitle(url: String?, title: String) {
+        guard let url, !title.isEmpty else { return }
+        try? core.nameVisit(url: url, title: title)
+    }
+
+    /// Best match first, or newest first for an empty query. Ranked in Rust;
+    /// see `history.rs` for why the corpus does not cross the FFI per keystroke.
+    func history(_ query: String, limit: UInt32 = 60) -> [HistoryEntry] {
+        (try? core.history(query: query, limit: limit)) ?? []
+    }
+
+    /// How many pages are on record, for the palette's footer.
+    var historyCount: UInt32 { (try? core.historyCount()) ?? 0 }
+
+    func forgetVisit(_ url: String) { try? core.forgetVisit(url: url) }
+
+    func clearHistory() { try? core.clearHistory() }
+
     // MARK: - focus and scroll
 
     /// Focus, without marshalling the strip. Focus does not change the shape of

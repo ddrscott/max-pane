@@ -12,6 +12,7 @@ uniffi::setup_scaffolding!();
 
 pub mod error;
 pub mod eviction;
+pub mod history;
 pub mod ledger;
 pub mod model;
 pub mod ordinal;
@@ -57,6 +58,24 @@ fn new_id() -> String {
 struct Inner {
     ledger: Ledger,
     index: search::Index,
+    /// What each pane last settled on, so one navigation reported three times
+    /// is one visit. Not persisted — a burst cannot straddle a launch.
+    visits: history::VisitMemo,
+    /// Visits since the last prune. The caps are enforced on a cadence rather
+    /// than on every settle; see [`history::HISTORY_PRUNE_EVERY`].
+    visits_since_prune: u32,
+    /// The rows a history query scores, kept between writes.
+    ///
+    /// Measured: a keystroke over a full ledger costs ~1.1 ms of SQLite and
+    /// ~1.0 ms of scoring. The scoring is the work; the read is the same 2 000
+    /// rows fetched again for every character of the same query, and the
+    /// palette is open for a second at a time during which nothing navigates.
+    /// So it is read once and dropped by the next write — the same bargain
+    /// `NewPanePicker` strikes when it reads `recents` once on open, moved down
+    /// here because the corpus deliberately never reaches Swift.
+    ///
+    /// Bounded by [`history::HISTORY_SCAN_ROWS`], not by the size of the table.
+    history_cache: Option<Vec<history::Candidate>>,
     /// `Some(project_root)` while the user is in a gather view. View-only.
     gather: Option<String>,
     revision: u64,
@@ -82,6 +101,9 @@ impl Core {
             inner: Mutex::new(Inner {
                 ledger,
                 index: search::Index::default(),
+                visits: history::VisitMemo::default(),
+                visits_since_prune: 0,
+                history_cache: None,
                 gather: None,
                 revision: 0,
                 hysteresis: eviction::Hysteresis::default(),
@@ -98,6 +120,9 @@ impl Core {
             inner: Mutex::new(Inner {
                 ledger,
                 index: search::Index::default(),
+                visits: history::VisitMemo::default(),
+                visits_since_prune: 0,
+                history_cache: None,
                 gather: None,
                 revision: 0,
                 hysteresis: eviction::Hysteresis::default(),
@@ -206,6 +231,7 @@ impl Core {
         let lane = inner.ledger.lane(&lane_id)?;
         for p in &lane.panes {
             inner.index.forget(&p.id);
+            inner.visits.forget(&p.id);
         }
         inner.ledger.delete_lane(&lane_id)?;
         Self::bump(&mut inner);
@@ -217,6 +243,7 @@ impl Core {
     pub fn close_pane(&self, pane_id: String) -> Result<StripState> {
         let mut inner = self.inner.lock();
         inner.index.forget(&pane_id);
+        inner.visits.forget(&pane_id);
         let lane_id = inner.ledger.delete_pane(&pane_id)?;
         if inner.ledger.lane(&lane_id)?.panes.is_empty() {
             inner.ledger.delete_lane(&lane_id)?;
@@ -397,6 +424,124 @@ impl Core {
     pub fn forget_recent(&self, kind: RecentKind, value: String) -> Result<()> {
         let inner = self.inner.lock();
         inner.ledger.forget_recent(kind, &value)
+    }
+
+    // ---- history -----------------------------------------------------------
+
+    /// A web pane settled on a page. One call, from wherever the shell learns a
+    /// navigation finished.
+    ///
+    /// `url` is the address that ended up on screen. `requested_url` is the one
+    /// the navigation started from — `WKBackForwardListItem.initialURL`, which
+    /// is the same string except when something redirected.
+    ///
+    /// # Which address is the history entry?
+    ///
+    /// You ask for `example.com` and land on `https://www.example.com/en`. The
+    /// entry is where you landed: that is the page with the title, and it is
+    /// the address that reopens to what you actually saw — an entry for the
+    /// redirect source reopens to a bounce, which is a row that looks like a
+    /// page and is not one. But an entry for *only* the destination means
+    /// typing back the thing you asked for finds nothing, and "I typed
+    /// example.com and history has never heard of it" is exactly the hole this
+    /// piece exists to close. So the source is kept as an alias: searchable,
+    /// never listed, dropped with the entry it points at. A chain of three
+    /// redirects leaves one entry and, because the shell only ever knows where
+    /// the navigation began, one alias — the address the user typed, which is
+    /// the only hop they could ever search for.
+    ///
+    /// No `StripState`: a visit is not layout, and republishing the strip on
+    /// every page load would redraw 150 lanes because one of them scrolled.
+    pub fn record_visit(
+        &self,
+        pane_id: String,
+        url: String,
+        title: Option<String>,
+        requested_url: Option<String>,
+    ) -> Result<()> {
+        let Some(url) = history::normalize_url(&url) else { return Ok(()) };
+        let now = now_ms();
+        let mut inner = self.inner.lock();
+        if !inner.visits.accept(&pane_id, &url, now) {
+            // Still a chance to learn the name: the duplicate settle is often
+            // the one that finally has a <title>.
+            if let Some(t) = title.as_deref() {
+                inner.ledger.name_visit(&url, t)?;
+                inner.history_cache = None;
+            }
+            return Ok(());
+        }
+        inner.ledger.record_visit(&url, title.as_deref(), now)?;
+        inner.history_cache = None;
+        if let Some(alias) = requested_url.as_deref().and_then(history::normalize_url) {
+            inner.ledger.note_visit_alias(&alias, &url)?;
+        }
+        inner.visits_since_prune += 1;
+        if inner.visits_since_prune >= history::HISTORY_PRUNE_EVERY {
+            inner.visits_since_prune = 0;
+            inner
+                .ledger
+                .prune_history(history::HISTORY_MAX_ROWS, now - history::HISTORY_MAX_AGE_MS)?;
+        }
+        Ok(())
+    }
+
+    /// The page's `<title>`, which usually lands after the navigation finished.
+    ///
+    /// Separate from [`Core::record_visit`] because it is a correction to a
+    /// visit rather than another one: it never inserts and never counts.
+    pub fn name_visit(&self, url: String, title: String) -> Result<()> {
+        let Some(url) = history::normalize_url(&url) else { return Ok(()) };
+        let mut inner = self.inner.lock();
+        inner.ledger.name_visit(&url, &title)?;
+        inner.history_cache = None;
+        Ok(())
+    }
+
+    /// History, best match first — or most recent first for an empty query,
+    /// which is what the palette shows before anything is typed.
+    pub fn history(&self, query: String, limit: u32) -> Result<Vec<HistoryEntry>> {
+        let mut inner = self.inner.lock();
+        if inner.history_cache.is_none() {
+            inner.history_cache = Some(inner.ledger.history_candidates(history::HISTORY_SCAN_ROWS)?);
+        }
+        let candidates = inner.history_cache.as_deref().unwrap_or_default();
+        Ok(history::rank(candidates, &query, limit as usize))
+    }
+
+    /// How many pages are on record, for the palette's footer.
+    pub fn history_count(&self) -> Result<u32> {
+        let inner = self.inner.lock();
+        inner.ledger.history_count()
+    }
+
+    /// Drop one page, and every redirect that pointed at it. The palette's ⌘⌫.
+    pub fn forget_visit(&self, url: String) -> Result<()> {
+        let url = history::normalize_url(&url).unwrap_or(url);
+        let mut inner = self.inner.lock();
+        inner.ledger.forget_visit(&url)?;
+        inner.history_cache = None;
+        Ok(())
+    }
+
+    /// Forget everything. There is no undo, which is the point of it.
+    pub fn clear_history(&self) -> Result<()> {
+        let mut inner = self.inner.lock();
+        inner.ledger.clear_history()?;
+        inner.history_cache = None;
+        Ok(())
+    }
+
+    /// Enforce the caps now rather than on the next cadence. The shell has no
+    /// reason to call this; tests and `maxpane` housekeeping do.
+    pub fn prune_history(&self) -> Result<u32> {
+        let now = now_ms();
+        let mut inner = self.inner.lock();
+        let gone = inner
+            .ledger
+            .prune_history(history::HISTORY_MAX_ROWS, now - history::HISTORY_MAX_AGE_MS)?;
+        inner.history_cache = None;
+        Ok(gone as u32)
     }
 
     pub fn set_pane_data_store(&self, pane_id: String, data_store_id: String) -> Result<()> {

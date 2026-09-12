@@ -643,6 +643,11 @@ public protocol CoreProtocol: AnyObject, Sendable {
      */
     func addPane(laneId: String, kind: PaneKind, relaySessionId: String?, url: String?) throws  -> StripState
     
+    /**
+     * Forget everything. There is no undo, which is the point of it.
+     */
+    func clearHistory() throws 
+    
     func closeLane(laneId: String) throws  -> StripState
     
     /**
@@ -682,10 +687,26 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func forgetRecent(kind: RecentKind, value: String) throws 
     
     /**
+     * Drop one page, and every redirect that pointed at it. The palette's ⌘⌫.
+     */
+    func forgetVisit(url: String) throws 
+    
+    /**
      * Show only lanes tagged with `project_root`, in true ordinal order (⌘G).
      * A filter over the snapshot; it writes nothing.
      */
     func gather(projectRoot: String) throws  -> StripState
+    
+    /**
+     * History, best match first — or most recent first for an empty query,
+     * which is what the palette shows before anything is typed.
+     */
+    func history(query: String, limit: UInt32) throws  -> [HistoryEntry]
+    
+    /**
+     * How many pages are on record, for the palette's footer.
+     */
+    func historyCount() throws  -> UInt32
     
     /**
      * Append an exported strip to the right-hand end of this one.
@@ -722,6 +743,14 @@ public protocol CoreProtocol: AnyObject, Sendable {
      * an ordinal outside of creation — and only ever because the user asked.
      */
     func moveLane(laneId: String, placement: Placement) throws  -> StripState
+    
+    /**
+     * The page's `<title>`, which usually lands after the navigation finished.
+     *
+     * Separate from [`Core::record_visit`] because it is a correction to a
+     * visit rather than another one: it never inserts and never counts.
+     */
+    func nameVisit(url: String, title: String) throws 
     
     /**
      * Record focus without building a snapshot.
@@ -775,6 +804,12 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func projectRootOf(cwd: String)  -> String?
     
     /**
+     * Enforce the caps now rather than on the next cadence. The shell has no
+     * reason to call this; tests and `maxpane` housekeeping do.
+     */
+    func pruneHistory() throws  -> UInt32
+    
+    /**
      * Hand `laned-core` a pty pane's recent scrollback so ⌘P can find it.
      * Pushed from the shell on a debounce; capped at 200 lines per pane.
      */
@@ -784,6 +819,34 @@ public protocol CoreProtocol: AnyObject, Sendable {
      * What to offer, most recent first.
      */
     func recents(limit: UInt32) throws  -> [Recent]
+    
+    /**
+     * A web pane settled on a page. One call, from wherever the shell learns a
+     * navigation finished.
+     *
+     * `url` is the address that ended up on screen. `requested_url` is the one
+     * the navigation started from — `WKBackForwardListItem.initialURL`, which
+     * is the same string except when something redirected.
+     *
+     * # Which address is the history entry?
+     *
+     * You ask for `example.com` and land on `https://www.example.com/en`. The
+     * entry is where you landed: that is the page with the title, and it is
+     * the address that reopens to what you actually saw — an entry for the
+     * redirect source reopens to a bounce, which is a row that looks like a
+     * page and is not one. But an entry for *only* the destination means
+     * typing back the thing you asked for finds nothing, and "I typed
+     * example.com and history has never heard of it" is exactly the hole this
+     * piece exists to close. So the source is kept as an alias: searchable,
+     * never listed, dropped with the entry it points at. A chain of three
+     * redirects leaves one entry and, because the shell only ever knows where
+     * the navigation began, one alias — the address the user typed, which is
+     * the only hop they could ever search for.
+     *
+     * No `StripState`: a visit is not layout, and republishing the strip on
+     * every page load would redraw 150 lanes because one of them scrolled.
+     */
+    func recordVisit(paneId: String, url: String, title: String?, requestedUrl: String?) throws 
     
     /**
      * The current revision, without marshalling a snapshot.
@@ -950,6 +1013,17 @@ open func addPane(laneId: String, kind: PaneKind, relaySessionId: String?, url: 
 })
 }
     
+    /**
+     * Forget everything. There is no undo, which is the point of it.
+     */
+open func clearHistory()throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_clear_history(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
 open func closeLane(laneId: String)throws  -> StripState  {
     return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
         uniffiCallStatus in
@@ -1040,6 +1114,18 @@ open func forgetRecent(kind: RecentKind, value: String)throws   {try rustCallWit
 }
     
     /**
+     * Drop one page, and every redirect that pointed at it. The palette's ⌘⌫.
+     */
+open func forgetVisit(url: String)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_forget_visit(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(url),uniffiCallStatus
+    )
+}
+}
+    
+    /**
      * Show only lanes tagged with `project_root`, in true ordinal order (⌘G).
      * A filter over the snapshot; it writes nothing.
      */
@@ -1049,6 +1135,33 @@ open func gather(projectRoot: String)throws  -> StripState  {
     uniffi_laned_core_fn_method_core_gather(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(projectRoot),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * History, best match first — or most recent first for an empty query,
+     * which is what the palette shows before anything is typed.
+     */
+open func history(query: String, limit: UInt32)throws  -> [HistoryEntry]  {
+    return try  FfiConverterSequenceTypeHistoryEntry.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_history(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(query),
+        FfiConverterUInt32.lower(limit),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * How many pages are on record, for the palette's footer.
+     */
+open func historyCount()throws  -> UInt32  {
+    return try  FfiConverterUInt32.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_history_count(
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -1130,6 +1243,22 @@ open func moveLane(laneId: String, placement: Placement)throws  -> StripState  {
         FfiConverterTypePlacement_lower(placement),uniffiCallStatus
     )
 })
+}
+    
+    /**
+     * The page's `<title>`, which usually lands after the navigation finished.
+     *
+     * Separate from [`Core::record_visit`] because it is a correction to a
+     * visit rather than another one: it never inserts and never counts.
+     */
+open func nameVisit(url: String, title: String)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_name_visit(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(url),
+        FfiConverterString.lower(title),uniffiCallStatus
+    )
+}
 }
     
     /**
@@ -1259,6 +1388,19 @@ open func projectRootOf(cwd: String) -> String?  {
 }
     
     /**
+     * Enforce the caps now rather than on the next cadence. The shell has no
+     * reason to call this; tests and `maxpane` housekeeping do.
+     */
+open func pruneHistory()throws  -> UInt32  {
+    return try  FfiConverterUInt32.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_prune_history(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * Hand `laned-core` a pty pane's recent scrollback so ⌘P can find it.
      * Pushed from the shell on a debounce; capped at 200 lines per pane.
      */
@@ -1283,6 +1425,44 @@ open func recents(limit: UInt32)throws  -> [Recent]  {
         FfiConverterUInt32.lower(limit),uniffiCallStatus
     )
 })
+}
+    
+    /**
+     * A web pane settled on a page. One call, from wherever the shell learns a
+     * navigation finished.
+     *
+     * `url` is the address that ended up on screen. `requested_url` is the one
+     * the navigation started from — `WKBackForwardListItem.initialURL`, which
+     * is the same string except when something redirected.
+     *
+     * # Which address is the history entry?
+     *
+     * You ask for `example.com` and land on `https://www.example.com/en`. The
+     * entry is where you landed: that is the page with the title, and it is
+     * the address that reopens to what you actually saw — an entry for the
+     * redirect source reopens to a bounce, which is a row that looks like a
+     * page and is not one. But an entry for *only* the destination means
+     * typing back the thing you asked for finds nothing, and "I typed
+     * example.com and history has never heard of it" is exactly the hole this
+     * piece exists to close. So the source is kept as an alias: searchable,
+     * never listed, dropped with the entry it points at. A chain of three
+     * redirects leaves one entry and, because the shell only ever knows where
+     * the navigation began, one alias — the address the user typed, which is
+     * the only hop they could ever search for.
+     *
+     * No `StripState`: a visit is not layout, and republishing the strip on
+     * every page load would redraw 150 lanes because one of them scrolled.
+     */
+open func recordVisit(paneId: String, url: String, title: String?, requestedUrl: String?)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_record_visit(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(paneId),
+        FfiConverterString.lower(url),
+        FfiConverterOptionString.lower(title),
+        FfiConverterOptionString.lower(requestedUrl),uniffiCallStatus
+    )
+}
 }
     
     /**
@@ -1522,6 +1702,131 @@ public func FfiConverterTypeCore_lower(_ value: Core) -> UInt64 {
 }
 
 
+
+
+/**
+ * One page in the browsing history — a URL, what it was called, when, and how
+ * many times.
+ *
+ * Aggregated per URL by the ledger rather than per navigation, so this is one
+ * line in a palette and not one line per time you pressed Return. The
+ * addresses that redirected here are deliberately *not* carried: they exist
+ * only so that typing what you asked for finds where you landed, they have no
+ * titles of their own, and putting a `Vec<String>` on a record that comes back
+ * fifty at a time per keystroke would marshal a list nothing renders.
+ */
+public struct HistoryEntry: Equatable, Hashable {
+    /**
+     * Normalized. The address that was actually on screen, after redirects.
+     */
+    public var url: String
+    /**
+     * `None` for a page that never produced a `<title>`.
+     */
+    public var title: String?
+    /**
+     * Epoch ms. Never moves.
+     */
+    public var firstVisitAt: Int64
+    /**
+     * Epoch ms.
+     */
+    public var lastVisitAt: Int64
+    public var visitCount: UInt32
+    /**
+     * Why this row survived the query, for the palette's row glyph. A match on
+     * a redirect source reports [`SearchField::Url`]: it is a URL in every
+     * sense the reader cares about.
+     */
+    public var matchedField: SearchField
+    /**
+     * Higher is better. Zero, and meaningless, for an empty query.
+     */
+    public var score: Int32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Normalized. The address that was actually on screen, after redirects.
+         */url: String, 
+        /**
+         * `None` for a page that never produced a `<title>`.
+         */title: String?, 
+        /**
+         * Epoch ms. Never moves.
+         */firstVisitAt: Int64, 
+        /**
+         * Epoch ms.
+         */lastVisitAt: Int64, visitCount: UInt32, 
+        /**
+         * Why this row survived the query, for the palette's row glyph. A match on
+         * a redirect source reports [`SearchField::Url`]: it is a URL in every
+         * sense the reader cares about.
+         */matchedField: SearchField, 
+        /**
+         * Higher is better. Zero, and meaningless, for an empty query.
+         */score: Int32) {
+        self.url = url
+        self.title = title
+        self.firstVisitAt = firstVisitAt
+        self.lastVisitAt = lastVisitAt
+        self.visitCount = visitCount
+        self.matchedField = matchedField
+        self.score = score
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension HistoryEntry: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeHistoryEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HistoryEntry {
+        return
+            try HistoryEntry(
+                url: FfiConverterString.read(from: &buf), 
+                title: FfiConverterOptionString.read(from: &buf), 
+                firstVisitAt: FfiConverterInt64.read(from: &buf), 
+                lastVisitAt: FfiConverterInt64.read(from: &buf), 
+                visitCount: FfiConverterUInt32.read(from: &buf), 
+                matchedField: FfiConverterTypeSearchField.read(from: &buf), 
+                score: FfiConverterInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: HistoryEntry, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.url, into: &buf)
+        FfiConverterOptionString.write(value.title, into: &buf)
+        FfiConverterInt64.write(value.firstVisitAt, into: &buf)
+        FfiConverterInt64.write(value.lastVisitAt, into: &buf)
+        FfiConverterUInt32.write(value.visitCount, into: &buf)
+        FfiConverterTypeSearchField.write(value.matchedField, into: &buf)
+        FfiConverterInt32.write(value.score, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHistoryEntry_lift(_ buf: RustBuffer) throws -> HistoryEntry {
+    return try FfiConverterTypeHistoryEntry.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHistoryEntry_lower(_ value: HistoryEntry) -> RustBuffer {
+    return FfiConverterTypeHistoryEntry.lower(value)
+}
 
 
 public struct Lane: Equatable, Hashable {
@@ -3310,6 +3615,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeHistoryEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [HistoryEntry]
+
+    public static func write(_ value: [HistoryEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeHistoryEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [HistoryEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [HistoryEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeHistoryEntry.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeLane: FfiConverterRustBuffer {
     typealias SwiftType = [Lane]
 
@@ -3500,6 +3830,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_add_pane() != 2752) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_clear_history() != 27909) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_close_lane() != 42855) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3518,7 +3851,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_forget_recent() != 59469) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_forget_visit() != 57548) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_gather() != 60520) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_history() != 65217) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_history_count() != 17535) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_import_strip() != 55913) {
@@ -3534,6 +3876,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_move_lane() != 14936) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_name_visit() != 65330) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_note_focus() != 58566) {
@@ -3563,10 +3908,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_project_root_of() != 21459) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_prune_history() != 55299) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_push_scrollback() != 4856) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_recents() != 56922) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_record_visit() != 47060) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_revision() != 56367) {

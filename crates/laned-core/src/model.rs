@@ -52,6 +52,34 @@ pub struct Recent {
     pub use_count: u32,
 }
 
+/// One page in the browsing history — a URL, what it was called, when, and how
+/// many times.
+///
+/// Aggregated per URL by the ledger rather than per navigation, so this is one
+/// line in a palette and not one line per time you pressed Return. The
+/// addresses that redirected here are deliberately *not* carried: they exist
+/// only so that typing what you asked for finds where you landed, they have no
+/// titles of their own, and putting a `Vec<String>` on a record that comes back
+/// fifty at a time per keystroke would marshal a list nothing renders.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct HistoryEntry {
+    /// Normalized. The address that was actually on screen, after redirects.
+    pub url: String,
+    /// `None` for a page that never produced a `<title>`.
+    pub title: Option<String>,
+    /// Epoch ms. Never moves.
+    pub first_visit_at: i64,
+    /// Epoch ms.
+    pub last_visit_at: i64,
+    pub visit_count: u32,
+    /// Why this row survived the query, for the palette's row glyph. A match on
+    /// a redirect source reports [`SearchField::Url`]: it is a URL in every
+    /// sense the reader cares about.
+    pub matched_field: SearchField,
+    /// Higher is better. Zero, and meaningless, for an empty query.
+    pub score: i32,
+}
+
 /// Whether the shell should be holding a live view for this pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum PaneState {

@@ -382,6 +382,15 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             case .search:
                 showPalette()
 
+            case .showHistory:
+                // Chosen from history, a page opens the way every other URL in
+                // this app opens: a lane immediately right of the one you were
+                // looking at, not a replacement for it.
+                HistoryPaletteController.present(store: store, over: window) { [weak self] url in
+                    guard let self else { return }
+                    self.launch(.url(url), near: self.store.focusedLane)
+                }
+
             case .gather:
                 if let root = focusedLane?.projectRoot { try store.gather(projectRoot: root) }
 
