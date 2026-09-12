@@ -9,13 +9,28 @@
 #   ./scripts/build-app.sh            release (default)
 #   ./scripts/build-app.sh debug
 #   ./scripts/build-app.sh release run
+#
+# MAXPANE_APP builds to a different bundle. Use it whenever an instance you did
+# not start is running: this script `rm -rf`s the bundle before reassembling it,
+# and pulling a bundle out from under a live process kills it — WKWebView stops
+# being able to spawn its XPC processes and the app goes down with no message.
+# That has already cost someone a half-finished sign-in.
+#
+#   MAXPANE_APP=build/gauntlet-p1.app ./scripts/build-app.sh
 set -euo pipefail
 source "$(dirname "$0")/env.sh"
 cd "$REPO_ROOT"
 
 CONFIG="${1:-release}"
 RUN="${2:-}"
-APP="build/MaxPane.app"
+APP="${MAXPANE_APP:-build/MaxPane.app}"
+
+# Refuse to demolish a bundle someone is running.
+if pgrep -f "$APP/Contents/MacOS/MaxPane" >/dev/null 2>&1; then
+  echo "refusing to rebuild $APP: an instance of it is running (pid $(pgrep -f "$APP/Contents/MacOS/MaxPane" | tr '\n' ' '))." >&2
+  echo "quit it, or build elsewhere: MAXPANE_APP=build/mine.app $0 $*" >&2
+  exit 1
+fi
 
 ./scripts/gen-bindings.sh "$CONFIG"
 
