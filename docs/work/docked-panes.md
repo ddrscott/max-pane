@@ -10,6 +10,7 @@
 > start with a single pane. when a lane is docked all its panes are inherently
 > docked with it. the order of the docked lane is remembered so it returns to
 > the same spot when it's undocked."
+> "two docks at once, one each side. dock width resizable and persisted."
 
 So: a pane that stays put at one edge while the strip scrolls behind or beside
 it, in one of two modes — **overlay** (floats above the strip) or **inset** (the
@@ -53,6 +54,18 @@ open:
   through its remembered position. "The same spot" needs a definition that
   survives its neighbours changing.
 
+- **Two docks at once, one per side.** At most one left and at most one right —
+  not a list. Docking to an occupied side needs a defined answer (replace, with
+  the incumbent undocking to its remembered ordinal, or refuse), and if it
+  replaces, that undock must restore the ordinal exactly as a hand undock would
+  or docking something else silently loses someone's place.
+- **The dock's width is resizable and persisted.** Per-dock durable state.
+  Probably a different number from the lane's own `width_pt`, which the owner
+  drags deliberately and which must not be silently overwritten when a lane
+  docks. `laneMinPt`/`laneMaxPt` bound a column in a scrolling strip; a dock is
+  a fixed share of the window, so whether the same clamp applies — and what a
+  window too narrow for two docks plus a lane does — is a real question.
+
 Still open:
 - **Everything that reads the viewport width has to agree with inset mode.**
   `LaneSnap.offset`, `LanePeek`, `StripEdgeRail`'s counts, `materializationWindow`
@@ -61,10 +74,10 @@ Still open:
   *under* the overlay is occluded, which the edge rails and the "can I tell
   there is more" work exist to prevent. Overlay mode arguably needs the peek to
   treat the covered strip as an edge.
-- **Two docks at once** — one left, one right? Different modes on each?
-- **Width.** Resizable like a lane? Persisted? Does it obey `laneMinPt`?
 - **Keyboard.** Do ⌘[ / ⌘] skip the docked lane, or does it join the cycle at
-  one end? Focus has to be reachable and escapable without the mouse.
+  one end? Focus has to be reachable and escapable without the mouse. The one
+  question the owner has not answered, and better argued from use than asked
+  about.
 - **Overlay needs to say it is floating**, or it reads as a lane that will not
   scroll. A shadow, an edge, something.
 
