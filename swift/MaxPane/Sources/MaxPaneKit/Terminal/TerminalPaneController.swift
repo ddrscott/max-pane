@@ -112,7 +112,13 @@ final class TerminalPaneController: NSObject, PaneController {
         // which is exactly how this first came up: a header reading 254B/s
         // above an empty black column.
         container.onLayout = { [weak self] in self?.terminal.fitToSize() }
-        container.onAttach = { [weak self] in self?.applyPendingFocus() }
+        container.onAttach = { [weak self] in
+            self?.applyPendingFocus()
+            // A recycled lane view brings a fresh surface, at the config's font
+            // size — so a zoomed pane scrolled off the strip and back would
+            // come back the wrong size without this.
+            self?.applyZoom()
+        }
         terminal.onCommandClick = { [weak self] point in self?.openToken(at: point) }
 
         session = InMemoryTerminalSession(
@@ -275,6 +281,39 @@ final class TerminalPaneController: NSObject, PaneController {
     /// The explicit "claim this session" command (ADR-0007 §5).
     func claimSessionAtLaneWidth() {
         attachment?.claimSize(cols: hostCols, rows: hostRows)
+    }
+
+    // MARK: - zoom
+
+    /// ⌘= / ⌘- / ⌘0 on this terminal: bigger or smaller text.
+    ///
+    /// Ghostty carries font size on the *controller*, and one controller backs
+    /// every pane (ADR-0009) — so a per-pane size cannot come from the config.
+    /// It comes from the surface's own font-size binding actions instead, which
+    /// are per-surface and are what Ghostty's own ⌘+ does.
+    private(set) var zoom: Double = 1
+
+    func setZoom(_ next: Double) {
+        let ladder = PaneZoom.ladder
+        zoom = min(max(next, ladder.first!), ladder.last!)
+        applyZoom()
+    }
+
+    /// Drive the surface to `zoom` from a known base rather than by however far
+    /// it has to travel.
+    ///
+    /// Ghostty only offers *relative* font-size actions, and a surface rebuild
+    /// — which happens whenever the strip recycles a lane view — silently puts
+    /// the font back to the config's size. Tracking the delta we last applied
+    /// would then be tracking a number the surface no longer agrees with. So
+    /// this resets first: two actions instead of one, and the answer is right
+    /// however the surface got where it is.
+    private func applyZoom() {
+        terminal.performBindingAction("reset_font_size")
+        let delta = config.fontSize * (zoom - 1)
+        guard abs(delta) > 0.01 else { return }
+        terminal.performBindingAction(
+            delta > 0 ? "increase_font_size:\(delta)" : "decrease_font_size:\(-delta)")
     }
 
     /// The lane's width changed. Ghostty re-derives its grid from the view, so
