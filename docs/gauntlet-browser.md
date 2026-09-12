@@ -54,12 +54,12 @@ running app — never the builder's account of it.
 
 | # | Piece | Files it owns | Builder | Critic verdict |
 |---|---|---|---|---|
-| 1 | OAuth, popups, `window.opener` | `Web/WebPaneController.swift` | done, committed | judging |
+| 1 | OAuth, popups, `window.opener` | `Web/WebPaneController.swift` | done, committed | **PASSES** (3 fixes routed) |
 | 2 | History: record, search, surface | `crates/laned-core`, a new palette | round 1 committed | **THE BAR WINS** → [round 2](work/history-round-2.md) |
 | 3 | Appear/disappear animations, and the split-down reconcile | `Views/StripViewController.swift`, `Views/LaneView.swift` | building | — |
 | 4 | Browser chrome: URL, nav, security, find, zoom readout | a new chrome view + `Web/WebPaneController.swift` | building (worktree) | — |
 | 5 | Terminal zoom | `Terminal/TerminalPaneController.swift` | lead, done | pending |
-| 6 | Copy/paste between panes | `Terminal/TerminalPaneController.swift`, `RelayAttachmentAdapter.swift`, `AppDelegate.swift` | building | — |
+| 6 | Copy/paste between panes | `Terminal/TerminalPaneController.swift`, `RelayAttachmentAdapter.swift`, `AppDelegate.swift` | done, committed | — |
 | 7 | Lane widths: one configurable default, and always visible evidence of more | `Views/StripViewController.swift`, `Config.swift`, `crates/laned-core` | building (worktree) | — |
 | 8 | Horizontal splits: a visible seam, draggable to resize heights | `Views/LaneView.swift`, `crates/laned-core` | building (worktree) | — |
 | 9 | ⌘O: one place anything starts | `Commands.swift`, the palettes | building (worktree) | — |
@@ -183,6 +183,31 @@ Two bugs found while writing those briefs, before any builder started:
   The caps bought speed nobody was short of — the query costs 2 ms over 2,000
   rows, measured. Full list in [round 2](work/history-round-2.md); the two
   findings that change what is being built *right now* went to piece 9.
+
+- **Round 1, piece 1 judged: PASSES.** Eleven popups across seven scenarios and
+  the named failure mode — a popup with no `window.opener` — never occurred. The
+  evidence that counts is cross-origin, which is the shape OAuth actually has:
+  opener on `localhost`, popup on `127.0.0.1`, `has_opener=true`, and the
+  message arriving with the right origin. The cookie jar was proved at the
+  network layer — a `Set-Cookie` sent only to the opener came back on the
+  popup's own document request and its subresource fetch, which a popup built
+  from a fresh configuration could not have done — and it survived a restart.
+  On the user agent: measured on the wire, byte-identical to
+  `navigator.userAgent`, and `accounts.google.com` answered a fabricated
+  address with "Couldn't find this account" — the normal answer, meaning the UA
+  passed the gate that used to reject it. No unsupported-browser banner on Gmail
+  or YouTube.
+  Three fixes routed to piece 4, the biggest being that a popup opened while its
+  opener is off-screen is created and focused but never scrolled to — fine for a
+  machine-to-machine round trip, useless for a form you have to type into.
+  The critic was straight about its boundary: it never saw a token come back, a
+  consent screen, or a signed-in Gmail. That the whole flow completes is
+  inferred from the parts, not observed.
+
+- **Round 1, piece 6 done.** Copy/paste: three bugs wearing one costume — a
+  bracketed-paste guess about a program on the far end of a socket, one paste
+  arriving as three unordered Tasks, and a pane that lost the keyboard when the
+  strip reparented its view.
 
 - **A datum that narrows piece 1.** Scott's Gmail lane is signed in and the
   session survived a restart, so cookie persistence and the data-store sharding
