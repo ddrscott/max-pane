@@ -7,6 +7,7 @@ import AppKit
 /// to declare its key here or it does not exist.
 public enum Command: String, CaseIterable {
     case newTerminalLane
+    case runCommand
     case newWebLane
     case splitDown
     case closePane
@@ -32,10 +33,12 @@ public enum Command: String, CaseIterable {
     case exportStrip
     case importStrip
     case toggleSpan
+    case showHelp
 
     public var title: String {
         switch self {
         case .newTerminalLane: return "New Terminal Lane"
+        case .runCommand: return "Run Command…"
         case .newWebLane: return "New Web Lane…"
         case .splitDown: return "Split Down"
         case .closePane: return "Close Pane"
@@ -61,6 +64,7 @@ public enum Command: String, CaseIterable {
         case .exportStrip: return "Export Strip…"
         case .importStrip: return "Import Strip…"
         case .toggleSpan: return "Span Lane (2× Width)"
+        case .showHelp: return "Keyboard Shortcuts"
         }
     }
 
@@ -69,6 +73,7 @@ public enum Command: String, CaseIterable {
     public var shortcut: (String, NSEvent.ModifierFlags) {
         switch self {
         case .newTerminalLane: return ("t", [.command])
+        case .runCommand:      return ("r", [.command])
         case .newWebLane:      return ("l", [.command])
         case .splitDown:       return ("d", [.command])
         case .closePane:       return ("w", [.command])
@@ -99,19 +104,21 @@ public enum Command: String, CaseIterable {
         case .exportStrip:     return ("s", [.command, .shift])
         case .importStrip:     return ("o", [.command, .shift])
         case .toggleSpan:      return ("\\", [.command])
+        // The one everybody reaches for when they do not know the others.
+        case .showHelp:        return ("/", [.command])
         }
     }
 
     /// Which menu this belongs under.
     public var menu: MenuSection {
         switch self {
-        case .newTerminalLane, .newWebLane, .splitDown, .attachSession: return .file
+        case .newTerminalLane, .newWebLane, .runCommand, .splitDown, .attachSession: return .file
         case .closePane, .closeLane: return .file
         case .focusLeft, .focusRight, .focusUp, .focusDown, .search, .gather, .ungather: return .navigate
         case .moveLaneLeft, .moveLaneRight, .toggleSidebar, .togglePinned,
              .widenLane, .narrowLane, .peekDesktop: return .view
         case .claimSession: return .file
-        case .showMemory: return .view
+        case .showMemory, .showHelp: return .view
         case .pairWithNext: return .navigate
         case .exportStrip, .importStrip: return .file
         case .toggleSpan: return .view

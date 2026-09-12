@@ -27,7 +27,9 @@ final class LaneView: NSView {
     /// coordinate space; `final` marks the drop.
     var onHeaderDrag: ((_ x: CGFloat, _ final: Bool) -> Void)?
 
-    private var widthConstraint: NSLayoutConstraint!
+    /// What the drag handle is currently asking for. The parent reads it during
+    /// a live resize; the ledger only hears about it on the drop.
+    private(set) var desiredWidth: CGFloat = 0
     /// A spanned lane may be twice as wide (PRD §13 Phase 3), so this is per
     /// lane rather than a constant.
     var widthBounds: ClosedRange<UInt32> = 420...900
@@ -44,9 +46,13 @@ final class LaneView: NSView {
         // Square. Explicitly, so nobody "improves" it later.
         layer?.cornerRadius = 0
 
-        translatesAutoresizingMaskIntoConstraints = false
-        widthConstraint = widthAnchor.constraint(equalToConstant: CGFloat(lane.widthPt))
-        widthConstraint.isActive = true
+        // Frame-positioned, deliberately. `StripContentView` lays lanes out by
+        // summing widths (ADR-0004), so the lane's own frame is set from
+        // outside. Leaving this false would hand placement to Auto Layout, which
+        // has nothing pinning the height and collapses every lane to its header
+        // — the whole strip becomes a row of 28pt bars with no panes in it.
+        translatesAutoresizingMaskIntoConstraints = true
+        frame.size.width = CGFloat(lane.widthPt)
 
         stack.orientation = .vertical
         stack.distribution = .fillEqually
@@ -80,8 +86,8 @@ final class LaneView: NSView {
             guard let self else { return }
             let next = UInt32(max(Double(self.widthBounds.lowerBound),
                                   min(Double(self.widthBounds.upperBound),
-                                      Double(self.widthConstraint.constant) + delta)))
-            self.widthConstraint.constant = CGFloat(next)
+                                      Double(self.desiredWidth) + delta)))
+            self.desiredWidth = CGFloat(next)
             self.onResize?(next, final)
         }
         header.onDoubleClick = { [weak self] in self?.onHeaderDoubleClick?() }
@@ -98,9 +104,7 @@ final class LaneView: NSView {
     /// is cheap to rebuild, the pane views are not and are reused by id.
     func apply(_ lane: Lane) {
         laneId = lane.id
-        if widthConstraint.constant != CGFloat(lane.widthPt) {
-            widthConstraint.constant = CGFloat(lane.widthPt)
-        }
+        desiredWidth = CGFloat(lane.widthPt)
         header.apply(lane)
     }
 

@@ -6,6 +6,14 @@ rust-version.workspace = true
 license.workspace = true
 description = "Hand a URL from a terminal to the running Max Pane, so it opens as a web lane next to that terminal."
 
+# Two names, one implementation. `argv[0]` picks the behaviour: `maxpane-open`
+# is the single-purpose BROWSER shim, `maxpane` is the full CLI. Both are
+# three-line binaries over the library so cargo is not asked to compile one
+# source file into two targets.
+[lib]
+name = "maxpane_open"
+path = "src/lib.rs"
+
 [[bin]]
-name = "maxpane-open"
+name = "maxpane"
 path = "src/main.rs"

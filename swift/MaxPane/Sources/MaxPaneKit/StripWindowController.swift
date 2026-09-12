@@ -14,6 +14,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private var palette: SearchPaletteController?
     private var openServer: OpenServer?
     private var memoryDashboard: MemoryDashboard?
+    private var helpPanel: HelpPanel?
     private var sessionWatcher: RelaySessionWatcher?
 
     public init(store: StripStore, config: Config) {
@@ -42,6 +43,14 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         split.addSplitViewItem(NSSplitViewItem(viewController: strip))
         window.contentViewController = split
 
+        // Setting `contentViewController` makes AppKit resize the window to the
+        // content's *fitting* size. An empty strip has no intrinsic width, so
+        // that collapses the window to the sidebar's minimum thickness — a
+        // 228×50 sliver. Restore a real size and floor it, after the assignment.
+        window.setContentSize(NSSize(width: 1600, height: 1000))
+        window.minSize = NSSize(width: 720, height: 400)
+        window.center()
+
         sidebar.onSelect = { [weak self] laneId in self?.strip.reveal(laneId: laneId, flash: true) }
         startSideChannels()
     }
@@ -55,7 +64,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
         do {
             openServer = try OpenServer { [weak self] request in
-                MainActor.assumeIsolated { self?.handleOpen(request) ?? false }
+                MainActor.assumeIsolated {
+                    self?.handle(request) ?? .refused("max pane is shutting down")
+                }
             }
         } catch {
             // Not fatal. Without it, URLs from terminals go to the default
@@ -68,23 +79,84 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         }
     }
 
-    /// A URL arrived from `maxpane-open` (PRD §7.1).
+    /// A request from the `maxpane` CLI.
     ///
-    /// The web lane goes immediately right of the terminal that asked, tagged
-    /// with that terminal's project. A URL from somewhere that is not a lane —
-    /// a plain shell, a cron job — goes to the end of the strip rather than
-    /// being refused.
-    private func handleOpen(_ request: OpenServer.Request) -> Bool {
-        let near = request.sessionId.isEmpty ? nil : strip.lane(forRelaySession: request.sessionId)
+    /// This is the whole scriptable surface, and it is also how the app gets
+    /// tested: driving AppKit from outside needs accessibility permission, and a
+    /// socket does not.
+    private func handle(_ request: OpenServer.Request) -> OpenServer.Reply {
+        switch request {
+        case .open(let url, let sessionId, _):
+            return openFromCLI(url: url, sessionId: sessionId)
+        case .run(let command, let args, let sessionId, let cwd):
+            return runFromCLI(command: command, args: args, sessionId: sessionId, cwd: cwd)
+        case .list:
+            return OpenServer.Reply(ok: true, lanes: describeStrip())
+        }
+    }
+
+    /// PRD §7.1. The web lane goes immediately right of the terminal that asked,
+    /// tagged with that terminal's project. A URL from somewhere that is not a
+    /// lane — a plain shell, a cron job — goes to the end of the strip rather
+    /// than being refused.
+    private func openFromCLI(url: String, sessionId: String) -> OpenServer.Reply {
+        let near = sessionId.isEmpty ? nil : strip.lane(forRelaySession: sessionId)
         do {
-            try store.newWebLane(url: request.url, near: near)
+            try store.newWebLane(url: url, near: near)
             if let laneId = store.state.lanes.last?.id, near == nil {
                 strip.reveal(laneId: laneId, flash: true)
             }
-            return true
+            return .handled
         } catch {
-            return false
+            return .refused("\(error)")
         }
+    }
+
+    /// `maxpane run htop` — a new terminal lane running `htop`.
+    ///
+    /// The session is started here rather than by the CLI so it inherits the
+    /// app's environment, including `BROWSER` pointing back at the shim.
+    private func runFromCLI(command: String, args: [String], sessionId: String, cwd: String)
+        -> OpenServer.Reply
+    {
+        let near = sessionId.isEmpty ? store.focusedLane?.id : strip.lane(forRelaySession: sessionId)
+        // The caller's own cwd, when it gave one, beats the focused pane's.
+        let workingDirectory = cwd.isEmpty
+            ? (store.state.focusedPaneId.flatMap { strip.cwd(ofPane: $0) }
+                ?? FileManager.default.homeDirectoryForCurrentUser.path)
+            : cwd
+        do {
+            let session = try RelaySessionSpawner(config: config).spawn(
+                cwd: workingDirectory,
+                command: command.isEmpty ? nil : command,
+                args: args)
+            try store.newTerminalLane(relaySessionId: session, near: near)
+            if let laneId = store.state.lanes.last?.id {
+                strip.reveal(laneId: laneId, flash: true)
+            }
+            return OpenServer.Reply(ok: true, session: session)
+        } catch {
+            return .refused("\(error)")
+        }
+    }
+
+    /// One line per lane, tab-separated, so `maxpane ls` pipes.
+    private func describeStrip() -> String {
+        let state = store.state
+        guard !state.lanes.isEmpty else { return "(no lanes)\n" }
+        return state.lanes.enumerated().map { index, lane in
+            let kinds = lane.panes.map { pane -> String in
+                switch pane.kind {
+                case .pty: return pane.relaySessionId.map { "pty:\($0)" } ?? "pty"
+                case .web: return "web"
+                case .placeholder: return "web(evicted)"
+                }
+            }.joined(separator: ",")
+            let focused = lane.panes.contains { $0.id == state.focusedPaneId } ? "*" : " "
+            let tag = lane.projectRoot.map { ($0 as NSString).lastPathComponent } ?? "-"
+            let title = lane.title ?? lane.panes.first?.url ?? "untitled"
+            return "\(focused)\(index)\t\(kinds)\t\(tag)\t\(title)"
+        }.joined(separator: "\n") + "\n"
     }
 
     @available(*, unavailable)
@@ -113,6 +185,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return store.isGathered
         case .gather:
             return store.focusedLane?.projectRoot != nil
+        case .runCommand, .showHelp:
+            return true
         case .claimSession:
             // Only meaningful for a terminal pane.
             return store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .pty
@@ -134,6 +208,20 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             switch command {
             case .newTerminalLane:
                 try newTerminal(near: focusedLane)
+
+            case .runCommand:
+                promptForCommand { [weak self] line in
+                    guard let self, let line, !line.isEmpty else { return }
+                    // Split on whitespace the way a shell would for the simple
+                    // case; anything quoted goes through $SHELL -c anyway.
+                    let parts = line.split(separator: " ").map(String.init)
+                    _ = self.runFromCLI(
+                        command: parts[0], args: Array(parts.dropFirst()),
+                        sessionId: "", cwd: "")
+                }
+
+            case .showHelp:
+                showHelp()
 
             case .newWebLane:
                 promptForURL { [weak self] url in
@@ -369,6 +457,35 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         } else {
             try store.pair(pty: pair.pty, web: pair.web)
         }
+    }
+
+    /// ⌘/ — every shortcut, generated from `Command`.
+    private func showHelp() {
+        if let existing = helpPanel {
+            existing.orderFront(nil)
+            return
+        }
+        let panel = HelpPanel()
+        helpPanel = panel
+        if let frame = window?.frame {
+            panel.setFrameOrigin(NSPoint(x: frame.midX - 280, y: frame.midY - 260))
+        }
+        panel.orderFront(nil)
+    }
+
+    /// ⌘R — what to run in a new terminal lane.
+    private func promptForCommand(_ completion: @escaping (String?) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = "Run a command"
+        alert.informativeText = "Starts a Relay session in a new lane. Empty runs your shell."
+        alert.addButton(withTitle: "Run")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 420, height: 24))
+        field.placeholderString = "htop"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return completion(nil) }
+        completion(field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// PRD §13 Phase 2's memory dashboard. Floating, so it can sit beside the

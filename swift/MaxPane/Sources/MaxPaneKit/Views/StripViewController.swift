@@ -36,6 +36,9 @@ public final class StripViewController: NSViewController {
     private var dragPreview: (laneId: String, target: Int)?
     /// True until the strip has settled after launch. See `makeController`.
     private var isColdLaunch = true
+    /// Shown when the strip is empty, because a blank window that says nothing
+    /// is indistinguishable from a broken one.
+    private lazy var emptyState = EmptyStripView()
 
     public init(store: StripStore, config: Config) {
         self.store = store
@@ -71,9 +74,21 @@ public final class StripViewController: NSViewController {
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
 
+        emptyState.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(emptyState)
+        NSLayoutConstraint.activate([
+            emptyState.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            emptyState.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        ])
+
         NotificationCenter.default.addObserver(
             self, selector: #selector(didScroll),
             name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
+        // A lane is as tall as the strip, so every size change re-lays them out.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(clipViewResized),
+            name: NSView.frameDidChangeNotification, object: scrollView.contentView)
+        scrollView.contentView.postsFrameChangedNotifications = true
     }
 
     public override func viewDidLoad() {
@@ -124,6 +139,7 @@ public final class StripViewController: NSViewController {
     /// Diff the new snapshot against what is on screen and touch only the
     /// difference. Called after every mutation, so it must not rebuild the world.
     private func apply(_ state: StripState) {
+        emptyState.isHidden = !state.lanes.isEmpty
         let wanted = Set(state.lanes.map(\.id))
 
         // Lanes that went away take their panes with them.
@@ -386,6 +402,11 @@ public final class StripViewController: NSViewController {
 
     // MARK: - scrolling
 
+    @objc private func clipViewResized() {
+        content.layOut(lanes: store.state.lanes, viewFor: { [weak self] lane in self?.laneViews[lane.id] })
+        updateMaterialization()
+    }
+
     @objc private func didScroll() {
         updateMaterialization()
         // The ledger write is debounced; the strip is not.
@@ -567,7 +588,11 @@ final class StripContentView: NSView {
     /// scroller would only span what happens to be built.
     func layOut(lanes: [Lane], viewFor: (Lane) -> LaneView?) {
         var x: CGFloat = 0
+        // The clip view's height, not our own: our height is what we are about
+        // to set, so reading it here would latch whatever it was last frame —
+        // zero, on the first pass.
         let height = superview?.bounds.height ?? bounds.height
+        guard height > 0 else { return }
         for lane in lanes {
             let width = CGFloat(lane.widthPt)
             if let laneView = viewFor(lane) {

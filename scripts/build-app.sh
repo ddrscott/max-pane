@@ -26,7 +26,10 @@ BIN="swift/MaxPane/.build/$CONFIG/MaxPane"
 
 echo "==> assembling $APP"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+# Helpers, not MacOS: macOS filesystems are case-insensitive by default, so a
+# CLI called `maxpane` next to an app called `MaxPane` silently overwrites it.
+# That failure looks like the app launching and printing CLI usage.
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Helpers"
 cp "$BIN" "$APP/Contents/MacOS/MaxPane"
 cp swift/MaxPane/Resources/Info.plist "$APP/Contents/Info.plist"
 
@@ -35,18 +38,22 @@ cp swift/MaxPane/Resources/Info.plist "$APP/Contents/Info.plist"
 
 echo "==> maxpane-open (the BROWSER shim)"
 cargo build --release -p maxpane-open
-cp "target/release/maxpane-open" "$APP/Contents/MacOS/maxpane-open"
+cp "target/release/maxpane-open" "$APP/Contents/Helpers/maxpane-open"
+cp "target/release/maxpane" "$APP/Contents/Helpers/maxpane"
 
 # Signing must come last. Adding a file to the bundle afterwards breaks the seal,
 # and the only symptom is `codesign --verify` saying "a sealed resource is
 # missing or invalid" — which nothing checks unless you ask it to. So we ask.
 echo "==> signing (ad-hoc)"
-codesign --force --sign - --timestamp=none "$APP/Contents/MacOS/maxpane-open" >/dev/null
+codesign --force --sign - --timestamp=none "$APP/Contents/Helpers/maxpane-open" >/dev/null
+codesign --force --sign - --timestamp=none "$APP/Contents/Helpers/maxpane" >/dev/null
 codesign --force --sign - --timestamp=none "$APP" >/dev/null
 codesign --verify --deep --strict "$APP"
 
 echo "built $APP"
-echo "  terminals should run with BROWSER=$PWD/$APP/Contents/MacOS/maxpane-open"
+echo
+echo "  CLI:      $PWD/$APP/Contents/Helpers/maxpane"
+echo "  BROWSER:  $PWD/$APP/Contents/Helpers/maxpane-open  (set automatically in panes it starts)"
 
 if [ "$RUN" = "run" ]; then
   open "$APP"

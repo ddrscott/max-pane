@@ -195,10 +195,14 @@ public struct RelaySessionSpawner {
 }
 
 extension RelaySessionSpawner {
-    /// `maxpane-open`, which ships inside the app bundle next to the executable.
+    /// `maxpane-open`, which ships in the bundle's `Helpers` directory.
+    ///
+    /// Not `Contents/MacOS`: macOS filesystems are case-insensitive by default,
+    /// and a helper called `maxpane` there would overwrite the app's own
+    /// `MaxPane` executable.
     static func shimPath() -> String? {
         let bundled = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/MacOS/maxpane-open").path
+            .appendingPathComponent("Contents/Helpers/maxpane-open").path
         if FileManager.default.isExecutableFile(atPath: bundled) { return bundled }
         // Running straight out of `swift build`, the shim sits beside the binary.
         let sibling = URL(fileURLWithPath: CommandLine.arguments[0])

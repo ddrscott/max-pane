@@ -13,11 +13,36 @@ import Foundation
 /// over a Unix socket in the user's own Application Support directory, so the
 /// only thing that can reach it is something already running as the user.
 public final class OpenServer: @unchecked Sendable {
-    public struct Request: Sendable {
-        public let url: String
-        /// Empty when the URL came from somewhere that is not a Relay session.
-        public let sessionId: String
-        public let cwd: String
+    /// What the CLI asked for.
+    public enum Request: Sendable {
+        /// A URL to open as a web lane. `sessionId` is empty when the caller was
+        /// not itself a Relay session.
+        case open(url: String, sessionId: String, cwd: String)
+        /// A command to run in a new terminal lane. An empty `command` means the
+        /// user's shell.
+        case run(command: String, args: [String], sessionId: String, cwd: String)
+        /// What is on the strip.
+        case list
+    }
+
+    /// What goes back. `session` carries the id of a session just started;
+    /// `lanes` carries `ls` output already formatted, because the app knows the
+    /// strip order and the CLI does not.
+    public struct Reply: Sendable {
+        public let ok: Bool
+        public var session: String = ""
+        public var lanes: String = ""
+        public var error: String = ""
+
+        public init(ok: Bool, session: String = "", lanes: String = "", error: String = "") {
+            self.ok = ok
+            self.session = session
+            self.lanes = lanes
+            self.error = error
+        }
+
+        public static let handled = Reply(ok: true)
+        public static func refused(_ why: String) -> Reply { Reply(ok: false, error: why) }
     }
 
     public static var socketPath: String {
@@ -32,11 +57,11 @@ public final class OpenServer: @unchecked Sendable {
     private var fd: Int32 = -1
     private var source: DispatchSourceRead?
     private let queue = DispatchQueue(label: "maxpane.open-server")
-    private let handler: @Sendable (Request) -> Bool
+    private let handler: @Sendable (Request) -> Reply
 
-    /// `handler` returns whether the URL was accepted; the shim falls back to
-    /// the system browser when it was not.
-    public init(handler: @escaping @Sendable (Request) -> Bool) throws {
+    /// `handler` answers each request. A refused `open` makes the shim fall back
+    /// to the system browser, so refusing is a real answer rather than a failure.
+    public init(handler: @escaping @Sendable (Request) -> Reply) throws {
         self.handler = handler
         try listen()
     }
@@ -120,11 +145,12 @@ public final class OpenServer: @unchecked Sendable {
             outcome.set(handler(request))
             done.signal()
         }
-        // If the app is wedged, answer anyway so the shim can fall back rather
+        // Spawning a session polls for its socket for up to 3 s, so this has to
+        // outlast that. If the app is genuinely wedged, answer anyway rather
         // than hanging the user's terminal.
-        _ = done.wait(timeout: .now() + 2)
+        _ = done.wait(timeout: .now() + 8)
 
-        let reply = outcome.get() ? #"{"ok":true}"# : #"{"ok":false,"error":"not handled"}"#
+        let reply = Self.encode(outcome.get())
         _ = reply.withCString { write(client, $0, strlen($0)) }
         _ = "\n".withCString { write(client, $0, 1) }
     }
@@ -134,19 +160,59 @@ public final class OpenServer: @unchecked Sendable {
     public static func parse(_ line: String) -> Request? {
         guard let data = line.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              object["op"] as? String == "open",
-              let url = object["url"] as? String,
-              !url.isEmpty
+              let op = object["op"] as? String
         else { return nil }
-        // Only schemes a web pane can actually load. A `file://` or `javascript:`
-        // arriving from a shell is not something to open silently.
-        guard let scheme = URL(string: url)?.scheme?.lowercased(),
-              scheme == "http" || scheme == "https"
-        else { return nil }
-        return Request(
-            url: url,
-            sessionId: object["session"] as? String ?? "",
-            cwd: object["cwd"] as? String ?? "")
+
+        let sessionId = object["session"] as? String ?? ""
+        let cwd = object["cwd"] as? String ?? ""
+
+        switch op {
+        case "open":
+            guard let url = object["url"] as? String, !url.isEmpty else { return nil }
+            // Only schemes a web pane can load. A `file://` or `javascript:`
+            // arriving from a shell is not something to open silently.
+            guard let scheme = URL(string: url)?.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https"
+            else { return nil }
+            return .open(url: url, sessionId: sessionId, cwd: cwd)
+
+        case "run":
+            return .run(
+                command: object["command"] as? String ?? "",
+                args: object["args"] as? [String] ?? [],
+                sessionId: sessionId,
+                cwd: cwd)
+
+        case "ls":
+            return .list
+
+        default:
+            return nil
+        }
+    }
+
+    static func encode(_ reply: Reply) -> String {
+        var parts = ["\"ok\":\(reply.ok)"]
+        if !reply.session.isEmpty { parts.append("\"session\":\(json(reply.session))") }
+        if !reply.lanes.isEmpty { parts.append("\"lanes\":\(json(reply.lanes))") }
+        if !reply.error.isEmpty { parts.append("\"error\":\(json(reply.error))") }
+        return "{" + parts.joined(separator: ",") + "}"
+    }
+
+    static func json(_ s: String) -> String {
+        var out = "\""
+        for c in s.unicodeScalars {
+            switch c {
+            case "\"": out += "\\\""
+            case "\\": out += "\\\\"
+            case "\n": out += "\\n"
+            case "\r": out += "\\r"
+            case "\t": out += "\\t"
+            case let c where c.value < 0x20: out += String(format: "\\u%04x", c.value)
+            default: out.unicodeScalars.append(c)
+            }
+        }
+        return out + "\""
     }
 }
 
@@ -155,15 +221,15 @@ public final class OpenServer: @unchecked Sendable {
 /// compiler.
 private final class Outcome: @unchecked Sendable {
     private let lock = NSLock()
-    private var value = false
+    private var value = OpenServer.Reply.refused("not handled")
 
-    func set(_ v: Bool) {
+    func set(_ v: OpenServer.Reply) {
         lock.lock()
         value = v
         lock.unlock()
     }
 
-    func get() -> Bool {
+    func get() -> OpenServer.Reply {
         lock.lock()
         defer { lock.unlock() }
         return value

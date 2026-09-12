@@ -121,20 +121,64 @@ which was written from the Rust pty-host source and cites it.
   [`docs/acceptance.md`](docs/acceptance.md), and the PRD itself is annotated
   **[AMENDED]** in place.
 
-## Running it for real
+## Using it
 
 ```sh
 ./scripts/build-app.sh release run
 ```
 
-Terminals spawned by the app get `BROWSER` pointed at the bundled
-`maxpane-open`, so anything that opens a URL politely gets a web lane beside the
-terminal that asked. To get the same from a terminal you started yourself:
+Press **⌘/** for every shortcut. The three that matter:
+
+| | |
+|---|---|
+| **⌘R** | run a command in a new terminal lane |
+| **⌘L** | a web lane (`google.com` is enough — no scheme needed) |
+| **⌘[** / **⌘]** | move focus between lanes |
+
+An empty strip says the same thing, so a fresh launch is not a blank rectangle.
+
+### From a terminal
+
+Both CLI tools live in the bundle at `Contents/Helpers/`:
 
 ```sh
-export BROWSER="$PWD/build/MaxPane.app/Contents/MacOS/maxpane-open"
+export PATH="$PWD/build/MaxPane.app/Contents/Helpers:$PATH"
+
+maxpane run htop          # a terminal lane running htop
+maxpane run               # a terminal lane running your shell
+maxpane open google.com   # a web lane
+maxpane ls                # what is on the strip
 ```
 
-`MAXPANE_WINDOWED=1` skips fullscreen, and `MAXPANE_DEBUG=1` turns on the chatty
-half of the logging. Both go to stderr, which you only see if you run the binary
-inside the bundle directly rather than via `open`.
+`maxpane ls` prints one tab-separated line per lane, so it pipes:
+
+```
+ 0	pty:bc780940	max-pane	untitled
+*1	web	-	Google
+```
+
+Terminals Max Pane starts already have `BROWSER` set to the bundled shim, so
+anything inside them that opens a URL politely gets a web lane beside the
+terminal that asked. For a terminal you started yourself:
+
+```sh
+export BROWSER="$PWD/build/MaxPane.app/Contents/Helpers/maxpane-open"
+```
+
+### Debugging
+
+`MAXPANE_WINDOWED=1` skips fullscreen and `MAXPANE_DEBUG=1` turns on the chatty
+logging. Both write to stderr, which you only see by running the executable
+inside the bundle directly rather than through `open`:
+
+```sh
+MAXPANE_WINDOWED=1 MAXPANE_DEBUG=1 ./build/MaxPane.app/Contents/MacOS/MaxPane
+```
+
+### A note on terminal size
+
+Max Pane never resizes a Relay session — the PTY has one size shared by every
+client, including your phone, so claiming it would reshape the terminal for all
+of them ([ADR-0007](docs/decisions/0007-terminal-panes-never-resize-the-pty.md)).
+It sizes the *lane* to the session instead. **⌃⌘⇧R** claims a session at the
+lane's width, and asks first, because that one does affect everyone.
