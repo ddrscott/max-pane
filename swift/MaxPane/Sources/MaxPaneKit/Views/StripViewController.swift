@@ -39,6 +39,9 @@ public final class StripViewController: NSViewController {
     /// Latest session telemetry, so a lane materialised mid-stream is not blank
     /// until the next poll.
     private var laneTelemetry: [String: SessionTelemetry] = [:]
+    /// The pane whose view currently holds the keyboard, so a snapshot that did
+    /// not move focus does not steal it back from whatever the user clicked.
+    private var focusedPaneInView: String?
     /// Shown when the strip is empty, because a blank window that says nothing
     /// is indistinguishable from a broken one.
     private lazy var emptyState = EmptyStripView()
@@ -158,6 +161,17 @@ public final class StripViewController: NSViewController {
             laneViews[lane.id]?.isFocused = state.focusedPaneId.map { id in
                 lane.panes.contains { $0.id == id }
             } ?? false
+        }
+
+        // Give the keyboard to a pane the ledger says is focused but which does
+        // not have it yet. Without this a lane created by `maxpane run` — or by
+        // ⌘T, or by the shim — comes up drawn, attached and completely deaf:
+        // the ledger records the focus, no view ever takes first responder, and
+        // every keystroke goes nowhere with no indication why.
+        if let wanted = state.focusedPaneId, wanted != focusedPaneInView,
+           let controller = paneControllers[wanted] {
+            focusedPaneInView = wanted
+            controller.takeFocus()
         }
     }
 

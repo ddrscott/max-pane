@@ -79,7 +79,7 @@ final class TerminalPaneController: NSObject, PaneController {
         self.pane = pane
         self.store = store
         self.config = config
-        self.terminal = TerminalView(frame: .zero)
+        self.terminal = AutoCopyTerminalView(frame: .zero)
         super.init()
 
         container.wantsLayer = true
@@ -483,7 +483,16 @@ extension TerminalPaneController: @preconcurrency TerminalViewDelegate {
     }
 
     func scrolled(source: TerminalView, position: Double) {}
-    func clipboardCopy(source: TerminalView, content: Data) {}
+    /// OSC 52 — the terminal asking for something to be put on the clipboard.
+    ///
+    /// Agents use this to hand you a command or a path without you selecting it.
+    /// Dropping it on the floor, which is what an empty implementation does,
+    /// looks exactly like the feature not existing.
+    func clipboardCopy(source: TerminalView, content: Data) {
+        guard let text = String(data: content, encoding: .utf8), !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
 
     func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
@@ -544,5 +553,22 @@ final class ReconnectingBanner: NSView {
             label.textColor = Theme.dimText
             layer?.backgroundColor = Theme.laneBorder.withAlphaComponent(0.3).cgColor
         }
+    }
+}
+
+/// A `TerminalView` that copies the selection the moment you finish making one.
+///
+/// RelayTTY does this, and it is the reason a daily user of it has never pressed
+/// ⌘C in a terminal: you drag over a stack trace and it is already on the
+/// clipboard. Without it the gesture silently does nothing, which reads as the
+/// selection not having worked at all.
+final class AutoCopyTerminalView: TerminalView {
+    override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        // `getSelection` is nil unless a selection is actually active, so an
+        // ordinary click into a pane never clobbers the clipboard.
+        guard let selected = getSelection(), !selected.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(selected, forType: .string)
     }
 }

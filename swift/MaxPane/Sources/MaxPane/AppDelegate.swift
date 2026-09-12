@@ -48,6 +48,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appItem.submenu = appMenu
         main.addItem(appItem)
 
+        // The Edit menu, which macOS does not supply and which nothing else
+        // here would have created.
+        //
+        // Its absence is invisible in code review and fatal in use: SwiftTerm
+        // implements `copy(_:)`, `paste(_:)` and `selectAll(_:)` as responder
+        // methods, but with no menu item carrying those selectors, ⌘V reaches
+        // nothing and silently does nothing. A critic driving the app found it
+        // in five minutes; pasting a path or a stack trace into an agent prompt
+        // is the most frequent input action there is.
+        //
+        // `target = nil` is the point — each item walks the responder chain to
+        // whatever is focused, so the same ⌘C works in a terminal lane, a web
+        // pane and the search field without any of them knowing about this menu.
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        for (title, selector, key) in [
+            ("Cut", #selector(NSText.cut(_:)), "x"),
+            ("Copy", #selector(NSText.copy(_:)), "c"),
+            ("Paste", #selector(NSText.paste(_:)), "v"),
+            ("Select All", #selector(NSText.selectAll(_:)), "a"),
+        ] as [(String, Selector, String)] {
+            let item = NSMenuItem(title: title, action: selector, keyEquivalent: key)
+            item.target = nil
+            editMenu.addItem(item)
+        }
+        editItem.submenu = editMenu
+        main.addItem(editItem)
+
         for section in MenuSection.allCases {
             let item = NSMenuItem()
             let menu = NSMenu(title: section.rawValue)
