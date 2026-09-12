@@ -1,0 +1,543 @@
+import AppKit
+
+/// A web pane's browser chrome: one row, at the foot of the pane.
+///
+/// ## Why one row, and why at the bottom
+///
+/// Vivaldi spends four horizontal bands on this — tab bar, address bar,
+/// bookmarks bar, status line — across 1900 pt. A lane is 656 pt and can be
+/// dragged to 420, and it already gives 28 pt to the lane header at the top. A
+/// second bar up there would push the page down by 56 pt before it has drawn a
+/// pixel, in a column whose whole point is that the page is readable.
+///
+/// So: one band, and the owner said "at the bottom or top", which settles it.
+/// The bottom is where this app's remaining chrome already is (`StatusBar`), it
+/// is where Vivaldi's own link-target line is, and it keeps the *page* the first
+/// thing under the lane's title.
+///
+/// ## The decision that makes one row enough
+///
+/// **The address and the hovered link share the field.** They answer the same
+/// question a second apart — "where am I" and "where would this take me" — and
+/// you are never asking both at once, because the second only has an answer
+/// while the pointer is on a link. Vivaldi can afford a row for each; a lane
+/// cannot, and two half-width fields would truncate both. So the field shows
+/// the page's address, and swaps to the link target for as long as the pointer
+/// rests on one, with a 120 ms crossfade so the substitution is legible as a
+/// substitution rather than as the URL changing under you.
+///
+/// ## What is always here, and what is not
+///
+/// Always: back, forward, reload/stop, the address (editable, domain
+/// emphasised), find, and a load progress hairline. Those are the five things
+/// the round's kill criterion names plus the two that cost a glyph each.
+///
+/// Only when it has something to say: the security warning (an `http://` page
+/// only — a padlock on every https page is a padlock nobody reads, so the
+/// legible state is its absence) and the zoom readout (only off 100%, where it
+/// is both the readout and the Reset button).
+///
+/// Never: a bookmark star and a bookmarks bar — the strip is the bookmarks bar
+/// and a pinned lane is the star; and a separate search box — the address field
+/// takes a question as readily as an address, because a portrait column has
+/// room for one field and `NewPaneEntries.looksLikeURL` already knows the
+/// difference.
+@MainActor
+final class WebChromeBar: NSView {
+    static let height: CGFloat = 26
+
+    var onBack: (() -> Void)?
+    var onForward: (() -> Void)?
+    var onReloadOrStop: (() -> Void)?
+    var onFind: (() -> Void)?
+    var onZoomReset: (() -> Void)?
+    /// A line typed into the address field. Already trimmed; not yet resolved —
+    /// the pane decides whether it is an address or a search.
+    var onNavigate: ((String) -> Void)?
+    /// Click-and-hold or right-click on back/forward: the pane's own history,
+    /// which is the only place `backForwardList` is reachable by mouse.
+    var onBackMenu: (() -> NSMenu?)?
+    var onForwardMenu: (() -> NSMenu?)?
+
+    private let back = ChromeButton(glyph: "←")
+    private let forward = ChromeButton(glyph: "→")
+    private let reload = ChromeButton(glyph: "⟳")
+    private let find = ChromeButton(glyph: "⌕")
+    private let zoom = ChromeButton(glyph: "100%")
+    private let security = NSTextField(labelWithString: "")
+    private let address = AddressField()
+
+    private var currentURL: String = ""
+    private var hovered: String?
+    private var progress: Double = 0
+    private var isLoading = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+
+        security.font = Theme.mono(11, weight: .bold)
+        security.textColor = Self.warning
+        security.isHidden = true
+        security.setContentHuggingPriority(.required, for: .horizontal)
+
+        address.font = Theme.mono(11)
+        address.onCommit = { [weak self] text in self?.onNavigate?(text) }
+        // The address is the only thing on the row that gives, in both
+        // directions: it shrinks when the lane is dragged to 420 pt, and it
+        // takes all the slack when the lane is wide so that find and zoom sit
+        // against the right edge rather than trailing the URL like a suffix.
+        // A hugging priority of 1, the same trick `StatusBar` uses for its
+        // spacer — `.defaultLow` is 250 and ties with every other view here.
+        address.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        address.setContentHuggingPriority(.init(1), for: .horizontal)
+
+        back.onClick = { [weak self] in self?.onBack?() }
+        forward.onClick = { [weak self] in self?.onForward?() }
+        reload.onClick = { [weak self] in self?.onReloadOrStop?() }
+        find.onClick = { [weak self] in self?.onFind?() }
+        zoom.onClick = { [weak self] in self?.onZoomReset?() }
+        back.onMenu = { [weak self] in self?.onBackMenu?() }
+        forward.onMenu = { [weak self] in self?.onForwardMenu?() }
+
+        back.toolTip = "Back — click and hold for this pane's history"
+        forward.toolTip = "Forward"
+        reload.toolTip = "Reload (⌘R)"
+        find.toolTip = "Find in page (⌘F)"
+        zoom.toolTip = "Zoom — click for actual size (⌘0)"
+        zoom.isHidden = true
+
+        let row = NSStackView(views: [back, forward, reload, security, address, find, zoom])
+        row.orientation = .horizontal
+        row.spacing = 2
+        row.alignment = .centerY
+        // `.fill`, not the default `.gravityAreas`: the address has to take all
+        // the slack so find and zoom sit against the lane's right edge. Left as
+        // gravity areas, every control huddles at the left and the row reads as
+        // one run-on string.
+        row.distribution = .fill
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.setCustomSpacing(6, after: reload)
+        row.setCustomSpacing(4, after: security)
+        row.setCustomSpacing(6, after: address)
+        addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: 1),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor),
+            heightAnchor.constraint(equalToConstant: Self.height),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not a nib") }
+
+    // MARK: - what it says
+
+    func setURL(_ url: String?) {
+        currentURL = url ?? ""
+        // The field keeps the unabbreviated address separately from the three
+        // runs it draws, because clicking it has to open *that* for editing —
+        // see `AddressField.fullURL`.
+        address.fullURL = currentURL
+        renderAddress()
+    }
+
+    /// The link under the pointer, or nil when there is none.
+    func setHoveredLink(_ url: String?) {
+        let next = (url?.isEmpty == false) ? url : nil
+        guard next != hovered else { return }
+        hovered = next
+        renderAddress()
+    }
+
+    func setNavigation(canGoBack: Bool, canGoForward: Bool, loading: Bool) {
+        back.isEnabled = canGoBack
+        forward.isEnabled = canGoForward
+        if loading != isLoading {
+            isLoading = loading
+            // The same button, because stop and reload are the same intention
+            // at two moments and a portrait column has no room for the second
+            // one to be a separate target.
+            reload.glyph = loading ? "×" : "⟳"
+            reload.toolTip = loading ? "Stop" : "Reload (⌘R)"
+        }
+    }
+
+    func setProgress(_ value: Double) {
+        progress = value
+        needsDisplay = true
+    }
+
+    func setZoom(_ level: Double) {
+        let atRest = abs(level - 1) < 0.001
+        zoom.glyph = "\(Int((level * 100).rounded()))%"
+        guard zoom.isHidden != atRest else { return }
+        // Fade rather than cut: the row's contents shift when it appears, and a
+        // 120 ms fade is the difference between "something arrived" and "the
+        // address bar just got shorter for no reason".
+        if atRest {
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.12
+                zoom.animator().alphaValue = 0
+            }, completionHandler: { [weak zoom] in zoom?.isHidden = true })
+        } else {
+            zoom.alphaValue = 0
+            zoom.isHidden = false
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.12
+                zoom.animator().alphaValue = 1
+            }
+        }
+    }
+
+    /// An unfocused pane keeps its chrome — the address *is* the pane's identity
+    /// on a strip of ten lanes, and hiding it would make the strip unreadable —
+    /// but it does not keep its contrast. The buttons of nine panes you are not
+    /// using are nine rows of noise.
+    var isPaneFocused: Bool = false {
+        didSet {
+            guard isPaneFocused != oldValue else { return }
+            for button in [back, forward, reload, find, zoom] { button.isDimmed = !isPaneFocused }
+            renderAddress()
+            needsDisplay = true
+        }
+    }
+
+    var isEditingAddress: Bool { address.isEditingAddress }
+
+    func beginEditingAddress() { address.beginEditing(with: currentURL) }
+
+    func endEditingAddress() { address.cancelEditing() }
+
+    // MARK: - drawing
+
+    private func renderAddress() {
+        guard !address.isEditingAddress else { return }
+
+        if let hovered {
+            security.isHidden = true
+            address.show(Self.hoverText(hovered), fade: true)
+            address.toolTip = hovered
+            return
+        }
+
+        switch BrowserAddress.security(of: currentURL) {
+        case .insecure:
+            security.stringValue = "⚠"
+            security.textColor = Self.warning
+            security.isHidden = false
+        case .local:
+            security.stringValue = "⌂"
+            security.textColor = Theme.dimText
+            security.isHidden = false
+        case .secure, .none:
+            security.isHidden = true
+        }
+
+        let display = BrowserAddress.display(currentURL)
+        let attributed = NSMutableAttributedString()
+        let dim: [NSAttributedString.Key: Any] = [
+            .font: Theme.mono(11), .foregroundColor: Theme.dimText,
+        ]
+        let strong: [NSAttributedString.Key: Any] = [
+            .font: Theme.mono(11, weight: .medium),
+            .foregroundColor: isPaneFocused ? NSColor.labelColor : NSColor.secondaryLabelColor,
+        ]
+        attributed.append(NSAttributedString(string: display.dimLead, attributes: dim))
+        attributed.append(NSAttributedString(string: display.strong, attributes: strong))
+        attributed.append(NSAttributedString(string: display.dimTail, attributes: dim))
+        address.show(attributed, fade: hovered == nil && !currentURL.isEmpty)
+        address.toolTip = currentURL.isEmpty ? nil : currentURL
+    }
+
+    /// `→ example.com/page`. The arrow is what makes it a destination rather
+    /// than a claim about where you already are.
+    private static func hoverText(_ url: String) -> NSAttributedString {
+        let display = BrowserAddress.display(url)
+        let out = NSMutableAttributedString(string: "→ ", attributes: [
+            .font: Theme.mono(11, weight: .medium), .foregroundColor: Theme.dimText,
+        ])
+        out.append(NSAttributedString(string: display.strong, attributes: [
+            .font: Theme.mono(11, weight: .medium), .foregroundColor: NSColor.labelColor,
+        ]))
+        out.append(NSAttributedString(string: display.dimTail, attributes: [
+            .font: Theme.mono(11), .foregroundColor: Theme.dimText,
+        ]))
+        return out
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        Theme.laneBackground.setFill()
+        bounds.fill()
+
+        // A hairline above, so the row reads as chrome and not as the last line
+        // of the page.
+        Theme.laneBorder.setFill()
+        NSRect(x: 0, y: bounds.height - Theme.borderWidth,
+               width: bounds.width, height: Theme.borderWidth).fill()
+
+        // Load progress, on the same hairline. Not the accent: Signal Orange is
+        // spent on focus and on BLOCKED, and ten lanes each drawing an orange
+        // line every time a page loads is how BLOCKED stops meaning anything.
+        // `Theme.flowing` is already this app's "bytes are moving".
+        guard progress > 0.001, progress < 0.999 else { return }
+        Theme.flowing.setFill()
+        NSRect(x: 0, y: bounds.height - 2, width: bounds.width * CGFloat(progress), height: 2).fill()
+    }
+
+    /// The one colour on this row that is neither the accent nor grey.
+    ///
+    /// Deliberately not `Theme.accent`: an `http://` page is a caution, and
+    /// borrowing the colour that means *this pane needs you* to say it would
+    /// make both weaker. Amber, and it appears on maybe one page a month.
+    static let warning = NSColor(srgbRed: 0xE0 / 255, green: 0xA0 / 255, blue: 0x10 / 255, alpha: 1)
+}
+
+// MARK: - the address field
+
+/// The address, and the only editable thing in a web pane's chrome.
+///
+/// One field in two states rather than a label that swaps for a text field.
+/// Swapping views moves the text by a pixel or two and flickers the run
+/// colouring — in a bar whose whole job is to be read at a glance, the click
+/// that starts editing must not look like the page navigated.
+@MainActor
+final class AddressField: NSTextField, NSTextFieldDelegate {
+    /// A committed line. Raw, exactly as typed.
+    var onCommit: ((String) -> Void)?
+
+    private(set) var isEditingAddress = false
+    private var display = NSAttributedString()
+
+    /// The address in full, scheme and all.
+    ///
+    /// Held apart from what is drawn, and that is the whole point. The drawn
+    /// form has `https://` taken off it and is coloured in three runs; editing
+    /// a string that is not the string is a trap — you would delete a character
+    /// from the end of a URL that does not have the beginning you can see.
+    var fullURL: String = ""
+
+    init() {
+        super.init(frame: .zero)
+        isBezeled = false
+        isBordered = false
+        drawsBackground = false
+        focusRingType = .none
+        isEditable = false
+        // False until editing starts, so the click that starts editing reaches
+        // `mouseDown` instead of being eaten by text selection.
+        isSelectable = false
+        lineBreakMode = .byTruncatingTail
+        cell?.usesSingleLineMode = true
+        cell?.truncatesLastVisibleLine = true
+        wantsLayer = true
+        delegate = self
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not a nib") }
+
+    func show(_ text: NSAttributedString, fade: Bool) {
+        guard !isEditingAddress else { return }
+        display = text
+        if fade, let layer {
+            // A crossfade on the layer, not a property animation: the two
+            // strings have different colouring in different places and
+            // animating that is not a thing AppKit can interpolate.
+            let transition = CATransition()
+            transition.type = .fade
+            transition.duration = 0.12
+            layer.add(transition, forKey: "addressSwap")
+        }
+        attributedStringValue = text
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard !isEditingAddress else { return super.mouseDown(with: event) }
+        beginEditing(with: fullURL)
+    }
+
+    /// Editing shows the whole URL and selects it, which is what every browser
+    /// does and what makes "click, type, Return" one gesture rather than three.
+    func beginEditing(with url: String?) {
+        guard !isEditingAddress else { return }
+        isEditingAddress = true
+        isEditable = true
+        isSelectable = true
+        drawsBackground = true
+        backgroundColor = Theme.stripBackground
+        textColor = .labelColor
+        font = Theme.mono(11)
+        if let url { stringValue = url }
+        // A square 1 pt accent outline. This is the one place the accent is
+        // right: it means "the keyboard is here", which is what focus means
+        // everywhere else in the app.
+        layer?.borderColor = Theme.accent.cgColor
+        layer?.borderWidth = 1
+        layer?.cornerRadius = 0
+        window?.makeFirstResponder(self)
+        currentEditor()?.selectAll(nil)
+    }
+
+    func cancelEditing() {
+        guard isEditingAddress else { return }
+        finishEditing()
+    }
+
+    private func finishEditing() {
+        isEditingAddress = false
+        isEditable = false
+        isSelectable = false
+        drawsBackground = false
+        layer?.borderWidth = 0
+        attributedStringValue = display
+        if window?.firstResponder === currentEditor() { window?.makeFirstResponder(nil) }
+    }
+
+    func control(_ control: NSControl, textView: NSTextView,
+                 doCommandBy selector: Selector) -> Bool {
+        switch selector {
+        case #selector(NSResponder.insertNewline(_:)):
+            let typed = stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            finishEditing()
+            guard !typed.isEmpty else { return true }
+            // One turn later, and it is not a nicety. This runs inside the field
+            // editor's own key handling, with AppKit part-way through tearing
+            // the editor down; starting a navigation and moving first responder
+            // from in there left the page loaded, titled, addressed — and never
+            // painted, until something else forced a repaint. (The same hazard
+            // `webViewDidClose` already documents: do not do work on WebKit's
+            // stack.)
+            Task { @MainActor [onCommit] in onCommit?(typed) }
+            return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            finishEditing()
+            return true
+        default:
+            return false
+        }
+    }
+
+    func controlTextDidEndEditing(_ notification: Notification) {
+        // Clicking away is a cancel, not a commit. A half-typed address that
+        // navigated because the pointer moved would be the worst bug on this row.
+        finishEditing()
+    }
+}
+
+// MARK: - buttons
+
+/// A square, borderless glyph button.
+///
+/// Not `NSButton`: a bordered button is a rounded capsule and a borderless one
+/// has no hover state at all, and the hit target here has to stay 22 pt wide in
+/// a bar that is 26 pt tall. Square, 1 pt of nothing, and a fill on hover.
+@MainActor
+final class ChromeButton: NSView {
+    var onClick: (() -> Void)?
+    /// Built lazily on press-and-hold or right-click. Returning nil means the
+    /// button has no menu right now, and the press stays a plain click.
+    var onMenu: (() -> NSMenu?)?
+
+    var glyph: String { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
+    var isEnabled = true { didSet { needsDisplay = true } }
+    var isDimmed = true { didSet { needsDisplay = true } }
+
+    private var isHovered = false { didSet { needsDisplay = true } }
+    private var holdTimer: Timer?
+    private var menuShown = false
+
+    init(glyph: String) {
+        self.glyph = glyph
+        super.init(frame: .zero)
+        wantsLayer = true
+        translatesAutoresizingMaskIntoConstraints = false
+        heightAnchor.constraint(equalToConstant: 22).isActive = true
+        // A button is exactly its glyph wide. Without this it competes with the
+        // address field for the row's slack and the whole row spreads out.
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not a nib") }
+
+    /// A zoom readout is data and gets the house mono at reading size. A glyph
+    /// is not: `⟳` and `⌕` are outside JetBrains Mono, so they come back from
+    /// the system fallback at a face that draws visibly smaller than the arrows
+    /// beside them — measured at 13 pt they read as half the size. Two points
+    /// larger puts the row back in balance.
+    private var font: NSFont {
+        glyph.count > 2 ? Theme.mono(10, weight: .medium) : Theme.mono(15, weight: .medium)
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let width = (glyph as NSString).size(withAttributes: [.font: font]).width
+        return NSSize(width: max(22, width + 10), height: 22)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow], owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) { isHovered = isEnabled }
+    override func mouseExited(with event: NSEvent) { isHovered = false }
+
+    override func mouseDown(with event: NSEvent) {
+        guard isEnabled else { return }
+        menuShown = false
+        // Press-and-hold for the menu, the way a browser's back button has
+        // worked for twenty years. A timer rather than a tracking loop: a
+        // tracking loop blocks the run loop, and this view lives inside a
+        // WKWebView's pane where that would stall the page's rendering too.
+        holdTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.showMenu() }
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        holdTimer?.invalidate()
+        holdTimer = nil
+        guard isEnabled, !menuShown else { return }
+        onClick?()
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        guard isEnabled else { return }
+        showMenu()
+    }
+
+    private func showMenu() {
+        holdTimer?.invalidate()
+        holdTimer = nil
+        guard let menu = onMenu?(), menu.numberOfItems > 0 else { return }
+        menuShown = true
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: bounds.height + 2), in: self)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        if isHovered {
+            Theme.laneBorder.withAlphaComponent(0.6).setFill()
+            bounds.fill()
+        }
+        // Three levels, and they are a map of what is possible: bright for a
+        // thing this pane can do now, dim for a pane you are not in, dimmer
+        // still for an action with nothing behind it (no back history, no
+        // forward). Hiding the last would make the row's width jump around as
+        // you browse, which is worse than a grey arrow.
+        let colour: NSColor = !isEnabled
+            ? Theme.dimText.withAlphaComponent(0.3)
+            : (isDimmed ? Theme.dimText : .labelColor)
+        let text = NSAttributedString(string: glyph, attributes: [
+            .font: font, .foregroundColor: colour,
+        ])
+        let size = text.size()
+        text.draw(at: NSPoint(x: (bounds.width - size.width) / 2,
+                              y: (bounds.height - size.height) / 2))
+    }
+}

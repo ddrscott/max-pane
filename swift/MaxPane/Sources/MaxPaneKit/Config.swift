@@ -53,6 +53,16 @@ public struct Config: Codable {
     public var fontName: String = "JetBrains Mono"
     public var fontSize: Double = 13
 
+    /// Where a web pane's address bar sends something that is not an address.
+    ///
+    /// A portrait lane has room for one text field, so the address bar is also
+    /// the search box — `%s` is where the query goes, the same placeholder every
+    /// browser's custom-engine field uses. Google by default because that is
+    /// what the Vivaldi this was measured against is set to; a search box that
+    /// answers differently from the one it replaces is a downgrade dressed up
+    /// as a principle.
+    public var searchUrl: String = "https://www.google.com/search?q=%s"
+
     /// Settle a horizontal scroll with the nearest lane centred.
     ///
     /// A strip is a row of columns, and a scroll that stops between two of them
@@ -114,6 +124,7 @@ public struct Config: Codable {
         relayPtyHostPath = read(.relayPtyHostPath, d.relayPtyHostPath)
         fontName = read(.fontName, d.fontName)
         fontSize = read(.fontSize, d.fontSize)
+        searchUrl = read(.searchUrl, d.searchUrl)
         snapToLanes = read(.snapToLanes, d.snapToLanes)
         snapSeconds = read(.snapSeconds, d.snapSeconds)
     }

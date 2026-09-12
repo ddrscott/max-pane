@@ -187,6 +187,11 @@ else keeps its default.
 }
 ```
 
+`searchUrl` is where a web pane's address bar sends something that is not an
+address — `%s` is the query. A portrait lane has room for one text field, so the
+address bar is also the search box; `example.com` navigates, `swift actors`
+searches, and the rule for telling them apart is the same one ⌘T uses.
+
 `snapToLanes` settles a horizontal scroll with the nearest lane centred, rather
 than leaving two lanes half-readable. It is on by default; set it to `false` to
 have the scroll stop exactly where the gesture put it. `snapSeconds` (default

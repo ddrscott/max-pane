@@ -29,6 +29,14 @@ protocol PaneController: AnyObject {
     var zoom: Double { get }
     func setZoom(_ zoom: Double)
 
+    /// ⌘R, and ⇧⌘R when `fromOrigin` is true — fetch it again, ignoring the
+    /// cache.
+    ///
+    /// The same seam as `setZoom`: the command walks in, the pane decides what
+    /// the word means for it. Only a web pane has something to re-fetch, which
+    /// is why the default below is what it is.
+    func reload(fromOrigin: Bool)
+
     /// Write anything the pane would otherwise lose, without tearing it down.
     ///
     /// Called on quit. A terminal has nothing to save — the session lives in
@@ -55,6 +63,22 @@ extension PaneController {
     /// A pane that does not scale reports actual size and ignores the keys.
     var zoom: Double { 1 }
     func setZoom(_ zoom: Double) {}
+
+    /// A pane with nothing to re-fetch says so, out loud.
+    ///
+    /// ⌘R exists on every pane because the strip has two kinds and a key that
+    /// works in one lane and silently does nothing in the next is a key you
+    /// stop trusting in both. A terminal's screen is not a document — there is
+    /// no origin to ask again — so the honest answer is the system's own "that
+    /// key does not apply here", which is a beep.
+    ///
+    /// The alternative worth doing later, in the terminal's own file: repaint
+    /// the surface from the emulator's buffer, which is what `redraw` means in
+    /// tmux and is the only thing in a terminal that "reload" could honestly
+    /// name. What it must never do is *run* something — ⌘R used to open a
+    /// prompt that started a command, and a key that quietly kept doing that
+    /// after being renamed "reload" would be the worst outcome of the rename.
+    func reload(fromOrigin: Bool) { NSSound.beep() }
 }
 
 /// The rungs ⌘= and ⌘- climb.

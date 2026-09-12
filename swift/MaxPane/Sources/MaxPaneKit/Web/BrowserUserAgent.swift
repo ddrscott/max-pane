@@ -18,10 +18,20 @@ import Foundation
 /// they are one string, not two bugs.
 ///
 /// The fix finishes the sentence WebKit started rather than telling a different
-/// story. A pane *is* the system WebKit: the same framework, the same version
-/// and the same feature set Safari on this machine renders with, so claiming
-/// that Safari's version token is true, and feature detection that keys off it
-/// gets a correct answer. Claiming to be Chrome would not be.
+/// story. A pane renders in the system WebKit — the same framework, at the
+/// version Safari ships in lockstep with — so the `Version/` token is a true
+/// statement about the engine. Claiming to be Chrome would not be.
+///
+/// **It is not a true statement about the feature set**, and nothing here
+/// should be read as one. Measured inside a real pane: `PublicKeyCredential`
+/// exists but `isUserVerifyingPlatformAuthenticatorAvailable()` returns false,
+/// and `window.PaymentRequest` and `window.PushManager` are undefined. Safari 26
+/// on this machine has all three. Passkeys are the one worth naming, because
+/// Google pushes them hard at sign-in: a site that routes on the Safari claim
+/// can offer a passkey path that dead-ends. That is a cost of this string, not
+/// an argument against it — a truthful "I am a WKWebView" is exactly what got
+/// the owner blocked, and Vivaldi appends its own `Vivaldi/8.1.4087.75` tail
+/// for the same reason.
 ///
 /// The version is read out of `Safari.app` at launch rather than hard-coded,
 /// because a pinned number is precisely the thing that goes stale and re-creates
@@ -35,9 +45,15 @@ enum BrowserUserAgent {
     /// `customUserAgent` would work too and is worse: it replaces the platform
     /// prefix as well, so a future OS that changes how it describes itself would
     /// be describing itself through a string frozen here.
-    static let applicationName: String = token(
-        safariVersion: installedSafariVersion() ?? fallbackSafariVersion,
-        appVersion: appVersion)
+    /// Computed, not a `static let`. A `let` is read once per process and this
+    /// app is left open for days — a Safari update mid-session would leave every
+    /// pane built afterwards claiming the old version, which is the same class
+    /// of staleness the plist read exists to avoid. It costs one plist read per
+    /// web view built, which is a handful over a session.
+    static var applicationName: String {
+        token(safariVersion: installedSafariVersion() ?? fallbackSafariVersion,
+              appVersion: appVersion)
+    }
 
     /// `Version/26.6.2 Safari/605.1.15 MaxPane/0.1.0`, given those two inputs.
     ///

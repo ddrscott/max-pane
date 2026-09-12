@@ -129,7 +129,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private func startSideChannels() {
         // Snapshots outlive the panes that made them when the app is killed;
         // sweep the ones with no pane before anything can read a stale path.
-        SnapshotStore.sweep(keeping: Set(store.state.lanes.flatMap(\.panes).map(\.id)))
+        let live = Set(store.state.lanes.flatMap(\.panes).map(\.id))
+        SnapshotStore.sweep(keeping: live)
+        // Same reason, same moment: a `kill -9` leaves a zoom level behind for
+        // a pane that no longer exists. (This one goes away entirely when zoom
+        // becomes a column on `pane` — see `PaneZoomStore`.)
+        PaneZoomStore.shared.sweep(keeping: live)
 
         do {
             openServer = try OpenServer { [weak self] request in
