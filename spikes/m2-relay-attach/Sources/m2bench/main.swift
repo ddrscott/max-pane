@@ -189,6 +189,19 @@ case "echo":
     }
     cleanup()
 
+case "resize":
+    try runResize()
+
+case "conflict":
+    try runConflict()
+
+case "load":
+    try runLoad(Int(argv.count > 1 ? argv[1] : "30") ?? 30,
+                rate: Int(argv.count > 2 ? argv[2] : "200") ?? 200)
+
+case "observe":
+    try runObserve(argv.count > 1 ? argv[1] : "")
+
 default:
-    print("usage: m2bench <smoke|attach|echo|resize|conflict|lanefit|load|observe>")
+    print("usage: m2bench <smoke|attach|echo|resize|conflict|load|observe>")
 }

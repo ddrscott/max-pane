@@ -19,6 +19,7 @@ struct Options {
     var out = "results.json"
     var fullscreen = true
     var fsMode = "borderless"   // borderless | native | none
+    var forceDisplay = true
     var settle = 2.0
 }
 
@@ -38,6 +39,8 @@ func parseArgs() -> Options {
         case "--out": o.out = val()
         case "--settle": o.settle = Double(val()) ?? 2.0
         case "--fs-mode": o.fsMode = val()
+        case "--force-display": o.forceDisplay = true
+        case "--no-force-display": o.forceDisplay = false
         case "--no-fullscreen": o.fullscreen = false; o.fsMode = "none"
         default: break
         }
@@ -60,6 +63,14 @@ func assertDisplayAwake() {
                                      kIOPMUserActiveLocal, &userActivityAssertion)
 }
 func displayAsleep() -> Bool { CGDisplayIsAsleep(CGMainDisplayID()) != 0 }
+
+/// True when the login window is covering the session, in which case the
+/// window server does not composite our window and frame timing only
+/// reflects main-thread work, not GPU compositing.
+func screenIsLocked() -> Bool {
+    guard let d = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
+    return (d["CGSSessionScreenIsLocked"] as? Int) == 1
+}
 
 let logPath = opts.out + ".log"
 func elog(_ m: String) {
@@ -148,6 +159,10 @@ struct Results: Encodable {
     var requestedFrameRateHz: Double
     var framesWindowNotVisible: Int
     var framesDisplayAsleep: Int
+    var framesScreenLocked: Int
+    var screenLockedAtStart: Bool
+    var screenLockedAtEnd: Bool
+    var forceDisplayEachFrame: Bool
     var framesAppInactive: Int
     var totalMeasuredFrames: Int
     var laneWidthMeanPt: Double
@@ -197,6 +212,8 @@ final class Bench: NSObject {
     var peakLive = 0
     var framesNotVisible = 0
     var framesDisplayAsleep = 0
+    var framesLocked = 0
+    var lockedAtStart = false
     var framesAppInactive = 0
     var requestedFrameRate: Double = 0
 
@@ -328,6 +345,7 @@ final class Bench: NSObject {
         peakLive = max(peakLive, live)
         if !window.occlusionState.contains(.visible) { framesNotVisible += 1 }
         if displayAsleep() { framesDisplayAsleep += 1 }
+        if screenIsLocked() { framesLocked += 1 }
         if !NSApp.isActive { framesAppInactive += 1 }
         let work = (CACurrentMediaTime() - t0) * 1000.0
         frames.append(FrameSample(phase: phase.rawValue, ts: ts, dt: dt * 1000.0,
@@ -350,6 +368,7 @@ final class Bench: NSObject {
             scrollPos = max(0, min(scrollPos, maxX))
         }
         strip.setScrollX(scrollPos)
+        if opts.forceDisplay { window.contentView?.displayIfNeeded() }
     }
 
     var cleanResult: PhaseResult?
@@ -489,6 +508,10 @@ final class Bench: NSObject {
             requestedFrameRateHz: requestedFrameRate,
             framesWindowNotVisible: framesNotVisible,
             framesDisplayAsleep: framesDisplayAsleep,
+            framesScreenLocked: framesLocked,
+            screenLockedAtStart: lockedAtStart,
+            screenLockedAtEnd: screenIsLocked(),
+            forceDisplayEachFrame: opts.forceDisplay,
             framesAppInactive: framesAppInactive,
             totalMeasuredFrames: (cleanResult?.frames ?? 0) + (perturbResult?.frames ?? 0),
             laneWidthMeanPt: Double(widths.reduce(0,+)) / Double(widths.count),
@@ -634,6 +657,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let nStrip = bench.strip as? NaiveStrip { nStrip.resizeLane(at: 0, to: nStrip.widths[0]) }
         let fps = (window.screen ?? NSScreen.main!).maximumFramesPerSecond
         bench.frameBudget = 1.0 / Double(fps > 0 ? fps : 60)
+        bench.lockedAtStart = screenIsLocked()
+        elog("screen locked at bench start: \(bench.lockedAtStart)")
         bench.beginPhase(.settle)
         bench.startLink()
     }

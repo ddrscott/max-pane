@@ -1,0 +1,185 @@
+{
+  "appActive" : false,
+  "cleanScroll" : {
+    "droppedFrames" : 0,
+    "droppedPct" : 0,
+    "durationSeconds" : 4.800060000037774,
+    "frames" : 289,
+    "intervalMs" : {
+      "count" : 289,
+      "max" : 16.666875104419887,
+      "mean" : 16.666875000130705,
+      "min" : 16.666874988004565,
+      "p50" : 16.666874988004565,
+      "p95" : 16.666875104419887,
+      "p99" : 16.666875104419887
+    },
+    "layoutCallsPerFrameMax" : 2,
+    "layoutCallsPerFrameMean" : 1.0034602076124568,
+    "layoutCallsTotal" : 290,
+    "peakLiveLaneViews" : 10,
+    "scrollXEnd" : 0,
+    "scrollXMax" : 96403,
+    "scrollXStart" : 0,
+    "severeDrops" : 0,
+    "workMs" : {
+      "count" : 289,
+      "max" : 8.221791591495275,
+      "mean" : 2.871026670492567,
+      "min" : 1.2848750920966268,
+      "p50" : 2.7960833394899964,
+      "p95" : 4.338374943472445,
+      "p99" : 6.031249999068677
+    }
+  },
+  "collectionItemsInstantiated" : 10,
+  "displayLinkNominalIntervalMs" : 16.666875000000005,
+  "events" : [
+    {
+      "atLaneIndex" : 147,
+      "frameIndex" : 180,
+      "frameIntervalMs" : 16.666875104419887,
+      "kind" : "insert-mid-strip",
+      "layoutCallsThisFrame" : 4,
+      "maxIntervalNext10Ms" : 16.666875104419887,
+      "visibleHitch" : false,
+      "workMs" : 10.237666661851108
+    },
+    {
+      "atLaneIndex" : 146,
+      "frameIndex" : 420,
+      "frameIntervalMs" : 16.666874988004565,
+      "kind" : "resize-mid-scroll",
+      "layoutCallsThisFrame" : 0,
+      "maxIntervalNext10Ms" : 16.666875104419887,
+      "visibleHitch" : false,
+      "workMs" : 2.255708328448236
+    }
+  ],
+  "forceDisplayEachFrame" : true,
+  "frameBudgetMs" : 16.666666666666668,
+  "framesAppInactive" : 1070,
+  "framesDisplayAsleep" : 0,
+  "framesScreenLocked" : 1070,
+  "framesWindowNotVisible" : 1070,
+  "fullscreen" : false,
+  "fullscreenMode" : "borderless",
+  "fullscreenTransitionMs" : 13.1343750981614,
+  "idleCpuMaxPct" : 0.34139827383076404,
+  "idleCpuMeanPct" : 0.1778551133483331,
+  "idleCpuSamplesPctOfOneCore" : [
+    0.34139827383076404,
+    0.014311952865902141
+  ],
+  "idleRssBytes" : 76709888,
+  "idleSeconds" : 2,
+  "laneConfiguresTotal" : 424,
+  "laneViewsInstantiatedTotal" : 10,
+  "laneWidthMaxPt" : 894,
+  "laneWidthMeanPt" : 660.2866666666666,
+  "laneWidthMinPt" : 421,
+  "lanes" : 150,
+  "os" : "Version 26.6.2 (Build 25G83)",
+  "peakLiveLaneViews" : 10,
+  "perturbScroll" : {
+    "droppedFrames" : 0,
+    "droppedPct" : 0,
+    "durationSeconds" : 10.965540666715242,
+    "frames" : 659,
+    "intervalMs" : {
+      "count" : 659,
+      "max" : 16.666875104419887,
+      "mean" : 16.664958333407046,
+      "min" : 15.403791680000722,
+      "p50" : 16.666874988004565,
+      "p95" : 16.666875104419887,
+      "p99" : 16.666875104419887
+    },
+    "layoutCallsPerFrameMax" : 7,
+    "layoutCallsPerFrameMean" : 0.14871016691957512,
+    "layoutCallsTotal" : 98,
+    "peakLiveLaneViews" : 8,
+    "scrollXEnd" : 97271,
+    "scrollXMax" : 97271,
+    "scrollXStart" : 0,
+    "severeDrops" : 0,
+    "workMs" : {
+      "count" : 659,
+      "max" : 15.844041714444757,
+      "mean" : 3.0160926291945196,
+      "min" : 1.2939582811668515,
+      "p50" : 2.778916619718075,
+      "p95" : 5.991208367049694,
+      "p99" : 8.561083348467946
+    }
+  },
+  "physFootprintAfterScrollBytes" : 23561056,
+  "physFootprintAtRestBytes" : 18383688,
+  "recyclingBuffer" : 2,
+  "requestedFrameRateHz" : 60,
+  "restore" : [
+    {
+      "afterRebuildRestore" : 12345,
+      "afterSet" : 12345,
+      "exact" : true,
+      "requested" : 12345
+    },
+    {
+      "afterRebuildRestore" : 21734.25,
+      "afterSet" : 21734.25,
+      "exact" : true,
+      "requested" : 21734.25
+    },
+    {
+      "afterRebuildRestore" : 97271,
+      "afterSet" : 97271,
+      "exact" : true,
+      "requested" : 97271
+    }
+  ],
+  "rssAfterScrollBytes" : 80412672,
+  "rssAtRestBytes" : 76398592,
+  "screenLockedAtEnd" : true,
+  "screenLockedAtStart" : true,
+  "screens" : [
+    {
+      "backingScale" : 1,
+      "index" : 0,
+      "maximumFramesPerSecond" : 60,
+      "maximumRefreshInterval" : 0.016666875,
+      "minimumRefreshInterval" : 0.016666875,
+      "name" : "LG HDR WQHD",
+      "pointSize" : [
+        3840,
+        1600
+      ]
+    },
+    {
+      "backingScale" : 2,
+      "index" : 1,
+      "maximumFramesPerSecond" : 120,
+      "maximumRefreshInterval" : 0.041666667,
+      "minimumRefreshInterval" : 0.008333333,
+      "name" : "Built-in Retina Display",
+      "pointSize" : [
+        1728,
+        1117
+      ]
+    }
+  ],
+  "stripContentWidthPt" : 100243,
+  "swift" : "6.3.3",
+  "totalMeasuredFrames" : 948,
+  "ttiFromExecMs" : 134.7830295562744,
+  "ttiFromMainEntryMs" : 104.11882400512695,
+  "updateConstraintsTotal" : 10,
+  "variant" : "collection",
+  "velocityPtPerSec" : 40000,
+  "viewportHeightPt" : 1600,
+  "viewportWidthPt" : 3840,
+  "windowCoversScreen" : true,
+  "windowLevel" : 3,
+  "windowScreen" : "LG HDR WQHD",
+  "windowScreenMaxFPS" : 60,
+  "windowVisibleOcclusion" : false
+}

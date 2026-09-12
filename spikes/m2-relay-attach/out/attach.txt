@@ -1,0 +1,30 @@
+cleaned up 2 spawned sessions
+## Attach latency
+
+small=636b63dd big=56e22778; filling scrollback to 5.0 MB ...
+  big session totalBytesWritten = 4564270 (4.35 MB) filled=TIMEOUT
+
+### small session (636b63dd) — replay wire=917B plain=917B gz=false
+| metric | n | min | mean | p50 | p95 | p99 | max |
+|---|---|---|---|---|---|---|---|
+| connect -> SYNC (handshake) | 25 | 0.175 | 0.407 | 0.295 | 0.824 | 1.676 | 1.676 |
+| connect -> replay frame | 25 | 0.085 | 0.163 | 0.135 | 0.293 | 0.347 | 0.347 |
+| gzip inflate | 25 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |
+| connect -> replay decoded | 25 | 0.085 | 0.163 | 0.135 | 0.293 | 0.347 | 0.347 |
+| SwiftTerm feed (parse only) | 25 | 0.048 | 0.163 | 0.093 | 0.278 | 1.449 | 1.449 |
+| connect -> replay parsed into Terminal | 25 | 0.175 | 0.405 | 0.294 | 0.823 | 1.676 | 1.676 |
+
+### big session (56e22778) — replay wire=1153072B plain=4564270B gz=true
+| metric | n | min | mean | p50 | p95 | p99 | max |
+|---|---|---|---|---|---|---|---|
+| connect -> SYNC (handshake) | 25 | 130.744 | 159.415 | 133.921 | 404.338 | 494.181 | 494.181 |
+| connect -> replay frame | 25 | 38.560 | 51.473 | 40.659 | 68.328 | 278.668 | 278.668 |
+| gzip inflate | 25 | 3.225 | 4.275 | 3.384 | 8.084 | 21.292 | 21.292 |
+| connect -> replay decoded | 25 | 41.839 | 55.748 | 44.095 | 76.412 | 299.960 | 299.960 |
+| SwiftTerm feed (parse only) | 25 | 86.893 | 103.618 | 89.949 | 104.315 | 417.714 | 417.714 |
+| connect -> replay parsed into Terminal | 25 | 130.741 | 159.411 | 133.919 | 404.326 | 494.173 | 494.173 |
+
+### delta reattach at offset 4564270.0 (caught up: no replay frame at all)
+| metric | n | min | mean | p50 | p95 | p99 | max |
+|---|---|---|---|---|---|---|---|
+| connect -> SYNC | 25 | 0.068 | 0.274 | 0.256 | 0.525 | 0.712 | 0.712 |
