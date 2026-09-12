@@ -1,0 +1,5 @@
+# 110 rather than the default 100: the ledger's SQL-bearing calls and the
+# eviction match arms read better on one line than wrapped, and this file is
+# what keeps `cargo fmt` from disagreeing with the code that is already here.
+max_width = 110
+use_small_heuristics = "Max"

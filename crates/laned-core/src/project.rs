@@ -53,10 +53,7 @@ fn walk_for_git_root(start: &Path) -> Option<String> {
 
 /// The part of a project root a human reads: its last path component.
 pub fn short_name(root: &str) -> &str {
-    Path::new(root)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or(root)
+    Path::new(root).file_name().and_then(|s| s.to_str()).unwrap_or(root)
 }
 
 #[cfg(test)]
@@ -72,10 +69,7 @@ mod tests {
         std::fs::create_dir_all(root.join(".git")).unwrap();
 
         let r = ProjectResolver::default();
-        assert_eq!(
-            r.root_of(nested.to_str().unwrap()),
-            Some(root.to_string_lossy().into_owned())
-        );
+        assert_eq!(r.root_of(nested.to_str().unwrap()), Some(root.to_string_lossy().into_owned()));
     }
 
     #[test]
@@ -87,10 +81,7 @@ mod tests {
         std::fs::write(root.join(".git"), "gitdir: /elsewhere\n").unwrap();
 
         let r = ProjectResolver::default();
-        assert_eq!(
-            r.root_of(root.join("src").to_str().unwrap()),
-            Some(root.to_string_lossy().into_owned())
-        );
+        assert_eq!(r.root_of(root.join("src").to_str().unwrap()), Some(root.to_string_lossy().into_owned()));
     }
 
     #[test]
@@ -103,10 +94,7 @@ mod tests {
         std::fs::create_dir_all(inner.join(".git")).unwrap();
 
         let r = ProjectResolver::default();
-        assert_eq!(
-            r.root_of(inner.to_str().unwrap()),
-            Some(inner.to_string_lossy().into_owned())
-        );
+        assert_eq!(r.root_of(inner.to_str().unwrap()), Some(inner.to_string_lossy().into_owned()));
     }
 
     #[test]

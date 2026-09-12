@@ -42,10 +42,8 @@ fn rust_side_snapshot_cost() {
             )
             .unwrap();
         let id = st.lanes.last().unwrap().id.clone();
-        core.set_lane_title(id.clone(), Some(format!("lane {i} — a realistically long tab title")))
-            .unwrap();
-        core.set_manual_tag(id.clone(), Some(format!("/Users/spierce/code/project-{}", i % 12)))
-            .unwrap();
+        core.set_lane_title(id.clone(), Some(format!("lane {i} — a realistically long tab title"))).unwrap();
+        core.set_manual_tag(id.clone(), Some(format!("/Users/spierce/code/project-{}", i % 12))).unwrap();
         lane_ids.push(id);
     }
     for j in 0..100 {

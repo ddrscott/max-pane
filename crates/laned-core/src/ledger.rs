@@ -20,8 +20,9 @@ impl Ledger {
         let conn = match path {
             Some(p) => {
                 if let Some(dir) = p.parent() {
-                    std::fs::create_dir_all(dir)
-                        .map_err(|e| CoreError::Ledger { message: format!("create {}: {e}", dir.display()) })?;
+                    std::fs::create_dir_all(dir).map_err(|e| CoreError::Ledger {
+                        message: format!("create {}: {e}", dir.display()),
+                    })?;
                 }
                 Connection::open(p)?
             }
@@ -134,16 +135,16 @@ impl Ledger {
             ),
             Placement::RightOf { lane_id } => {
                 let o = self.ordinal_of(lane_id)?;
-                let next: Option<f64> = self
-                    .conn
-                    .query_row("SELECT MIN(ordinal) FROM lane WHERE ordinal > ?1", [o], |r| r.get(0))?;
+                let next: Option<f64> =
+                    self.conn
+                        .query_row("SELECT MIN(ordinal) FROM lane WHERE ordinal > ?1", [o], |r| r.get(0))?;
                 (Some(o), next)
             }
             Placement::LeftOf { lane_id } => {
                 let o = self.ordinal_of(lane_id)?;
-                let prev: Option<f64> = self
-                    .conn
-                    .query_row("SELECT MAX(ordinal) FROM lane WHERE ordinal < ?1", [o], |r| r.get(0))?;
+                let prev: Option<f64> =
+                    self.conn
+                        .query_row("SELECT MAX(ordinal) FROM lane WHERE ordinal < ?1", [o], |r| r.get(0))?;
                 (prev, Some(o))
             }
         })
@@ -216,9 +217,7 @@ impl Ledger {
     }
 
     pub fn set_ordinal(&self, lane_id: &str, ordinal: f64) -> Result<()> {
-        let n = self
-            .conn
-            .execute("UPDATE lane SET ordinal = ?2 WHERE id = ?1", params![lane_id, ordinal])?;
+        let n = self.conn.execute("UPDATE lane SET ordinal = ?2 WHERE id = ?1", params![lane_id, ordinal])?;
         if n == 0 {
             return Err(CoreError::NotFound { kind: "lane".into(), id: lane_id.into() });
         }
@@ -271,42 +270,41 @@ impl Ledger {
     }
 
     pub fn update_lane_title(&self, lane_id: &str, title: Option<&str>) -> Result<()> {
-        self.conn
-            .execute("UPDATE lane SET title = ?2 WHERE id = ?1", params![lane_id, title])?;
+        self.conn.execute("UPDATE lane SET title = ?2 WHERE id = ?1", params![lane_id, title])?;
         Ok(())
     }
 
     pub fn update_lane_width(&self, lane_id: &str, width_pt: u32) -> Result<()> {
-        self.conn
-            .execute("UPDATE lane SET width_pt = ?2 WHERE id = ?1", params![lane_id, width_pt])?;
+        self.conn.execute("UPDATE lane SET width_pt = ?2 WHERE id = ?1", params![lane_id, width_pt])?;
         Ok(())
     }
 
     pub fn set_pinned(&self, lane_id: &str, pinned: bool) -> Result<()> {
-        self.conn
-            .execute("UPDATE lane SET pinned = ?2 WHERE id = ?1", params![lane_id, pinned as i32])?;
+        self.conn.execute("UPDATE lane SET pinned = ?2 WHERE id = ?1", params![lane_id, pinned as i32])?;
         Ok(())
     }
 
     pub fn touch_focus(&self, lane_id: &str, at: i64) -> Result<()> {
-        self.conn
-            .execute("UPDATE lane SET last_focus_at = ?2 WHERE id = ?1", params![lane_id, at])?;
+        self.conn.execute("UPDATE lane SET last_focus_at = ?2 WHERE id = ?1", params![lane_id, at])?;
         Ok(())
     }
 
     pub fn update_pane_url(&self, pane_id: &str, url: &str) -> Result<()> {
-        self.conn
-            .execute("UPDATE pane SET url = ?2 WHERE id = ?1", params![pane_id, url])?;
+        self.conn.execute("UPDATE pane SET url = ?2 WHERE id = ?1", params![pane_id, url])?;
         Ok(())
     }
 
     pub fn update_pane_scroll(&self, pane_id: &str, scroll_y: f64) -> Result<()> {
-        self.conn
-            .execute("UPDATE pane SET scroll_y = ?2 WHERE id = ?1", params![pane_id, scroll_y])?;
+        self.conn.execute("UPDATE pane SET scroll_y = ?2 WHERE id = ?1", params![pane_id, scroll_y])?;
         Ok(())
     }
 
-    pub fn set_pane_evicted(&self, pane_id: &str, snapshot_path: Option<&str>, scroll_y: Option<f64>) -> Result<()> {
+    pub fn set_pane_evicted(
+        &self,
+        pane_id: &str,
+        snapshot_path: Option<&str>,
+        scroll_y: Option<f64>,
+    ) -> Result<()> {
         self.conn.execute(
             "UPDATE pane SET state = 'evicted', kind = 'placeholder',
                              snapshot_path = ?2,
@@ -326,17 +324,15 @@ impl Ledger {
     }
 
     pub fn set_pane_data_store(&self, pane_id: &str, data_store_id: &str) -> Result<()> {
-        self.conn.execute(
-            "UPDATE pane SET data_store_id = ?2 WHERE id = ?1",
-            params![pane_id, data_store_id],
-        )?;
+        self.conn
+            .execute("UPDATE pane SET data_store_id = ?2 WHERE id = ?1", params![pane_id, data_store_id])?;
         Ok(())
     }
 
     pub fn next_position(&self, lane_id: &str) -> Result<u32> {
-        let max: Option<i64> = self
-            .conn
-            .query_row("SELECT MAX(position) FROM pane WHERE lane_id = ?1", [lane_id], |r| r.get(0))?;
+        let max: Option<i64> =
+            self.conn
+                .query_row("SELECT MAX(position) FROM pane WHERE lane_id = ?1", [lane_id], |r| r.get(0))?;
         Ok(max.map(|m| m as u32 + 1).unwrap_or(0))
     }
 

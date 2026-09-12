@@ -68,11 +68,7 @@ fn main() {
             eprintln!("maxpane-open: could not read stdin");
             std::process::exit(1);
         }
-        buf.lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .map(String::from)
-            .collect()
+        buf.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect()
     } else {
         args.into_iter().filter(|a| !a.starts_with('-')).collect()
     };
@@ -110,16 +106,12 @@ fn deliver(url: &str) -> Result<(), String> {
     let path = socket_path();
     let mut stream = UnixStream::connect(&path)
         .map_err(|e| format!("max pane not listening at {}: {e}", path.display()))?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .map_err(|e| e.to_string())?;
+    stream.set_read_timeout(Some(Duration::from_secs(2))).map_err(|e| e.to_string())?;
 
     // RELAY_SESSION_ID is set in every session pty-host starts, which is how the
     // app knows which terminal this came from without us having to ask.
     let session = env::var("RELAY_SESSION_ID").unwrap_or_default();
-    let cwd = env::current_dir()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    let cwd = env::current_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
 
     let request = format!(
         "{{\"op\":\"open\",\"url\":{},\"session\":{},\"cwd\":{}}}\n",
@@ -131,9 +123,7 @@ fn deliver(url: &str) -> Result<(), String> {
     stream.flush().map_err(|e| e.to_string())?;
 
     let mut reply = String::new();
-    io::BufReader::new(&stream)
-        .read_line(&mut reply)
-        .map_err(|e| e.to_string())?;
+    io::BufReader::new(&stream).read_line(&mut reply).map_err(|e| e.to_string())?;
     if reply.contains("\"ok\":true") {
         Ok(())
     } else {
@@ -144,10 +134,7 @@ fn deliver(url: &str) -> Result<(), String> {
 fn fallback(url: &str) -> Result<(), String> {
     // `open` with no -a goes to the user's default handler, which is what they
     // would have got without the shim.
-    let status = Command::new("/usr/bin/open")
-        .arg(url)
-        .status()
-        .map_err(|e| e.to_string())?;
+    let status = Command::new("/usr/bin/open").arg(url).status().map_err(|e| e.to_string())?;
     if status.success() {
         Ok(())
     } else {
@@ -191,10 +178,7 @@ mod tests {
 
     #[test]
     fn leaves_ordinary_urls_alone() {
-        assert_eq!(
-            json_string("https://example.com/a?b=c&d=e#f"),
-            r#""https://example.com/a?b=c&d=e#f""#
-        );
+        assert_eq!(json_string("https://example.com/a?b=c&d=e#f"), r#""https://example.com/a?b=c&d=e#f""#);
     }
 
     #[test]

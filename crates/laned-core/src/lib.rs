@@ -207,7 +207,9 @@ impl Core {
         let mut inner = self.inner.lock();
         if let Placement::RightOf { lane_id: t } | Placement::LeftOf { lane_id: t } = &placement {
             if t == &lane_id {
-                return Err(CoreError::Invalid { message: "a lane cannot be placed relative to itself".into() });
+                return Err(CoreError::Invalid {
+                    message: "a lane cannot be placed relative to itself".into(),
+                });
             }
         }
         let ordinal = Self::place(&mut inner.ledger, &placement)?;
@@ -244,9 +246,7 @@ impl Core {
 
     pub fn set_lane_width(&self, lane_id: String, width_pt: u32) -> Result<StripState> {
         let mut inner = self.inner.lock();
-        inner
-            .ledger
-            .update_lane_width(&lane_id, width_pt.clamp(LANE_MIN_PT, LANE_MAX_PT))?;
+        inner.ledger.update_lane_width(&lane_id, width_pt.clamp(LANE_MIN_PT, LANE_MAX_PT))?;
         Self::bump(&mut inner);
         Self::snapshot(&inner)
     }
@@ -268,9 +268,7 @@ impl Core {
     /// The user's own tag. Sticky: the cwd tagger will not overwrite it.
     pub fn set_manual_tag(&self, lane_id: String, project_root: Option<String>) -> Result<StripState> {
         let mut inner = self.inner.lock();
-        inner
-            .ledger
-            .update_lane_tag(&lane_id, project_root.as_deref(), ProjectSource::Manual)?;
+        inner.ledger.update_lane_tag(&lane_id, project_root.as_deref(), ProjectSource::Manual)?;
         Self::bump(&mut inner);
         Self::snapshot(&inner)
     }
@@ -314,11 +312,14 @@ impl Core {
     }
 
     /// The shell has taken a snapshot and destroyed the `WKWebView`.
-    pub fn mark_evicted(&self, pane_id: String, snapshot_path: Option<String>, scroll_y: Option<f64>) -> Result<StripState> {
+    pub fn mark_evicted(
+        &self,
+        pane_id: String,
+        snapshot_path: Option<String>,
+        scroll_y: Option<f64>,
+    ) -> Result<StripState> {
         let mut inner = self.inner.lock();
-        inner
-            .ledger
-            .set_pane_evicted(&pane_id, snapshot_path.as_deref(), scroll_y)?;
+        inner.ledger.set_pane_evicted(&pane_id, snapshot_path.as_deref(), scroll_y)?;
         Self::bump(&mut inner);
         Self::snapshot(&inner)
     }
@@ -438,7 +439,11 @@ impl Core {
     /// What the shell should do with every pane, given what it just measured.
     /// Pure: calling it changes nothing. The shell reports back with
     /// [`Core::mark_evicted`] / [`Core::mark_live`] once it has acted.
-    pub fn plan_eviction(&self, viewport: eviction::Viewport, memory: eviction::MemoryReport) -> Result<Vec<eviction::PaneDirective>> {
+    pub fn plan_eviction(
+        &self,
+        viewport: eviction::Viewport,
+        memory: eviction::MemoryReport,
+    ) -> Result<Vec<eviction::PaneDirective>> {
         let inner = self.inner.lock();
         // The viewport is expressed as indices into the lanes the *shell* is
         // showing, so this has to see the same list — including the gather
@@ -470,9 +475,8 @@ impl Core {
         }
         ledger.renormalize()?;
         let (before, after) = ledger.neighbours(placement)?;
-        ordinal::between(before, after).ok_or_else(|| CoreError::Invalid {
-            message: "ordinal space exhausted after renormalize".into(),
-        })
+        ordinal::between(before, after)
+            .ok_or_else(|| CoreError::Invalid { message: "ordinal space exhausted after renormalize".into() })
     }
 
     fn bump(inner: &mut Inner) {
@@ -484,11 +488,7 @@ impl Core {
         if let Some(root) = &inner.gather {
             lanes.retain(|l| l.project_root.as_deref() == Some(root.as_str()));
         }
-        let scroll_x = inner
-            .ledger
-            .app_state(KEY_SCROLL_X)?
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0.0);
+        let scroll_x = inner.ledger.app_state(KEY_SCROLL_X)?.and_then(|s| s.parse().ok()).unwrap_or(0.0);
         Ok(StripState {
             lanes,
             scroll_x,

@@ -96,11 +96,7 @@ pub fn plan(lanes: &[Lane], viewport: &Viewport, memory: &MemoryReport) -> Vec<P
                     }
                 }
             };
-            directives.push(PaneDirective {
-                pane_id: pane.id.clone(),
-                lane_id: lane.id.clone(),
-                action,
-            });
+            directives.push(PaneDirective { pane_id: pane.id.clone(), lane_id: lane.id.clone(), action });
         }
     }
 
@@ -109,10 +105,8 @@ pub fn plan(lanes: &[Lane], viewport: &Viewport, memory: &MemoryReport) -> Vec<P
     }
 
     // Furthest from the viewport first; ties broken by least recently focused.
-    candidates.sort_by(|a, b| {
-        b.0.cmp(&a.0)
-            .then_with(|| lanes[a.1].last_focus_at.cmp(&lanes[b.1].last_focus_at))
-    });
+    candidates
+        .sort_by(|a, b| b.0.cmp(&a.0).then_with(|| lanes[a.1].last_focus_at.cmp(&lanes[b.1].last_focus_at)));
 
     // We cannot know a single pane's real cost without asking WebKit per
     // process, so assume the overage is spread evenly across the live web panes
@@ -260,11 +254,8 @@ mod tests {
         let total = 40u64 * 1024 * 1024;
         let over = MemoryReport { web_content_rss_bytes: total, budget_bytes: total - 1024 * 1024 };
         let plan = plan(&lanes, &vp, &over);
-        let evicted: Vec<&str> = plan
-            .iter()
-            .filter(|d| d.action == PaneAction::Evict)
-            .map(|d| d.lane_id.as_str())
-            .collect();
+        let evicted: Vec<&str> =
+            plan.iter().filter(|d| d.action == PaneAction::Evict).map(|d| d.lane_id.as_str()).collect();
         assert_eq!(evicted, vec!["l0"], "furthest-from-viewport lane should go first");
     }
 

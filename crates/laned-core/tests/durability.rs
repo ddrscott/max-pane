@@ -102,9 +102,8 @@ fn retagging_never_moves_a_lane() {
     let target = ids[2].clone();
     let before: Vec<String> = core.state().unwrap().lanes.iter().map(|l| l.id.clone()).collect();
 
-    let changed = core
-        .observe_cwd(target.clone(), repo.join("deep/nested").to_string_lossy().into_owned())
-        .unwrap();
+    let changed =
+        core.observe_cwd(target.clone(), repo.join("deep/nested").to_string_lossy().into_owned()).unwrap();
     assert!(changed, "first observation should set the tag");
 
     let st = core.state().unwrap();
@@ -130,9 +129,7 @@ fn the_cwd_tagger_does_not_overwrite_a_manual_tag() {
     let lane = st.lanes[0].id.clone();
 
     core.set_manual_tag(lane.clone(), Some("/my/own/label".into())).unwrap();
-    let changed = core
-        .observe_cwd(lane.clone(), dir.path().to_string_lossy().into_owned())
-        .unwrap();
+    let changed = core.observe_cwd(lane.clone(), dir.path().to_string_lossy().into_owned()).unwrap();
 
     assert!(!changed);
     let st = core.state().unwrap();
@@ -147,7 +144,9 @@ fn gather_filters_without_writing_an_ordinal() {
     let core = Core::open_in_memory().unwrap();
     let mut ids = Vec::new();
     for i in 0..6 {
-        let st = core.create_lane(Placement::End, PaneKind::Web, None, Some(format!("https://{i}")), None).unwrap();
+        let st = core
+            .create_lane(Placement::End, PaneKind::Web, None, Some(format!("https://{i}")), None)
+            .unwrap();
         let id = st.lanes.last().unwrap().id.clone();
         // Interleave two projects so "contiguous" is a real requirement.
         let root = if i % 2 == 0 { "/src/foo" } else { "/src/bar" };
@@ -245,7 +244,8 @@ fn scroll_and_focus_survive_a_restart() {
     let focused = {
         let core = Core::open(db(&dir)).unwrap();
         core.create_lane(Placement::End, PaneKind::Web, None, Some("https://a".into()), None).unwrap();
-        let st = core.create_lane(Placement::End, PaneKind::Web, None, Some("https://b".into()), None).unwrap();
+        let st =
+            core.create_lane(Placement::End, PaneKind::Web, None, Some("https://b".into()), None).unwrap();
         let pane = st.lanes[1].panes[0].id.clone();
         core.focus_pane(pane.clone()).unwrap();
         core.set_scroll_x(1337.5).unwrap();
@@ -281,7 +281,9 @@ fn deleting_a_lane_cascades_to_its_panes() {
 #[test]
 fn search_covers_titles_urls_and_scrollback() {
     let core = Core::open_in_memory().unwrap();
-    let st = core.create_lane(Placement::End, PaneKind::Web, None, Some("https://docs.rs/rusqlite".into()), None).unwrap();
+    let st = core
+        .create_lane(Placement::End, PaneKind::Web, None, Some("https://docs.rs/rusqlite".into()), None)
+        .unwrap();
     let web = st.lanes[0].id.clone();
     core.set_lane_title(web, Some("rusqlite docs".into())).unwrap();
 
@@ -405,8 +407,5 @@ fn eviction_planning_follows_the_gather_filter() {
     }
     // The far end of the gathered strip is unparented, as it should be.
     let last_id = gathered.lanes.last().unwrap().id.as_str();
-    assert_eq!(
-        plan.iter().find(|d| d.lane_id == last_id).unwrap().action,
-        PaneAction::Unparent
-    );
+    assert_eq!(plan.iter().find(|d| d.lane_id == last_id).unwrap().action, PaneAction::Unparent);
 }
