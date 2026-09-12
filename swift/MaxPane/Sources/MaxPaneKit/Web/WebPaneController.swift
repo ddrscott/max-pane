@@ -33,12 +33,18 @@ final class WebPaneController: NSObject, PaneController {
 
     var view: NSView { container }
 
-    init(pane: Pane, lane: Lane, store: StripStore, config: Config) {
+    /// `deferLoad` is PRD §13's lazy launch: on a cold start only the panes near
+    /// the viewport are instantiated, and the rest wait as placeholders. M1
+    /// priced a web pane at 27–95 MB and at least one OS process, so a 150-lane
+    /// strip that built every one of them at launch would spend gigabytes before
+    /// the window appeared.
+    init(pane: Pane, lane: Lane, store: StripStore, config: Config, deferLoad: Bool = false) {
         self.paneId = pane.id
         self.pane = pane
         self.store = store
         self.config = config
         self.laneWidth = CGFloat(lane.widthPt)
+        self.dataStoreId = pane.dataStoreId ?? Self.shard(for: lane.projectRoot, of: config)
         super.init()
 
         container.wantsLayer = true
@@ -48,9 +54,27 @@ final class WebPaneController: NSObject, PaneController {
         // web view that immediately gets torn down again.
         if pane.state == .evicted || pane.kind == .placeholder {
             showPlaceholder()
+        } else if deferLoad {
+            isDeferred = true
+            showPlaceholder()
         } else {
-            buildWebView(dataStoreId: pane.dataStoreId ?? Self.shard(for: lane.projectRoot, of: config))
+            buildWebView(dataStoreId: dataStoreId)
         }
+    }
+
+    /// True while this pane is waiting for its first load (PRD §13's lazy
+    /// launch). Distinct from *evicted*: nothing was ever built, so there is no
+    /// snapshot and nothing to restore beyond the URL.
+    private(set) var isDeferred = false
+    private let dataStoreId: String
+
+    /// Build the web view a deferred pane has been waiting to get.
+    func loadIfDeferred() {
+        guard isDeferred else { return }
+        isDeferred = false
+        placeholder?.removeFromSuperview()
+        placeholder = nil
+        buildWebView(dataStoreId: dataStoreId)
     }
 
     // MARK: - PaneController
@@ -103,6 +127,9 @@ final class WebPaneController: NSObject, PaneController {
     }
 
     func evict() {
+        // Nothing was built, so there is nothing to reclaim and no snapshot to
+        // take. Leaving it deferred is already the cheapest state it has.
+        guard !isDeferred else { return }
         guard let webView else { return }
         captureScroll()
         let paneId = self.paneId
@@ -132,10 +159,14 @@ final class WebPaneController: NSObject, PaneController {
     }
 
     func rehydrate() {
+        if isDeferred {
+            loadIfDeferred()
+            return
+        }
         guard webView == nil, let url = pane.url else { return }
         placeholder?.removeFromSuperview()
         placeholder = nil
-        buildWebView(dataStoreId: pane.dataStoreId ?? DataStorePool.defaultShardId)
+        buildWebView(dataStoreId: dataStoreId)
         load(url)
         try? store.markLive(paneId)
     }

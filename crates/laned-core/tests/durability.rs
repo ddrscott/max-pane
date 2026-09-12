@@ -415,3 +415,64 @@ fn eviction_planning_follows_the_gather_filter() {
     let last_id = gathered.lanes.last().unwrap().id.as_str();
     assert_eq!(plan.iter().find(|d| d.lane_id == last_id).unwrap().action, PaneAction::Unparent);
 }
+
+/// Drag-reorder is the user's gesture, and PRD §7.2 says the system never
+/// reorders. These check that a drop lands exactly where it was aimed, for the
+/// two directions that behave differently.
+#[test]
+fn dragging_a_lane_right_lands_past_the_target() {
+    let core = Core::open_in_memory().unwrap();
+    let mut ids = Vec::new();
+    for i in 0..5 {
+        let st = core
+            .create_lane(Placement::End, PaneKind::Web, None, Some(format!("https://{i}")), None)
+            .unwrap();
+        ids.push(st.lanes.last().unwrap().id.clone());
+    }
+
+    // Drag lane 1 onto lane 3: it should end up immediately right of 3.
+    core.move_lane(ids[1].clone(), Placement::RightOf { lane_id: ids[3].clone() }).unwrap();
+
+    let order: Vec<String> = core.state().unwrap().lanes.iter().map(|l| l.id.clone()).collect();
+    assert_eq!(order, vec![ids[0].clone(), ids[2].clone(), ids[3].clone(), ids[1].clone(), ids[4].clone()]);
+}
+
+#[test]
+fn dragging_a_lane_left_lands_before_the_target() {
+    let core = Core::open_in_memory().unwrap();
+    let mut ids = Vec::new();
+    for i in 0..5 {
+        let st = core
+            .create_lane(Placement::End, PaneKind::Web, None, Some(format!("https://{i}")), None)
+            .unwrap();
+        ids.push(st.lanes.last().unwrap().id.clone());
+    }
+
+    core.move_lane(ids[3].clone(), Placement::LeftOf { lane_id: ids[1].clone() }).unwrap();
+
+    let order: Vec<String> = core.state().unwrap().lanes.iter().map(|l| l.id.clone()).collect();
+    assert_eq!(order, vec![ids[0].clone(), ids[3].clone(), ids[1].clone(), ids[2].clone(), ids[4].clone()]);
+}
+
+/// Dragging to either end of the strip is the case that tends to break, because
+/// there is no neighbour on one side to place against.
+#[test]
+fn a_lane_can_be_dragged_to_either_end() {
+    let core = Core::open_in_memory().unwrap();
+    let mut ids = Vec::new();
+    for i in 0..4 {
+        let st = core
+            .create_lane(Placement::End, PaneKind::Web, None, Some(format!("https://{i}")), None)
+            .unwrap();
+        ids.push(st.lanes.last().unwrap().id.clone());
+    }
+
+    core.move_lane(ids[2].clone(), Placement::LeftOf { lane_id: ids[0].clone() }).unwrap();
+    let order: Vec<String> = core.state().unwrap().lanes.iter().map(|l| l.id.clone()).collect();
+    assert_eq!(order[0], ids[2], "should be at the far left");
+
+    core.move_lane(ids[2].clone(), Placement::RightOf { lane_id: ids[3].clone() }).unwrap();
+    let order: Vec<String> = core.state().unwrap().lanes.iter().map(|l| l.id.clone()).collect();
+    assert_eq!(order.last().unwrap(), &ids[2], "should be at the far right");
+    assert_eq!(order.len(), 4, "a move must not duplicate or lose a lane");
+}

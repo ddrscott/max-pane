@@ -23,6 +23,9 @@ final class LaneView: NSView {
     var onResize: ((UInt32, _ final: Bool) -> Void)?
     var onFocusPane: ((String) -> Void)?
     var onHeaderDoubleClick: (() -> Void)?
+    /// Dragging the header reorders the strip (PRD §7.2). `x` is in the strip's
+    /// coordinate space; `final` marks the drop.
+    var onHeaderDrag: ((_ x: CGFloat, _ final: Bool) -> Void)?
 
     private var widthConstraint: NSLayoutConstraint!
     private var bounds_: ClosedRange<UInt32> = 420...900
@@ -80,6 +83,7 @@ final class LaneView: NSView {
             self.onResize?(next, final)
         }
         header.onDoubleClick = { [weak self] in self?.onHeaderDoubleClick?() }
+        header.onDrag = { [weak self] x, final in self?.onHeaderDrag?(x, final) }
 
         apply(lane)
     }
@@ -171,6 +175,10 @@ final class LaneHeaderView: NSView {
     private let pin = NSTextField(labelWithString: "")
 
     var onDoubleClick: (() -> Void)?
+    /// `(x in the superview's superview, isFinal)`.
+    var onDrag: ((CGFloat, Bool) -> Void)?
+
+    private var dragging = false
 
     var isFocused: Bool = false {
         didSet { title.textColor = isFocused ? .labelColor : Theme.dimText }
@@ -227,8 +235,30 @@ final class LaneHeaderView: NSView {
         NSRect(x: 0, y: 0, width: bounds.width, height: Theme.borderWidth).fill()
     }
 
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .openHand)
+    }
+
     override func mouseDown(with event: NSEvent) {
-        if event.clickCount == 2 { onDoubleClick?() } else { super.mouseDown(with: event) }
+        if event.clickCount == 2 {
+            onDoubleClick?()
+        } else {
+            dragging = true
+        }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard dragging, let strip = superview?.superview else { return }
+        onDrag?(strip.convert(event.locationInWindow, from: nil).x, false)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard dragging, let strip = superview?.superview else {
+            dragging = false
+            return
+        }
+        dragging = false
+        onDrag?(strip.convert(event.locationInWindow, from: nil).x, true)
     }
 
     func apply(_ lane: Lane) {

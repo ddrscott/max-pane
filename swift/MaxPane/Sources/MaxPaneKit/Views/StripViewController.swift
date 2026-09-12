@@ -32,6 +32,10 @@ public final class StripViewController: NSViewController {
     private var observer: UUID?
     private var scrollDebounce: DispatchWorkItem?
     private var memoryTimer: Timer?
+    /// `(lane being dragged, index it would land at)` during a drag.
+    private var dragPreview: (laneId: String, target: Int)?
+    /// True until the strip has settled after launch. See `makeController`.
+    private var isColdLaunch = true
 
     public init(store: StripStore, config: Config) {
         self.store = store
@@ -82,6 +86,9 @@ public final class StripViewController: NSViewController {
             self.scrollView.contentView.scroll(to: NSPoint(x: self.store.state.scrollX, y: 0))
             self.scrollView.reflectScrolledClipView(self.scrollView.contentView)
             self.updateMaterialization()
+            // Launch is over: from here on, a new pane loads immediately.
+            // Anything still deferred stays deferred until it is scrolled to.
+            self.isColdLaunch = false
         }
     }
 
@@ -180,6 +187,15 @@ public final class StripViewController: NSViewController {
             materialize(lane)
         }
 
+        // Anything deferred that has come close enough gets built now. This is
+        // the other half of lazy launch: §13 defers, and scrolling to a lane is
+        // what undefers it.
+        for lane in state.lanes where distanceFromViewport(laneId: lane.id) <= config.rehydrateDistance {
+            for pane in lane.panes {
+                (paneControllers[pane.id] as? WebPaneController)?.loadIfDeferred()
+            }
+        }
+
         content.layOut(lanes: state.lanes, viewFor: { [weak self] lane in self?.laneViews[lane.id] })
         applyEvictionPlan(for: state)
     }
@@ -197,6 +213,9 @@ public final class StripViewController: NSViewController {
         laneView.onResize = { [weak self] width, isFinal in
             guard isFinal, let self else { return }
             try? self.store.setLaneWidth(lane.id, width)
+        }
+        laneView.onHeaderDrag = { [weak self] x, isFinal in
+            self?.handleLaneDrag(laneId: lane.id, toX: x, isFinal: isFinal)
         }
         laneView.onHeaderDoubleClick = { [weak self] in
             guard let self, let root = self.store.lane(lane.id)?.projectRoot else { return }
@@ -243,13 +262,97 @@ public final class StripViewController: NSViewController {
             }
             return controller
         case .web, .placeholder:
-            return WebPaneController(pane: pane, lane: lane, store: store, config: config)
+            // PRD §13: on a cold launch only panes near the viewport are
+            // instantiated. Everything else waits as a placeholder until it is
+            // scrolled to — which, at M1's 27–95 MB a pane, is the difference
+            // between a 150-lane strip opening and a 150-lane strip thrashing.
+            return WebPaneController(
+                pane: pane, lane: lane, store: store, config: config,
+                deferLoad: isColdLaunch && distanceFromViewport(laneId: lane.id) > config.rehydrateDistance)
         }
+    }
+
+    // MARK: - drag reorder (§7.2)
+
+    /// Drag a lane to a new place in the strip.
+    ///
+    /// Only the drop writes. PRD §6 wants every layout mutation committed before
+    /// the UI animates it, and a drag produces a mutation per frame — committing
+    /// each would be sixty synchronous SQLite writes a second to describe one
+    /// decision the user has not finished making yet.
+    ///
+    /// **The system never reorders** (§7.2). This runs only from the user's own
+    /// gesture, and it is the only thing besides ⌘⇧←/→ that writes an ordinal.
+    private func handleLaneDrag(laneId: String, toX x: CGFloat, isFinal: Bool) {
+        let state = store.state
+        guard let target = laneIndex(atX: x, in: state),
+              let from = state.lanes.firstIndex(where: { $0.id == laneId })
+        else { return }
+
+        guard isFinal else {
+            // Live feedback without a write: slide the dragged lane's view to
+            // where it would land.
+            dragPreview = (laneId, target)
+            content.layOut(lanes: reordered(state.lanes, from: from, to: target),
+                           viewFor: { [weak self] lane in self?.laneViews[lane.id] })
+            return
+        }
+
+        dragPreview = nil
+        guard target != from else {
+            // Dropped where it started. Re-lay out so the preview does not stick.
+            content.layOut(lanes: state.lanes, viewFor: { [weak self] lane in self?.laneViews[lane.id] })
+            return
+        }
+
+        let neighbour = state.lanes[target]
+        do {
+            if target > from {
+                try store.moveLane(laneId, rightOf: neighbour.id)
+            } else {
+                try store.moveLane(laneId, leftOf: neighbour.id)
+            }
+        } catch {
+            Log.warn("could not move lane \(laneId): \(error)")
+        }
+    }
+
+    /// `lanes` with the lane at `from` moved to `to`. Preview only — the ledger
+    /// is what decides the real order.
+    private func reordered(_ lanes: [Lane], from: Int, to: Int) -> [Lane] {
+        guard from != to, lanes.indices.contains(from), lanes.indices.contains(to) else { return lanes }
+        var copy = lanes
+        let moved = copy.remove(at: from)
+        copy.insert(moved, at: to)
+        return copy
+    }
+
+    /// Which lane sits under a point in the strip's coordinate space.
+    private func laneIndex(atX x: CGFloat, in state: StripState) -> Int? {
+        guard !state.lanes.isEmpty else { return nil }
+        var left: CGFloat = 0
+        for (i, lane) in state.lanes.enumerated() {
+            let right = left + CGFloat(lane.widthPt)
+            if x < right { return i }
+            left = right + Theme.borderWidth
+        }
+        return state.lanes.count - 1
     }
 
     // MARK: - geometry
 
     /// Indices of the lanes at least partly on screen.
+    /// How many lanes `laneId` is from the visible range. 0 when on screen,
+    /// `.max` when it is not on the strip at all.
+    private func distanceFromViewport(laneId: String) -> UInt32 {
+        let state = store.state
+        guard let index = state.lanes.firstIndex(where: { $0.id == laneId }) else { return .max }
+        let visible = visibleLaneRange(in: state)
+        if index < visible.lowerBound { return UInt32(visible.lowerBound - index) }
+        if index >= visible.upperBound { return UInt32(index - visible.upperBound + 1) }
+        return 0
+    }
+
     private func visibleLaneRange(in state: StripState) -> Range<Int> {
         let origin = scrollView.contentView.bounds.origin.x
         let width = scrollView.contentView.bounds.width
