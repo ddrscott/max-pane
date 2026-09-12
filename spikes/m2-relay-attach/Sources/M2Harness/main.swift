@@ -103,11 +103,22 @@ func png(_ view: NSView, _ name: String) {
     }
 }
 
-func makeView(_ frame: NSRect, font: NSFont) -> TimedTerminalView {
-    let v = TimedTerminalView(frame: frame, font: font)
+func makeView(_ frame: NSRect, font: NSFont, scrollback: Int = 500) -> TimedTerminalView {
+    var o = TerminalOptions.default
+    o.scrollback = scrollback
+    let v = TimedTerminalView(frame: frame, font: font, options: o)
     v.terminalDelegate = appDelegate
-    v.configureNativeColors()
+    // Real sessions are themed dark and emit light foreground SGR; render on black.
+    v.nativeBackgroundColor = NSColor.black
+    v.nativeForegroundColor = NSColor(white: 0.85, alpha: 1)
     return v
+}
+
+/// A genuine idle wait: blocks in the run loop instead of spinning, so the CPU
+/// measured is the app's, not the measurement loop's.
+func idleWait(_ seconds: Double) {
+    let end = Date().addingTimeInterval(seconds)
+    while Date() < end { RunLoop.current.run(mode: .default, before: end) }
 }
 
 func pump(_ seconds: Double) {
@@ -119,30 +130,36 @@ func pump(_ seconds: Double) {
     }
 }
 
+let mode = CommandLine.arguments.dropFirst().first ?? "all"
+
 func run() {
     emit("# M2 harness (windowed AppKit + SwiftTerm TerminalView)\n")
+    if mode == "cpu" { runCPUOnly(); flushLog("harness-cpu.md"); exit(0) }
 
     // ---- 1. per-TerminalView memory -------------------------------------
     emit("## Per-TerminalView memory cost\n")
     let mono = NSFont(name: "Menlo", size: 12) ?? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
     var keep = [TimedTerminalView]()
-    pump(0.4)
-    let base = footprint(), baseRSS = rss()
-    let batch = 40
-    for i in 0..<batch {
-        let v = makeView(NSRect(x: 0, y: 0, width: 560, height: 760), font: mono)
-        v.getTerminal().resize(cols: 80, rows: 45)
-        // give each one realistic content: a full screen + scrollback
-        var bytes = [UInt8]()
-        for l in 0..<2000 { bytes.append(contentsOf: Array("line \(l) of pane \(i) \(String(repeating: "x", count: 60))\r\n".utf8)) }
-        v.feed(byteArray: bytes[...])
-        keep.append(v)
+    emit("30 TerminalViews at 80x45, each fed 3000 lines of output, never parented.\n")
+    emit("| scrollback (lines) | phys_footprint delta | per view | RSS delta |")
+    emit("|---|---|---|---|")
+    let batch = 30
+    for sb in [200, 500, 2000, 5000] {
+        keep.removeAll(); pump(0.6)
+        let base = footprint(), baseRSS = rss()
+        for i in 0..<batch {
+            let v = makeView(NSRect(x: 0, y: 0, width: 560, height: 760), font: mono, scrollback: sb)
+            v.getTerminal().resize(cols: 80, rows: 45)
+            var bytes = [UInt8]()
+            for l in 0..<3000 { bytes.append(contentsOf: Array("line \(l) of pane \(i) \(String(repeating: "x", count: 60))\r\n".utf8)) }
+            v.feed(byteArray: bytes[...])
+            keep.append(v)
+        }
+        pump(0.8)
+        let after = footprint(), afterRSS = rss()
+        emit(String(format: "| %d | %@ | **%.2f MB** | %@ |", sb, mbs(after &- base),
+                    Double(after &- base) / Double(batch) / 1_048_576.0, mbs(afterRSS &- baseRSS)))
     }
-    pump(0.6)
-    let after = footprint(), afterRSS = rss()
-    emit("- \(batch) TerminalViews, 80x45, 2000 lines of scrollback each, never parented")
-    emit("- phys_footprint: \(mbs(base)) -> \(mbs(after)) = **\(mbs(after &- base)) total, \(String(format: "%.2f MB", Double(after &- base) / Double(batch) / 1_048_576.0)) per view**")
-    emit("- RSS: \(mbs(baseRSS)) -> \(mbs(afterRSS)) = \(mbs(afterRSS &- baseRSS))")
 
     // parent 8 of them so we also measure the parented/rendered cost
     let before2 = footprint()
@@ -213,14 +230,14 @@ func run() {
         emit("- big session totalBytesWritten = \(Int(lastV)) (\(String(format: "%.2f MB", lastV / 1_048_576)))")
 
         for (label, id) in [("small (prompt only)", small), ("big (\(String(format: "%.1f", lastV / 1_048_576)) MB scrollback)", big)] {
-            var toDraw = [Double](), toFed = [Double]()
+            var toDraw = [Double](), toFed = [Double](), paint = [Double]()
             for _ in 0..<25 {
                 let v = makeView(NSRect(x: 0, y: 0, width: 620, height: 800), font: mono)
                 v.getTerminal().resize(cols: 80, rows: 40)
                 root.addSubview(v)
                 pump(0.2)
                 v.displayIfNeeded()
-                var drawnAt = 0.0, fedAt = 0.0, sawDirty = false
+                var drawnAt = 0.0, fedAt = 0.0
                 let s = RelaySession(id: id)
                 s.onReplay = { p, isDelta in
                     if !isDelta { v.getTerminal().resetToInitialState() }
@@ -228,12 +245,18 @@ func run() {
                     fedAt = now()
                 }
                 try s.connect()
-                let deadline = Date().addingTimeInterval(5)
-                while drawnAt == 0 && Date() < deadline {
-                    if v.needsDisplay { sawDirty = true }
-                    else if sawDirty { drawnAt = now(); break }
+                let deadline = Date().addingTimeInterval(10)
+                while fedAt == 0 && Date() < deadline {
                     if let e = app.nextEvent(matching: .any, until: Date(), inMode: .default, dequeue: true) { app.sendEvent(e) }
                     RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.0005))
+                }
+                // Force the paint synchronously on the main thread. SwiftTerm's own path
+                // defers this to the next run-loop display pass (<= one 8.3 ms frame at
+                // 120 Hz); display() does the same drawing work, just now.
+                if fedAt > 0 {
+                    v.display()
+                    drawnAt = now()
+                    paint.append((drawnAt - fedAt) * 1000)
                 }
                 let st = s.timings
                 if drawnAt > 0 {
@@ -246,8 +269,70 @@ func run() {
             emit("\n### \(label)")
             emit(statHeader)
             emit(statRow("connect -> replay fed (ms)", toFed))
-            emit(statRow("connect -> first draw complete (ms)", toDraw))
+            emit(statRow("paint the 80x40 grid (ms)", paint))
+            emit(statRow("connect -> pixels on screen (ms)", toDraw))
         }
+
+        // ---- 4b. 20 live panes parented in a real window --------------------
+        emit("\n## 20 live terminal panes, parented and rendering (PRD §10.1: idle CPU < 2%)\n")
+        var liveViews = [TimedTerminalView]()
+        var liveSessions = [RelaySession]()
+        let preRSS = rss(), preFP = footprint()
+        func cpuBase(_ seconds: Double) -> Double {
+            var u0 = rusage(); getrusage(RUSAGE_SELF, &u0); let t0 = now()
+            idleWait(seconds)
+            var u1 = rusage(); getrusage(RUSAGE_SELF, &u1)
+            let d = (Double(u1.ru_utime.tv_sec - u0.ru_utime.tv_sec) + Double(u1.ru_utime.tv_usec - u0.ru_utime.tv_usec) / 1e6)
+                  + (Double(u1.ru_stime.tv_sec - u0.ru_stime.tv_sec) + Double(u1.ru_stime.tv_usec - u0.ru_stime.tv_usec) / 1e6)
+            return d / (now() - t0) * 100
+        }
+        emit("- baseline: empty window, 0 panes: **\(String(format: "%.2f%%", cpuBase(10))) of one core**")
+        for i in 0..<20 {
+            let sid = try RelaySpawn.spawn(command: "/bin/zsh", cwd: NSTemporaryDirectory(), cols: 80, rows: 45)
+            spawned.append(sid)
+            let v = makeView(NSRect(x: CGFloat(i % 8) * 172, y: CGFloat(i / 8) * 300, width: 168, height: 295), font: mono)
+            v.getTerminal().resize(cols: 80, rows: 45)
+            root.addSubview(v)
+            let sess = RelaySession(id: sid)
+            sess.onReplay = { p, isDelta in
+                if !isDelta { v.getTerminal().resetToInitialState() }
+                v.feed(byteArray: p[...])
+            }
+            sess.onData = { d in v.feed(byteArray: d) }
+            sess.onResize = { c, r in DispatchQueue.main.async { v.getTerminal().resize(cols: c, rows: r) } }
+            try sess.connect()
+            liveViews.append(v); liveSessions.append(sess)
+            pump(0.1)
+        }
+        pump(3.0)
+        func cpuOver(_ seconds: Double) -> Double {
+            var u0 = rusage(); getrusage(RUSAGE_SELF, &u0); let t0 = now()
+            idleWait(seconds)
+            var u1 = rusage(); getrusage(RUSAGE_SELF, &u1)
+            let d = (Double(u1.ru_utime.tv_sec - u0.ru_utime.tv_sec) + Double(u1.ru_utime.tv_usec - u0.ru_utime.tv_usec) / 1e6)
+                  + (Double(u1.ru_stime.tv_sec - u0.ru_stime.tv_sec) + Double(u1.ru_stime.tv_usec - u0.ru_stime.tv_usec) / 1e6)
+            return d / (now() - t0) * 100
+        }
+        let idle20 = cpuOver(15)
+        emit("- 20 panes attached, parented, visible, shells at a prompt: **\(String(format: "%.2f%%", idle20)) of one core**")
+        emit("- RSS \(mbs(preRSS)) -> \(mbs(rss())), phys_footprint \(mbs(preFP)) -> \(mbs(footprint()))")
+        for s2 in liveSessions.prefix(3) {
+            s2.sendInput(Array("perl \(fixtures)/gen.pl 20 0\n".utf8))
+        }
+        pump(2.0)
+        let busy3 = cpuOver(15)
+        emit("- with 3 of the 20 emitting 20 lines/s (a realistic agent working): **\(String(format: "%.2f%%", busy3)) of one core**")
+        for s2 in liveSessions.prefix(3) { s2.sendInput([0x03]) }
+        pump(1.0)
+        for s2 in liveSessions { s2.sendInput(Array("perl \(fixtures)/gen.pl 500 0\n".utf8)) }
+        pump(2.0)
+        let busyAll = cpuOver(15)
+        emit("- with all 20 emitting 500 lines/s (worst case, nothing like real use): **\(String(format: "%.2f%%", busyAll)) of one core**, RSS \(mbs(rss()))")
+        for s2 in liveSessions { s2.close() }
+        for v in liveViews { v.removeFromSuperview() }
+        liveViews.removeAll(); liveSessions.removeAll()
+        cleanup()
+        pump(1.0)
 
         // ---- 5. narrow-lane rendering options -----------------------------
         emit("\n## Narrow portrait lane: a wide host screen inside a 420pt column\n")
@@ -314,6 +399,65 @@ func run() {
 
 /// Same walk, but reading each cell through Terminal.getCharacter(col:row:), which
 /// resolves the side-table payload that holds astral-plane scalars.
+/// Isolated CPU measurement: 20 real sessions attached to 20 parented, visible
+/// TerminalViews, with the run loop actually idle (no spin).
+func runCPUOnly() {
+    emit("## 20 live terminal panes — CPU (PRD §10.1: idle CPU < 2% of one core)\n")
+    let mono = NSFont(name: "Menlo", size: 12)!
+    func cpuOver(_ seconds: Double) -> Double {
+        var u0 = rusage(); getrusage(RUSAGE_SELF, &u0); let t0 = now()
+        idleWait(seconds)
+        var u1 = rusage(); getrusage(RUSAGE_SELF, &u1)
+        let d = (Double(u1.ru_utime.tv_sec - u0.ru_utime.tv_sec) + Double(u1.ru_utime.tv_usec - u0.ru_utime.tv_usec) / 1e6)
+              + (Double(u1.ru_stime.tv_sec - u0.ru_stime.tv_sec) + Double(u1.ru_stime.tv_usec - u0.ru_stime.tv_usec) / 1e6)
+        return d / (now() - t0) * 100
+    }
+    emit("| condition | CPU (% of one core) | RSS |")
+    emit("|---|---|---|")
+    emit(String(format: "| empty window, 0 panes (baseline) | %.2f | %@ |", cpuOver(10), mbs(rss())))
+
+    var views = [TimedTerminalView]()
+    var sessions = [RelaySession]()
+    do {
+        for i in 0..<20 {
+            let sid = try RelaySpawn.spawn(command: "/bin/zsh", cwd: NSTemporaryDirectory(), cols: 80, rows: 45)
+            spawned.append(sid)
+            let v = makeView(NSRect(x: CGFloat(i % 8) * 172, y: CGFloat(i / 8) * 300, width: 168, height: 295), font: mono)
+            v.getTerminal().resize(cols: 80, rows: 45)
+            root.addSubview(v)
+            let sess = RelaySession(id: sid)
+            sess.onReplay = { p, isDelta in
+                if !isDelta { v.getTerminal().resetToInitialState() }
+                v.feed(byteArray: p[...])
+            }
+            sess.onData = { d in v.feed(byteArray: d) }
+            sess.onResize = { c, r in DispatchQueue.main.async { v.getTerminal().resize(cols: c, rows: r) } }
+            try sess.connect()
+            views.append(v); sessions.append(sess)
+            pump(0.1)
+        }
+    } catch { emit("spawn failed: \(error)"); cleanup(); return }
+    pump(3.0)
+    emit(String(format: "| 20 panes attached + parented + visible, shells idle at a prompt | **%.2f** | %@ |", cpuOver(20), mbs(rss())))
+
+    for v in views { v.removeFromSuperview() }
+    pump(1.0)
+    emit(String(format: "| the same 20 attached but unparented (off-screen lane) | %.2f | %@ |", cpuOver(15), mbs(rss())))
+    for v in views { root.addSubview(v) }
+    pump(1.0)
+
+    for s2 in sessions.prefix(3) { s2.sendInput(Array("perl \(fixtures)/gen.pl 20 0\n".utf8)) }
+    pump(2.0)
+    emit(String(format: "| 3 of the 20 emitting 20 lines/s (a working agent) | %.2f | %@ |", cpuOver(15), mbs(rss())))
+    for s2 in sessions.prefix(3) { s2.sendInput([0x03]) }
+    pump(2.0)
+    for s2 in sessions { s2.sendInput(Array("perl \(fixtures)/gen.pl 200 0\n".utf8)) }
+    pump(2.0)
+    emit(String(format: "| all 20 emitting 200 lines/s (worst case) | %.2f | %@ |", cpuOver(15), mbs(rss())))
+    for s2 in sessions { s2.close() }
+    cleanup()
+}
+
 func lastLinesPerCell(_ t: Terminal, _ n: Int) -> [String] {
     var out = [String]()
     var row = t.buffer.totalLinesTrimmed + t.getTopVisibleRow() + t.rows - 1

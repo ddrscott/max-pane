@@ -11,6 +11,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private let sidebar: SidebarViewController
     private let strip: StripViewController
     private var palette: SearchPaletteController?
+    private var openServer: OpenServer?
+    private var sessionWatcher: RelaySessionWatcher?
 
     public init(store: StripStore, config: Config) {
         self.store = store
@@ -39,6 +41,48 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         window.contentViewController = split
 
         sidebar.onSelect = { [weak self] laneId in self?.strip.reveal(laneId: laneId, flash: true) }
+        startSideChannels()
+    }
+
+    /// The two things that talk to the world outside the window: the shim's
+    /// socket, and RelayTTY's session directory.
+    private func startSideChannels() {
+        // Snapshots outlive the panes that made them when the app is killed;
+        // sweep the ones with no pane before anything can read a stale path.
+        SnapshotStore.sweep(keeping: Set(store.state.lanes.flatMap(\.panes).map(\.id)))
+
+        do {
+            openServer = try OpenServer { [weak self] request in
+                MainActor.assumeIsolated { self?.handleOpen(request) ?? false }
+            }
+        } catch {
+            // Not fatal. Without it, URLs from terminals go to the default
+            // browser — the same thing that happens when the app is not running.
+            FileHandle.standardError.write(Data("maxpane: open socket unavailable: \(error)\n".utf8))
+        }
+
+        sessionWatcher = RelaySessionWatcher(pollInterval: config.sessionPollSeconds) { [weak self] sessions in
+            MainActor.assumeIsolated { self?.strip.sessionsChanged(sessions) }
+        }
+    }
+
+    /// A URL arrived from `maxpane-open` (PRD §7.1).
+    ///
+    /// The web lane goes immediately right of the terminal that asked, tagged
+    /// with that terminal's project. A URL from somewhere that is not a lane —
+    /// a plain shell, a cron job — goes to the end of the strip rather than
+    /// being refused.
+    private func handleOpen(_ request: OpenServer.Request) -> Bool {
+        let near = request.sessionId.isEmpty ? nil : strip.lane(forRelaySession: request.sessionId)
+        do {
+            try store.newWebLane(url: request.url, near: near)
+            if let laneId = store.state.lanes.last?.id, near == nil {
+                strip.reveal(laneId: laneId, flash: true)
+            }
+            return true
+        } catch {
+            return false
+        }
     }
 
     @available(*, unavailable)

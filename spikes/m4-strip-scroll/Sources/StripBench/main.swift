@@ -21,6 +21,8 @@ struct Options {
     var fsMode = "borderless"   // borderless | native | none
     var forceDisplay = true
     var settle = 2.0
+    var snapshot = ""
+    var snapshotX: CGFloat = 0
 }
 
 func parseArgs() -> Options {
@@ -38,6 +40,8 @@ func parseArgs() -> Options {
         case "--buffer": o.buffer = Int(val()) ?? 2
         case "--out": o.out = val()
         case "--settle": o.settle = Double(val()) ?? 2.0
+        case "--snapshot": o.snapshot = val()
+        case "--snapshot-x": o.snapshotX = CGFloat(Double(val()) ?? 0)
         case "--fs-mode": o.fsMode = val()
         case "--force-display": o.forceDisplay = true
         case "--no-force-display": o.forceDisplay = false
@@ -696,6 +700,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let nStrip = bench.strip as? NaiveStrip { nStrip.resizeLane(at: 0, to: nStrip.widths[0]) }
         let fps = (window.screen ?? NSScreen.main!).maximumFramesPerSecond
         bench.frameBudget = 1.0 / Double(fps > 0 ? fps : 60)
+        if !opts.snapshot.isEmpty {
+            bench.strip.setScrollX(opts.snapshotX)
+            window.contentView?.layoutSubtreeIfNeeded()
+            let sv = bench.strip.scrollView
+            if let rep = sv.bitmapImageRepForCachingDisplay(in: sv.bounds) {
+                sv.cacheDisplay(in: sv.bounds, to: rep)
+                if let png = rep.representation(using: .png, properties: [:]) {
+                    try? png.write(to: URL(fileURLWithPath: opts.snapshot))
+                    elog("wrote snapshot \(opts.snapshot) (\(png.count) bytes)")
+                }
+            }
+            bench.strip.setScrollX(0)
+        }
         bench.lockedAtStart = screenIsLocked()
         elog("screen locked at bench start: \(bench.lockedAtStart)")
         bench.beginPhase(.settle)

@@ -143,9 +143,13 @@ final class WebPaneController: NSObject, PaneController {
 
     private func buildWebView(dataStoreId: String) {
         let configuration = WKWebViewConfiguration()
-        // PRD §9: one process pool for the whole app, and a small fixed number
-        // of data stores so a project's panes share cookies and logins.
-        configuration.processPool = DataStorePool.shared.processPool
+        // No `processPool` here. PRD §9 says "one WKProcessPool for the whole
+        // app (WebKit does process-per-site under it)"; spike M1 found both
+        // halves untrue on macOS 26. WKProcessPool has been a deprecated no-op
+        // since macOS 12, and WebKit gave exactly one WebContent process per
+        // WKWebView with no site coalescing — 100 views across 20 origins
+        // produced 100 processes. The right model is one web pane, one OS
+        // process, and there is nothing here to configure. ADR-0003.
         configuration.websiteDataStore = DataStorePool.shared.store(dataStoreId)
         configuration.suppressesIncrementalRendering = false
 
@@ -283,7 +287,6 @@ extension WebPaneController: WKUIDelegate {
 final class DataStorePool {
     static let shared = DataStorePool()
 
-    let processPool = WKProcessPool()
     private var stores: [String: WKWebsiteDataStore] = [:]
 
     static let defaultShardId = "shard-0"

@@ -346,7 +346,14 @@ public final class StripViewController: NSViewController {
             lastVisible: UInt32(max(visible.lowerBound, visible.upperBound - 1)))
         let memory = MemoryReport(
             webContentRssBytes: WebProcessMemory.currentBytes(),
-            budgetBytes: config.webMemoryBudgetBytes)
+            softBudgetBytes: config.webMemorySoftBytes,
+            hardBudgetBytes: config.webMemoryHardBytes,
+            targetBytes: config.webMemoryTargetBytes,
+            // Attributing a WebKit process to a pane needs
+            // `_webProcessIdentifier`, which is private API this app does not
+            // use. The policy falls back to distance and recency when this is
+            // empty, which is the ordering the PRD specifies anyway. ADR-0003.
+            paneFootprints: [])
 
         for directive in store.planEviction(viewport: viewport, memory: memory) {
             guard let controller = paneControllers[directive.paneId] else { continue }
@@ -375,6 +382,21 @@ public final class StripViewController: NSViewController {
     /// `maxpane-open` shim.
     public func lane(forRelaySession sessionId: String) -> String? {
         store.state.lanes.first { $0.panes.contains { $0.relaySessionId == sessionId } }?.id
+    }
+
+    /// RelayTTY's session directory changed.
+    ///
+    /// A session that has gone leaves its lane exactly where it is (PRD §11:
+    /// "the lane and ordinal are unaffected"); the pane says so instead. A
+    /// session that has come back is reattached.
+    public func sessionsChanged(_ sessions: [RelaySession]) {
+        let live = Set(sessions.map(\.id))
+        for (paneId, controller) in paneControllers {
+            guard let terminal = controller as? TerminalPaneController,
+                  let sessionId = store.pane(paneId)?.relaySessionId
+            else { continue }
+            terminal.sessionAvailabilityChanged(live.contains(sessionId))
+        }
     }
 }
 

@@ -1,0 +1,3 @@
+# SwiftPM + hand-assembled bundle; rebuild with ./build.sh
+.build/
+build/

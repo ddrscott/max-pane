@@ -56,6 +56,14 @@ public struct RelaySessionSpawner {
         env["RELAY_SESSION_ID"] = id
         env["RELAY_ORIG_COMMAND"] = cmd
         env["RELAY_ORIG_ARGS"] = (try? String(data: JSONEncoder().encode(args), encoding: .utf8)) ?? "[]"
+        // PRD §7.1: anything in this session that opens a URL the polite way
+        // gets a web lane next to it instead of a Safari window. The shim
+        // reads RELAY_SESSION_ID, which pty-host sets in the child anyway, so
+        // it knows which terminal asked.
+        if let shim = Self.shimPath() {
+            env["BROWSER"] = shim
+            env["MAXPANE_SOCKET"] = OpenServer.socketPath
+        }
         process.environment = env
         // Detached with stdio ignored: the session must outlive MaxPane, which
         // is the entire reason terminal content survives a crash.
@@ -183,5 +191,19 @@ public struct RelaySessionSpawner {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, size) }
         }
         return ok == 0
+    }
+}
+
+extension RelaySessionSpawner {
+    /// `maxpane-open`, which ships inside the app bundle next to the executable.
+    static func shimPath() -> String? {
+        let bundled = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/MacOS/maxpane-open").path
+        if FileManager.default.isExecutableFile(atPath: bundled) { return bundled }
+        // Running straight out of `swift build`, the shim sits beside the binary.
+        let sibling = URL(fileURLWithPath: CommandLine.arguments[0])
+            .deletingLastPathComponent()
+            .appendingPathComponent("maxpane-open").path
+        return FileManager.default.isExecutableFile(atPath: sibling) ? sibling : nil
     }
 }

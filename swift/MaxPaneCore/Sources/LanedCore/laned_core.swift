@@ -1442,25 +1442,69 @@ public func FfiConverterTypeLane_lower(_ value: Lane) -> RustBuffer {
  */
 public struct MemoryReport: Equatable, Hashable {
     /**
-     * Resident bytes across every WebKit content process.
+     * Summed `phys_footprint` of the app and every WebKit helper process.
      */
     public var webContentRssBytes: UInt64
     /**
-     * Evict until we are under this. The shell derives it from physical RAM.
+     * Start evicting above this. M1 recommends 0.25 × physical RAM: 100 real
+     * sites measured 9.48 GB, and the soft mark should bite right about there.
      */
-    public var budgetBytes: UInt64
+    public var softBudgetBytes: UInt64
+    /**
+     * Evict hard above this. M1 recommends 0.35 × physical RAM, which must sit
+     * above the 130-pane design target or it fires constantly.
+     */
+    public var hardBudgetBytes: UInt64
+    /**
+     * Evict down to here once evicting, so there is something for the
+     * hysteresis window to hold. M1 recommends 0.20 × physical RAM.
+     */
+    public var targetBytes: UInt64
+    /**
+     * Per-pane measured footprint, where the shell can attribute a WebKit
+     * process to a pane.
+     *
+     * Usually empty. Since M1 established one `WebContent` process per
+     * `WKWebView`, the attribution exists in principle — but the only way to
+     * ask a `WKWebView` for its process id is `_webProcessIdentifier`, which is
+     * private API this app does not use. When it is empty the policy falls back
+     * to distance and recency, which is the ordering the PRD specifies anyway.
+     */
+    public var paneFootprints: [PaneFootprint]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(
         /**
-         * Resident bytes across every WebKit content process.
+         * Summed `phys_footprint` of the app and every WebKit helper process.
          */webContentRssBytes: UInt64, 
         /**
-         * Evict until we are under this. The shell derives it from physical RAM.
-         */budgetBytes: UInt64) {
+         * Start evicting above this. M1 recommends 0.25 × physical RAM: 100 real
+         * sites measured 9.48 GB, and the soft mark should bite right about there.
+         */softBudgetBytes: UInt64, 
+        /**
+         * Evict hard above this. M1 recommends 0.35 × physical RAM, which must sit
+         * above the 130-pane design target or it fires constantly.
+         */hardBudgetBytes: UInt64, 
+        /**
+         * Evict down to here once evicting, so there is something for the
+         * hysteresis window to hold. M1 recommends 0.20 × physical RAM.
+         */targetBytes: UInt64, 
+        /**
+         * Per-pane measured footprint, where the shell can attribute a WebKit
+         * process to a pane.
+         *
+         * Usually empty. Since M1 established one `WebContent` process per
+         * `WKWebView`, the attribution exists in principle — but the only way to
+         * ask a `WKWebView` for its process id is `_webProcessIdentifier`, which is
+         * private API this app does not use. When it is empty the policy falls back
+         * to distance and recency, which is the ordering the PRD specifies anyway.
+         */paneFootprints: [PaneFootprint]) {
         self.webContentRssBytes = webContentRssBytes
-        self.budgetBytes = budgetBytes
+        self.softBudgetBytes = softBudgetBytes
+        self.hardBudgetBytes = hardBudgetBytes
+        self.targetBytes = targetBytes
+        self.paneFootprints = paneFootprints
     }
 
     
@@ -1480,13 +1524,19 @@ public struct FfiConverterTypeMemoryReport: FfiConverterRustBuffer {
         return
             try MemoryReport(
                 webContentRssBytes: FfiConverterUInt64.read(from: &buf), 
-                budgetBytes: FfiConverterUInt64.read(from: &buf)
+                softBudgetBytes: FfiConverterUInt64.read(from: &buf), 
+                hardBudgetBytes: FfiConverterUInt64.read(from: &buf), 
+                targetBytes: FfiConverterUInt64.read(from: &buf), 
+                paneFootprints: FfiConverterSequenceTypePaneFootprint.read(from: &buf)
         )
     }
 
     public static func write(_ value: MemoryReport, into buf: inout [UInt8]) {
         FfiConverterUInt64.write(value.webContentRssBytes, into: &buf)
-        FfiConverterUInt64.write(value.budgetBytes, into: &buf)
+        FfiConverterUInt64.write(value.softBudgetBytes, into: &buf)
+        FfiConverterUInt64.write(value.hardBudgetBytes, into: &buf)
+        FfiConverterUInt64.write(value.targetBytes, into: &buf)
+        FfiConverterSequenceTypePaneFootprint.write(value.paneFootprints, into: &buf)
     }
 }
 
@@ -1683,6 +1733,60 @@ public func FfiConverterTypePaneDirective_lift(_ buf: RustBuffer) throws -> Pane
 #endif
 public func FfiConverterTypePaneDirective_lower(_ value: PaneDirective) -> RustBuffer {
     return FfiConverterTypePaneDirective.lower(value)
+}
+
+
+public struct PaneFootprint: Equatable, Hashable {
+    public var paneId: String
+    public var bytes: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(paneId: String, bytes: UInt64) {
+        self.paneId = paneId
+        self.bytes = bytes
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PaneFootprint: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePaneFootprint: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PaneFootprint {
+        return
+            try PaneFootprint(
+                paneId: FfiConverterString.read(from: &buf), 
+                bytes: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PaneFootprint, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.paneId, into: &buf)
+        FfiConverterUInt64.write(value.bytes, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePaneFootprint_lift(_ buf: RustBuffer) throws -> PaneFootprint {
+    return try FfiConverterTypePaneFootprint.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePaneFootprint_lower(_ value: PaneFootprint) -> RustBuffer {
+    return FfiConverterTypePaneFootprint.lower(value)
 }
 
 
@@ -2066,12 +2170,13 @@ public enum PaneAction: Equatable, Hashable {
     case keep
     /**
      * Remove the view from the hierarchy but keep the `WKWebView` alive.
-     * WebKit stops rendering an unparented view, which is most of the win for
-     * none of the cost of a reload.
+     * Worth ~3.5 MB and the page's render/CPU cost; the object, its process and
+     * its session all survive, so putting it back is instant.
      */
     case unparent
     /**
-     * Snapshot, record scroll, destroy the `WKWebView`.
+     * Snapshot, record scroll, destroy the `WKWebView`. Worth 24.7–90.8 MB and
+     * one OS process. Coming back is a full page load.
      */
     case evict
     /**
@@ -2704,6 +2809,31 @@ fileprivate struct FfiConverterSequenceTypePaneDirective: FfiConverterRustBuffer
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypePaneDirective.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePaneFootprint: FfiConverterRustBuffer {
+    typealias SwiftType = [PaneFootprint]
+
+    public static func write(_ value: [PaneFootprint], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePaneFootprint.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PaneFootprint] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PaneFootprint]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePaneFootprint.read(from: &buf))
         }
         return seq
     }

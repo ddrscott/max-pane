@@ -49,6 +49,7 @@ final class TerminalPaneController: NSObject, PaneController {
     private var attachment: RelayAttachment?
     private var pane: Pane
     private var scrollbackDebounce: DispatchWorkItem?
+    private var isSessionAvailable = true
 
     /// Last cwd seen, for ⌘T spawning a sibling in the right place and for
     /// tagging. Sourced from OSC 7 in the stream, backed by the session file.
@@ -141,6 +142,22 @@ final class TerminalPaneController: NSObject, PaneController {
     func reparentIfNeeded() {}
     func evict() {}
     func rehydrate() {}
+
+    /// The session appeared in, or vanished from, RelayTTY's directory.
+    ///
+    /// Vanishing is not the same as the process exiting: the relay host can be
+    /// restarted under us. Either way the lane stays put and the banner
+    /// explains itself.
+    func sessionAvailabilityChanged(_ available: Bool) {
+        guard available != isSessionAvailable else { return }
+        isSessionAvailable = available
+        if available {
+            status.setState(.connected)
+            attachment?.connect()
+        } else {
+            status.setState(.reconnecting)
+        }
+    }
 
     // MARK: - cwd
 

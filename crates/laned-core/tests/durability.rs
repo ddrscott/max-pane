@@ -395,7 +395,13 @@ fn eviction_planning_follows_the_gather_filter() {
 
     // The shell is looking at indices 0..2 of the *filtered* strip.
     let vp = Viewport { first_visible: 0, last_visible: 2 };
-    let plenty = MemoryReport { web_content_rss_bytes: 1, budget_bytes: u64::MAX };
+    let plenty = MemoryReport {
+        web_content_rss_bytes: 1,
+        soft_budget_bytes: u64::MAX,
+        hard_budget_bytes: u64::MAX,
+        target_bytes: u64::MAX,
+        pane_footprints: Vec::new(),
+    };
     let plan = core.plan_eviction(vp, plenty).unwrap();
 
     // Exactly the gathered lanes get directives, and the first three are on

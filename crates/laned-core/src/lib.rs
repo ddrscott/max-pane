@@ -50,6 +50,9 @@ struct Inner {
     /// `Some(project_root)` while the user is in a gather view. View-only.
     gather: Option<String>,
     revision: u64,
+    /// Eviction's memory of what it has already done. Not persisted: after a
+    /// relaunch the strip is cold and a cooldown would have nothing to protect.
+    hysteresis: eviction::Hysteresis,
 }
 
 /// The handle the shell holds for the whole run of the app.
@@ -66,7 +69,13 @@ impl Core {
     pub fn open(path: String) -> Result<std::sync::Arc<Self>> {
         let ledger = Ledger::open(Some(&PathBuf::from(path)))?;
         Ok(std::sync::Arc::new(Core {
-            inner: Mutex::new(Inner { ledger, index: search::Index::default(), gather: None, revision: 0 }),
+            inner: Mutex::new(Inner {
+                ledger,
+                index: search::Index::default(),
+                gather: None,
+                revision: 0,
+                hysteresis: eviction::Hysteresis::default(),
+            }),
             projects: project::ProjectResolver::default(),
         }))
     }
@@ -76,7 +85,13 @@ impl Core {
     pub fn open_in_memory() -> Result<std::sync::Arc<Self>> {
         let ledger = Ledger::open(None)?;
         Ok(std::sync::Arc::new(Core {
-            inner: Mutex::new(Inner { ledger, index: search::Index::default(), gather: None, revision: 0 }),
+            inner: Mutex::new(Inner {
+                ledger,
+                index: search::Index::default(),
+                gather: None,
+                revision: 0,
+                hysteresis: eviction::Hysteresis::default(),
+            }),
             projects: project::ProjectResolver::default(),
         }))
     }
@@ -444,13 +459,14 @@ impl Core {
         viewport: eviction::Viewport,
         memory: eviction::MemoryReport,
     ) -> Result<Vec<eviction::PaneDirective>> {
-        let inner = self.inner.lock();
+        let mut inner = self.inner.lock();
         // The viewport is expressed as indices into the lanes the *shell* is
         // showing, so this has to see the same list — including the gather
         // filter. Planning against the unfiltered strip while the shell is
         // gathered would evict whatever happens to sit at those indices.
         let lanes = Self::snapshot(&inner)?.lanes;
-        Ok(eviction::plan(&lanes, &viewport, &memory))
+        let now = now_ms();
+        Ok(eviction::plan(&lanes, &viewport, &memory, &mut inner.hysteresis, now))
     }
 
     // ---- housekeeping ------------------------------------------------------

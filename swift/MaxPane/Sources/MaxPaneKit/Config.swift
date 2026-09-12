@@ -23,9 +23,19 @@ public struct Config: Codable {
     /// PRD §9 — how many `WKWebsiteDataStore` shards to spread projects across.
     public var dataStoreCount: Int = 3
 
-    /// Fraction of physical RAM WebKit content processes may hold before
-    /// eviction engages.
-    public var webMemoryBudgetFraction: Double = 0.35
+    /// Fractions of physical RAM that bound WebKit's footprint. Spike M1 §9.4
+    /// derived all three from measurement: 100 real sites weighed 9.48 GB and
+    /// 130 extrapolates to ~11.96 GB, so the soft mark has to bite around the
+    /// former and the hard mark has to sit above the latter or it fires
+    /// constantly.
+    public var webMemorySoftFraction: Double = 0.25
+    public var webMemoryHardFraction: Double = 0.35
+    public var webMemoryTargetFraction: Double = 0.20
+
+    /// How often to sample WebKit's footprint. The policy wants three
+    /// consecutive over-budget samples before it acts, so this also sets what
+    /// "sustained" means: 3 × 10 s.
+    public var memorySampleSeconds: Double = 10
 
     /// How often to re-read RelayTTY's session files (seconds). pty-host flushes
     /// on a 5 s cadence, so polling faster buys nothing.
@@ -66,8 +76,12 @@ public struct Config: Codable {
         Swift.min(Swift.max(pt, widthRange.lowerBound), widthRange.upperBound)
     }
 
-    /// Bytes of WebKit content-process residency to stay under.
-    public var webMemoryBudgetBytes: UInt64 {
-        UInt64(Double(ProcessInfo.processInfo.physicalMemory) * webMemoryBudgetFraction)
-    }
+    private var physicalMemory: Double { Double(ProcessInfo.processInfo.physicalMemory) }
+
+    /// Sustained residency above this starts eviction.
+    public var webMemorySoftBytes: UInt64 { UInt64(physicalMemory * webMemorySoftFraction) }
+    /// Residency above this evicts immediately, with no waiting.
+    public var webMemoryHardBytes: UInt64 { UInt64(physicalMemory * webMemoryHardFraction) }
+    /// Evict down to here once evicting, so the cooldown has something to hold.
+    public var webMemoryTargetBytes: UInt64 { UInt64(physicalMemory * webMemoryTargetFraction) }
 }
