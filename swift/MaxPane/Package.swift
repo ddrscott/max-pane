@@ -44,7 +44,7 @@ let package = Package(
         ),
         .testTarget(
             name: "MaxPaneKitTests",
-            dependencies: ["MaxPaneKit", "RelayClient"],
+            dependencies: ["MaxPaneKit", "RelayClient", .product(name: "LanedCore", package: "MaxPaneCore")],
             path: "Tests/MaxPaneKitTests"
         ),
     ]

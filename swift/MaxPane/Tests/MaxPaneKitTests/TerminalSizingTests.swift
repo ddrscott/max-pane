@@ -1,5 +1,6 @@
 import Testing
 import AppKit
+import LanedCore
 @testable import MaxPaneKit
 
 /// ADR-0007: the lane is sized to the session, never the other way round.
@@ -65,6 +66,19 @@ struct LaneSizingTests {
         #expect(Int(atMin) >= 80, "only \(Int(atMin)) columns at the floor")
         #expect(Int(atMax) >= 170)
         #expect(TerminalPaneController.minimumFontSize == 9)
+    }
+
+    @Test("the Swift and Rust defaults agree")
+    func defaultsAgree() {
+        // `laned-core` stamps LANE_DEFAULT_PT onto every new lane; Config is
+        // what the user can override. They drift silently if nobody checks,
+        // and the symptom is a web lane that opens at a different width than
+        // the one the config file says.
+        let core = try! Core.openInMemory()
+        let state = try! core.createLane(
+            placement: .end, kind: .web, relaySessionId: nil,
+            url: "https://example.com", inheritTagFromLane: nil)
+        #expect(state.lanes[0].widthPt == Config().laneDefaultPt)
     }
 
     @Test("the default lane width holds 80 columns at the default font size")

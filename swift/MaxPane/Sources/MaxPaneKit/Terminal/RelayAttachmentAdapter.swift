@@ -123,7 +123,9 @@ final class RelayAttachmentAdapter: RelayAttachment {
                 offset: lastOffset,
                 maxReplayBytes: lastOffset > 0 ? nil : Self.maximumReplayBytes)
             try session.connect(mode: mode)
+            Log.debug("attached \(sessionId) at offset \(lastOffset)")
         } catch {
+            Log.warn("could not attach \(sessionId) at \(RelayPaths.socket(for: sessionId)): \(error)")
             self.session = nil
             onConnectionChange?(false)
             scheduleReconnect()

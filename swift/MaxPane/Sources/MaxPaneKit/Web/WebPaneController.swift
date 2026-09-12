@@ -29,6 +29,7 @@ final class WebPaneController: NSObject, PaneController {
     private var laneWidth: CGFloat
     private var isParented = false
     private var scrollObservation: Timer?
+    private var titleObservation: NSKeyValueObservation?
 
     var view: NSView { container }
 
@@ -74,6 +75,8 @@ final class WebPaneController: NSObject, PaneController {
     func tearDown() {
         scrollObservation?.invalidate()
         scrollObservation = nil
+        titleObservation?.invalidate()
+        titleObservation = nil
         webView?.stopLoading()
         webView?.navigationDelegate = nil
         webView?.uiDelegate = nil
@@ -139,6 +142,14 @@ final class WebPaneController: NSObject, PaneController {
 
     func laneWidthChanged(to width: CGFloat) { laneWidth = width }
 
+    /// Put the page's title on its lane. A lane with no title falls back to the
+    /// URL's host, which is worse to scan a strip by.
+    private func adoptTitle(_ title: String) {
+        guard let laneId = store.lane(containing: paneId)?.id else { return }
+        guard store.lane(laneId)?.title != title else { return }
+        try? store.setLaneTitle(laneId, title)
+    }
+
     // MARK: - building
 
     private func buildWebView(dataStoreId: String) {
@@ -162,6 +173,14 @@ final class WebPaneController: NSObject, PaneController {
         webView.autoresizingMask = [.width, .height]
 
         self.webView = webView
+        // `webView.title` is usually still empty when `didFinish` fires — the
+        // document's <title> often lands a beat later — so observe it rather
+        // than sampling it once. An end-to-end run with example.com produced a
+        // pane URL and no lane title, which is what this fixes.
+        titleObservation = webView.observe(\.title, options: [.new]) { [weak self] _, change in
+            guard let title = change.newValue ?? nil, !title.isEmpty else { return }
+            Task { @MainActor in self?.adoptTitle(title) }
+        }
         store.setPaneDataStore(paneId, dataStoreId)
         install(webView)
 
@@ -179,6 +198,8 @@ final class WebPaneController: NSObject, PaneController {
     private func destroyWebView() {
         scrollObservation?.invalidate()
         scrollObservation = nil
+        titleObservation?.invalidate()
+        titleObservation = nil
         webView?.navigationDelegate = nil
         webView?.uiDelegate = nil
         webView?.removeFromSuperview()
@@ -247,9 +268,8 @@ extension WebPaneController: WKNavigationDelegate {
             pane.url = url
             store.setPaneUrl(paneId, url)
         }
-        if let title = webView.title, !title.isEmpty,
-           let laneId = store.lane(containing: paneId)?.id {
-            try? store.setLaneTitle(laneId, title)
+        if let title = webView.title, !title.isEmpty {
+            adoptTitle(title)
         }
         if let y = pendingScrollRestore {
             pendingScrollRestore = nil

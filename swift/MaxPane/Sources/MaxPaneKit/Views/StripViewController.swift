@@ -185,6 +185,7 @@ public final class StripViewController: NSViewController {
     }
 
     private func materialize(_ lane: Lane) {
+        Log.debug("materialize lane \(lane.id) with \(lane.panes.count) pane(s)")
         let laneView: LaneView
         if let reused = recycled.popLast() {
             reused.apply(lane)
@@ -237,6 +238,8 @@ public final class StripViewController: NSViewController {
             // (PRD §11, §15.8); it just has nothing to attach to.
             if let sessionId = pane.relaySessionId {
                 controller.attach(RelayAttachmentAdapter(sessionId: sessionId))
+            } else {
+                Log.warn("pty pane \(pane.id) has no relay session")
             }
             return controller
         case .web, .placeholder:

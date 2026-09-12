@@ -29,11 +29,15 @@ pub const LANE_MIN_PT: u32 = 420;
 pub const LANE_MAX_PT: u32 = 900;
 /// Width a lane is born with.
 ///
-/// 640 because spike M2 measured a 13 pt monospace cell at 8 pt wide: 80
-/// columns, which is what almost every agent TUI assumes, needs 640 pt. A
-/// narrower default would start the common case horizontally scrolled, and
-/// ADR-0007 means the lane may not resize the PTY to fix it.
-pub const LANE_DEFAULT_PT: u32 = 640;
+/// 656 because spike M2 measured a 13 pt monospace cell at 8 pt wide: 80
+/// columns — what almost every agent TUI assumes — needs 640 pt of grid plus
+/// 16 pt of lane chrome. A narrower default opens the common case already
+/// clipped, and ADR-0007 means the lane may not resize the PTY to fix it.
+///
+/// **Must match `Config.laneDefaultPt` in the Swift app**, which is the value
+/// the user can override; a terminal lane is re-sized from its session on the
+/// first inbound `RESIZE` anyway, so this is the width a *web* lane keeps.
+pub const LANE_DEFAULT_PT: u32 = 656;
 
 const KEY_SCROLL_X: &str = "strip_scroll_x";
 const KEY_FOCUSED_PANE: &str = "focused_pane_id";
