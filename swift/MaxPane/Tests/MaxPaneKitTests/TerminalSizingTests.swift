@@ -134,3 +134,101 @@ struct ScrollbackTextTests {
         #expect(TerminalPaneController.stripEscapes(plain) == plain)
     }
 }
+
+/// The agent-state model — the single most valuable thing RelayTTY does. With
+/// ten agents running it is what tells you which one has stopped and is waiting
+/// on you; finding that by eye means reading ten terminals.
+///
+/// The wire values come from `crates/pty-host/src/agent_state.rs`, serialised
+/// lowercase. Getting a name wrong here does not fail loudly — the state just
+/// reads as `unknown` and the signal silently disappears, which is exactly what
+/// had happened before these tests existed.
+@Suite("agent state")
+struct AgentStateTests {
+    @Test("every state pty-host can emit round-trips", arguments: [
+        ("blocked", AgentState.blocked),
+        ("working", AgentState.working),
+        ("done", AgentState.done),
+        ("idle", AgentState.idle),
+        ("unknown", AgentState.unknown),
+    ])
+    func parsesEveryWireValue(_ c: (wire: String, expected: AgentState)) {
+        #expect(AgentState(relayValue: c.wire, status: "running") == c.expected)
+    }
+
+    @Test("an exited session is exited whatever the classifier last said")
+    func exitedWins() {
+        #expect(AgentState(relayValue: "working", status: "exited") == .exited)
+        #expect(AgentState(relayValue: nil, status: "exited") == .exited)
+    }
+
+    @Test("a state we do not recognise is unknown, not a guess")
+    func unknownIsNotAGuess() {
+        #expect(AgentState(relayValue: "sleeping", status: "running") == .unknown)
+        #expect(AgentState(relayValue: nil, status: "running") == .unknown)
+    }
+
+    @Test("blocked sorts above everything")
+    func blockedSortsFirst() {
+        let ranks = [AgentState.blocked, .working, .done, .idle, .unknown].map(\.rank)
+        #expect(ranks == ranks.sorted(), "rank order changed")
+        #expect(AgentState.blocked.rank == 0)
+    }
+
+    @Test("only the three states worth interrupting someone for get a chip")
+    func onlyUrgentStatesGetChips() {
+        #expect(AgentState.blocked.chipText == "BLOCKED")
+        #expect(AgentState.working.chipText == "WORKING")
+        #expect(AgentState.done.chipText == "DONE")
+        // A chip on every row is a chip that means nothing.
+        #expect(!AgentState.idle.hasChip)
+        #expect(!AgentState.unknown.hasChip)
+    }
+
+    @Test("throughput and agent state answer different questions")
+    func throughputIsNotState() {
+        // The combination worth walking across the room for: nothing coming out
+        // of it, and it is waiting on you.
+        var t = SessionTelemetry(sessionId: "x", state: .blocked, bytesPerSecond: 0)
+        #expect(t.badgeText == "idle")
+        #expect(t.needsAttention)
+
+        t.bytesPerSecond = 1740
+        #expect(t.badgeText == "1.7KB/s")
+        #expect(t.badgeIsThroughput)
+    }
+
+    @Test("throughput is printed the way the bar prints it")
+    func throughputFormatting() {
+        func text(_ bps: Double) -> String {
+            SessionTelemetry(sessionId: "x", bytesPerSecond: bps).throughputText
+        }
+        #expect(text(0) == "")
+        #expect(text(0.4) == "")
+        #expect(text(842) == "842B/s")
+        #expect(text(1740) == "1.7KB/s")
+        #expect(text(2_202_010) == "2.1MB/s")
+    }
+
+    @Test("ages read the way a person says them")
+    func ageFormatting() {
+        let now = Date()
+        func text(_ secondsAgo: TimeInterval) -> String {
+            SessionTelemetry.age(since: now.addingTimeInterval(-secondsAgo), now: now)
+        }
+        #expect(text(1) == "now")
+        #expect(text(6) == "6s ago")
+        #expect(text(120) == "2m ago")
+        #expect(text(13 * 3600) == "13h ago")
+        #expect(text(3 * 86_400) == "3d ago")
+    }
+
+    @Test("home is abbreviated to ~ the way the bar does")
+    func pathAbbreviation() {
+        let home = NSHomeDirectory()
+        #expect(SessionTelemetry.abbreviate(home) == "~")
+        #expect(SessionTelemetry.abbreviate(home + "/code/max-pane") == "~/code/max-pane")
+        #expect(SessionTelemetry.abbreviate("/opt/thing") == "/opt/thing")
+        #expect(SessionTelemetry.abbreviate("") == "~")
+    }
+}

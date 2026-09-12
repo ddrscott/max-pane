@@ -8,50 +8,79 @@ import RelayClient
 /// every session at once. A supervision surface that cannot tell you which of
 /// ten agents is waiting on you is not supervising anything.
 public enum AgentState: String, Sendable {
-    /// Working — output is flowing.
-    case active
-    /// Alive but quiet. The common case, and the one that matters: an idle agent
-    /// is usually an agent blocked on a prompt.
-    case idle
-    /// Finished its task and said so.
+    /// **The one that matters.** The agent has drawn a prompt and is waiting on
+    /// a human — "Do you want to proceed", "(y/n)", "❯ 1. Yes". With ten agents
+    /// running, this is the entire reason to glance at the screen, and finding
+    /// it by eye means reading ten terminals.
+    case blocked
+    /// Output is flowing, or the tail says "esc to interrupt"/"Thinking", or a
+    /// braille spinner is turning.
+    case working
+    /// Finished while nobody was attached.
+    ///
+    /// pty-host makes this a *notification* state rather than a display state:
+    /// `(Working, 0 clients) → Done`, and `(Done, >0 clients) → Idle`. It exists
+    /// only while unwatched and clears itself the moment someone looks. Which is
+    /// also why RelayTTY's own monitors attach in OBSERVE mode — a counted
+    /// client would suppress `Done` for every session forever.
     case done
-    /// The process is gone.
-    case exited
-    /// No opinion — a session that has not been observed yet.
+    /// Alive and quiet.
+    case idle
+    /// A foreground process pty-host does not recognise as an agent. It
+    /// deliberately does not guess.
     case unknown
+    /// The process is gone. Not one of pty-host's states — ours, from `status`.
+    case exited
 
+    /// The wire values are lowercase, from `crates/pty-host/src/agent_state.rs`
+    /// (`#[serde(rename_all = "lowercase")]`).
     public init(relayValue: String?, status: String) {
         if status == "exited" {
             self = .exited
             return
         }
-        switch relayValue {
-        case "active": self = .active
-        case "idle": self = .idle
-        case "done": self = .done
-        default: self = .unknown
+        self = relayValue.flatMap(AgentState.init(rawValue:)) ?? .unknown
+    }
+
+    /// Sort order: blocked first, always. This is the whole point — it is what
+    /// floats the agent that needs you to the top of a list of ten.
+    public var rank: Int {
+        switch self {
+        case .blocked: return 0
+        case .working: return 1
+        case .done: return 2
+        case .idle: return 3
+        case .unknown: return 4
+        case .exited: return 5
         }
     }
 
-    /// The glyph the strip and sidebar show. Matches the bar's vocabulary:
-    /// a spinner-ish mark for working, a quiet asterisk for waiting.
+    /// The chip's text, or empty where there should be no chip.
+    ///
+    /// RelayTTY renders nothing at all for idle and unknown, and it is right to:
+    /// a chip on every row is a chip that means nothing. Only the three states
+    /// worth interrupting someone for get one.
+    public var chipText: String {
+        switch self {
+        case .blocked: return "BLOCKED"
+        case .working: return "WORKING"
+        case .done: return "DONE"
+        case .exited: return "EXITED"
+        case .idle, .unknown: return ""
+        }
+    }
+
+    public var hasChip: Bool { !chipText.isEmpty }
+
+    /// A glyph for places too narrow for a chip.
     public var glyph: String {
         switch self {
-        case .active: return "◑"
-        case .idle: return "✳"
+        case .blocked: return "!"
+        case .working: return "◑"
         case .done: return "✓"
-        case .exited: return "×"
+        case .idle: return "✳"
         case .unknown: return "·"
-        }
-    }
-
-    public var label: String {
-        switch self {
-        case .active: return "active"
-        case .idle: return "idle"
-        case .done: return "done"
-        case .exited: return "exited"
-        case .unknown: return ""
+        case .exited: return "×"
         }
     }
 }
@@ -119,15 +148,23 @@ public struct SessionTelemetry: Sendable, Equatable {
         return String(format: "%.0fB/s", bytesPerSecond)
     }
 
-    /// What goes in the badge slot. Throughput when it is moving, otherwise the
-    /// state — exactly the bar's rule, and the reason that column is never dead
-    /// space.
+    /// The throughput slot: a rate when bytes are moving, the word "idle" when
+    /// they are not.
+    ///
+    /// This is *not* the agent state, and conflating the two loses the signal.
+    /// RelayTTY shows both: this readout answers "is anything coming out of it",
+    /// and the chip answers "does it need me". A session can read `idle` here
+    /// and `BLOCKED` on its chip at the same time — indeed that is the exact
+    /// combination worth walking across the room for.
     public var badgeText: String {
         let flow = throughputText
-        return flow.isEmpty ? state.label : flow
+        return flow.isEmpty ? "idle" : flow
     }
 
     public var badgeIsThroughput: Bool { !throughputText.isEmpty }
+
+    /// True when this session is waiting on a human.
+    public var needsAttention: Bool { state == .blocked }
 
     /// "6s ago", "13h ago", "3d ago". Short, because it sits in a 290pt column.
     public var ageText: String {
@@ -205,14 +242,28 @@ public final class SessionRegistry {
         let wanted = sessions.values.filter { !attachedOnly || $0.isAttached }
         let byPath = Dictionary(grouping: wanted, by: \.groupPath)
         return byPath.keys.sorted().map { path in
+            // Blocked first, then working, then by recency. An agent waiting on
+            // a prompt has to be at the top or the list is just a list.
             let inGroup = byPath[path]!.sorted {
-                ($0.lastActivity ?? .distantPast) > ($1.lastActivity ?? .distantPast)
+                if $0.state.rank != $1.state.rank { return $0.state.rank < $1.state.rank }
+                return ($0.lastActivity ?? .distantPast) > ($1.lastActivity ?? .distantPast)
             }
             return (path: path, sessions: inGroup)
         }
     }
 
     public var runningCount: Int { sessions.values.filter(\.isRunning).count }
+
+    /// Sessions waiting on a human right now.
+    public var blockedCount: Int { sessions.values.filter { $0.isRunning && $0.needsAttention }.count }
+
+    /// Every session, blocked first. For anything that shows one flat list.
+    public var byUrgency: [SessionTelemetry] {
+        sessions.values.sorted {
+            if $0.state.rank != $1.state.rank { return $0.state.rank < $1.state.rank }
+            return ($0.lastActivity ?? .distantPast) > ($1.lastActivity ?? .distantPast)
+        }
+    }
 
     /// Tell the registry which sessions have lanes, so the picker can hide the
     /// ones already on the strip and the sidebar can mark them.
@@ -235,12 +286,12 @@ public final class SessionRegistry {
             t.lastActivity = bytesPerSecond > 0 ? Date() : t.lastActivity
             changed = true
         }
-        if let active {
-            let next: AgentState = active ? .active : (t.state == .active ? .idle : t.state)
-            if t.state != next {
-                t.state = next
-                changed = true
-            }
+        // SESSION_STATE (0x12) only says "bytes are moving". It must never
+        // overwrite `blocked` or `done`, which pty-host decides from the
+        // terminal's tail and which are strictly more informative.
+        if let active, active, t.state == .idle || t.state == .unknown {
+            t.state = .working
+            changed = true
         }
         guard changed else { return }
         sessions[sessionId] = t

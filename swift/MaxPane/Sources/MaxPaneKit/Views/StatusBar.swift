@@ -78,15 +78,18 @@ public final class StatusBar: NSView {
         let running = telemetry.values.filter(\.isRunning)
         sessions.stringValue = "\(running.count) session\(running.count == 1 ? "" : "s")"
 
-        // The number that actually changes behaviour: an idle agent is usually
-        // an agent blocked on a prompt, and the whole point of the strip is
-        // noticing that without reading every column.
-        let waiting = running.filter { $0.state == .idle || $0.state == .done }.count
-        if waiting > 0 {
-            attention.stringValue = "\(waiting) waiting"
+        // The number that actually changes behaviour. Not "idle" — idle is the
+        // resting state of every session and counting it would light this up
+        // permanently. `blocked` means pty-host found a prompt in the terminal's
+        // tail: the agent has stopped and is waiting on a person.
+        let blocked = running.filter(\.needsAttention).count
+        if blocked > 0 {
+            attention.stringValue = "\(blocked) BLOCKED"
             attention.textColor = Theme.accent
         } else {
-            attention.stringValue = ""
+            let working = running.filter { $0.state == .working }.count
+            attention.stringValue = working > 0 ? "\(working) working" : ""
+            attention.textColor = Theme.dimText
         }
 
         memory.stringValue = webBytes > 0 ? "web \(Self.mb(webBytes))" : ""

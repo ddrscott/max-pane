@@ -39,6 +39,22 @@ enum Theme {
             ?? NSFont.monospacedSystemFont(ofSize: size, weight: weight)
     }
 
+    /// The colour of an agent-state chip.
+    ///
+    /// RelayTTY renders BLOCKED in `#E85D00` — which is, by coincidence or good
+    /// taste, exactly Signal Orange. So the most important signal in the app
+    /// already arrives in the house accent, and the other two stay muted so it
+    /// keeps that meaning.
+    static func agentStateColor(_ state: AgentState) -> NSColor {
+        switch state {
+        case .blocked: return accent
+        case .working: return NSColor(srgbRed: 0x22 / 255, green: 0xc5 / 255, blue: 0x5e / 255, alpha: 1)
+        case .done: return NSColor(srgbRed: 0x94 / 255, green: 0xa3 / 255, blue: 0xb8 / 255, alpha: 1)
+        case .exited: return dimText
+        case .idle, .unknown: return .clear
+        }
+    }
+
     /// The kind glyph used in the sidebar and on lane headers (PRD §7.6).
     static func glyph(for kind: PaneGlyph) -> String {
         switch kind {
