@@ -330,3 +330,42 @@ fn repeated_inserts_at_one_spot_renormalize_and_stay_ordered() {
     let at = st.lanes.iter().position(|l| l.id == left).unwrap();
     assert_eq!(st.lanes[at + 1].panes[0].url.as_deref(), Some("https://mid/59"));
 }
+
+/// The snapshot-free hot paths agree with the snapshot-building ones. Spike M3
+/// added them to keep 2.4 ms of marshalling off the focus path; they are only
+/// worth having if they write the same rows.
+#[test]
+fn note_focus_matches_focus_pane_and_bumps_the_revision() {
+    let core = Core::open_in_memory().unwrap();
+    core.create_lane(Placement::End, PaneKind::Web, None, Some("https://a".into()), None).unwrap();
+    let st = core.create_lane(Placement::End, PaneKind::Web, None, Some("https://b".into()), None).unwrap();
+    let a = st.lanes[0].panes[0].id.clone();
+    let b = st.lanes[1].panes[0].id.clone();
+
+    let before = core.revision();
+    core.note_focus(a.clone()).unwrap();
+    assert_eq!(core.state().unwrap().focused_pane_id, Some(a.clone()));
+    assert!(core.revision() > before, "a mutation must move the revision");
+
+    let heavy = core.focus_pane(b.clone()).unwrap();
+    assert_eq!(heavy.focused_pane_id, Some(b.clone()));
+    assert_eq!(heavy.revision, core.revision());
+
+    // Both paths touch last_focus_at, which is what eviction ranks on.
+    let lane_b = core.lane(st.lanes[1].id.clone()).unwrap();
+    let lane_a = core.lane(st.lanes[0].id.clone()).unwrap();
+    assert!(lane_b.last_focus_at >= lane_a.last_focus_at);
+}
+
+/// `lane()` returns the same lane the full snapshot does, panes and all.
+#[test]
+fn single_lane_read_matches_the_snapshot() {
+    let core = Core::open_in_memory().unwrap();
+    let st = core.create_lane(Placement::End, PaneKind::Pty, Some("s".into()), None, None).unwrap();
+    let id = st.lanes[0].id.clone();
+    core.add_pane(id.clone(), PaneKind::Web, None, Some("https://x".into())).unwrap();
+
+    let from_snapshot = core.state().unwrap().lanes[0].clone();
+    let direct = core.lane(id).unwrap();
+    assert_eq!(direct, from_snapshot);
+}

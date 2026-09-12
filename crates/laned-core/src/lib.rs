@@ -333,6 +333,39 @@ impl Core {
 
     // ---- focus and viewport ------------------------------------------------
 
+    /// The current revision, without marshalling a snapshot.
+    ///
+    /// Spike M3 measured a 300-lane `state()` at 2.4 ms, 88% of it uniffi
+    /// copying records into Swift. The shell holds the last snapshot and calls
+    /// this first: unchanged revision means there is nothing to re-render and
+    /// the 2.4 ms is not spent.
+    pub fn revision(&self) -> u64 {
+        self.inner.lock().revision
+    }
+
+    /// One lane, for when the shell knows exactly what changed. Costs what a
+    /// single lane costs rather than what the strip costs.
+    pub fn lane(&self, lane_id: String) -> Result<Lane> {
+        let inner = self.inner.lock();
+        inner.ledger.lane(&lane_id)
+    }
+
+    /// Record focus without building a snapshot.
+    ///
+    /// Focus changes on every ⌘-arrow and every click, and it moves exactly two
+    /// rows — `lane.last_focus_at` and one `app_state` key. Neither changes the
+    /// shape of the strip, so the shell already knows how to draw the result.
+    pub fn note_focus(&self, pane_id: String) -> Result<()> {
+        let mut inner = self.inner.lock();
+        let pane = inner.ledger.pane(&pane_id)?;
+        inner.ledger.touch_focus(&pane.lane_id, now_ms())?;
+        inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane_id)?;
+        Self::bump(&mut inner);
+        Ok(())
+    }
+
+    /// [`Core::note_focus`], plus the snapshot. Use it when focus was a side
+    /// effect of something structural, like search-to-scroll.
     pub fn focus_pane(&self, pane_id: String) -> Result<StripState> {
         let mut inner = self.inner.lock();
         let pane = inner.ledger.pane(&pane_id)?;
