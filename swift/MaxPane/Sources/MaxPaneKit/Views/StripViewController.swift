@@ -42,6 +42,10 @@ public final class StripViewController: NSViewController {
     /// The pane whose view currently holds the keyboard, so a snapshot that did
     /// not move focus does not steal it back from whatever the user clicked.
     private var focusedPaneInView: String?
+    /// Swallows horizontal scrolls anywhere over the strip. See `startScrollCapture`.
+    private var scrollMonitor: Any?
+    /// `(lane, width)` while its right edge is being dragged. View-only.
+    private var liveResize: (laneId: String, width: CGFloat)?
     /// Shown when the strip is empty, because a blank window that says nothing
     /// is indistinguishable from a broken one.
     private lazy var emptyState = EmptyStripView()
@@ -101,6 +105,7 @@ public final class StripViewController: NSViewController {
         super.viewDidLoad()
         observer = store.observe { [weak self] state in self?.apply(state) }
         startMemorySampling()
+        startScrollCapture()
         // PRD §8: strip scroll position persists across launches.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -110,6 +115,41 @@ public final class StripViewController: NSViewController {
             // Launch is over: from here on, a new pane loads immediately.
             // Anything still deferred stays deferred until it is scrolled to.
             self.isColdLaunch = false
+        }
+    }
+
+    /// Make a horizontal scroll move the strip, wherever the pointer happens to
+    /// be.
+    ///
+    /// Without this the strip only scrolls when the pointer is over a gap
+    /// between lanes, because a terminal view or a `WKWebView` under the cursor
+    /// eats the event before the enclosing scroll view ever sees it — so the
+    /// app appears to scroll only "in the margins", which is how Scott put it.
+    ///
+    /// The rule is by axis, not by what is underneath: a predominantly sideways
+    /// gesture belongs to the strip, a vertical one belongs to whatever is under
+    /// the pointer. That costs a web page its own horizontal scrolling, which is
+    /// the right trade in an app whose central invariant is that lanes are
+    /// portrait columns and wide content is the exception.
+    private func startScrollCapture() {
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self, let window = self.view.window,
+                  event.window === window,
+                  abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
+            else { return event }
+
+            // Only over the strip — the sidebar scrolls itself.
+            let inStrip = self.view.convert(event.locationInWindow, from: nil)
+            guard self.view.bounds.contains(inStrip) else { return event }
+
+            let clip = self.scrollView.contentView
+            // Trackpads report points; a mouse wheel reports lines.
+            let step = event.hasPreciseScrollingDeltas ? event.scrollingDeltaX : event.scrollingDeltaX * 16
+            let maxX = max(0, self.content.frame.width - clip.bounds.width)
+            let next = min(max(0, clip.bounds.origin.x - step), maxX)
+            clip.setBoundsOrigin(NSPoint(x: next, y: clip.bounds.origin.y))
+            self.scrollView.reflectScrolledClipView(clip)
+            return nil
         }
     }
 
@@ -244,8 +284,21 @@ public final class StripViewController: NSViewController {
         }
         laneView.laneId = lane.id
         laneView.onResize = { [weak self] width, isFinal in
-            guard isFinal, let self else { return }
-            try? self.store.setLaneWidth(lane.id, width)
+            guard let self else { return }
+            if isFinal {
+                self.liveResize = nil
+                try? self.store.setLaneWidth(lane.id, width)
+            } else {
+                // Lay out live. Without this the lane only jumps to its new
+                // width on mouse-up, which reads as the drag not working at all.
+                // Still no ledger write until the drop — §6 wants one commit per
+                // decision, not sixty a second.
+                self.liveResize = (lane.id, CGFloat(width))
+                self.content.layOut(
+                    lanes: self.store.state.lanes,
+                    viewFor: { [weak self] l in self?.laneViews[l.id] },
+                    widthOverride: self.liveResize)
+            }
         }
         laneView.widthBounds = config.widthRange.lowerBound...(config.laneMaxPt * max(lane.span, 1))
         laneView.onHeaderDrag = { [weak self] x, isFinal in
@@ -608,7 +661,10 @@ final class StripContentView: NSView {
     /// Position every materialised lane and size the document view to the whole
     /// strip, including the lanes that have no view right now — otherwise the
     /// scroller would only span what happens to be built.
-    func layOut(lanes: [Lane], viewFor: (Lane) -> LaneView?) {
+    func layOut(
+        lanes: [Lane], viewFor: (Lane) -> LaneView?,
+        widthOverride: (laneId: String, width: CGFloat)? = nil
+    ) {
         var x: CGFloat = 0
         // The clip view's height, not our own: our height is what we are about
         // to set, so reading it here would latch whatever it was last frame —
@@ -616,7 +672,8 @@ final class StripContentView: NSView {
         let height = superview?.bounds.height ?? bounds.height
         guard height > 0 else { return }
         for lane in lanes {
-            let width = CGFloat(lane.widthPt)
+            let width = (widthOverride?.laneId == lane.id ? widthOverride?.width : nil)
+                ?? CGFloat(lane.widthPt)
             if let laneView = viewFor(lane) {
                 laneView.frame = NSRect(x: x, y: 0, width: width, height: height)
             }

@@ -41,9 +41,14 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         super.init(window: window)
 
         let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
-        sidebarItem.minimumThickness = 220
-        sidebarItem.maximumThickness = 380
+        // 260, not 220. A session row carries a title, a state chip, a
+        // throughput reading and an age; at 220 the title — the only part that
+        // tells two sessions apart — is the one that truncates.
+        sidebarItem.minimumThickness = 260
+        sidebarItem.maximumThickness = 420
         sidebarItem.canCollapse = true
+        // Remember where the user drags the divider.
+        split.splitView.autosaveName = "MaxPaneStripSplit"
         split.addSplitViewItem(sidebarItem)
         // The strip with a footer under it. A footer rather than a toolbar
         // because the strip is the interface, and chrome across the top would
@@ -73,6 +78,11 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         // that collapses the window to the sidebar's minimum thickness — a
         // 228×50 sliver. Restore a real size and floor it, after the assignment.
         window.setContentSize(NSSize(width: 1600, height: 1000))
+        // Open the sidebar at a width a session row actually fits in. Only on a
+        // first run — afterwards the autosave above wins.
+        if UserDefaults.standard.object(forKey: "NSSplitView Subview Frames MaxPaneStripSplit") == nil {
+            split.splitView.setPosition(290, ofDividerAt: 0)
+        }
         window.minSize = NSSize(width: 720, height: 400)
         window.center()
 

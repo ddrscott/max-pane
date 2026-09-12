@@ -94,7 +94,7 @@ final class LaneView: NSView {
             resizeHandle.topAnchor.constraint(equalTo: topAnchor),
             resizeHandle.bottomAnchor.constraint(equalTo: bottomAnchor),
             resizeHandle.trailingAnchor.constraint(equalTo: trailingAnchor),
-            resizeHandle.widthAnchor.constraint(equalToConstant: 6),
+            resizeHandle.widthAnchor.constraint(equalToConstant: 10),
         ])
 
         resizeHandle.onDrag = { [weak self] delta, final in
@@ -721,12 +721,18 @@ final class LaneResizeHandle: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        lastX = convert(event.locationInWindow, from: nil).x
+        // Window coordinates, not our own: this view moves as the lane resizes,
+        // so a delta measured in its local space is measured against a moving
+        // origin and the drag fights itself.
+        lastX = event.locationInWindow.x
     }
 
     override func mouseDragged(with event: NSEvent) {
-        let x = convert(event.locationInWindow, from: nil).x
-        onDrag?(Double(x - lastX), false)
+        let x = event.locationInWindow.x
+        let delta = x - lastX
+        lastX = x
+        guard delta != 0 else { return }
+        onDrag?(Double(delta), false)
     }
 
     override func mouseUp(with event: NSEvent) {
