@@ -19,7 +19,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
-            store = try StripStore()
+            // Clamped here rather than trusted: `laneDefaultPt` is a number in a
+            // file a person edits, and the core would clamp it anyway — doing it
+            // on this side keeps the app's own `widthRange` the one that decides
+            // what a lane may be.
+            store = try StripStore(laneDefaultPt: config.clampWidth(config.laneDefaultPt))
         } catch {
             presentFatal("Could not open the ledger", error)
             return

@@ -29,16 +29,21 @@ use std::path::PathBuf;
 /// PRD §8. Both ends of the allowed lane width, in points.
 pub const LANE_MIN_PT: u32 = 420;
 pub const LANE_MAX_PT: u32 = 900;
-/// Width a lane is born with.
+/// Width a lane is born with when no shell has said otherwise.
 ///
 /// 656 because spike M2 measured a 13 pt monospace cell at 8 pt wide: 80
 /// columns — what almost every agent TUI assumes — needs 640 pt of grid plus
 /// 16 pt of lane chrome. A narrower default opens the common case already
 /// clipped, and ADR-0007 means the lane may not resize the PTY to fix it.
 ///
-/// **Must match `Config.laneDefaultPt` in the Swift app**, which is the value
-/// the user can override; a terminal lane is re-sized from its session on the
-/// first inbound `RESIZE` anyway, so this is the width a *web* lane keeps.
+/// This used to carry a "**must match `Config.laneDefaultPt`**" note, and the
+/// two did match — which made `laneDefaultPt` decorative, because `create_lane`
+/// read *this* one. Editing the config file changed nothing about a new lane,
+/// and the day someone edited one constant and not the other the app would have
+/// disagreed with itself in a way no test could see. There is one source of
+/// truth now: the shell states the width once, through
+/// [`Core::set_default_lane_width`], and this is only what a caller that never
+/// says anything — the tests, a future shell mid-boot — gets.
 pub const LANE_DEFAULT_PT: u32 = 656;
 
 const KEY_SCROLL_X: &str = "strip_scroll_x";
@@ -78,6 +83,13 @@ struct Inner {
     history_cache: Option<Vec<history::Candidate>>,
     /// `Some(project_root)` while the user is in a gather view. View-only.
     gather: Option<String>,
+    /// The width a new lane is born with.
+    ///
+    /// Deliberately *not* persisted: the user's config file already persists it,
+    /// and a copy in the ledger would be a second answer to the same question
+    /// that survives the file being edited. The shell states it at launch; until
+    /// it does, [`LANE_DEFAULT_PT`] stands.
+    default_lane_width: u32,
     revision: u64,
     /// Eviction's memory of what it has already done. Not persisted: after a
     /// relaunch the strip is cold and a cooldown would have nothing to protect.
@@ -105,6 +117,7 @@ impl Core {
                 visits_since_prune: 0,
                 history_cache: None,
                 gather: None,
+                default_lane_width: LANE_DEFAULT_PT,
                 revision: 0,
                 hysteresis: eviction::Hysteresis::default(),
             }),
@@ -124,6 +137,7 @@ impl Core {
                 visits_since_prune: 0,
                 history_cache: None,
                 gather: None,
+                default_lane_width: LANE_DEFAULT_PT,
                 revision: 0,
                 hysteresis: eviction::Hysteresis::default(),
             }),
@@ -138,6 +152,21 @@ impl Core {
     }
 
     // ---- creation ----------------------------------------------------------
+
+    /// How wide a lane is born, in points. The shell's config file, arriving.
+    ///
+    /// Call it once at launch, before the first `create_lane`. Clamped to the
+    /// same bounds a resize is, so a config file that says `40` or `4000` gets a
+    /// lane it is still possible to read rather than a lane it is not.
+    ///
+    /// Existing lanes are untouched, deliberately and permanently: a width in
+    /// the ledger is either the one the user dragged or the one the session
+    /// asked for, and re-flowing the whole strip because a default changed would
+    /// throw both away.
+    pub fn set_default_lane_width(&self, width_pt: u32) {
+        let mut inner = self.inner.lock();
+        inner.default_lane_width = width_pt.clamp(LANE_MIN_PT, LANE_MAX_PT);
+    }
 
     /// A new lane holding one pane.
     ///
@@ -167,7 +196,7 @@ impl Core {
         let lane = Lane {
             id: new_id(),
             ordinal,
-            width_pt: LANE_DEFAULT_PT,
+            width_pt: inner.default_lane_width,
             title: None,
             project_root,
             project_source,

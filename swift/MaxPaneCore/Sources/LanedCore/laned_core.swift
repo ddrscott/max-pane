@@ -861,6 +861,20 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func search(query: String, limit: UInt32) throws  -> [SearchHit]
     
     /**
+     * How wide a lane is born, in points. The shell's config file, arriving.
+     *
+     * Call it once at launch, before the first `create_lane`. Clamped to the
+     * same bounds a resize is, so a config file that says `40` or `4000` gets a
+     * lane it is still possible to read rather than a lane it is not.
+     *
+     * Existing lanes are untouched, deliberately and permanently: a width in
+     * the ledger is either the one the user dragged or the one the session
+     * asked for, and re-flowing the whole strip because a default changed would
+     * throw both away.
+     */
+    func setDefaultLaneWidth(widthPt: UInt32) 
+    
+    /**
      * How many lane-widths a lane may occupy (PRD §13 Phase 3).
      *
      * Clamped to 1..=2. §1's invariant is that a lane is a portrait column, and
@@ -1491,6 +1505,27 @@ open func search(query: String, limit: UInt32)throws  -> [SearchHit]  {
         FfiConverterUInt32.lower(limit),uniffiCallStatus
     )
 })
+}
+    
+    /**
+     * How wide a lane is born, in points. The shell's config file, arriving.
+     *
+     * Call it once at launch, before the first `create_lane`. Clamped to the
+     * same bounds a resize is, so a config file that says `40` or `4000` gets a
+     * lane it is still possible to read rather than a lane it is not.
+     *
+     * Existing lanes are untouched, deliberately and permanently: a width in
+     * the ledger is either the one the user dragged or the one the session
+     * asked for, and re-flowing the whole strip because a default changed would
+     * throw both away.
+     */
+open func setDefaultLaneWidth(widthPt: UInt32)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_set_default_lane_width(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(widthPt),uniffiCallStatus
+    )
+}
 }
     
     /**
@@ -3924,6 +3959,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_search() != 36861) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_set_default_lane_width() != 59748) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_set_lane_span() != 29040) {

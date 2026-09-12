@@ -34,8 +34,19 @@ public final class StripStore {
         return dir.appendingPathComponent("ledger.db").path
     }
 
-    public init(ledgerPath: String = StripStore.defaultLedgerPath) throws {
+    /// `laneDefaultPt` is stated once, here, before anything can create a lane.
+    ///
+    /// The core keeps its own `LANE_DEFAULT_PT` for callers that never say — the
+    /// Rust tests, the CLI — but for this app the config file is now the only
+    /// answer. It used to be two answers that happened to agree: `create_lane`
+    /// read the Rust constant, so editing `laneDefaultPt` in
+    /// `~/.config/maxpane/config.json` changed the width of precisely nothing.
+    public init(
+        ledgerPath: String = StripStore.defaultLedgerPath,
+        laneDefaultPt: UInt32? = nil
+    ) throws {
         core = try Core.open(path: ledgerPath)
+        if let laneDefaultPt { core.setDefaultLaneWidth(widthPt: laneDefaultPt) }
         state = try core.state()
     }
 

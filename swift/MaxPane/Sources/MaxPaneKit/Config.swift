@@ -18,7 +18,37 @@ public struct Config: Codable {
     /// 640 pt of grid, plus 16 pt of lane chrome. At 560 the common case opens
     /// already clipped, and per ADR-0007 the lane may not fix that by resizing
     /// the PTY.
+    ///
+    /// This is the number every new lane is born at, and it is uniform on
+    /// purpose: *"pages on a desk are usually uniform."* It reaches the ledger
+    /// through `Core.setDefaultLaneWidth` at launch — until that existed the
+    /// setting was decorative, because `create_lane` read a Rust constant that
+    /// happened to hold the same 656.
     public var laneDefaultPt: UInt32 = 656
+
+    /// The smallest sliver of the next lane the strip will come to rest with,
+    /// in points.
+    ///
+    /// Uniform lane widths have one failure: when a whole number of them
+    /// happens to fill the window, the strip stops flush with a lane boundary
+    /// and there is *nothing* at either edge — no evidence that anything exists
+    /// beyond the screen. Settling a hair off that alignment costs at most this
+    /// many points of the centred lane and buys back the one thing a strip has
+    /// to say: there is more, this way.
+    ///
+    /// 28 because a sliver has to be legible as a *lane*: 1 pt of border plus
+    /// ~3 monospace cells of whatever is inside it. Below about 10 it reads as a
+    /// thick border and proves nothing. `0` turns it off and gives you exactly
+    /// centred snapping again.
+    public var lanePeekPt: UInt32 = 28
+
+    /// The two edge rails, which count the lanes off either end of the screen.
+    ///
+    /// A sliver says *there is more that way*; it cannot say **how much**, and
+    /// at the ends of the strip it cannot appear at all. The rails answer both —
+    /// a number when lanes are hidden, a solid wall when you have reached the
+    /// end. `false` gives the strip the full width and no counters.
+    public var stripEdgeRails: Bool = true
 
     /// PRD §10.2 — lanes off-screen before a web pane is unparented.
     public var releaseDistance: UInt32 = 6
@@ -103,6 +133,8 @@ public struct Config: Codable {
         laneMinPt = read(.laneMinPt, d.laneMinPt)
         laneMaxPt = read(.laneMaxPt, d.laneMaxPt)
         laneDefaultPt = read(.laneDefaultPt, d.laneDefaultPt)
+        lanePeekPt = read(.lanePeekPt, d.lanePeekPt)
+        stripEdgeRails = read(.stripEdgeRails, d.stripEdgeRails)
         releaseDistance = read(.releaseDistance, d.releaseDistance)
         rehydrateDistance = read(.rehydrateDistance, d.rehydrateDistance)
         dataStoreCount = read(.dataStoreCount, d.dataStoreCount)
