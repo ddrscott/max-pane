@@ -124,7 +124,7 @@ pub fn plan(lanes: &[Lane], viewport: &Viewport, memory: &MemoryReport) -> Vec<P
         .max(1) as u64;
     let per_pane = (memory.web_content_rss_bytes / live_web).max(1);
     let overage = memory.web_content_rss_bytes - memory.budget_bytes;
-    let to_evict = ((overage + per_pane - 1) / per_pane) as usize;
+    let to_evict = overage.div_ceil(per_pane) as usize;
 
     for (_, li, pi) in candidates.into_iter().take(to_evict) {
         let pane_id = &lanes[li].panes[pi].id;
@@ -139,10 +139,8 @@ pub fn plan(lanes: &[Lane], viewport: &Viewport, memory: &MemoryReport) -> Vec<P
 fn distance(index: u32, vp: &Viewport) -> u32 {
     if index < vp.first_visible {
         vp.first_visible - index
-    } else if index > vp.last_visible {
-        index - vp.last_visible
     } else {
-        0
+        index.saturating_sub(vp.last_visible)
     }
 }
 

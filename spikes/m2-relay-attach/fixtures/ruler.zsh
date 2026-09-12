@@ -1,15 +1,23 @@
 #!/bin/zsh
 # Full-screen ruler with known column positions, for cell-accurate reflow checks.
-# Row 0: "SIZE <cols>x<rows> gen=<n>"
-# Row 1: ruler — char at column j is ((j+1) % 10) as a digit, except the LAST column is '#'
-# Row 2..r-2: left edge '|' at col 0, right edge '|' at col c-1
-# Row r-1: c copies of '=' with 'E' in the last column
+#   row 0        : "SIZE <cols>x<rows> gen=<n> winch=<w>"
+#   row 1        : column ruler - char at column j is ((j+1) % 10), last column '#'
+#   rows 2..r-2  : '|' at column 0 and at column c-1
+#   row r-1      : '=' repeated, 'E' in the last column
+# Redraw is driven both by SIGWINCH (TRAPWINCH) and by a 100 ms stty poll, so the
+# test does not depend on zsh's signal handling; `winch=` reports which fired.
+emulate -L zsh
 gen=0
+winch=0
+need=1
+last=""
+TRAPWINCH() { winch=$((winch+1)); need=1 }
+
 draw() {
-  local c=$COLUMNS r=$LINES i line
+  local c=$1 r=$2 i line
   gen=$((gen+1))
   printf '\033[H\033[2J'
-  printf 'SIZE %dx%d gen=%d\n' $c $r $gen
+  printf 'SIZE %dx%d gen=%d winch=%d\n' $c $r $gen $winch
   line=""
   for (( i=1; i<c; i++ )); do line+="$(( i % 10 ))"; done
   line+="#"
@@ -24,6 +32,13 @@ draw() {
   printf '%s' "$line"
   printf '\033[1;1H'
 }
-TRAPWINCH() { draw }
-draw
-while true; do read -t 0.2 -k 1 _ 2>/dev/null; done
+
+while true; do
+  size=$(stty size 2>/dev/null)
+  if [[ "$size" != "$last" ]]; then last=$size; need=1; fi
+  if (( need )); then
+    need=0
+    draw ${size##* } ${size%% *}
+  fi
+  sleep 0.1
+done

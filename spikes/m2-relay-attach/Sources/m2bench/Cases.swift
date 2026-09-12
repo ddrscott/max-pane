@@ -268,8 +268,14 @@ func runObserve(_ id: String) throws {
     s.onResize = { c, r in lk.lock(); term.resize(cols: c, rows: r); lk.unlock() }
     s.onReplay = { p, isDelta in lk.lock(); if !isDelta { term.resetToInitialState() }; term.feed(buffer: p[...]); lk.unlock() }
     s.onData = { dd in lk.lock(); term.feed(buffer: dd); lk.unlock() }
+    var captured = [UInt8]()
+    s.onReplay = { p, isDelta in
+        lk.lock(); if !isDelta { term.resetToInitialState() }
+        term.feed(buffer: p[...]); captured.append(contentsOf: p); lk.unlock()
+    }
     let sem = DispatchSemaphore(value: 0); s.onHandshake = { _ in sem.signal() }
-    try s.connect()
+    // READ ONLY: RESUME with a 256 KiB replay clamp. No RESIZE, no DATA, ever.
+    try s.connect(mode: .resume(offset: 0, maxReplayBytes: 262_144))
     _ = sem.wait(timeout: .now() + 15)
     let t = s.timings
     print(String(format: "- handshake %.3f ms; inbound RESIZE says %dx%d; replay wire %d B -> plain %d B (gz=%@); inflate %.3f ms",
@@ -285,6 +291,12 @@ func runObserve(_ id: String) throws {
     let outPath = FileManager.default.currentDirectoryPath + "/out/observed-\(id).txt"
     try? rows.joined(separator: "\n").write(toFile: outPath, atomically: true, encoding: .utf8)
     print("- screen dump: \(outPath)")
+    let binPath = FileManager.default.currentDirectoryPath + "/out/capture-real.bin"
+    lk.lock(); let cap = captured; lk.unlock()
+    try? Data(cap).write(to: URL(fileURLWithPath: binPath))
+    try? "\(s.hostCols)".write(toFile: FileManager.default.currentDirectoryPath + "/out/capture-real.cols",
+                               atomically: true, encoding: .utf8)
+    print("- raw replay bytes (\(cap.count) B) saved for the narrow-lane render test: \(binPath)")
     // scrollback proof (PRD 7.5 wants the last 200 lines)
     let sb = lastLines(term, 200)
     print("- SwiftTerm scrollback: pulled \(sb.count) lines, \(sb.reduce(0) { $0 + $1.count }) chars")

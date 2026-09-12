@@ -108,6 +108,7 @@ final class Spike: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     var baselinePids: Set<Int32> = []
     var snapshots: [MemSnapshot] = []
     var loadState: [Int: String] = [:]     // index -> "ok" | "fail: ..."
+    var loadStateAll: [Int: String] = [:]  // never pruned, for the final report
     var pendingLoads = 0
     var settleCallback: (() -> Void)?
     var report: [String: Any] = [:]
@@ -228,6 +229,7 @@ final class Spike: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         guard let idx = views.firstIndex(of: w) else { return }
         if loadState[idx] != nil { return }
         loadState[idx] = status
+        loadStateAll[idx] = status
         pendingLoads -= 1
         if pendingLoads <= 0, let cb = settleCallback { settleCallback = nil; cb() }
     }
@@ -572,7 +574,47 @@ final class Spike: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         }
         report["latency_summary"] = summary
         report["latency_trials"] = latency
-        finalPhase()
+        evictionPhase()
+    }
+
+    // ---------- eviction ----------
+    // §10.3 evicts by DESTROYING the WKWebView, not merely unparenting it.
+    // Measure how much each step actually reclaims:
+    //   a) unparent-only          (already measured above)
+    //   b) destroy 95 WKWebViews  (this phase)
+    func evictionPhase() {
+        log("eviction test: releasing all but \(PARENTED) WKWebViews (the §10.3 'evict' operation)")
+        let before = MemSnapshot.take("before_evict", baseline: baselinePids)
+        snapshots.append(before)
+        for v in views where v.superview != nil { }
+        var keep: [WKWebView] = []
+        for (i, v) in views.enumerated() {
+            if i < PARENTED { keep.append(v) }
+            else { v.stopLoading(); v.navigationDelegate = nil; v.removeFromSuperview() }
+        }
+        views = keep
+        loadState = loadState.filter { $0.key < PARENTED }
+        for (i, v) in views.enumerated() { v.frame = laneFrame(i); if v.superview == nil { container.addSubview(v) } }
+        log("  released \(before.count("WebContent") ) -> waiting 30s for WebKit to reap content processes")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+            let after = MemSnapshot.take("after_evict_to_\(PARENTED)", baseline: self.baselinePids)
+            self.snapshots.append(after)
+            log("  after evicting to \(PARENTED) views: total footprint "
+                + "\(String(format: "%.0f", Double(after.totalFootprint)/1048576)) MB, "
+                + "RSS \(String(format: "%.0f", Double(after.totalResident)/1048576)) MB, "
+                + "WebContent procs: \(after.count("WebContent")) (was \(before.count("WebContent")))")
+            self.report["eviction"] = [
+                "before_footprint_mb": Double(before.totalFootprint)/1048576.0,
+                "after_footprint_mb": Double(after.totalFootprint)/1048576.0,
+                "before_rss_mb": Double(before.totalResident)/1048576.0,
+                "after_rss_mb": Double(after.totalResident)/1048576.0,
+                "before_webcontent": before.count("WebContent"),
+                "after_webcontent": after.count("WebContent"),
+                "reclaimed_mb_per_view": (Double(before.totalFootprint) - Double(after.totalFootprint))/1048576.0
+                    / Double(max(1, before.count("WebContent") - after.count("WebContent"))),
+            ]
+            self.finalPhase()
+        }
     }
 
     // ---------- finish ----------
@@ -586,9 +628,9 @@ final class Spike: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         report["display_asleep_at_end"] = displayAsleep()
         report["screen_locked_at_end"] = screenLocked()
         report["valid_for_visibility_measurements"] = everVisible && !screenLocked()
-        report["load_state"] = loadState.map { ["index": $0.key, "url": urls[$0.key].absoluteString, "status": $0.value] }
-        report["load_ok"] = loadState.values.filter { $0 == "ok" }.count
-        report["load_failed"] = loadState.values.filter { $0 != "ok" }.count
+        report["load_state"] = loadStateAll.map { ["index": $0.key, "url": urls[$0.key].absoluteString, "status": $0.value] }
+        report["load_ok"] = loadStateAll.values.filter { $0 == "ok" }.count
+        report["load_failed"] = loadStateAll.values.filter { $0 != "ok" }.count
         report["urls"] = urls.map { $0.absoluteString }
 
         // Per-WebContent-process detail from the final snapshot, so the report
