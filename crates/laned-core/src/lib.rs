@@ -28,7 +28,12 @@ use std::path::PathBuf;
 pub const LANE_MIN_PT: u32 = 420;
 pub const LANE_MAX_PT: u32 = 900;
 /// Width a lane is born with.
-pub const LANE_DEFAULT_PT: u32 = 560;
+///
+/// 640 because spike M2 measured a 13 pt monospace cell at 8 pt wide: 80
+/// columns, which is what almost every agent TUI assumes, needs 640 pt. A
+/// narrower default would start the common case horizontally scrolled, and
+/// ADR-0007 means the lane may not resize the PTY to fix it.
+pub const LANE_DEFAULT_PT: u32 = 640;
 
 const KEY_SCROLL_X: &str = "strip_scroll_x";
 const KEY_FOCUSED_PANE: &str = "focused_pane_id";
