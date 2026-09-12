@@ -14,4 +14,9 @@ cleaned up 1 spawned sessions
 | 80x40 | 80x40 | 40x24 | 80x40 | exact | SIZE 80x40 gen=9 winch=8 | none |
 
 verdict: all sizes cell-exact
+
+| metric | n | min | mean | p50 | p95 | p99 | max |
+|---|---|---|---|---|---|---|---|
+| RESIZE sent -> host RESIZE echoed back | 8 | 0.138 | 0.172 | 0.167 | 0.223 | 0.223 | 0.223 |
+| RESIZE sent -> first redraw byte from the app | 8 | 22.095 | 27.946 | 29.333 | 32.208 | 32.208 | 32.208 |
 redundant RESIZE x20 at the size already in effect -> 0 bytes of DATA generated

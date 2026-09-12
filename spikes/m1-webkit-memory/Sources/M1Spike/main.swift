@@ -80,6 +80,24 @@ let INSTRUMENT_JS = """
     M.timer = setInterval(function () { M.tick++; }, 100);
     return 'started';
   };
+  M.frameBody = function () {
+    M.raf++;
+    M.lastRafWall = Date.now();
+    if (M.markT && !M.firstRafAfterMark) { M.firstRafAfterMark = Date.now(); }
+  };
+  M.selfTest = function () {
+    // Prove mark() -> firstRafAfterMark works without depending on WebKit
+    // actually scheduling a frame. Returns ms between mark and the synthetic
+    // frame; restores counters afterwards so the real measurement is clean.
+    var savedRaf = M.raf, savedMark = M.markT, savedFirst = M.firstRafAfterMark;
+    M.markT = 0; M.firstRafAfterMark = 0;
+    M.mark();
+    M.frameBody();
+    var ok = M.firstRafAfterMark > 0 && M.firstRafAfterMark >= M.markT;
+    var delta = M.firstRafAfterMark - M.markT;
+    M.raf = savedRaf; M.markT = savedMark; M.firstRafAfterMark = savedFirst;
+    return JSON.stringify({ ok: ok, delta_ms: delta });
+  };
   M.stop = function () { M.running = false; if (M.timer) clearInterval(M.timer); return 'stopped'; };
   M.mark = function () { M.markT = Date.now(); M.firstRafAfterMark = 0; return M.markT; };
   M.read = function () {
@@ -495,6 +513,16 @@ final class Spike: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     func latencyPhase() {
         log("re-parent latency: \(TRIALS) trials, hot slot 0 (visible)")
+        // Validate the first-frame probe before trusting (or disbelieving) it.
+        views[min(PARENTED, views.count - 1)].evaluateJavaScript("window.__m1.selfTest()", in: nil, in: .defaultClient) { r in
+            if case .success(let v) = r, let s = v as? String {
+                log("  first-frame probe self-test: \(s)  (proves mark()->firstRaf plumbing; a later n=0 therefore means WebKit scheduled no frames)")
+                self.report["first_frame_probe_selftest"] = s
+            } else {
+                log("  first-frame probe self-test FAILED to evaluate")
+                self.report["first_frame_probe_selftest"] = "eval-failed"
+            }
+        }
         if link == nil {
             link = container.displayLink(target: self, selector: #selector(onDisplayLink(_:)))
             link?.add(to: .main, forMode: .common)

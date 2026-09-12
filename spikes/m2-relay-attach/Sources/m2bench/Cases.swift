@@ -58,18 +58,26 @@ func runResize() throws {
     let lock = NSLock()
     let s = RelaySession(id: id)
     var hostSize = (0, 0)
+    var tSent = 0.0, tEcho = 0.0, tFirstByte = 0.0
     s.onResize = { c, r in
-        lock.lock(); term.resize(cols: c, rows: r); hostSize = (c, r); lock.unlock()
+        lock.lock(); term.resize(cols: c, rows: r); hostSize = (c, r)
+        if tSent > 0 && tEcho == 0 { tEcho = now() }
+        lock.unlock()
     }
     s.onReplay = { p, isDelta in
         lock.lock(); if !isDelta { term.resetToInitialState() }; term.feed(buffer: p[...]); lock.unlock()
     }
-    s.onData = { d in lock.lock(); term.feed(buffer: d); lock.unlock() }
+    s.onData = { d in
+        lock.lock(); term.feed(buffer: d)
+        if tSent > 0 && tFirstByte == 0 { tFirstByte = now() }
+        lock.unlock()
+    }
     let sem = DispatchSemaphore(value: 0); s.onHandshake = { _ in sem.signal() }
     try s.connect()
     _ = sem.wait(timeout: .now() + 5)
     usleep(500_000)
 
+    var echoMs = [Double](), redrawMs = [Double]()
     print("| target | host RESIZE echo | session JSON cols x rows | SwiftTerm grid | ruler line | app-reported SIZE | corruption |")
     print("|---|---|---|---|---|---|---|")
 
@@ -77,6 +85,7 @@ func runResize() throws {
     let targets = [(80, 40), (100, 50), (64, 50), (50, 50), (44, 30), (40, 24), (92, 60), (57, 45), (80, 40)]
     var allOK = true
     for (c, r) in targets {
+        lock.lock(); tEcho = 0; tFirstByte = 0; tSent = now(); lock.unlock()
         s.sendResize(cols: c, rows: r)
         let ok = waitUntil(4.0) {
             lock.lock(); defer { lock.unlock() }
@@ -105,11 +114,18 @@ func runResize() throws {
         if bottomOK { for i in 0..<(c - 1) where term.getCharacter(col: i, row: r - 1) != "=" { bottomOK = false; break } }
         lock.unlock()
         let meta = RelaySessionMeta.read(id: id)
+        lock.lock()
+        if tEcho > 0 { echoMs.append((tEcho - tSent) * 1000) }
+        if tFirstByte > 0 { redrawMs.append((tFirstByte - tSent) * 1000) }
+        lock.unlock()
         let corrupt = (rulerOK && bottomOK) ? "none" : "RULER@\(badAt) bottom=\(bottomOK)"
         if !(rulerOK && bottomOK && ok) { allOK = false }
         print("| \(c)x\(r) | \(hostSize.0)x\(hostSize.1) | \(meta?.cols ?? -1)x\(meta?.rows ?? -1) | \(grid.cols)x\(grid.rows) | \(rulerOK ? "exact" : "MISMATCH") | \(reported) | \(corrupt) |")
     }
     print("\nverdict: \(allOK ? "all sizes cell-exact" : "MISMATCH FOUND")")
+    print("\n" + Stats.header)
+    print(Stats("RESIZE sent -> host RESIZE echoed back", echoMs).row)
+    print(Stats("RESIZE sent -> first redraw byte from the app", redrawMs).row)
 
     // redundant resize is dropped by the host (main.rs:1913-1916) -> no redraw traffic
     let before = s.dataBytes
@@ -159,10 +175,21 @@ func runConflict() throws {
         let avg = totals.isEmpty ? 0 : totals.reduce(0, +) / totals.count
         print("\nmean redraw traffic forced on every other attached client per flip: **\(avg) bytes**")
         let meta = RelaySessionMeta.read(id: id)
-        print("PTY winsize after the fight: \(meta?.cols ?? -1)x\(meta?.rows ?? -1) — whoever wrote last owns it for everyone")
+        print("live PTY winsize after the fight (last inbound RESIZE broadcast): **\(c.hostCols)x\(c.hostRows)** — the phone wrote last, so it owns the PTY for everyone")
+        print("session JSON still says \(meta?.cols ?? -1)x\(meta?.rows ?? -1) — the metadata flush is on a 5 s timer, so NEVER read live size from the JSON")
+        print("client A (the MaxPane lane) asked for 50x50 and is now being fed a \(a.hostCols)-column screen it has \(a.hostCols > 50 ? "no room for" : "room for")")
 
-        // What the loser sees: client A still believes 50x50 but the PTY is 100x30.
-        print("client A asked for 50x50; the PTY ended at \(meta?.cols ?? -1)x\(meta?.rows ?? -1); A's own last inbound RESIZE was \(a.hostCols)x\(a.hostRows)")
+        // Mitigation: a client that attaches and never sends RESIZE.
+        let d = try attachAndWait(id)
+        var dSizes = [String]()
+        d.onResize = { cc, rr in dSizes.append("\(cc)x\(rr)") }
+        let dBefore = d.dataBytes
+        b.sendResize(cols: 72, rows: 36)
+        usleep(900_000)
+        b.sendResize(cols: 100, rows: 30)
+        usleep(900_000)
+        print("mitigation check — a client that never sends RESIZE: learned host size \(dSizes) purely from inbound RESIZE frames, received \(d.dataBytes - dBefore) B of redraw, and caused 0 SIGWINCHs itself")
+        d.close()
         a.close(); b.close(); c.close()
         RelaySpawn.kill(id: id); spawned.removeAll { $0 == id }
         usleep(300_000)
