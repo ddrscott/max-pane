@@ -43,7 +43,7 @@ surfaced rather than quietly reinterpreted.
 | §10.2: unparenting is how memory stays down | Unparenting reclaims 3.5 MB; eviction reclaims 24.7–90.8 MB. Unparenting is a CPU strategy | [ADR-0003](decisions/0003-website-data-store-sharding.md) |
 | §10.1: 150 lanes (~130 web) "before eviction engages" on a 32 GB Mac | 130 real web panes ≈ 11.34 GiB ≈ 36% of 32 GB — above the hard mark. Eviction will be engaged at that target | [ADR-0003](decisions/0003-website-data-store-sharding.md) |
 | §7.3: poll foreground cwd with `proc_pidinfo` every 5 s | RelayTTY's pty-host already does exactly this, and does not strip OSC 7 from the stream. Observe instead of duplicating | [ADR-0005](decisions/0005-cwd-for-relay-sessions.md) |
-| §11: "resize → propagate to Relay" | RelayTTY's PTY resize is global last-writer-wins. A narrow lane propagating its size would reshape the PTY for the phone client too | ADR-0007 *(pending M2)* |
+| §11: "resize → propagate to Relay" | Measured: every size flip forces a full TUI redraw on every other attached client — 6 671 bytes for `htop` — and the last writer owns the PTY for everyone | [ADR-0007](decisions/0007-terminal-panes-never-resize-the-pty.md) |
 | §12 M4: "scroll at 120 Hz" | Not verifiable on this machine — the panel is 60 Hz, and the built-in display reported 120 but delivered exactly 16.667 ms | [ADR-0004](decisions/0004-strip-view-strategy.md) |
 
 None of these were reinterpreted silently. Each has an ADR saying what was built

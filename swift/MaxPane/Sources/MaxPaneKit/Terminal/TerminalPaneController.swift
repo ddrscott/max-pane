@@ -33,7 +33,13 @@ protocol RelayAttachment: AnyObject {
 /// that asserted its own size would reshape the PTY for every other client and
 /// force a full TUI redraw on each flip. This pane therefore **never sends
 /// RESIZE**: it takes the host's size from the inbound frame and fits the
-/// content inside the column. See the resize ADR.
+/// content inside the column.
+///
+/// Spike M2 measured both sides of that: flipping between a 50-column lane and a
+/// 100-column phone forced 6 671 bytes of redraw on every other attached client
+/// per flip for `htop`, while a client that never sends RESIZE learned the host
+/// size from inbound frames alone and caused zero `SIGWINCH`s.
+/// [ADR-0007](../../../../docs/decisions/0007-terminal-panes-never-resize-the-pty.md).
 ///
 /// pty panes are never unparented and never evicted (PRD §10.3): SwiftTerm is
 /// cheap, and the attachment is the thing holding the session's continuity.

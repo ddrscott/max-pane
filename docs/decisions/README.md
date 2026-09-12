@@ -11,6 +11,12 @@ implemented (PRD §0.7).
 | [0004](0004-strip-view-strategy.md) | Virtualized strip (`NSCollectionView`) vs. `NSScrollView` with manual recycling | Accepted |
 | [0005](0005-cwd-for-relay-sessions.md) | How cwd is obtained for Relay sessions | Accepted |
 | [0006](0006-placeholder-snapshots.md) | Snapshot format and resolution for placeholders | Accepted |
+| [0007](0007-terminal-panes-never-resize-the-pty.md) | Terminal panes never resize the PTY (**amends PRD §11**) | Accepted |
 
 Each ADR states the decision, what evidence decided it (usually a spike, by
 number), what was rejected and why, and what would make us revisit.
+
+ADR-0007 is not one of §14's open decisions. It records a PRD requirement that
+turned out to contradict the system it depends on, surfaced per §0.6 rather than
+quietly reinterpreted. [`docs/acceptance.md`](../acceptance.md) tabulates every
+such conflict.
