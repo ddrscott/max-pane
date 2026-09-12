@@ -60,6 +60,8 @@ final class TerminalPaneController: NSObject, PaneController {
     /// Ghostty's side of the pipe: bytes in from Relay, bytes out from the
     /// keyboard, and a resize whenever the view's grid changes.
     private var session: InMemoryTerminalSession!
+    /// Everything leaving this pane, in one ordered queue. See `TerminalOutbound`.
+    private var outbound: TerminalOutbound!
     private var attachment: RelayAttachment?
     private var pane: Pane
     private var scrollbackDebounce: DispatchWorkItem?
@@ -101,7 +103,17 @@ final class TerminalPaneController: NSObject, PaneController {
             TerminalDebugLog.sink = { message in
                 FileHandle.standardError.write(Data((message + "\n").utf8))
             }
-            TerminalDebugLog.enable([.lifecycle, .metrics])
+            // `.input` traces every byte crossing the surface boundary, in
+            // both directions. It is how the bracketed-paste framing was
+            // pinned down — `host <- terminal … \e[200~` is the whole bug in
+            // one line — and it is the first thing to turn on for anything
+            // about keys or paste. Behind its own flag rather than MAXPANE_DEBUG
+            // because it prints what the user typed, passwords included.
+            var categories: TerminalDebugCategory = [.lifecycle, .metrics]
+            if ProcessInfo.processInfo.environment["MAXPANE_DEBUG_INPUT"] != nil {
+                categories.insert(.input)
+            }
+            TerminalDebugLog.enable(categories)
         }
 
         container.wantsLayer = true
@@ -120,11 +132,20 @@ final class TerminalPaneController: NSObject, PaneController {
             self?.applyZoom()
         }
         terminal.onCommandClick = { [weak self] point in self?.openToken(at: point) }
+        container.onPaste = { [weak self] in self?.pasteFromClipboard() }
+
+        let outbound = TerminalOutbound { [weak self] bytes in
+            self?.attachment?.send(bytes[...])
+        }
+        self.outbound = outbound
 
         session = InMemoryTerminalSession(
-            write: { [weak self] data in
-                // Keyboard and paste, on their way to the PTY.
-                Task { @MainActor in self?.attachment?.send(ArraySlice(data)) }
+            write: { [outbound] data in
+                // Keyboard, mouse reports and device replies, on their way to
+                // the PTY. Queued rather than sent: this callback arrives on
+                // whichever thread Ghostty was parsing on, and the order it
+                // arrives in is the only order the far end can be told about.
+                outbound.enqueue(data)
             },
             resize: { [weak self] viewport in
                 Task { @MainActor in
@@ -231,8 +252,31 @@ final class TerminalPaneController: NSObject, PaneController {
         applyPendingFocus()
     }
 
+    /// Take the keyboard if it is owed to this pane.
+    ///
+    /// Two callers, and the second is the one that was missing. A view that
+    /// leaves the view hierarchy stops being first responder — AppKit hands
+    /// that back to the window — and the strip reparents pane views as a
+    /// matter of course: a new lane materialising, a lane view recycled on
+    /// scroll, a split reconciling. `takeFocus` used to clear its flag on the
+    /// first success, so a pane focused and *then* reparented came back with
+    /// the orange border, a live cursor, and no keyboard at all. Every
+    /// keystroke and every ⌘V went to the window and stopped there, which is
+    /// exactly the "freshly created lane where paste does nothing" report.
+    ///
+    /// Re-asserting is safe because of the two guards: the keyboard has to be
+    /// unclaimed — after a reparent the window holds it precisely because
+    /// nothing else does — and the ledger, not a local flag, has to say this
+    /// pane is the focused one. A palette, a search field or the pane the user
+    /// has since moved to keeps what it has.
     private func applyPendingFocus() {
-        guard wantsFocus, let window = container.window else { return }
+        guard let window = container.window else { return }
+        let unclaimed = window.firstResponder === window
+        guard wantsFocus || (unclaimed && store.state.focusedPaneId == paneId) else { return }
+        guard window.firstResponder !== terminal else {
+            wantsFocus = false
+            return
+        }
         if window.makeFirstResponder(terminal) { wantsFocus = false }
     }
 
@@ -240,6 +284,26 @@ final class TerminalPaneController: NSObject, PaneController {
         scrollbackDebounce?.cancel()
         attachment?.disconnect()
         attachment = nil
+    }
+
+    // MARK: - clipboard
+
+    /// ⌘V, arriving from the Edit menu by way of the pane's container view.
+    ///
+    /// Deliberately not Ghostty's `paste:`. That one asks the local emulator to
+    /// paste, and the local emulator decides the framing from what it believes
+    /// the far end's modes to be — a belief that is a guess about a program on
+    /// the other end of a socket. `TerminalPaste` makes the framing something
+    /// this app knows rather than something it infers.
+    ///
+    /// The bytes go through the session, not straight at the attachment, so a
+    /// paste and the keystrokes on either side of it are one stream in one
+    /// order rather than two racing ones.
+    func pasteFromClipboard() {
+        guard let text = TerminalPaste.clipboardText() else { return }
+        let bytes = TerminalPaste.bytes(for: text)
+        guard !bytes.isEmpty else { return }
+        session.sendInput(Data(bytes))
     }
 
     // pty panes are exempt from all four of these (PRD §10.3). The policy in
@@ -550,6 +614,7 @@ final class ReconnectingBanner: NSView {
 final class TerminalPaneContainer: NSView {
     var onLayout: (() -> Void)?
     var onAttach: (() -> Void)?
+    var onPaste: (() -> Void)?
 
     override func layout() {
         super.layout()
@@ -560,6 +625,19 @@ final class TerminalPaneContainer: NSView {
         super.viewDidMoveToWindow()
         if window != nil { onAttach?() }
     }
+}
+
+/// The pane's paste, answered by the container rather than by the terminal.
+///
+/// The terminal view is Ghostty's, and a subclass in this module cannot
+/// override a method the framework did not declare `open` — nor should it want
+/// to, since `paste:` is the emulator path the pane deliberately does not take.
+/// The container is the terminal's `nextResponder`, so the Edit menu's
+/// nil-targeted send arrives here the moment the terminal declines it, and
+/// arrives nowhere at all when a web pane has the keyboard — which is how ⌘V
+/// still reaches WebKit untouched.
+extension TerminalPaneContainer: TerminalPasteTarget {
+    func pasteIntoTerminalPane(_ sender: Any?) { onPaste?() }
 }
 
 

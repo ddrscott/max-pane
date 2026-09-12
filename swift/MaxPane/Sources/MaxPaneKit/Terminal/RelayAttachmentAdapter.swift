@@ -25,6 +25,13 @@ final class RelayAttachmentAdapter: RelayAttachment {
     private var wantsConnection = false
     /// Byte offset to resume from, so a reconnect replays only what was missed.
     private var lastOffset: Double = 0
+    /// True from the SYNC that completes the handshake until the socket goes.
+    ///
+    /// Not `RelaySession.handshakeDone`: that is written on the session's own
+    /// queue, and this is read on the main actor on the keystroke path.
+    private var isAttached = false
+    /// What the user typed or pasted at a pane whose socket was not up yet.
+    private var pending = PendingInput()
 
     /// PRD §11: "retry with backoff".
     private static let minimumDelay: TimeInterval = 0.5
@@ -45,12 +52,32 @@ final class RelayAttachmentAdapter: RelayAttachment {
 
     func disconnect() {
         wantsConnection = false
+        isAttached = false
+        pending.clear()
         session?.close()
         session = nil
     }
 
+    /// Bytes for the PTY.
+    ///
+    /// A pane is live to the user before its socket is: `maxpane run` focuses
+    /// a new lane the moment the ledger has it, which is one or more run loops
+    /// — and, if Relay is still starting, several backoff rounds — before the
+    /// handshake lands. Every reconnect reopens the same window.
+    ///
+    /// This used to be `session?.sendInput(...)`. That `?` discards a paste
+    /// with no trace and no way to tell from the outside: the pane is drawn,
+    /// the cursor blinks, and the bytes are gone. Holding them instead costs a
+    /// few kilobytes, and `PendingInput` carries the rules that keep held
+    /// input from turning into a surprise later.
     func send(_ bytes: ArraySlice<UInt8>) {
-        session?.sendInput(Array(bytes))
+        guard let session, isAttached else {
+            if !pending.hold(bytes) {
+                Log.warn("\(sessionId): dropped input buffered while disconnected — over \(PendingInput.limit)B")
+            }
+            return
+        }
+        session.sendInput(Array(bytes))
     }
 
     /// ADR-0007 §5. Reached only from the user's "claim this session" command,
@@ -93,14 +120,20 @@ final class RelayAttachmentAdapter: RelayAttachment {
         session.onExit = { [weak self] code in
             Task { @MainActor in
                 self?.onExit?(code)
-                // An exited session is gone for good; do not reconnect to it.
+                // An exited session is gone for good; do not reconnect to it,
+                // and do not keep input for a PTY that will never read it.
                 self?.wantsConnection = false
+                self?.pending.clear()
             }
         }
         session.onHandshake = { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 self.reconnectDelay = Self.minimumDelay
+                self.isAttached = true
+                // Before the banner clears: what the user typed at this pane
+                // goes first, ahead of anything they type once it looks live.
+                self.flushPendingInput()
                 self.onConnectionChange?(true)
             }
         }
@@ -132,8 +165,20 @@ final class RelayAttachmentAdapter: RelayAttachment {
         }
     }
 
+    /// Send what was held while the socket was down, or decide against it.
+    private func flushPendingInput() {
+        guard let session, !pending.isEmpty else { return }
+        guard let bytes = pending.take() else {
+            Log.warn("\(sessionId): dropped input buffered more than \(Int(PendingInput.maxAge))s ago")
+            return
+        }
+        Log.debug("\(sessionId): flushed \(bytes.count)B of input held while disconnected")
+        session.sendInput(bytes)
+    }
+
     private func handleClosed() {
         session = nil
+        isAttached = false
         guard wantsConnection else { return }
         onConnectionChange?(false)
         scheduleReconnect()

@@ -67,16 +67,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // `target = nil` is the point — each item walks the responder chain to
         // whatever is focused, so the same ⌘C works in a terminal lane, a web
         // pane and the search field without any of them knowing about this menu.
+        //
+        // Paste is the exception, and is targeted here: a terminal pane needs
+        // its own paste rather than the emulator's. `pasteFromEditMenu(_:)`
+        // says why, and still ends at `paste:` for every other kind of pane.
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: "Edit")
         for (title, selector, key) in [
             ("Cut", #selector(NSText.cut(_:)), "x"),
             ("Copy", #selector(NSText.copy(_:)), "c"),
-            ("Paste", #selector(NSText.paste(_:)), "v"),
+            ("Paste", #selector(AppDelegate.pasteFromEditMenu(_:)), "v"),
             ("Select All", #selector(NSText.selectAll(_:)), "a"),
         ] as [(String, Selector, String)] {
             let item = NSMenuItem(title: title, action: selector, keyEquivalent: key)
-            item.target = nil
+            item.target = selector == #selector(AppDelegate.pasteFromEditMenu(_:)) ? self : nil
             editMenu.addItem(item)
         }
         editItem.submenu = editMenu
@@ -105,6 +109,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for section in main.items.dropFirst() {
             section.submenu?.delegate = self
         }
+    }
+
+    /// ⌘V, offered to a terminal pane first and to everything else after.
+    ///
+    /// The two sends are the whole of it. `pasteIntoTerminalPane:` is answered
+    /// only by a terminal pane's container, so it finds one when a terminal has
+    /// the keyboard and nothing at all otherwise — at which point `paste:`
+    /// takes over and reaches WKWebView, a search field, or whatever else is
+    /// focused, exactly as it did before this existed.
+    ///
+    /// The terminal has to be asked separately because its own `paste:` frames
+    /// the clipboard from the local emulator's belief about a program at the
+    /// far end of a socket. See `TerminalPaste`.
+    @objc private func pasteFromEditMenu(_ sender: Any?) {
+        let toTerminal = #selector(TerminalPasteTarget.pasteIntoTerminalPane(_:))
+        if NSApp.sendAction(toTerminal, to: nil, from: sender) { return }
+        NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: sender)
     }
 
     @objc private func runCommand(_ sender: NSMenuItem) {
