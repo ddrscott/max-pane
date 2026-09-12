@@ -1,0 +1,1681 @@
+{
+  "display_asleep_at_end" : false,
+  "eviction" : {
+    "after_footprint_mb" : 591.82307434082031,
+    "after_rss_mb" : 757.6875,
+    "after_webcontent" : 6,
+    "before_footprint_mb" : 9215.3279418945312,
+    "before_rss_mb" : 5079.390625,
+    "before_webcontent" : 101,
+    "reclaimed_mb_per_view" : 90.773735447933802
+  },
+  "final_webcontent_footprints_mb" : [
+    20.328857421875,
+    29.500709533691406,
+    40.594528198242188,
+    94.391403198242188,
+    98.157119750976562,
+    115.76674652099609
+  ],
+  "first_frame_probe_selftest" : "{\"ok\":true,\"delta_ms\":0}",
+  "idle_quiescent" : {
+    "max_pct_one_core" : 0.2616627916393986,
+    "mean_pct_one_core" : 0.13430739147014312,
+    "min_pct_one_core" : 0.089012460713865704,
+    "per_window_pct" : [
+      0.2616627916393986,
+      0.1154737599157567,
+      0.13190460903398959,
+      0.13187682726464842,
+      0.13414619496160887,
+      0.093451021252539249,
+      0.12228386467789364,
+      0.11859819405608263,
+      0.099301067506762958,
+      0.089012460713865704,
+      0.19681540541507378,
+      0.11716250120409699
+    ],
+    "window_secs" : 5,
+    "windows" : 12
+  },
+  "idle_with_animating_pages" : {
+    "max_pct_one_core" : 0.53704914717087227,
+    "mean_pct_one_core" : 0.17762883250963898,
+    "min_pct_one_core" : 0.07844907914938222,
+    "per_window_pct" : [
+      0.11880221281023971,
+      0.13727657890268577,
+      0.12892049899648292,
+      0.14185950039640782,
+      0.21390202601636282,
+      0.53704914717087227,
+      0.15162074255848429,
+      0.14852235168427577,
+      0.07844907914938222,
+      0.2198341909074083,
+      0.17235900610398572,
+      0.082950655419079575
+    ],
+    "window_secs" : 5,
+    "windows" : 12
+  },
+  "latency_summary" : {
+    "addsubview_return_ms" : {
+      "max" : 1.6634584171697497,
+      "mean" : 1.1126450076699257,
+      "median" : 1.1138750705868006,
+      "min" : 0.5442500114440918,
+      "n" : 25,
+      "p95" : 1.6127084381878376
+    },
+    "catransaction_commit_ms" : {
+      "max" : 1.8363334238529205,
+      "mean" : 1.248046662658453,
+      "median" : 1.253125024959445,
+      "min" : 0.59229170437902212,
+      "n" : 25,
+      "p95" : 1.8026250181719661
+    },
+    "displaylink_ms" : {
+      "max" : 15.395958325825632,
+      "mean" : 7.784939999692142,
+      "median" : 8.3013332914561033,
+      "min" : 1.0146250715479255,
+      "n" : 25,
+      "p95" : 15.149083221331239
+    },
+    "first_web_frame_ms" : {
+      "n" : 0
+    }
+  },
+  "latency_trials" : [
+    {
+      "addsubview_return_ms" : 0.81133341882377863,
+      "catransaction_commit_ms" : 0.92037499416619539,
+      "displaylink_ms" : 2.2297917166724801,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 5,
+      "outgoing_view" : 0,
+      "trial" : 0
+    },
+    {
+      "addsubview_return_ms" : 1.0470834095031023,
+      "catransaction_commit_ms" : 1.2321249814704061,
+      "displaylink_ms" : 1.1846666457131505,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 6,
+      "outgoing_view" : 5,
+      "trial" : 1
+    },
+    {
+      "addsubview_return_ms" : 1.1759999906644225,
+      "catransaction_commit_ms" : 1.3151249149814248,
+      "displaylink_ms" : 12.385291629470885,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 7,
+      "outgoing_view" : 6,
+      "trial" : 2
+    },
+    {
+      "addsubview_return_ms" : 0.5442500114440918,
+      "catransaction_commit_ms" : 0.59229170437902212,
+      "displaylink_ms" : 2.856541657820344,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 8,
+      "outgoing_view" : 7,
+      "trial" : 3
+    },
+    {
+      "addsubview_return_ms" : 1.2222916120663285,
+      "catransaction_commit_ms" : 1.3460833579301834,
+      "displaylink_ms" : 12.101624975912273,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 9,
+      "outgoing_view" : 8,
+      "trial" : 4
+    },
+    {
+      "addsubview_return_ms" : 1.6127084381878376,
+      "catransaction_commit_ms" : 1.8363334238529205,
+      "displaylink_ms" : 1.7576667014509439,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 10,
+      "outgoing_view" : 9,
+      "trial" : 5
+    },
+    {
+      "addsubview_return_ms" : 0.92862499877810478,
+      "catransaction_commit_ms" : 1.0222499258816242,
+      "displaylink_ms" : 12.279958231374621,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 11,
+      "outgoing_view" : 10,
+      "trial" : 6
+    },
+    {
+      "addsubview_return_ms" : 1.1049166787415743,
+      "catransaction_commit_ms" : 1.253125024959445,
+      "displaylink_ms" : 2.206583390943706,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 12,
+      "outgoing_view" : 11,
+      "trial" : 7
+    },
+    {
+      "addsubview_return_ms" : 1.0695416713133454,
+      "catransaction_commit_ms" : 1.2800416443496943,
+      "displaylink_ms" : 10.296208318322897,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 13,
+      "outgoing_view" : 12,
+      "trial" : 8
+    },
+    {
+      "addsubview_return_ms" : 1.2847499456256628,
+      "catransaction_commit_ms" : 1.4741666382178664,
+      "displaylink_ms" : 12.280916678719223,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 14,
+      "outgoing_view" : 13,
+      "trial" : 9
+    },
+    {
+      "addsubview_return_ms" : 0.91795832850039005,
+      "catransaction_commit_ms" : 1.0098749771714211,
+      "displaylink_ms" : 9.289999958127737,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 15,
+      "outgoing_view" : 14,
+      "trial" : 10
+    },
+    {
+      "addsubview_return_ms" : 0.92566665261983871,
+      "catransaction_commit_ms" : 1.0433749994263053,
+      "displaylink_ms" : 4.7441666247323155,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 16,
+      "outgoing_view" : 15,
+      "trial" : 11
+    },
+    {
+      "addsubview_return_ms" : 0.88649999815970659,
+      "catransaction_commit_ms" : 1.0526666883379221,
+      "displaylink_ms" : 1.0146250715479255,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 17,
+      "outgoing_view" : 16,
+      "trial" : 12
+    },
+    {
+      "addsubview_return_ms" : 0.89191668666899204,
+      "catransaction_commit_ms" : 1.0216250084340572,
+      "displaylink_ms" : 10.616624960675836,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 18,
+      "outgoing_view" : 17,
+      "trial" : 13
+    },
+    {
+      "addsubview_return_ms" : 1.1822084197774529,
+      "catransaction_commit_ms" : 1.3122500386089087,
+      "displaylink_ms" : 13.193791732192039,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 19,
+      "outgoing_view" : 18,
+      "trial" : 14
+    },
+    {
+      "addsubview_return_ms" : 1.2867917539551854,
+      "catransaction_commit_ms" : 1.3879584148526192,
+      "displaylink_ms" : 5.5334584321826696,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 20,
+      "outgoing_view" : 19,
+      "trial" : 15
+    },
+    {
+      "addsubview_return_ms" : 0.92383322771638632,
+      "catransaction_commit_ms" : 1.0347082279622555,
+      "displaylink_ms" : 8.043374982662499,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 21,
+      "outgoing_view" : 20,
+      "trial" : 16
+    },
+    {
+      "addsubview_return_ms" : 1.6634584171697497,
+      "catransaction_commit_ms" : 1.8026250181719661,
+      "displaylink_ms" : 4.8543333541601896,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 22,
+      "outgoing_view" : 21,
+      "trial" : 17
+    },
+    {
+      "addsubview_return_ms" : 1.2263749958947301,
+      "catransaction_commit_ms" : 1.4195416588336229,
+      "displaylink_ms" : 15.395958325825632,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 23,
+      "outgoing_view" : 22,
+      "trial" : 18
+    },
+    {
+      "addsubview_return_ms" : 1.1138750705868006,
+      "catransaction_commit_ms" : 1.2173333670943975,
+      "displaylink_ms" : 3.2155000371858478,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 24,
+      "outgoing_view" : 23,
+      "trial" : 19
+    },
+    {
+      "addsubview_return_ms" : 1.1219165753573179,
+      "catransaction_commit_ms" : 1.2326249852776527,
+      "displaylink_ms" : 7.8114999923855066,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 25,
+      "outgoing_view" : 24,
+      "trial" : 20
+    },
+    {
+      "addsubview_return_ms" : 0.91904157306998968,
+      "catransaction_commit_ms" : 1.0406249202787876,
+      "displaylink_ms" : 8.3013332914561033,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 26,
+      "outgoing_view" : 25,
+      "trial" : 21
+    },
+    {
+      "addsubview_return_ms" : 1.4342082431539893,
+      "catransaction_commit_ms" : 1.5952499816194177,
+      "displaylink_ms" : 15.149083221331239,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 27,
+      "outgoing_view" : 26,
+      "trial" : 22
+    },
+    {
+      "addsubview_return_ms" : 1.1570834321901202,
+      "catransaction_commit_ms" : 1.2724583502858877,
+      "displaylink_ms" : 9.1369167203083634,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 28,
+      "outgoing_view" : 27,
+      "trial" : 23
+    },
+    {
+      "addsubview_return_ms" : 1.3637916417792439,
+      "catransaction_commit_ms" : 1.4863333199173212,
+      "displaylink_ms" : 8.7435833411291242,
+      "first_web_frame_ms" : -1,
+      "incoming_view" : 29,
+      "outgoing_view" : 28,
+      "trial" : 24
+    }
+  ],
+  "load_failed" : 1,
+  "load_ok" : 98,
+  "load_state" : [
+    {
+      "index" : 71,
+      "status" : "ok",
+      "url" : "https:\/\/developer.mozilla.org\/en-US\/docs\/Web\/API\/IntersectionObserver"
+    },
+    {
+      "index" : 30,
+      "status" : "ok",
+      "url" : "https:\/\/developers.cloudflare.com\/workers\/"
+    },
+    {
+      "index" : 4,
+      "status" : "ok",
+      "url" : "https:\/\/doc.rust-lang.org\/book\/ch04-01-what-is-ownership.html"
+    },
+    {
+      "index" : 88,
+      "status" : "ok",
+      "url" : "https:\/\/cloud.google.com\/bigquery\/docs\/reference\/standard-sql\/query-syntax"
+    },
+    {
+      "index" : 34,
+      "status" : "ok",
+      "url" : "https:\/\/nodejs.org\/api\/fs.html"
+    },
+    {
+      "index" : 83,
+      "status" : "ok",
+      "url" : "https:\/\/www.sqlite.org\/fts5.html"
+    },
+    {
+      "index" : 38,
+      "status" : "ok",
+      "url" : "https:\/\/www.rfc-editor.org\/rfc\/rfc9110.html"
+    },
+    {
+      "index" : 51,
+      "status" : "ok",
+      "url" : "https:\/\/github.com\/ggerganov\/llama.cpp"
+    },
+    {
+      "index" : 69,
+      "status" : "ok",
+      "url" : "https:\/\/github.com\/git\/git"
+    },
+    {
+      "index" : 60,
+      "status" : "ok",
+      "url" : "https:\/\/go.dev\/ref\/spec"
+    },
+    {
+      "index" : 8,
+      "status" : "ok",
+      "url" : "https:\/\/github.com\/rust-lang\/rust"
+    },
+    {
+      "index" : 54,
+      "status" : "ok",
+      "url" : "https:\/\/numpy.org\/doc\/stable\/reference\/generated\/numpy.einsum.html"
+    },
+    {
+      "index" : 49,
+      "status" : "ok",
+      "url" : "https:\/\/serverfault.com\/"
+    },
+    {
+      "index" : 92,
+      "status" : "ok",
+      "url" : "https:\/\/airflow.apache.org\/docs\/apache-airflow\/stable\/index.html"
+    },
+    {
+      "index" : 18,
+      "status" : "ok",
+      "url" : "https:\/\/www.postgresql.org\/docs\/current\/queries-with.html"
+    },
+    {
+      "index" : 84,
+      "status" : "ok",
+      "url" : "https:\/\/duckdb.org\/docs\/sql\/introduction"
+    },
+    {
+      "index" : 62,
+      "status" : "ok",
+      "url" : "https:\/\/github.com\/golang\/go"
+    },
+    {
+      "index" : 2,
+      "status" : "ok",
+      "url" : "https:\/\/developer.apple.com\/documentation\/webkit\/wkwebview"
+    },
+    {
+      "index" : 85,
+      "status" : "ok",
+      "url" : "https:\/\/clickhouse.com\/docs\/en\/sql-reference\/statements\/select"
+    },
+    {
+      "index" : 47,
+      "status" : "ok",
+      "url" : "https:\/\/stackoverflow.com\/questions\/tagged\/swift"
+    },
+    {
+      "index" : 64,
+      "status" : "ok",
+      "url" : "https:\/\/llvm.org\/docs\/LangRef.html"
+    },
+    {
+      "index" : 81,
+      "status" : "ok",
+      "url" : "https:\/\/tokio.rs\/tokio\/tutorial"
+    },
+    {
+      "index" : 43,
+      "status" : "ok",
+      "url" : "https:\/\/techcrunch.com\/"
+    },
+    {
+      "index" : 25,
+      "status" : "ok",
+      "url" : "https:\/\/docs.rs\/serde\/latest\/serde\/"
+    },
+    {
+      "index" : 96,
+      "status" : "ok",
+      "url" : "https:\/\/opentelemetry.io\/docs\/"
+    },
+    {
+      "index" : 15,
+      "status" : "ok",
+      "url" : "https:\/\/kubernetes.io\/docs\/concepts\/workloads\/pods\/"
+    },
+    {
+      "index" : 80,
+      "status" : "ok",
+      "url" : "https:\/\/doc.rust-lang.org\/cargo\/reference\/manifest.html"
+    },
+    {
+      "index" : 42,
+      "status" : "ok",
+      "url" : "https:\/\/www.theverge.com\/"
+    },
+    {
+      "index" : 40,
+      "status" : "ok",
+      "url" : "https:\/\/lobste.rs\/"
+    },
+    {
+      "index" : 67,
+      "status" : "ok",
+      "url" : "https:\/\/tldp.org\/LDP\/abs\/html\/"
+    },
+    {
+      "index" : 6,
+      "status" : "ok",
+      "url" : "https:\/\/news.ycombinator.com\/"
+    },
+    {
+      "index" : 58,
+      "status" : "ok",
+      "url" : "https:\/\/github.com\/astral-sh\/uv"
+    },
+    {
+      "index" : 55,
+      "status" : "ok",
+      "url" : "https:\/\/pandas.pydata.org\/docs\/reference\/api\/pandas.DataFrame.groupby.html"
+    },
+    {
+      "index" : 79,
+      "status" : "ok",
+      "url" : "https:\/\/mozilla.github.io\/uniffi-rs\/latest\/"
+    },
+    {
+      "index" : 17,
+      "status" : "ok",
+      "url" : "https:\/\/docs.docker.com\/engine\/reference\/builder\/"
+    },
+    {
+      "index" : 99,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8820\/anim\/99"
+    },
+    {
+      "index" : 72,
+      "status" : "ok",
+      "url" : "https:\/\/web.dev\/articles\/vitals"
+    },
+    {
+      "index" : 20,
+      "status" : "ok",
+      "url" : "https:\/\/en.wikipedia.org\/wiki\/WebKit"
+    },
+    {
+      "index" : 91,
+      "status" : "ok",
+      "url" : "https:\/\/www.getdbt.com\/"
+    },
+    {
+      "index" : 46,
+      "status" : "ok",
+      "url" : "https:\/\/www.reuters.com\/technology\/"
+    },
+    {
+      "index" : 56,
+      "status" : "ok",
+      "url" : "https:\/\/docs.astral.sh\/uv\/"
+    },
+    {
+      "index" : 26,
+      "status" : "ok",
+      "url" : "https:\/\/crates.io\/"
+    },
+    {
+      "index" : 94,
+      "status" : "ok",
+      "url" : "https:\/\/grafana.com\/docs\/grafana\/latest\/"
+    },
+    {
+      "index" : 36,
+      "status" : "ok",
+      "url" : "https:\/\/tailwindcss.com\/docs\/flex"
+    },
+    {
+      "index" : 23,
+      "status" : "ok",
+      "url" : "https:\/\/swiftpackageindex.com\/"
+    },
+    {
+      "index" : 41,
+      "status" : "ok",
+      "url" : "https:\/\/arstechnica.com\/"
+    },
+    {
+      "index" : 68,
+      "status" : "ok",
+      "url" : "https:\/\/git-scm.com\/docs\/git-rebase"
+    },
+    {
+      "index" : 11,
+      "status" : "ok",
+      "url" : "https:\/\/developer.apple.com\/documentation\/appkit\/nsscrollview"
+    },
+    {
+      "index" : 9,
+      "status" : "ok",
+      "url" : "https:\/\/docs.python.org\/3\/library\/asyncio-task.html"
+    },
+    {
+      "index" : 21,
+      "status" : "ok",
+      "url" : "https:\/\/developer.mozilla.org\/en-US\/docs\/Web\/HTTP\/Headers\/Cache-Control"
+    },
+    {
+      "index" : 19,
+      "status" : "ok",
+      "url" : "https:\/\/redis.io\/docs\/latest\/commands\/set\/"
+    },
+    {
+      "index" : 86,
+      "status" : "ok",
+      "url" : "https:\/\/trino.io\/docs\/current\/sql\/select.html"
+    },
+    {
+      "index" : 82,
+      "status" : "ok",
+      "url" : "https:\/\/sqlite.org\/wal.html"
+    },
+    {
+      "index" : 89,
+      "status" : "ok",
+      "url" : "https:\/\/docs.snowflake.com\/en\/sql-reference\/constructs"
+    },
+    {
+      "index" : 66,
+      "status" : "ok",
+      "url" : "https:\/\/www.gnu.org\/software\/bash\/manual\/bash.html"
+    },
+    {
+      "index" : 5,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8806\/anim\/5"
+    },
+    {
+      "index" : 98,
+      "status" : "ok",
+      "url" : "https:\/\/nginx.org\/en\/docs\/http\/ngx_http_core_module.html"
+    },
+    {
+      "index" : 75,
+      "status" : "ok",
+      "url" : "https:\/\/developer.apple.com\/documentation\/foundation\/urlsession"
+    },
+    {
+      "index" : 7,
+      "status" : "ok",
+      "url" : "https:\/\/developer.mozilla.org\/en-US\/docs\/Web\/CSS\/grid-template-areas"
+    },
+    {
+      "index" : 14,
+      "status" : "ok",
+      "url" : "https:\/\/developer.mozilla.org\/en-US\/docs\/Web\/JavaScript\/Reference\/Global_Objects\/Promise"
+    },
+    {
+      "index" : 22,
+      "status" : "ok",
+      "url" : "https:\/\/github.com\/microsoft\/vscode"
+    },
+    {
+      "index" : 73,
+      "status" : "ok",
+      "url" : "https:\/\/caniuse.com\/"
+    },
+    {
+      "index" : 3,
+      "status" : "ok",
+      "url" : "https:\/\/github.com\/apple\/swift"
+    },
+    {
+      "index" : 78,
+      "status" : "ok",
+      "url" : "https:\/\/github.com\/mozilla\/uniffi-rs"
+    },
+    {
+      "index" : 52,
+      "status" : "ok",
+      "url" : "https:\/\/huggingface.co\/docs\/transformers\/index"
+    },
+    {
+      "index" : 53,
+      "status" : "ok",
+      "url" : "https:\/\/pytorch.org\/docs\/stable\/generated\/torch.nn.Linear.html"
+    },
+    {
+      "index" : 95,
+      "status" : "ok",
+      "url" : "https:\/\/prometheus.io\/docs\/prometheus\/latest\/querying\/basics\/"
+    },
+    {
+      "index" : 76,
+      "status" : "ok",
+      "url" : "https:\/\/developer.apple.com\/design\/human-interface-guidelines\/"
+    },
+    {
+      "index" : 93,
+      "status" : "ok",
+      "url" : "https:\/\/prefect.io\/"
+    },
+    {
+      "index" : 97,
+      "status" : "ok",
+      "url" : "https:\/\/www.elastic.co\/guide\/en\/elasticsearch\/reference\/current\/query-dsl.html"
+    },
+    {
+      "index" : 65,
+      "status" : "ok",
+      "url" : "https:\/\/man7.org\/linux\/man-pages\/man2\/mmap.2.html"
+    },
+    {
+      "index" : 12,
+      "status" : "ok",
+      "url" : "https:\/\/github.com\/tokio-rs\/tokio"
+    },
+    {
+      "index" : 87,
+      "status" : "ok",
+      "url" : "https:\/\/spark.apache.org\/docs\/latest\/sql-programming-guide.html"
+    },
+    {
+      "index" : 32,
+      "status" : "ok",
+      "url" : "https:\/\/hono.dev\/docs\/"
+    },
+    {
+      "index" : 48,
+      "status" : "ok",
+      "url" : "https:\/\/superuser.com\/"
+    },
+    {
+      "index" : 57,
+      "status" : "ok",
+      "url" : "https:\/\/docs.astral.sh\/ruff\/rules\/"
+    },
+    {
+      "index" : 37,
+      "status" : "ok",
+      "url" : "https:\/\/developer.mozilla.org\/en-US\/docs\/Web\/API\/Fetch_API"
+    },
+    {
+      "index" : 33,
+      "status" : "ok",
+      "url" : "https:\/\/bun.sh\/docs"
+    },
+    {
+      "index" : 16,
+      "status" : "ok",
+      "url" : "https:\/\/github.com\/kubernetes\/kubernetes"
+    },
+    {
+      "index" : 90,
+      "status" : "provfail: A server with the specified hostname could not be found.",
+      "url" : "https:\/\/dbt-docs.getdbt.com\/"
+    },
+    {
+      "index" : 77,
+      "status" : "ok",
+      "url" : "https:\/\/github.com\/migueldeicaza\/SwiftTerm"
+    },
+    {
+      "index" : 74,
+      "status" : "ok",
+      "url" : "https:\/\/developer.apple.com\/documentation\/swiftui\/view"
+    },
+    {
+      "index" : 50,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8811\/anim\/50"
+    },
+    {
+      "index" : 10,
+      "status" : "ok",
+      "url" : "https:\/\/www.sqlite.org\/lang_select.html"
+    },
+    {
+      "index" : 39,
+      "status" : "ok",
+      "url" : "https:\/\/httpwg.org\/specs\/rfc9113.html"
+    },
+    {
+      "index" : 27,
+      "status" : "ok",
+      "url" : "https:\/\/github.com\/facebook\/react"
+    },
+    {
+      "index" : 70,
+      "status" : "ok",
+      "url" : "https:\/\/docs.github.com\/en\/actions\/using-workflows\/workflow-syntax-for-github-actions"
+    },
+    {
+      "index" : 29,
+      "status" : "ok",
+      "url" : "https:\/\/vitejs.dev\/guide\/"
+    },
+    {
+      "index" : 35,
+      "status" : "ok",
+      "url" : "https:\/\/docs.astro.build\/en\/guides\/routing\/"
+    },
+    {
+      "index" : 13,
+      "status" : "ok",
+      "url" : "https:\/\/doc.rust-lang.org\/std\/vec\/struct.Vec.html"
+    },
+    {
+      "index" : 44,
+      "status" : "ok",
+      "url" : "https:\/\/www.bbc.com\/news"
+    },
+    {
+      "index" : 1,
+      "status" : "ok",
+      "url" : "http:\/\/127.0.0.1:8802\/anim\/1"
+    },
+    {
+      "index" : 59,
+      "status" : "ok",
+      "url" : "https:\/\/peps.python.org\/pep-0008\/"
+    },
+    {
+      "index" : 63,
+      "status" : "ok",
+      "url" : "https:\/\/clang.llvm.org\/docs\/UsersManual.html"
+    },
+    {
+      "index" : 28,
+      "status" : "ok",
+      "url" : "https:\/\/react.dev\/reference\/react\/useEffect"
+    },
+    {
+      "index" : 61,
+      "status" : "ok",
+      "url" : "https:\/\/pkg.go.dev\/net\/http"
+    },
+    {
+      "index" : 0,
+      "status" : "ok",
+      "url" : "https:\/\/developer.mozilla.org\/en-US\/docs\/Web\/API\/Window\/requestAnimationFrame"
+    },
+    {
+      "index" : 24,
+      "status" : "ok",
+      "url" : "https:\/\/www.swift.org\/documentation\/"
+    },
+    {
+      "index" : 31,
+      "status" : "ok",
+      "url" : "https:\/\/developers.cloudflare.com\/durable-objects\/"
+    }
+  ],
+  "meta" : {
+    "baseline_webkit_pids" : 11,
+    "date" : "2026-09-12T11:24:55Z",
+    "display_asleep_at_start" : true,
+    "idle_secs" : 60,
+    "lane_h" : 1000,
+    "lane_w" : 560,
+    "mode" : "real",
+    "parented" : 5,
+    "pid" : 73360,
+    "screen_locked_at_start" : true,
+    "store_count" : 3,
+    "store_kind" : "persistent(forIdentifier:)",
+    "trials" : 25,
+    "views" : 100
+  },
+  "screen_locked_at_end" : true,
+  "snapshots" : [
+    {
+      "by_kind" : {
+        "app" : {
+          "count" : 1,
+          "footprint_mb" : 32.126029968261719,
+          "pids" : [
+            73360
+          ],
+          "rss_mb" : 113.203125
+        },
+        "GPU" : {
+          "count" : 1,
+          "footprint_mb" : 35.735794067382812,
+          "pids" : [
+            73386
+          ],
+          "rss_mb" : 105.734375
+        },
+        "Networking" : {
+          "count" : 1,
+          "footprint_mb" : 80.657417297363281,
+          "pids" : [
+            73387
+          ],
+          "rss_mb" : 320.4375
+        },
+        "WebContent" : {
+          "count" : 25,
+          "footprint_mb" : 1510.2708282470703,
+          "pids" : [
+            73419,
+            73418,
+            73412,
+            73410,
+            73409,
+            73408,
+            73407,
+            73405,
+            73404,
+            73403,
+            73402,
+            73401,
+            73400,
+            73399,
+            73398,
+            73397,
+            73396,
+            73395,
+            73394,
+            73393,
+            73392,
+            73391,
+            73390,
+            73389,
+            73388
+          ],
+          "rss_mb" : 3422.34375
+        }
+      },
+      "helper_count" : 27,
+      "label" : "parented_25",
+      "total_footprint_mb" : 1658.7900695800781,
+      "total_rss_mb" : 3961.71875,
+      "wall" : 1789212313.2020791,
+      "webcontent_count" : 25
+    },
+    {
+      "by_kind" : {
+        "app" : {
+          "count" : 1,
+          "footprint_mb" : 89.110565185546875,
+          "pids" : [
+            73360
+          ],
+          "rss_mb" : 126.28125
+        },
+        "GPU" : {
+          "count" : 1,
+          "footprint_mb" : 104.45548248291016,
+          "pids" : [
+            73386
+          ],
+          "rss_mb" : 94.046875
+        },
+        "Networking" : {
+          "count" : 1,
+          "footprint_mb" : 258.23558807373047,
+          "pids" : [
+            73387
+          ],
+          "rss_mb" : 189.53125
+        },
+        "WebContent" : {
+          "count" : 51,
+          "footprint_mb" : 4902.9821319580078,
+          "pids" : [
+            73955,
+            73928,
+            73924,
+            73923,
+            73921,
+            73920,
+            73918,
+            73917,
+            73916,
+            73915,
+            73914,
+            73913,
+            73912,
+            73911,
+            73910,
+            73909,
+            73908,
+            73907,
+            73906,
+            73905,
+            73904,
+            73903,
+            73902,
+            73901,
+            73900,
+            73898,
+            73419,
+            73418,
+            73412,
+            73410,
+            73409,
+            73408,
+            73407,
+            73405,
+            73404,
+            73403,
+            73402,
+            73401,
+            73400,
+            73399,
+            73398,
+            73397,
+            73396,
+            73395,
+            73394,
+            73393,
+            73392,
+            73391,
+            73390,
+            73389,
+            73388
+          ],
+          "rss_mb" : 2763.171875
+        }
+      },
+      "helper_count" : 53,
+      "label" : "parented_50",
+      "total_footprint_mb" : 5354.7837677001953,
+      "total_rss_mb" : 3173.03125,
+      "wall" : 1789212507.8242469,
+      "webcontent_count" : 51
+    },
+    {
+      "by_kind" : {
+        "app" : {
+          "count" : 1,
+          "footprint_mb" : 124.28255462646484,
+          "pids" : [
+            73360
+          ],
+          "rss_mb" : 138.265625
+        },
+        "GPU" : {
+          "count" : 1,
+          "footprint_mb" : 143.76933288574219,
+          "pids" : [
+            73386
+          ],
+          "rss_mb" : 152.015625
+        },
+        "Networking" : {
+          "count" : 1,
+          "footprint_mb" : 320.18896484375,
+          "pids" : [
+            73387
+          ],
+          "rss_mb" : 190.546875
+        },
+        "WebContent" : {
+          "count" : 101,
+          "footprint_mb" : 8895.9777145385742,
+          "pids" : [
+            78550,
+            78549,
+            78532,
+            78531,
+            78530,
+            78529,
+            78528,
+            78527,
+            78526,
+            78525,
+            78524,
+            78523,
+            78522,
+            78521,
+            78520,
+            78519,
+            78518,
+            78517,
+            78516,
+            78515,
+            78514,
+            78513,
+            78512,
+            78511,
+            78510,
+            78509,
+            78506,
+            78503,
+            78502,
+            78499,
+            78498,
+            78494,
+            78491,
+            78487,
+            78486,
+            78484,
+            78483,
+            78482,
+            78481,
+            78480,
+            78479,
+            78478,
+            78477,
+            78476,
+            78475,
+            78474,
+            78473,
+            78472,
+            78470,
+            78468,
+            73955,
+            73928,
+            73924,
+            73923,
+            73921,
+            73920,
+            73918,
+            73917,
+            73916,
+            73915,
+            73914,
+            73913,
+            73912,
+            73911,
+            73910,
+            73909,
+            73908,
+            73907,
+            73906,
+            73905,
+            73904,
+            73903,
+            73902,
+            73901,
+            73900,
+            73898,
+            73419,
+            73418,
+            73412,
+            73410,
+            73409,
+            73408,
+            73407,
+            73405,
+            73404,
+            73403,
+            73402,
+            73401,
+            73400,
+            73399,
+            73398,
+            73397,
+            73396,
+            73395,
+            73394,
+            73393,
+            73392,
+            73391,
+            73390,
+            73389,
+            73388
+          ],
+          "rss_mb" : 6086.71875
+        }
+      },
+      "helper_count" : 103,
+      "label" : "parented_100",
+      "total_footprint_mb" : 9484.2185668945312,
+      "total_rss_mb" : 6567.546875,
+      "wall" : 1789212536.4058161,
+      "webcontent_count" : 101
+    },
+    {
+      "by_kind" : {
+        "app" : {
+          "count" : 1,
+          "footprint_mb" : 124.42317962646484,
+          "pids" : [
+            73360
+          ],
+          "rss_mb" : 146.84375
+        },
+        "GPU" : {
+          "count" : 1,
+          "footprint_mb" : 145.34745788574219,
+          "pids" : [
+            73386
+          ],
+          "rss_mb" : 161.421875
+        },
+        "Networking" : {
+          "count" : 1,
+          "footprint_mb" : 307.01708984375,
+          "pids" : [
+            73387
+          ],
+          "rss_mb" : 205.859375
+        },
+        "WebContent" : {
+          "count" : 101,
+          "footprint_mb" : 8555.5870666503906,
+          "pids" : [
+            78550,
+            78549,
+            78532,
+            78531,
+            78530,
+            78529,
+            78528,
+            78527,
+            78526,
+            78525,
+            78524,
+            78523,
+            78522,
+            78521,
+            78520,
+            78519,
+            78518,
+            78517,
+            78516,
+            78515,
+            78514,
+            78513,
+            78512,
+            78511,
+            78510,
+            78509,
+            78506,
+            78503,
+            78502,
+            78499,
+            78498,
+            78494,
+            78491,
+            78487,
+            78486,
+            78484,
+            78483,
+            78482,
+            78481,
+            78480,
+            78479,
+            78478,
+            78477,
+            78476,
+            78475,
+            78474,
+            78473,
+            78472,
+            78470,
+            78468,
+            73955,
+            73928,
+            73924,
+            73923,
+            73921,
+            73920,
+            73918,
+            73917,
+            73916,
+            73915,
+            73914,
+            73913,
+            73912,
+            73911,
+            73910,
+            73909,
+            73908,
+            73907,
+            73906,
+            73905,
+            73904,
+            73903,
+            73902,
+            73901,
+            73900,
+            73898,
+            73419,
+            73418,
+            73412,
+            73410,
+            73409,
+            73408,
+            73407,
+            73405,
+            73404,
+            73403,
+            73402,
+            73401,
+            73400,
+            73399,
+            73398,
+            73397,
+            73396,
+            73395,
+            73394,
+            73393,
+            73392,
+            73391,
+            73390,
+            73389,
+            73388
+          ],
+          "rss_mb" : 6157.625
+        }
+      },
+      "helper_count" : 103,
+      "label" : "parented_5_unparented_95",
+      "total_footprint_mb" : 9132.3747940063477,
+      "total_rss_mb" : 6671.75,
+      "wall" : 1789212557.5174851,
+      "webcontent_count" : 101
+    },
+    {
+      "by_kind" : {
+        "app" : {
+          "count" : 1,
+          "footprint_mb" : 120.86070251464844,
+          "pids" : [
+            73360
+          ],
+          "rss_mb" : 117.359375
+        },
+        "GPU" : {
+          "count" : 1,
+          "footprint_mb" : 260.15998077392578,
+          "pids" : [
+            73386
+          ],
+          "rss_mb" : 121.84375
+        },
+        "Networking" : {
+          "count" : 1,
+          "footprint_mb" : 246.03269195556641,
+          "pids" : [
+            73387
+          ],
+          "rss_mb" : 86.046875
+        },
+        "WebContent" : {
+          "count" : 101,
+          "footprint_mb" : 8588.2745666503906,
+          "pids" : [
+            78550,
+            78549,
+            78532,
+            78531,
+            78530,
+            78529,
+            78528,
+            78527,
+            78526,
+            78525,
+            78524,
+            78523,
+            78522,
+            78521,
+            78520,
+            78519,
+            78518,
+            78517,
+            78516,
+            78515,
+            78514,
+            78513,
+            78512,
+            78511,
+            78510,
+            78509,
+            78506,
+            78503,
+            78502,
+            78499,
+            78498,
+            78494,
+            78491,
+            78487,
+            78486,
+            78484,
+            78483,
+            78482,
+            78481,
+            78480,
+            78479,
+            78478,
+            78477,
+            78476,
+            78475,
+            78474,
+            78473,
+            78472,
+            78470,
+            78468,
+            73955,
+            73928,
+            73924,
+            73923,
+            73921,
+            73920,
+            73918,
+            73917,
+            73916,
+            73915,
+            73914,
+            73913,
+            73912,
+            73911,
+            73910,
+            73909,
+            73908,
+            73907,
+            73906,
+            73905,
+            73904,
+            73903,
+            73902,
+            73901,
+            73900,
+            73898,
+            73419,
+            73418,
+            73412,
+            73410,
+            73409,
+            73408,
+            73407,
+            73405,
+            73404,
+            73403,
+            73402,
+            73401,
+            73400,
+            73399,
+            73398,
+            73397,
+            73396,
+            73395,
+            73394,
+            73393,
+            73392,
+            73391,
+            73390,
+            73389,
+            73388
+          ],
+          "rss_mb" : 4754.140625
+        }
+      },
+      "helper_count" : 103,
+      "label" : "before_evict",
+      "total_footprint_mb" : 9215.3279418945312,
+      "total_rss_mb" : 5079.390625,
+      "wall" : 1789212775.067589,
+      "webcontent_count" : 101
+    },
+    {
+      "by_kind" : {
+        "app" : {
+          "count" : 1,
+          "footprint_mb" : 54.595077514648438,
+          "pids" : [
+            73360
+          ],
+          "rss_mb" : 192.578125
+        },
+        "GPU" : {
+          "count" : 1,
+          "footprint_mb" : 59.659088134765625,
+          "pids" : [
+            73386
+          ],
+          "rss_mb" : 136.34375
+        },
+        "Networking" : {
+          "count" : 1,
+          "footprint_mb" : 78.829544067382812,
+          "pids" : [
+            73387
+          ],
+          "rss_mb" : 129.765625
+        },
+        "WebContent" : {
+          "count" : 6,
+          "footprint_mb" : 398.73936462402344,
+          "pids" : [
+            78526,
+            73392,
+            73391,
+            73390,
+            73389,
+            73388
+          ],
+          "rss_mb" : 299
+        }
+      },
+      "helper_count" : 8,
+      "label" : "after_evict_to_5",
+      "total_footprint_mb" : 591.82307434082031,
+      "total_rss_mb" : 757.6875,
+      "wall" : 1789212806.9119139,
+      "webcontent_count" : 6
+    },
+    {
+      "by_kind" : {
+        "app" : {
+          "count" : 1,
+          "footprint_mb" : 54.595077514648438,
+          "pids" : [
+            73360
+          ],
+          "rss_mb" : 192.578125
+        },
+        "GPU" : {
+          "count" : 1,
+          "footprint_mb" : 59.659088134765625,
+          "pids" : [
+            73386
+          ],
+          "rss_mb" : 136.34375
+        },
+        "Networking" : {
+          "count" : 1,
+          "footprint_mb" : 78.829544067382812,
+          "pids" : [
+            73387
+          ],
+          "rss_mb" : 129.765625
+        },
+        "WebContent" : {
+          "count" : 6,
+          "footprint_mb" : 398.73936462402344,
+          "pids" : [
+            78526,
+            73392,
+            73391,
+            73390,
+            73389,
+            73388
+          ],
+          "rss_mb" : 299
+        }
+      },
+      "helper_count" : 8,
+      "label" : "final",
+      "total_footprint_mb" : 591.82307434082031,
+      "total_rss_mb" : 757.6875,
+      "wall" : 1789212806.9461799,
+      "webcontent_count" : 6
+    }
+  ],
+  "suspension" : [
+    {
+      "document_hidden" : true,
+      "phase" : "unparented_window",
+      "raf_delta" : 0,
+      "raf_fps" : 0,
+      "role" : "control(parented,visible)",
+      "seconds" : 15.74,
+      "tick_delta" : 5,
+      "ticks_per_sec" : 0.31766200762388819,
+      "view" : 1,
+      "visibility_state" : "hidden"
+    },
+    {
+      "document_hidden" : true,
+      "phase" : "unparented_window",
+      "raf_delta" : 0,
+      "raf_fps" : 0,
+      "role" : "subject(unparented)",
+      "seconds" : 15.739000000000001,
+      "tick_delta" : 2,
+      "ticks_per_sec" : 0.12707287629455491,
+      "view" : 5,
+      "visibility_state" : "hidden"
+    },
+    {
+      "document_hidden" : true,
+      "phase" : "unparented_window",
+      "raf_delta" : 0,
+      "raf_fps" : 0,
+      "role" : "subject(unparented)",
+      "seconds" : 15.739000000000001,
+      "tick_delta" : 2,
+      "ticks_per_sec" : 0.12707287629455491,
+      "view" : 50,
+      "visibility_state" : "hidden"
+    },
+    {
+      "document_hidden" : true,
+      "phase" : "after_swap",
+      "raf_delta" : 0,
+      "raf_fps" : 0,
+      "role" : "was-parented, NOW UNPARENTED",
+      "seconds" : 15.754,
+      "tick_delta" : 2,
+      "view" : 1,
+      "visibility_state" : "hidden"
+    },
+    {
+      "document_hidden" : true,
+      "phase" : "after_swap",
+      "raf_delta" : 0,
+      "raf_fps" : 0,
+      "role" : "was-unparented, NOW PARENTED+VISIBLE",
+      "seconds" : 15.752000000000001,
+      "tick_delta" : 4,
+      "view" : 5,
+      "visibility_state" : "hidden"
+    }
+  ],
+  "urls" : [
+    "https:\/\/developer.mozilla.org\/en-US\/docs\/Web\/API\/Window\/requestAnimationFrame",
+    "http:\/\/127.0.0.1:8802\/anim\/1",
+    "https:\/\/developer.apple.com\/documentation\/webkit\/wkwebview",
+    "https:\/\/github.com\/apple\/swift",
+    "https:\/\/doc.rust-lang.org\/book\/ch04-01-what-is-ownership.html",
+    "http:\/\/127.0.0.1:8806\/anim\/5",
+    "https:\/\/news.ycombinator.com\/",
+    "https:\/\/developer.mozilla.org\/en-US\/docs\/Web\/CSS\/grid-template-areas",
+    "https:\/\/github.com\/rust-lang\/rust",
+    "https:\/\/docs.python.org\/3\/library\/asyncio-task.html",
+    "https:\/\/www.sqlite.org\/lang_select.html",
+    "https:\/\/developer.apple.com\/documentation\/appkit\/nsscrollview",
+    "https:\/\/github.com\/tokio-rs\/tokio",
+    "https:\/\/doc.rust-lang.org\/std\/vec\/struct.Vec.html",
+    "https:\/\/developer.mozilla.org\/en-US\/docs\/Web\/JavaScript\/Reference\/Global_Objects\/Promise",
+    "https:\/\/kubernetes.io\/docs\/concepts\/workloads\/pods\/",
+    "https:\/\/github.com\/kubernetes\/kubernetes",
+    "https:\/\/docs.docker.com\/engine\/reference\/builder\/",
+    "https:\/\/www.postgresql.org\/docs\/current\/queries-with.html",
+    "https:\/\/redis.io\/docs\/latest\/commands\/set\/",
+    "https:\/\/en.wikipedia.org\/wiki\/WebKit",
+    "https:\/\/developer.mozilla.org\/en-US\/docs\/Web\/HTTP\/Headers\/Cache-Control",
+    "https:\/\/github.com\/microsoft\/vscode",
+    "https:\/\/swiftpackageindex.com\/",
+    "https:\/\/www.swift.org\/documentation\/",
+    "https:\/\/docs.rs\/serde\/latest\/serde\/",
+    "https:\/\/crates.io\/",
+    "https:\/\/github.com\/facebook\/react",
+    "https:\/\/react.dev\/reference\/react\/useEffect",
+    "https:\/\/vitejs.dev\/guide\/",
+    "https:\/\/developers.cloudflare.com\/workers\/",
+    "https:\/\/developers.cloudflare.com\/durable-objects\/",
+    "https:\/\/hono.dev\/docs\/",
+    "https:\/\/bun.sh\/docs",
+    "https:\/\/nodejs.org\/api\/fs.html",
+    "https:\/\/docs.astro.build\/en\/guides\/routing\/",
+    "https:\/\/tailwindcss.com\/docs\/flex",
+    "https:\/\/developer.mozilla.org\/en-US\/docs\/Web\/API\/Fetch_API",
+    "https:\/\/www.rfc-editor.org\/rfc\/rfc9110.html",
+    "https:\/\/httpwg.org\/specs\/rfc9113.html",
+    "https:\/\/lobste.rs\/",
+    "https:\/\/arstechnica.com\/",
+    "https:\/\/www.theverge.com\/",
+    "https:\/\/techcrunch.com\/",
+    "https:\/\/www.bbc.com\/news",
+    "https:\/\/apnews.com\/",
+    "https:\/\/www.reuters.com\/technology\/",
+    "https:\/\/stackoverflow.com\/questions\/tagged\/swift",
+    "https:\/\/superuser.com\/",
+    "https:\/\/serverfault.com\/",
+    "http:\/\/127.0.0.1:8811\/anim\/50",
+    "https:\/\/github.com\/ggerganov\/llama.cpp",
+    "https:\/\/huggingface.co\/docs\/transformers\/index",
+    "https:\/\/pytorch.org\/docs\/stable\/generated\/torch.nn.Linear.html",
+    "https:\/\/numpy.org\/doc\/stable\/reference\/generated\/numpy.einsum.html",
+    "https:\/\/pandas.pydata.org\/docs\/reference\/api\/pandas.DataFrame.groupby.html",
+    "https:\/\/docs.astral.sh\/uv\/",
+    "https:\/\/docs.astral.sh\/ruff\/rules\/",
+    "https:\/\/github.com\/astral-sh\/uv",
+    "https:\/\/peps.python.org\/pep-0008\/",
+    "https:\/\/go.dev\/ref\/spec",
+    "https:\/\/pkg.go.dev\/net\/http",
+    "https:\/\/github.com\/golang\/go",
+    "https:\/\/clang.llvm.org\/docs\/UsersManual.html",
+    "https:\/\/llvm.org\/docs\/LangRef.html",
+    "https:\/\/man7.org\/linux\/man-pages\/man2\/mmap.2.html",
+    "https:\/\/www.gnu.org\/software\/bash\/manual\/bash.html",
+    "https:\/\/tldp.org\/LDP\/abs\/html\/",
+    "https:\/\/git-scm.com\/docs\/git-rebase",
+    "https:\/\/github.com\/git\/git",
+    "https:\/\/docs.github.com\/en\/actions\/using-workflows\/workflow-syntax-for-github-actions",
+    "https:\/\/developer.mozilla.org\/en-US\/docs\/Web\/API\/IntersectionObserver",
+    "https:\/\/web.dev\/articles\/vitals",
+    "https:\/\/caniuse.com\/",
+    "https:\/\/developer.apple.com\/documentation\/swiftui\/view",
+    "https:\/\/developer.apple.com\/documentation\/foundation\/urlsession",
+    "https:\/\/developer.apple.com\/design\/human-interface-guidelines\/",
+    "https:\/\/github.com\/migueldeicaza\/SwiftTerm",
+    "https:\/\/github.com\/mozilla\/uniffi-rs",
+    "https:\/\/mozilla.github.io\/uniffi-rs\/latest\/",
+    "https:\/\/doc.rust-lang.org\/cargo\/reference\/manifest.html",
+    "https:\/\/tokio.rs\/tokio\/tutorial",
+    "https:\/\/sqlite.org\/wal.html",
+    "https:\/\/www.sqlite.org\/fts5.html",
+    "https:\/\/duckdb.org\/docs\/sql\/introduction",
+    "https:\/\/clickhouse.com\/docs\/en\/sql-reference\/statements\/select",
+    "https:\/\/trino.io\/docs\/current\/sql\/select.html",
+    "https:\/\/spark.apache.org\/docs\/latest\/sql-programming-guide.html",
+    "https:\/\/cloud.google.com\/bigquery\/docs\/reference\/standard-sql\/query-syntax",
+    "https:\/\/docs.snowflake.com\/en\/sql-reference\/constructs",
+    "https:\/\/dbt-docs.getdbt.com\/",
+    "https:\/\/www.getdbt.com\/",
+    "https:\/\/airflow.apache.org\/docs\/apache-airflow\/stable\/index.html",
+    "https:\/\/prefect.io\/",
+    "https:\/\/grafana.com\/docs\/grafana\/latest\/",
+    "https:\/\/prometheus.io\/docs\/prometheus\/latest\/querying\/basics\/",
+    "https:\/\/opentelemetry.io\/docs\/",
+    "https:\/\/www.elastic.co\/guide\/en\/elasticsearch\/reference\/current\/query-dsl.html",
+    "https:\/\/nginx.org\/en\/docs\/http\/ngx_http_core_module.html",
+    "http:\/\/127.0.0.1:8820\/anim\/99"
+  ],
+  "valid_for_visibility_measurements" : false,
+  "window_diag" : "window: isVisible=true occlusion=OCCLUDED isKey=false NSApp.isActive=false screen=true display_asleep=false screen_locked=true",
+  "window_ever_occluded" : true,
+  "window_ever_visible" : false
+}

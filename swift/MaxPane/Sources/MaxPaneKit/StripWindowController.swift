@@ -49,7 +49,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         window?.makeKeyAndOrderFront(sender)
         // Enter fullscreen after the window exists, so the strip lays out once
         // at its final size rather than twice.
-        if window?.styleMask.contains(.fullScreen) == false {
+        //
+        // MAXPANE_WINDOWED skips it: a fullscreen app that takes the display the
+        // moment it launches is not something you want during a smoke test on a
+        // machine somebody is using.
+        let windowed = ProcessInfo.processInfo.environment["MAXPANE_WINDOWED"] != nil
+        if !windowed, window?.styleMask.contains(.fullScreen) == false {
             window?.toggleFullScreen(nil)
         }
     }
