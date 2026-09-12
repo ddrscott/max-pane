@@ -39,6 +39,16 @@ enum Theme {
             ?? NSFont.monospacedSystemFont(ofSize: size, weight: weight)
     }
 
+    /// Throughput and other "this is moving" readouts.
+    ///
+    /// Green, not the accent. Signal Orange has to mean one thing — *this one
+    /// needs you* — and a strip of ten lanes where the byte counters are all
+    /// orange is a strip where BLOCKED arrives and changes nothing. The accent
+    /// is now spent on exactly two things: focus, and blocked. They are told
+    /// apart by form, not hue — focus is a hairline around a column, blocked is
+    /// a filled chip inside it.
+    static let flowing = NSColor(srgbRed: 0x22 / 255, green: 0xc5 / 255, blue: 0x5e / 255, alpha: 1)
+
     /// The colour of an agent-state chip.
     ///
     /// RelayTTY renders BLOCKED in `#E85D00` — which is, by coincidence or good

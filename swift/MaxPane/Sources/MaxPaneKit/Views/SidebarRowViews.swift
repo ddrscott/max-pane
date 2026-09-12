@@ -102,7 +102,7 @@ final class SidebarEntryView: NSTableCellView {
         marker.font = Theme.mono(11, weight: attached ? .bold : .regular)
         // The orange prompt means "live, and on the strip". A lane whose session
         // has died is neither, so it goes grey with the rest of the row.
-        marker.textColor = (attached && entry.isRunning && !isWeb) ? Theme.accent : SidebarInk.gone
+        marker.textColor = (attached && entry.isRunning && !isWeb) ? Theme.flowing : SidebarInk.gone
         marker.alignment = .center
 
         glyph.stringValue = isWeb ? "" : entry.glyph

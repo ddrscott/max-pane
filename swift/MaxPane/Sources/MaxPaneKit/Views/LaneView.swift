@@ -345,14 +345,16 @@ final class LaneHeaderView: NSView {
 
         kindGlyph.stringValue = Theme.glyph(for: model.kind)
         // The orange $ marks a live terminal and nothing else.
-        kindGlyph.textColor = (model.kind == .pty && model.isLive) ? Theme.accent : Theme.dimText
+        // Not the accent: every terminal lane carries this glyph, so tinting it
+        // orange spends the alarm colour on the most routine state there is.
+        kindGlyph.textColor = (model.kind == .pty && model.isLive) ? Theme.flowing : Theme.dimText
         applyChip()
         pin.stringValue = model.pinned ? "▪" : ""
         title.stringValue = model.title
         badge.stringValue = model.badge
         // Throughput is the thing that is changing right now, so it gets the
         // accent; a quiet lane's age is reference material and stays dim.
-        badge.textColor = model.badgeIsThroughput ? Theme.accent : Theme.dimText
+        badge.textColor = model.badgeIsThroughput ? Theme.flowing : Theme.dimText
         toolTip = model.tooltip.isEmpty ? nil : model.tooltip
 
         needsLayout = true
