@@ -31,7 +31,7 @@ public final class StripViewController: NSViewController {
 
     private var observer: UUID?
     private var scrollDebounce: DispatchWorkItem?
-    private var lastPlanRevision: UInt64 = .max
+    private var memoryTimer: Timer?
 
     public init(store: StripStore, config: Config) {
         self.store = store
@@ -75,6 +75,7 @@ public final class StripViewController: NSViewController {
     public override func viewDidLoad() {
         super.viewDidLoad()
         observer = store.observe { [weak self] state in self?.apply(state) }
+        startMemorySampling()
         // PRD §8: strip scroll position persists across launches.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -86,6 +87,29 @@ public final class StripViewController: NSViewController {
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        // The timer is not touched here: `deinit` is nonisolated and `Timer` is
+        // not Sendable. It holds only a weak reference to self, so it stops
+        // doing anything the moment this controller is gone, and the window
+        // controller outlives it anyway.
+    }
+
+    /// Sample WebKit's footprint on a fixed cadence.
+    ///
+    /// Scroll alone is not enough. The eviction policy needs three *consecutive*
+    /// over-budget readings before the soft mark acts — spike M1 watched the
+    /// same 100 panes swing 57% in three and a half minutes with nobody
+    /// touching anything — and a user reading one lane produces no scroll events
+    /// at all while memory climbs behind them.
+    private func startMemorySampling() {
+        memoryTimer?.invalidate()
+        memoryTimer = Timer.scheduledTimer(
+            withTimeInterval: config.memorySampleSeconds, repeats: true
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.applyEvictionPlan(for: self.store.state)
+            }
+        }
     }
 
     // MARK: - applying a snapshot
