@@ -1,6 +1,8 @@
 # ADR 0001 — SwiftTerm, not Relay's web client in a `WKWebView`
 
-**Status:** Accepted · 2026-09-12
+**Status:** Superseded in part by [ADR-0009](0009-libghostty-over-swiftterm.md) ·
+2026-09-12. The emulator is now libghostty; the argument below against Relay's
+web terminal in a `WKWebView` still stands.
 **Decides:** PRD §14 — "SwiftTerm vs. embedding Relay's existing web terminal
 client in a `WKWebView`."
 **Evidence:** [Spike M2](../spikes/02-m2-relay-attach.md),

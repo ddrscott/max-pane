@@ -45,7 +45,16 @@ final class TerminalPaneController: NSObject, PaneController {
     private let store: StripStore
     private let config: Config
     private let container = TerminalPaneContainer()
-    private let terminal = TerminalView(frame: .zero)
+    /// Focus was asked for while the pane had no window to give it.
+    private var wantsFocus = false
+    /// The grid as Ghostty last measured it, for turning a click into a cell.
+    private var grid: (columns: Int, rows: Int)?
+
+    /// The terminal's inset inside its pane, matching the lane's own gutter.
+    /// Shared with the controller's config: if the two drift, ⌘-click lands on
+    /// the wrong cell by however far they disagree.
+    static let terminalPadding = CGPoint(x: 6, y: 4)
+    private let terminal = ClickableTerminalView(frame: .zero)
     private let status = ReconnectingBanner()
 
     /// Ghostty's side of the pipe: bytes in from Relay, bytes out from the
@@ -101,6 +110,8 @@ final class TerminalPaneController: NSObject, PaneController {
         // which is exactly how this first came up: a header reading 254B/s
         // above an empty black column.
         container.onLayout = { [weak self] in self?.terminal.fitToSize() }
+        container.onAttach = { [weak self] in self?.applyPendingFocus() }
+        terminal.onCommandClick = { [weak self] point in self?.openToken(at: point) }
 
         session = InMemoryTerminalSession(
             write: { [weak self] data in
@@ -109,6 +120,7 @@ final class TerminalPaneController: NSObject, PaneController {
             },
             resize: { [weak self] viewport in
                 Task { @MainActor in
+                    self?.grid = (Int(viewport.columns), Int(viewport.rows))
                     self?.gridChanged(cols: Int(viewport.columns), rows: Int(viewport.rows))
                 }
             },
@@ -180,7 +192,14 @@ final class TerminalPaneController: NSObject, PaneController {
             self?.status.setState(connected ? .connected : .reconnecting)
         }
         attachment.onExit = { [weak self] code in
-            self?.session.finish(exitCode: UInt32(bitPattern: code), runtimeMilliseconds: 0)
+            // Deliberately not `session.finish(...)`. That hands the exit to
+            // Ghostty, which paints its own end-of-process screen over the
+            // pane: "Ghostty failed to launch the requested command … Press
+            // any key to close the window." Both halves are untrue here — the
+            // command ran, Relay launched it, and no key closes anything — and
+            // it lands on top of the output the exit is about. The lane's own
+            // EXITED chip says the same thing in this app's vocabulary, and
+            // leaving the surface alive keeps the scrollback readable.
             self?.status.isHidden = false
             self?.status.setState(.exited(code))
         }
@@ -191,7 +210,22 @@ final class TerminalPaneController: NSObject, PaneController {
 
     func apply(_ pane: Pane) { self.pane = pane }
 
-    func takeFocus() { container.window?.makeFirstResponder(terminal) }
+    /// Give this pane the keyboard.
+    ///
+    /// A pane is routinely asked for focus before it is in a window — a lane
+    /// created by `maxpane run` is focused in the ledger the moment it exists,
+    /// which is a run loop or two before it is on screen. `makeFirstResponder`
+    /// just fails then, and since the strip only asks once, the pane comes up
+    /// drawn, attached, and deaf. So remember the want and honour it on attach.
+    func takeFocus() {
+        wantsFocus = true
+        applyPendingFocus()
+    }
+
+    private func applyPendingFocus() {
+        guard wantsFocus, let window = container.window else { return }
+        if window.makeFirstResponder(terminal) { wantsFocus = false }
+    }
 
     func tearDown() {
         scrollbackDebounce?.cancel()
@@ -269,6 +303,32 @@ final class TerminalPaneController: NSObject, PaneController {
         guard let laneId = store.lane(containing: paneId)?.id, let url = token.openURL else { return }
         try? store.newWebLane(url: url.absoluteString, near: laneId)
         onRevealLane?(store.state.lanes.last?.id)
+    }
+
+    /// ⌘-click: open whatever is under the pointer in the next lane.
+    ///
+    /// The word comes from the viewport read rather than from Ghostty's own
+    /// word selection, because the interesting tokens are exactly the ones its
+    /// word boundaries split — `src/foo.ts:42:10` is one thing to open, not
+    /// four. `TerminalTokenizer` gates on the file existing, so a ⌘-click on
+    /// prose does nothing rather than opening a pane onto a word.
+    private func openToken(at point: CGPoint) {
+        guard let grid,
+              let cell = ClickableTerminalView.cell(
+                  at: point,
+                  columns: grid.columns,
+                  rows: grid.rows,
+                  viewSize: terminal.bounds.size,
+                  padding: Self.terminalPadding),
+              let text = session.readViewportText()
+        else { return }
+
+        let lines = text.components(separatedBy: "\n")
+        guard cell.row < lines.count,
+              let word = TerminalTokenizer.word(in: lines[cell.row], column: cell.column),
+              let token = TerminalTokenizer.classify(word, cwd: currentCwd ?? "")
+        else { return }
+        open(token)
     }
 
     // MARK: - search index
@@ -447,10 +507,16 @@ final class ReconnectingBanner: NSView {
 @MainActor
 final class TerminalPaneContainer: NSView {
     var onLayout: (() -> Void)?
+    var onAttach: (() -> Void)?
 
     override func layout() {
         super.layout()
         onLayout?()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil { onAttach?() }
     }
 }
 
@@ -485,10 +551,20 @@ enum TerminalControllerPool {
                     builder.withSelectionBackground(hex(Theme.accent))
                     builder.withSelectionForeground(hex(Theme.laneBackground))
                     builder.withCursorColor(hex(Theme.accent))
+                    // Ghostty ships a full set of app keybindings — ⇧⌘W closes
+                    // a window, ⌘T opens a tab — and claims them in
+                    // `performKeyEquivalent`, which runs before the menu. In
+                    // Ghostty those shortcuts do something; here they silently
+                    // ate Max Pane's own, so Close Lane worked from the File
+                    // menu and did nothing from the keyboard. The strip owns
+                    // the window, so the terminal owns no window commands.
+                    // Copy, paste and select-all are unaffected: those are
+                    // responder-chain actions, driven by our Edit menu.
+                    builder.withCustom("keybind", "clear")
                     // Matching the lane's own gutter, so text does not start
                     // hard against the divider.
-                    builder.withWindowPaddingX(6)
-                    builder.withWindowPaddingY(4)
+                    builder.withWindowPaddingX(Int(TerminalPaneController.terminalPadding.x))
+                    builder.withWindowPaddingY(Int(TerminalPaneController.terminalPadding.y))
                 })
             controller = made
             return made
