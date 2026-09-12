@@ -15,6 +15,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("../migrations/0003_session_and_recents.sql"),
     ),
     ("0004_history", include_str!("../migrations/0004_history.sql")),
+    ("0005_pane_height", include_str!("../migrations/0005_pane_height.sql")),
 ];
 
 pub struct Ledger {
@@ -85,7 +86,7 @@ impl Ledger {
         // One pass over every pane beats one query per lane at 150 lanes.
         let mut stmt = self.conn.prepare(
             "SELECT id, lane_id, position, kind, relay_session_id, url, scroll_y,
-                    data_store_id, snapshot_path, state
+                    data_store_id, snapshot_path, state, height_weight
              FROM pane ORDER BY lane_id, position ASC",
         )?;
         let panes: Vec<Pane> = stmt.query_map([], row_to_pane)?.collect::<rusqlite::Result<_>>()?;
@@ -115,7 +116,7 @@ impl Ledger {
             .ok_or_else(|| CoreError::NotFound { kind: "lane".into(), id: id.into() })?;
         let mut stmt = self.conn.prepare(
             "SELECT id, lane_id, position, kind, relay_session_id, url, scroll_y,
-                    data_store_id, snapshot_path, state
+                    data_store_id, snapshot_path, state, height_weight
              FROM pane WHERE lane_id = ?1 ORDER BY position ASC",
         )?;
         lane.panes = stmt.query_map([id], row_to_pane)?.collect::<rusqlite::Result<_>>()?;
@@ -126,7 +127,7 @@ impl Ledger {
         self.conn
             .query_row(
                 "SELECT id, lane_id, position, kind, relay_session_id, url, scroll_y,
-                        data_store_id, snapshot_path, state FROM pane WHERE id = ?1",
+                        data_store_id, snapshot_path, state, height_weight FROM pane WHERE id = ?1",
                 [id],
                 row_to_pane,
             )
@@ -212,8 +213,8 @@ impl Ledger {
     pub fn insert_pane(&self, pane: &Pane) -> Result<()> {
         self.conn.execute(
             "INSERT INTO pane (id, lane_id, position, kind, relay_session_id, url, scroll_y,
-                               data_store_id, snapshot_path, state)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                               data_store_id, snapshot_path, state, height_weight)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 pane.id,
                 pane.lane_id,
@@ -225,6 +226,7 @@ impl Ledger {
                 pane.data_store_id,
                 pane.snapshot_path,
                 state_str(pane.state),
+                pane.height_weight,
             ],
         )?;
         Ok(())
@@ -549,6 +551,31 @@ impl Ledger {
         Ok(max.map(|m| m as u32 + 1).unwrap_or(0))
     }
 
+    /// The weights already in a lane's stack, in stack order.
+    pub fn height_weights(&self, lane_id: &str) -> Result<Vec<f64>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT height_weight FROM pane WHERE lane_id = ?1 ORDER BY position ASC")?;
+        let weights = stmt.query_map([lane_id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(weights)
+    }
+
+    /// Write a whole lane's worth of weights at once.
+    ///
+    /// One transaction, because a divider drag is one decision about *two*
+    /// panes. Committing the pane that grew without the pane that shrank leaves
+    /// a stack claiming more height than the lane has, and a `kill -9` inside
+    /// that window is exactly what PRD §6's commit-before-you-animate rule is
+    /// there to make impossible.
+    pub fn set_height_weights(&mut self, weights: &[(String, f64)]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        for (pane_id, weight) in weights {
+            tx.execute("UPDATE pane SET height_weight = ?2 WHERE id = ?1", params![pane_id, weight])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn pair(&self, pty_pane_id: &str, web_pane_id: &str) -> Result<()> {
         self.conn.execute(
             "INSERT OR IGNORE INTO pairing (pty_pane_id, web_pane_id) VALUES (?1, ?2)",
@@ -613,6 +640,7 @@ fn row_to_pane(r: &Row) -> rusqlite::Result<Pane> {
         data_store_id: r.get(7)?,
         snapshot_path: r.get(8)?,
         state: parse_state(&r.get::<_, String>(9)?),
+        height_weight: r.get(10)?,
     })
 }
 

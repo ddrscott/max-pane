@@ -80,6 +80,19 @@ pub struct HistoryEntry {
     pub score: i32,
 }
 
+/// One pane's new share of its lane's height.
+///
+/// Its own record rather than two parallel `Vec`s across the FFI: a pane id and
+/// a weight that disagree in length is a silent mis-assignment, and the one
+/// caller is a mouse drag that must never put the top pane's height on the
+/// bottom one.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct PaneHeight {
+    pub pane_id: String,
+    /// Relative to the pane's siblings. Finite and > 0.
+    pub weight: f64,
+}
+
 /// Whether the shell should be holding a live view for this pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum PaneState {
@@ -105,6 +118,13 @@ pub struct Pane {
     /// `placeholder` only: on-disk snapshot rendered while evicted.
     pub snapshot_path: Option<String>,
     pub state: PaneState,
+    /// This pane's share of its lane's height, relative to its siblings.
+    ///
+    /// A weight and not a point height: the lane is as tall as the window, and
+    /// the window changes. Only the ratio between siblings is ever read, so
+    /// nothing normalizes these — 1 everywhere is the equal split that was the
+    /// only thing a lane could do before this existed.
+    pub height_weight: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]

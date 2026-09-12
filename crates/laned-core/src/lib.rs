@@ -55,6 +55,23 @@ fn new_id() -> String {
     ulid::Ulid::new().to_string()
 }
 
+/// The weight a pane joining a stack should be given.
+///
+/// The mean, so the newcomer takes an equal share of the enlarged lane and the
+/// panes already there give up height in proportion to what they had. 1.0 for
+/// an empty stack, which is the same number the migration defaults to, so the
+/// first pane of a lane is never a special case anywhere.
+fn mean_weight(existing: &[f64]) -> f64 {
+    if existing.is_empty() {
+        return 1.0;
+    }
+    let sum: f64 = existing.iter().filter(|w| w.is_finite() && **w > 0.0).sum();
+    if sum <= 0.0 {
+        return 1.0;
+    }
+    sum / existing.len() as f64
+}
+
 struct Inner {
     ledger: Ledger,
     index: search::Index,
@@ -188,6 +205,7 @@ impl Core {
             data_store_id: None,
             snapshot_path: None,
             state: PaneState::Live,
+            height_weight: 1.0,
         };
         inner.ledger.insert_lane(&lane)?;
         inner.ledger.insert_pane(&pane)?;
@@ -217,6 +235,13 @@ impl Core {
             data_store_id: None,
             snapshot_path: None,
             state: PaneState::Live,
+            // The mean of what is already there, which is the one value that
+            // gives the arrival an equal share of the *new* total while leaving
+            // every existing ratio untouched. Splitting a lane you have already
+            // tuned 70/30 therefore gives 47/20/33 — the two panes you arranged
+            // still stand in the same relation to each other, and neither is
+            // singled out to pay for the newcomer.
+            height_weight: mean_weight(&inner.ledger.height_weights(&lane_id)?),
         };
         inner.ledger.insert_pane(&pane)?;
         inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane.id)?;
@@ -301,6 +326,39 @@ impl Core {
         let mut inner = self.inner.lock();
         let span = inner.ledger.lane(&lane_id)?.span.max(1);
         inner.ledger.update_lane_width(&lane_id, width_pt.clamp(LANE_MIN_PT, LANE_MAX_PT * span))?;
+        Self::bump(&mut inner);
+        Self::snapshot(&inner)
+    }
+
+    /// Set the height weights of some or all of a lane's panes.
+    ///
+    /// A *list*, because the gesture that produces it moves two panes at once
+    /// and they have to land together — see `Ledger::set_height_weights`. The
+    /// caller sends only the panes it changed; a divider drag therefore writes
+    /// exactly two rows however tall the stack is, and every other pane's
+    /// weight stays bit-identical rather than being rewritten with a rounded
+    /// version of itself.
+    ///
+    /// Weights are a ratio, so the only thing refused here is a value that
+    /// cannot be one. A non-finite or non-positive weight would make `Σw`
+    /// meaningless for the whole lane — one NaN and every sibling's height is
+    /// NaN — so it is rejected at the boundary rather than clamped quietly: a
+    /// caller sending it has a bug, and a lane that silently reshapes itself is
+    /// a worse way to find out. The *point* floor a pane may not shrink past is
+    /// not here on purpose; it depends on how tall the lane is right now, which
+    /// is a fact about the window and not about the ledger.
+    pub fn set_pane_heights(&self, weights: Vec<PaneHeight>) -> Result<StripState> {
+        let mut inner = self.inner.lock();
+        for w in &weights {
+            if !w.weight.is_finite() || w.weight <= 0.0 {
+                return Err(CoreError::Invalid {
+                    message: format!("pane height weight must be finite and positive, got {}", w.weight),
+                });
+            }
+        }
+        let rows: Vec<(String, f64)> =
+            weights.into_iter().map(|w| (w.pane_id, w.weight)).collect();
+        inner.ledger.set_height_weights(&rows)?;
         Self::bump(&mut inner);
         Self::snapshot(&inner)
     }
@@ -752,6 +810,7 @@ impl Core {
                     data_store_id: None,
                     snapshot_path: None,
                     state: PaneState::Live,
+                    height_weight: p.height_weight,
                 })?;
             }
         }

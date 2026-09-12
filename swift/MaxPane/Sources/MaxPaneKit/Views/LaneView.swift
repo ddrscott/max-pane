@@ -17,10 +17,32 @@ final class LaneView: NSView {
     private let stack = NSStackView()
     private let resizeHandle = LaneResizeHandle()
     private var paneViews: [String: NSView] = [:]
+    /// Each pane's share of the lane, as the ledger has it.
+    private var paneWeights: [String: Double] = [:]
+    /// What a seam drag is currently asking for, until the ledger agrees.
+    ///
+    /// The same shape as `desiredWidth` and for the same reason: the lane draws
+    /// what the pointer says while the mouse is down, and the ledger is the
+    /// truth the instant it is up. A failed write therefore snaps back to the
+    /// real split rather than leaving the screen lying about what was stored.
+    private var draggedWeights: [String: Double]?
+    /// One per pane, owned here and updated in `layout`. The stack distributes
+    /// by these rather than by `.fillEqually`.
+    private var heightConstraints: [String: NSLayoutConstraint] = [:]
+    /// The seams, one fewer than the number of visible panes. Pooled rather
+    /// than rebuilt: a divider that is destroyed and recreated on every layout
+    /// pass loses its tracking area, and the cursor stops changing halfway
+    /// through a drag.
+    private var dividers: [PaneDividerView] = []
 
     /// Dragging the right edge. Reports live during the drag and once at the end
     /// so the ledger takes one write rather than one per frame.
     var onResize: ((UInt32, _ final: Bool) -> Void)?
+    /// Dragging a seam between two stacked panes. Same shape and same
+    /// discipline as `onResize`: live while the pointer moves so the lane
+    /// reflows under it, once more on the drop so the ledger takes one write
+    /// per decision. Only the two panes either side of the seam appear in it.
+    var onPaneHeights: (([(paneId: String, weight: Double)], _ final: Bool) -> Void)?
     var onFocusPane: ((String) -> Void)?
     var onHeaderDoubleClick: (() -> Void)?
     /// Dragging the header reorders the strip (PRD §7.2). `x` is in the strip's
@@ -70,8 +92,21 @@ final class LaneView: NSView {
         frame.size.width = CGFloat(lane.widthPt)
 
         stack.orientation = .vertical
-        stack.distribution = .fillEqually
-        stack.spacing = Theme.borderWidth
+        // `.fill`, not `.fillEqually`: panes have individual heights now, and
+        // this view owns them (see `applyPaneHeights`). `.fillEqually` would
+        // install its own equal-height constraints and win, so the split would
+        // be stored, read, computed — and then silently discarded at the last
+        // step.
+        stack.distribution = .fill
+        // The gap between panes is the seam, and the seam is a thing you can
+        // see and grab, so it is `PaneSplit.seam` wide rather than the single
+        // point of lane background it used to be. The rule drawn inside it is
+        // still `Theme.borderWidth`; the rest is hit area.
+        stack.spacing = PaneSplit.seam
+        // Panes have no intrinsic height, so without this the stack hugs them
+        // to nothing and the height constraints below fight a hug they cannot
+        // see the source of.
+        stack.setHuggingPriority(.defaultLow, for: .vertical)
         stack.translatesAutoresizingMaskIntoConstraints = false
         header.translatesAutoresizingMaskIntoConstraints = false
         resizeHandle.translatesAutoresizingMaskIntoConstraints = false
@@ -136,7 +171,13 @@ final class LaneView: NSView {
         laneId = lane.id
         currentSessionId = lane.panes.first(where: { $0.kind == .pty })?.relaySessionId
         desiredWidth = CGFloat(lane.widthPt)
+        // Keyed by pane id and not by position: a snapshot can arrive while a
+        // pane is still fading out of the stack, and an array indexed by
+        // position would hand the departing pane's height to the one that took
+        // its place.
+        paneWeights = Dictionary(uniqueKeysWithValues: lane.panes.map { ($0.id, $0.heightWeight) })
         header.apply(lane)
+        needsLayout = true
     }
 
     /// Install the view for a pane, or take one out. The lane owns arrangement;
@@ -148,11 +189,24 @@ final class LaneView: NSView {
             stack.removeArrangedSubview(existing)
             existing.removeFromSuperview()
             paneViews[paneId] = nil
+            heightConstraints[paneId]?.isActive = false
+            heightConstraints[paneId] = nil
         }
         guard let view else { return }
         paneViews[paneId] = view
         let index = min(position, stack.arrangedSubviews.count)
         stack.insertArrangedSubview(view, at: index)
+
+        // 999, not required. The stack is pinned top and bottom, so these have
+        // to add up to the lane exactly — and they do — but a window mid-resize
+        // hands the stack a height for one pass that no set of constants was
+        // computed against. At 999 that pass bends a point somewhere instead of
+        // logging an unsatisfiable-constraints wall and breaking one at random.
+        let height = view.heightAnchor.constraint(equalToConstant: 0)
+        height.priority = NSLayoutConstraint.Priority(999)
+        height.isActive = true
+        heightConstraints[paneId] = height
+        needsLayout = true
     }
 
     func paneView(for paneId: String) -> NSView? { paneViews[paneId] }
@@ -208,6 +262,11 @@ final class LaneView: NSView {
             context.allowsImplicitAnimation = true
             view.animator().alphaValue = 0
             view.animator().isHidden = true
+            // The heights the survivors grow into are worked out in `layout`,
+            // so the lane has to be *asked* for one — `layoutSubtreeIfNeeded`
+            // on its own does nothing when nothing has invalidated, and the
+            // gap would close in a cut at the end instead of over the fade.
+            self.needsLayout = true
             self.layoutSubtreeIfNeeded()
         } completionHandler: {
             // Back to a usable state before it goes: a pane controller can
@@ -244,12 +303,17 @@ final class LaneView: NSView {
     func animatePaneViewIn(for paneId: String, duration: TimeInterval) {
         guard let view = paneViews[paneId] else { return }
         view.isHidden = true
+        needsLayout = true
         layoutSubtreeIfNeeded()
         NSAnimationContext.runAnimationGroup { context in
             context.duration = duration
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             context.allowsImplicitAnimation = true
             view.animator().isHidden = false
+            // As in `fadeOutPaneView`: the arriving pane's height is decided in
+            // `layout`, and nothing else invalidates it, so without this the
+            // new pane animates from nothing to nothing.
+            self.needsLayout = true
             self.layoutSubtreeIfNeeded()
         }
     }
@@ -262,6 +326,14 @@ final class LaneView: NSView {
             view.removeFromSuperview()
         }
         paneViews.removeAll()
+        for (_, constraint) in heightConstraints { constraint.isActive = false }
+        heightConstraints.removeAll()
+        // The weights go too. This view is on its way to the recycle pool and
+        // will be handed a different lane; a seam left over from the last one
+        // would be drawn against panes it knows nothing about.
+        paneWeights.removeAll()
+        draggedWeights = nil
+        for divider in dividers { divider.isHidden = true }
     }
 
     // MARK: - opening and closing
@@ -314,6 +386,152 @@ final class LaneView: NSView {
         // height mid-transition would otherwise reveal a full-width lane through
         // a mask that is the old height.
         if revealWidth != nil { applyReveal() }
+        applyPaneHeights()
+    }
+
+    // MARK: - how tall each pane is
+
+    /// The panes the stack is actually showing, top to bottom.
+    ///
+    /// Hidden ones are excluded on purpose. A pane fading out of a stack is
+    /// still an arranged subview for the length of its exit (`fadeOutPaneView`),
+    /// and including it would keep its height reserved — the survivors would sit
+    /// still and then jump when it finally went, which is precisely the cut that
+    /// animation exists to remove.
+    private var visiblePaneIds: [String] {
+        stack.arrangedSubviews.filter { !$0.isHidden }.compactMap { view in
+            paneViews.first { $0.value === view }?.key
+        }
+    }
+
+    private func weight(of paneId: String) -> Double {
+        draggedWeights?[paneId] ?? paneWeights[paneId] ?? 1
+    }
+
+    /// Resolve the weights into constraint constants and put the seams where
+    /// the boundaries landed.
+    ///
+    /// Derived from the lane's own height rather than read back from the
+    /// stack's frame: this runs inside `layout`, before the subtree has been
+    /// laid out, so the stack's frame is still last pass's. The stack is pinned
+    /// to the header's bottom and the lane's bottom, so its height is a fact
+    /// about the lane and there is nothing to read.
+    private func applyPaneHeights() {
+        let ids = visiblePaneIds
+        guard !ids.isEmpty else {
+            for divider in dividers { divider.isHidden = true }
+            return
+        }
+
+        let seams = CGFloat(ids.count - 1) * PaneSplit.seam
+        let available = max(0, bounds.height - Theme.laneHeaderHeight - seams)
+        let heights = PaneSplit.heights(weights: ids.map(weight(of:)), available: available)
+
+        // A pane that is not showing gets nought rather than an *inactive*
+        // constraint. Activating and deactivating is a change to the constraint
+        // graph, and a graph change made from inside `layout` is not guaranteed
+        // to be solved in the same pass — which is exactly how ⇧⌘D put a third
+        // pane in a lane that was still drawing two. A constant is solved every
+        // time.
+        let wanted = Dictionary(uniqueKeysWithValues: zip(ids, heights))
+        for (id, constraint) in heightConstraints {
+            let height = wanted[id] ?? 0
+            // Half a point of hysteresis. These are set from inside `layout`,
+            // which marks the view as needing layout again; without a guard
+            // that is a pass every frame forever rather than one pass that
+            // settles.
+            if abs(constraint.constant - height) > 0.5 { constraint.constant = height }
+        }
+
+        layOutDividers(above: heights)
+    }
+
+    /// Put a seam in each gap between two visible panes.
+    ///
+    /// Positioned by summing heights, exactly as the strip positions lanes by
+    /// summing widths (ADR-0004) and for the same reason: the alternative is
+    /// reading sibling frames that this pass has not set yet.
+    private func layOutDividers(above heights: [CGFloat]) {
+        let wanted = max(0, heights.count - 1)
+        while dividers.count < wanted {
+            let divider = PaneDividerView(frame: .zero)
+            let index = dividers.count
+            divider.onDrag = { [weak self] delta, isFinal in
+                self?.seamDragged(at: index, by: delta, isFinal: isFinal)
+            }
+            // Below the width handle: the two overlap in the bottom-right
+            // corner, and the lane's edge has to win there or a lane can be
+            // made narrow but never wide again.
+            addSubview(divider, positioned: .below, relativeTo: resizeHandle)
+            dividers.append(divider)
+        }
+
+        var offset: CGFloat = 0
+        let top = bounds.height - Theme.laneHeaderHeight
+        for (index, divider) in dividers.enumerated() {
+            guard index < wanted else {
+                divider.isHidden = true
+                continue
+            }
+            offset += heights[index]
+            divider.isHidden = false
+            // Centred on the gap and taller than it, so the grab area reaches a
+            // few points into each neighbour. The seam it draws is still
+            // exactly the gap.
+            let frame = NSRect(
+                x: 0, y: top - offset - (PaneSplit.seam + PaneSplit.grab) / 2,
+                width: bounds.width, height: PaneSplit.grab)
+            guard divider.frame != frame else {
+                offset += PaneSplit.seam
+                continue
+            }
+            // No implicit animation. A seam is set from `layout`, which runs
+            // once per drag event; a quarter-second ease on each one would put
+            // the line permanently behind the pointer that is dragging it.
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            divider.frame = frame
+            CATransaction.commit()
+            window?.invalidateCursorRects(for: divider)
+            offset += PaneSplit.seam
+        }
+    }
+
+    /// The user moved a seam.
+    ///
+    /// The lane keeps its own answer for as long as the mouse is down and drops
+    /// it the moment the ledger has one — `onPaneHeights` writes synchronously
+    /// and the snapshot comes back through `apply` inside that call, so there is
+    /// no frame where neither is in charge. Clearing *before* the callback is
+    /// what makes a failed write snap back to the truth instead of leaving the
+    /// screen showing a split nobody stored.
+    private func seamDragged(at index: Int, by delta: CGFloat, isFinal: Bool) {
+        let ids = visiblePaneIds
+        guard ids.indices.contains(index), ids.indices.contains(index + 1) else { return }
+
+        let seams = CGFloat(ids.count - 1) * PaneSplit.seam
+        let available = max(0, bounds.height - Theme.laneHeaderHeight - seams)
+        let next = PaneSplit.drag(
+            weights: ids.map(weight(of:)), divider: index, delta: delta, available: available)
+
+        let changed = [
+            (paneId: ids[index], weight: next[index]),
+            (paneId: ids[index + 1], weight: next[index + 1]),
+        ]
+        if isFinal {
+            draggedWeights = nil
+        } else {
+            var live = draggedWeights ?? [:]
+            for pair in changed { live[pair.paneId] = pair.weight }
+            draggedWeights = live
+        }
+        needsLayout = true
+        // Synchronously, so the seam is under the pointer in this event and not
+        // in the next run-loop turn. A divider that trails the mouse by a frame
+        // reads as the drag not having taken, which is how the lane's own width
+        // handle behaved before it laid out live.
+        if !isFinal { layoutSubtreeIfNeeded() }
+        onPaneHeights?(changed, isFinal)
     }
 
     // MARK: - focus and flash

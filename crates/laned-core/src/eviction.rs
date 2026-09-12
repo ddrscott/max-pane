@@ -305,6 +305,7 @@ mod tests {
             data_store_id: None,
             snapshot_path: None,
             state,
+            height_weight: 1.0,
         }
     }
 

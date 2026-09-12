@@ -89,6 +89,10 @@ fn the_session_blob_stays_out_of_the_layout_snapshot() {
         data_store_id: _,
         snapshot_path: _,
         state: _,
+        // A ratio, eight bytes. Deliberately in the record where the session
+        // blob is deliberately not: the shell needs it to lay out every frame,
+        // and a `f64` per pane is the cheapest thing that crosses the FFI.
+        height_weight: _,
     } = pane.clone();
 }
 

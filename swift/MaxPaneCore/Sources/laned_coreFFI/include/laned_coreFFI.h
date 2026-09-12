@@ -454,6 +454,11 @@ RustBuffer uniffi_laned_core_fn_method_core_set_manual_tag(uint64_t ptr, RustBuf
 void uniffi_laned_core_fn_method_core_set_pane_data_store(uint64_t ptr, RustBuffer pane_id, RustBuffer data_store_id, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PANE_HEIGHTS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PANE_HEIGHTS
+RustBuffer uniffi_laned_core_fn_method_core_set_pane_heights(uint64_t ptr, RustBuffer weights, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PANE_INTERACTION_STATE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PANE_INTERACTION_STATE
 void uniffi_laned_core_fn_method_core_set_pane_interaction_state(uint64_t ptr, RustBuffer pane_id, RustBuffer state, RustCallStatus *_Nonnull out_status
@@ -979,6 +984,12 @@ uint16_t uniffi_laned_core_checksum_method_core_set_manual_tag(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_PANE_DATA_STORE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_PANE_DATA_STORE
 uint16_t uniffi_laned_core_checksum_method_core_set_pane_data_store(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_PANE_HEIGHTS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_PANE_HEIGHTS
+uint16_t uniffi_laned_core_checksum_method_core_set_pane_heights(void
     
 );
 #endif

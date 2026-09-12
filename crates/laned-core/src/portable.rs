@@ -51,9 +51,13 @@ pub fn export(lanes: &[Lane]) -> String {
             ));
             out.push_str(&format!("          \"url\": {},\n", json_opt(pane.url.as_deref())));
             out.push_str(&format!(
-                "          \"scroll_y\": {}\n",
+                "          \"scroll_y\": {},\n",
                 pane.scroll_y.map(|v| v.to_string()).unwrap_or_else(|| "null".into())
             ));
+            // The split the user arranged is layout, and layout is the whole of
+            // what this format carries. A file written before the column existed
+            // reads back as 1 everywhere, which is the equal split it described.
+            out.push_str(&format!("          \"height_weight\": {}\n", pane.height_weight));
             out.push_str(if j + 1 == lane.panes.len() { "        }\n" } else { "        },\n" });
         }
         out.push_str("      ]\n");
@@ -82,6 +86,9 @@ pub struct PortablePane {
     pub relay_session_id: Option<String>,
     pub url: Option<String>,
     pub scroll_y: Option<f64>,
+    /// This pane's share of its lane's height. 1 for a file written before the
+    /// field existed, or hand-edited to drop it.
+    pub height_weight: f64,
 }
 
 /// Parse an exported strip.
@@ -150,6 +157,13 @@ fn parse_pane(fields: &[(String, mini_json::Value)]) -> PortablePane {
         relay_session_id: get("relay_session_id").and_then(|v| v.string()).map(str::to_string),
         url: get("url").and_then(|v| v.string()).map(str::to_string),
         scroll_y: get("scroll_y").and_then(|v| v.number()),
+        // A hand-edited 0 or a negative would make `Σw` meaningless for the
+        // whole lane, so anything that is not a usable ratio falls back to the
+        // equal share rather than importing a lane nobody can lay out.
+        height_weight: get("height_weight")
+            .and_then(|v| v.number())
+            .filter(|w| w.is_finite() && *w > 0.0)
+            .unwrap_or(1.0),
     }
 }
 
@@ -391,6 +405,7 @@ mod tests {
             data_store_id: None,
             snapshot_path: None,
             state: PaneState::Live,
+            height_weight: 1.0,
         }
     }
 

@@ -506,6 +506,23 @@ public final class StripViewController: NSViewController {
                 self.relayout()
             }
         }
+        laneView.onPaneHeights = { [weak self] weights, isFinal in
+            guard let self else { return }
+            // The lane has already redrawn itself; the strip's only job here is
+            // the two things that must not happen sixty times a second. One
+            // ledger write per decision, as PRD §6 wants — and one word to the
+            // far end of each terminal, for the reason in
+            // `TerminalPaneController.beginLiveResize`.
+            let terminals = weights.compactMap {
+                self.paneControllers[$0.paneId] as? TerminalPaneController
+            }
+            guard isFinal else {
+                for terminal in terminals { terminal.beginLiveResize() }
+                return
+            }
+            try? self.store.setPaneHeights(weights)
+            for terminal in terminals { terminal.endLiveResize() }
+        }
         laneView.widthBounds = config.widthRange.lowerBound...(config.laneMaxPt * max(lane.span, 1))
         laneView.onHeaderDrag = { [weak self] x, isFinal in
             self?.handleLaneDrag(laneId: lane.id, toX: x, isFinal: isFinal)

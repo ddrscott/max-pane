@@ -257,7 +257,7 @@ struct LaneHeaderRenderTests {
              projectSource: .cwd, createdAt: 0, lastFocusAt: 0, pinned: pinned, span: 1,
              panes: [Pane(id: "p", laneId: "l", position: 0, kind: .pty,
                           relaySessionId: "a", url: nil, scrollY: nil, dataStoreId: nil,
-                          snapshotPath: nil, state: .live)])
+                          snapshotPath: nil, state: .live, heightWeight: 1)])
     }
 
     private func webLane() -> Lane {
@@ -265,6 +265,6 @@ struct LaneHeaderRenderTests {
              projectSource: .cwd, createdAt: 0, lastFocusAt: 0, pinned: false, span: 1,
              panes: [Pane(id: "wp", laneId: "w", position: 0, kind: .web,
                           relaySessionId: nil, url: "https://google.com", scrollY: nil,
-                          dataStoreId: nil, snapshotPath: nil, state: .live)])
+                          dataStoreId: nil, snapshotPath: nil, state: .live, heightWeight: 1)])
     }
 }

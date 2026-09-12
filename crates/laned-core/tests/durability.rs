@@ -761,4 +761,89 @@ fn an_old_ledger_gains_span_without_losing_anything() {
     assert!(st.lanes[0].pinned);
     assert_eq!(st.lanes[0].span, 1, "existing lanes must default to span 1");
     assert_eq!(st.lanes[0].panes[0].url.as_deref(), Some("https://old"));
+    // The layout a pre-0005 ledger described was `.fillEqually`, and equal
+    // weights are the same statement. A lane that came back with a different
+    // split than the one it was quit with would be the migration inventing a
+    // decision the user never made.
+    assert_eq!(st.lanes[0].panes[0].height_weight, 1.0);
+}
+
+/// A split the user dragged is layout, and layout survives `kill -9` like
+/// everything else in PRD §15 does.
+#[test]
+fn pane_heights_survive_an_unclean_exit() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let (lane_id, top, bottom) = {
+        let core = Core::open(db(&dir)).unwrap();
+        let st = core
+            .create_lane(Placement::End, PaneKind::Web, None, Some("https://top".into()), None)
+            .unwrap();
+        let lane_id = st.lanes[0].id.clone();
+        let top = st.lanes[0].panes[0].id.clone();
+        let st = core.add_pane(lane_id.clone(), PaneKind::Web, None, Some("https://bottom".into())).unwrap();
+        let bottom = st.lanes[0].panes[1].id.clone();
+
+        core.set_pane_heights(vec![
+            PaneHeight { pane_id: top.clone(), weight: 1.5 },
+            PaneHeight { pane_id: bottom.clone(), weight: 0.5 },
+        ])
+        .unwrap();
+        (lane_id, top, bottom)
+    };
+
+    let reopened = Core::open(db(&dir)).unwrap();
+    let lane = reopened.lane(lane_id).unwrap();
+    assert_eq!(lane.panes[0].id, top);
+    assert_eq!(lane.panes[0].height_weight, 1.5);
+    assert_eq!(lane.panes[1].id, bottom);
+    assert_eq!(lane.panes[1].height_weight, 0.5);
+}
+
+/// A pane joining a lane the user has already arranged takes an equal share of
+/// the enlarged stack, and leaves every existing ratio exactly where it was.
+#[test]
+fn a_joining_pane_takes_an_equal_share_and_disturbs_no_ratios() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = Core::open(db(&dir)).unwrap();
+
+    let st = core.create_lane(Placement::End, PaneKind::Web, None, Some("https://a".into()), None).unwrap();
+    let lane_id = st.lanes[0].id.clone();
+    let a = st.lanes[0].panes[0].id.clone();
+    let st = core.add_pane(lane_id.clone(), PaneKind::Web, None, Some("https://b".into())).unwrap();
+    let b = st.lanes[0].panes[1].id.clone();
+
+    // Drag the divider to 70/30, then split again.
+    core.set_pane_heights(vec![
+        PaneHeight { pane_id: a, weight: 0.7 },
+        PaneHeight { pane_id: b, weight: 0.3 },
+    ])
+    .unwrap();
+    let st = core.add_pane(lane_id, PaneKind::Web, None, Some("https://c".into())).unwrap();
+    let w: Vec<f64> = st.lanes[0].panes.iter().map(|p| p.height_weight).collect();
+
+    let total: f64 = w.iter().sum();
+    assert!((w[2] / total - 1.0 / 3.0).abs() < 1e-9, "the newcomer takes an equal share: {w:?}");
+    // The two panes the user arranged still stand in the same relation to each
+    // other — 70/30 of what is left of them — which is the whole content of the
+    // decision they made with the divider.
+    assert!((w[0] / w[1] - 7.0 / 3.0).abs() < 1e-9, "existing ratio moved: {w:?}");
+}
+
+/// A weight that cannot be a ratio poisons `Σw` for the whole lane — one NaN
+/// and every sibling's height is NaN — so it is refused rather than stored.
+#[test]
+fn a_weight_that_is_not_a_ratio_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = Core::open(db(&dir)).unwrap();
+    let st = core.create_lane(Placement::End, PaneKind::Web, None, Some("https://a".into()), None).unwrap();
+    let a = st.lanes[0].panes[0].id.clone();
+
+    for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        assert!(
+            core.set_pane_heights(vec![PaneHeight { pane_id: a.clone(), weight: bad }]).is_err(),
+            "{bad} was accepted as a height weight"
+        );
+    }
+    assert_eq!(core.state().unwrap().lanes[0].panes[0].height_weight, 1.0, "a refused write changed the ledger");
 }
