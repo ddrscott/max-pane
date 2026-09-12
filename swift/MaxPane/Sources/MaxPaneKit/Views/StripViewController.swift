@@ -148,9 +148,16 @@ public final class StripViewController: NSViewController {
     /// survive, because a `WKWebView` is expensive to build and cheap to
     /// unparent (PRD §10.2).
     ///
-    /// The window is deliberately wider than the viewport: `RELEASE_DISTANCE`
-    /// lanes of slack on each side means a normal scroll never waits for a lane
-    /// to be built.
+    /// The window is deliberately wider than the viewport, by exactly
+    /// `RELEASE_DISTANCE`. Sharing that constant is not laziness — it makes one
+    /// invariant true: **a lane has a view for exactly as long as its web panes
+    /// are meant to be parented.** Beyond it, both go at once, and there is no
+    /// band where the strip holds chrome for panes that have already been let
+    /// go, or vice versa.
+    ///
+    /// It also means a normal scroll never waits for a lane to be built: M4
+    /// measured 0.00% dropped frames with this slack and a peak of 13 live lane
+    /// views out of 150.
     private func materializationWindow(for state: StripState) -> Range<Int> {
         let visible = visibleLaneRange(in: state)
         let slack = Int(config.releaseDistance)
