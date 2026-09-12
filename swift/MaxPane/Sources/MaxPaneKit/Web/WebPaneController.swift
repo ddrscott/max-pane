@@ -507,8 +507,6 @@ final class WebPaneController: NSObject, PaneController {
         focusToken = nil
         keyWindowObserver.map(NotificationCenter.default.removeObserver)
         keyWindowObserver = nil
-        // The pane is gone for good, so its zoom level is too — otherwise the
-        // sidecar grows a row for every pane ever opened.
         webView.map(LinkHoverProbe.remove(from:))
         hoverRelay = nil
         webView?.stopLoading()
