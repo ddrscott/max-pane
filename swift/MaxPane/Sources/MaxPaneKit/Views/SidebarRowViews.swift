@@ -1,108 +1,409 @@
 import AppKit
 import LanedCore
 
-/// One lane in the sidebar: kind glyph, title, project tag, live/evicted state,
-/// pinned marker (PRD §7.6).
+/// The sidebar's ink beyond `Theme`'s one accent.
 ///
-/// Laid out by hand rather than with a stack view — this is redrawn for every
-/// visible row on every snapshot, and at 150 lanes the constraint solver is not
-/// worth inviting.
-final class SidebarLaneView: NSTableCellView {
+/// Status is not decoration, so it gets colour — but only three: orange for
+/// "working right now", green for "alive and waiting on you", grey for "gone".
+/// Anything else would make the accent stop meaning anything.
+enum SidebarInk {
+    /// Alive and quiet. Dimmer than `Theme.agentStateColor(.working)`, so a
+    /// session that is actually producing output still reads brighter.
+    static let live = NSColor(srgbRed: 0.18, green: 0.55, blue: 0.31, alpha: 1)
+    /// The throughput readout. Green only while bytes are moving.
+    static let flow = Theme.agentStateColor(.working)
+    static let gone = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 0.42, alpha: 1)
+            : NSColor(white: 0.60, alpha: 1)
+    }
+    static let hover = NSColor(white: 0.5, alpha: 0.10)
+    static let selection = Theme.accent.withAlphaComponent(0.16)
+}
+
+/// Square selection, square hover, and a hard orange edge on the selected row.
+///
+/// `NSTableView`'s source-list style draws a rounded blue capsule; that is the
+/// one thing the house style has no version of, so the row draws its own.
+final class SidebarRowView: NSTableRowView {
+    var isHovered = false { didSet { if isHovered != oldValue { needsDisplay = true } } }
+    /// Group headers are structure, not targets — they take no highlight.
+    var isTargetable = true
+
+    override func drawBackground(in dirtyRect: NSRect) {
+        super.drawBackground(in: dirtyRect)
+        guard isHovered, isTargetable, !isSelected else { return }
+        SidebarInk.hover.setFill()
+        bounds.fill()
+    }
+
+    override func drawSelection(in dirtyRect: NSRect) {
+        guard isTargetable else { return }
+        SidebarInk.selection.setFill()
+        bounds.fill()
+        Theme.accent.setFill()
+        NSRect(x: 0, y: 0, width: 2, height: bounds.height).fill()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) { isHovered = true }
+    override func mouseExited(with event: NSEvent) { isHovered = false }
+}
+
+/// One session (or web lane) in the browser.
+///
+///     ▪ $ ◑  Pane terminal siz…   1.7KB/s
+///       WORKING                     6s ago
+///
+/// Two lines, because the bar proved the second one is worth its pixels: a
+/// throughput reading with no age beside it cannot tell "busy" from "stuck",
+/// and the agent-state chip is the thing you actually scan ten rows for.
+final class SidebarEntryView: NSTableCellView {
+    private let status = NSView()
+    private let marker = NSTextField(labelWithString: "")
     private let glyph = NSTextField(labelWithString: "")
     private let title = NSTextField(labelWithString: "")
-    private let tagChip = NSTextField(labelWithString: "")
-    private let marker = NSTextField(labelWithString: "")
+    private let badge = NSTextField(labelWithString: "")
+    private let age = NSTextField(labelWithString: "")
+    private let chip = NSTextField(labelWithString: "")
 
-    init(lane: Lane, isLive: Bool) {
+    static let height: CGFloat = 40
+
+    init(entry: SidebarModel.Entry) {
         super.init(frame: .zero)
 
-        let kind: PaneGlyph = lane.panes.first.map {
-            switch $0.kind {
-            case .pty: return .pty
-            case .web: return .web
-            case .placeholder: return .placeholder
-            }
-        } ?? .web
+        let attached = entry.laneId != nil
+        let isWeb = entry.kind != .session
 
-        glyph.stringValue = Theme.glyph(for: kind)
-        glyph.font = Theme.mono(12, weight: .medium)
-        // The orange $ is the live-terminal marker; everything else stays quiet.
-        glyph.textColor = (kind == .pty && isLive) ? Theme.accent : Theme.dimText
+        // A filled square is a running process; a hollow one is a lane with no
+        // process behind it. Shape carries the fact, so the colour does not have
+        // to carry two.
+        status.wantsLayer = true
+        status.layer?.cornerRadius = 0
+        let tint = Self.statusColor(entry)
+        if entry.isRunning && !isWeb {
+            status.layer?.backgroundColor = tint.cgColor
+        } else {
+            status.layer?.borderWidth = 1
+            status.layer?.borderColor = tint.cgColor
+        }
+
+        // The orange `$` says "this one is on the strip"; a dim `+` says
+        // "click and it will be".
+        marker.stringValue = isWeb ? "◍" : (attached ? "$" : "+")
+        marker.font = Theme.mono(11, weight: attached ? .bold : .regular)
+        // The orange prompt means "live, and on the strip". A lane whose session
+        // has died is neither, so it goes grey with the rest of the row.
+        marker.textColor = (attached && entry.isRunning && !isWeb) ? Theme.accent : SidebarInk.gone
+        marker.alignment = .center
+
+        glyph.stringValue = isWeb ? "" : entry.glyph
+        glyph.font = Theme.mono(11, weight: entry.needsAttention ? .bold : .regular)
+        glyph.textColor = Self.ink(entry.state)
         glyph.alignment = .center
 
-        title.stringValue = lane.title ?? lane.panes.first?.url.map(Self.hostOf) ?? "untitled"
-        title.font = Theme.mono(12)
-        title.lineBreakMode = .byTruncatingTail
-        title.textColor = isLive ? .labelColor : Theme.dimText
+        // The chip only exists for the states worth interrupting someone for —
+        // blocked, working, done. An ordinary shell shows nothing here, which is
+        // exactly what makes the chips that do appear worth looking at.
+        let chipInk = Theme.agentStateColor(entry.state)
+        chip.stringValue = entry.chip.isEmpty ? "" : " \(entry.chip) "
+        chip.font = Theme.mono(8, weight: entry.needsAttention ? .bold : .medium)
+        chip.textColor = chipInk
+        chip.wantsLayer = true
+        // Square, like RelayTTY's own chip and like everything else here.
+        chip.layer?.cornerRadius = 0
+        chip.layer?.borderWidth = entry.chip.isEmpty ? 0 : 1
+        chip.layer?.borderColor = chipInk.cgColor
+        // BLOCKED is the only chip that gets filled. It is the one signal the
+        // eye has to find across ten rows without reading any of them.
+        chip.layer?.backgroundColor = entry.needsAttention
+            ? Theme.accent.withAlphaComponent(0.18).cgColor
+            : NSColor.clear.cgColor
 
-        tagChip.stringValue = lane.projectRoot.map { ($0 as NSString).lastPathComponent } ?? ""
-        tagChip.font = Theme.mono(10)
-        tagChip.textColor = Theme.dimText
-        tagChip.alignment = .right
-        tagChip.lineBreakMode = .byTruncatingHead
+        title.attributedStringValue = Self.titleText(entry)
 
-        marker.stringValue = lane.pinned ? "▪" : ""
-        marker.font = Theme.mono(10)
-        marker.textColor = Theme.accent
+        badge.stringValue = entry.badge.uppercased()
+        badge.font = Theme.mono(10, weight: entry.badgeIsThroughput ? .medium : .regular)
+        badge.textColor = entry.badgeIsThroughput ? SidebarInk.flow : Theme.dimText
+        badge.alignment = .right
 
-        for v in [glyph, title, tagChip, marker] {
-            v.translatesAutoresizingMaskIntoConstraints = false
+        age.stringValue = entry.age
+        age.font = Theme.mono(9)
+        age.textColor = NSColor.tertiaryLabelColor
+        age.alignment = .right
+
+        toolTip = attached
+            ? "\(entry.title)\n\(entry.sessionId ?? "web lane") — click to reveal on the strip"
+            : "\(entry.title)\n\(entry.sessionId ?? "") — click to attach"
+
+        for v in [marker, glyph, title, badge, age, chip] {
             v.isBezeled = false
             v.drawsBackground = false
+            // A label that wraps eats the row below it. Every column here is one
+            // line that truncates, always — and the break mode has to be set
+            // *after* `usesSingleLineMode`, which resets it to clipping and
+            // would drop the ellipsis that says a title was cut.
+            v.usesSingleLineMode = true
+            v.maximumNumberOfLines = 1
+            v.lineBreakMode = .byTruncatingTail
+            v.cell?.truncatesLastVisibleLine = true
+        }
+        for v: NSView in [status, marker, glyph, title, badge, age, chip] {
+            v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
 
         NSLayoutConstraint.activate([
-            glyph.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            glyph.centerYAnchor.constraint(equalTo: centerYAnchor),
-            glyph.widthAnchor.constraint(equalToConstant: 14),
+            status.widthAnchor.constraint(equalToConstant: 7),
+            status.heightAnchor.constraint(equalToConstant: 7),
+            status.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
+            status.centerYAnchor.constraint(equalTo: title.centerYAnchor),
 
-            marker.leadingAnchor.constraint(equalTo: glyph.trailingAnchor, constant: 2),
-            marker.centerYAnchor.constraint(equalTo: centerYAnchor),
-            marker.widthAnchor.constraint(equalToConstant: 8),
+            marker.leadingAnchor.constraint(equalTo: status.trailingAnchor, constant: 5),
+            marker.widthAnchor.constraint(equalToConstant: 10),
+            marker.centerYAnchor.constraint(equalTo: title.centerYAnchor),
 
-            title.leadingAnchor.constraint(equalTo: marker.trailingAnchor, constant: 4),
-            title.centerYAnchor.constraint(equalTo: centerYAnchor),
+            glyph.leadingAnchor.constraint(equalTo: marker.trailingAnchor, constant: 1),
+            glyph.widthAnchor.constraint(equalToConstant: 12),
+            glyph.centerYAnchor.constraint(equalTo: title.centerYAnchor),
 
-            tagChip.leadingAnchor.constraint(greaterThanOrEqualTo: title.trailingAnchor, constant: 8),
-            tagChip.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            tagChip.centerYAnchor.constraint(equalTo: centerYAnchor),
+            title.leadingAnchor.constraint(equalTo: glyph.trailingAnchor, constant: 5),
+            title.topAnchor.constraint(equalTo: topAnchor, constant: 5),
+
+            badge.leadingAnchor.constraint(greaterThanOrEqualTo: title.trailingAnchor, constant: 8),
+            badge.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -9),
+            badge.firstBaselineAnchor.constraint(equalTo: title.firstBaselineAnchor),
+
+            age.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -9),
+            age.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 1),
+
+            chip.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            chip.centerYAnchor.constraint(equalTo: age.centerYAnchor),
+            chip.trailingAnchor.constraint(lessThanOrEqualTo: age.leadingAnchor, constant: -6),
         ])
-        // The tag yields before the title does when the sidebar is narrow.
-        title.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
-        tagChip.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // The title yields to nothing: a truncated title is still readable, a
+        // truncated throughput reading is a wrong number.
+        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        badge.setContentCompressionResistancePriority(.required, for: .horizontal)
+        badge.setContentHuggingPriority(.required, for: .horizontal)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not a nib") }
 
-    /// A web lane with no title is best identified by its host, not its full URL.
-    static func hostOf(_ url: String) -> String {
-        URL(string: url)?.host ?? url
+    private static func titleText(_ entry: SidebarModel.Entry) -> NSAttributedString {
+        // Every live session gets a full-strength title. Dimming the ones that
+        // are not on the strip was a mistake the first screenshot made obvious:
+        // it greys out most of the browser, and those are the rows you are here
+        // to find. The `$`/`+` marker carries "on the strip" instead.
+        let colour: NSColor = entry.isRunning ? .labelColor : SidebarInk.gone
+        // An attributed string carries its own paragraph style, and the field's
+        // `lineBreakMode` does not reach it — without this the title clips flat
+        // with no ellipsis to say it was cut.
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        let out = NSMutableAttributedString()
+        if entry.pinned {
+            out.append(NSAttributedString(
+                string: "▪ ",
+                attributes: [
+                    .foregroundColor: Theme.accent,
+                    .font: Theme.mono(9),
+                    .paragraphStyle: paragraph,
+                ]))
+        }
+        out.append(NSAttributedString(
+            string: entry.title,
+            attributes: [
+                .foregroundColor: colour,
+                .font: Theme.mono(12),
+                .paragraphStyle: paragraph,
+            ]))
+        return out
+    }
+
+    /// The dot answers "is there a process there", the glyph answers "what is it
+    /// doing". So a running session with nothing else known is green: alive is
+    /// the fact the dot exists to carry, and an ordinary shell is not a problem.
+    /// The dot answers "is there a process there", the glyph and chip answer
+    /// "what is it doing". So a running session with nothing else known is
+    /// green: alive is the fact the dot exists to carry, and an ordinary shell
+    /// is not a problem.
+    private static func statusColor(_ entry: SidebarModel.Entry) -> NSColor {
+        guard entry.isRunning else { return SidebarInk.gone }
+        switch entry.kind {
+        case .web, .placeholder: return SidebarInk.gone
+        case .session:
+            switch entry.state {
+            case .blocked: return Theme.accent
+            case .working: return Theme.agentStateColor(.working)
+            case .idle, .done, .unknown: return SidebarInk.live
+            case .exited: return SidebarInk.gone
+            }
+        }
+    }
+
+    /// `Theme.agentStateColor` is the authority, and it deliberately returns
+    /// clear for the two states that get no chip — so those fall back to a
+    /// readable dim here rather than disappearing.
+    private static func ink(_ state: AgentState) -> NSColor {
+        let colour = Theme.agentStateColor(state)
+        return colour == .clear ? Theme.dimText : colour
     }
 }
 
-/// A `// PROJECT` header, shown only past 50 lanes.
+/// `▼ // ~/CODE/MAX-PANE ………… 1 RUNNING`
+///
+/// The house `// CAPS` header, with the bar's disclosure triangle and running
+/// count folded into it. Grouping is unconditional here: ten sessions across six
+/// projects is exactly when a flat list stops being a browser.
 final class SidebarGroupView: NSTableCellView {
-    init(label: String, count: Int) {
+    private let triangle = NSTextField(labelWithString: "")
+    private let slashes = NSTextField(labelWithString: "//")
+    private let label = NSTextField(labelWithString: "")
+    private let count = NSTextField(labelWithString: "")
+    private let rule = NSView()
+
+    static let height: CGFloat = 26
+
+    init(group: SidebarModel.Group) {
         super.init(frame: .zero)
-        let text = NSTextField(labelWithString: "")
-        let attributed = NSMutableAttributedString(
-            string: "// ",
-            attributes: [.foregroundColor: Theme.accent, .font: Theme.mono(10, weight: .bold)])
-        attributed.append(NSAttributedString(
-            string: "\(label.uppercased())  \(count)",
-            attributes: [.foregroundColor: Theme.dimText, .font: Theme.mono(10, weight: .bold)]))
-        text.attributedStringValue = attributed
-        text.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(text)
+
+        triangle.stringValue = group.collapsed ? "▶" : "▼"
+        triangle.font = Theme.mono(8)
+        triangle.textColor = Theme.dimText
+        triangle.alignment = .center
+
+        // The `//` is its own label so that a deep worktree path truncates
+        // without eating the house mark that makes this a section header.
+        slashes.font = Theme.mono(10, weight: .bold)
+        slashes.textColor = Theme.accent
+
+        label.stringValue = group.header
+        label.font = Theme.mono(10, weight: .bold)
+        label.textColor = NSColor.labelColor
+        // Head, not tail: the end of a path is the part that says which project
+        // this is. `…/WORKTREES/AGENT-AD3` beats `~/CODE/MAX-PA…`.
+        label.lineBreakMode = .byTruncatingHead
+
+        // A collapsed group hides its rows; the count is then the only thing
+        // left to say "there is an agent in here waiting on you", so when there
+        // is one it takes the accent and the rest stays quiet.
+        count.stringValue = group.countText
+        count.font = Theme.mono(9, weight: group.blocked > 0 ? .bold : .regular)
+        count.textColor = group.blocked > 0 ? Theme.accent : Theme.dimText
+        count.alignment = .right
+
+        // A hairline above the header instead of padding: the strip is made of
+        // hard edges, and so is its index.
+        rule.wantsLayer = true
+        rule.layer?.backgroundColor = Theme.laneBorder.cgColor
+
+        for v in [triangle, slashes, label, count] {
+            v.isBezeled = false
+            v.drawsBackground = false
+            v.usesSingleLineMode = true
+            v.maximumNumberOfLines = 1
+        }
+        // Set after `usesSingleLineMode`, which would otherwise reset it.
+        label.lineBreakMode = .byTruncatingHead
+        for v: NSView in [triangle, slashes, label, count, rule] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(v)
+        }
+
         NSLayoutConstraint.activate([
-            text.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            text.centerYAnchor.constraint(equalTo: centerYAnchor),
-            text.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+            rule.topAnchor.constraint(equalTo: topAnchor),
+            rule.leadingAnchor.constraint(equalTo: leadingAnchor),
+            rule.trailingAnchor.constraint(equalTo: trailingAnchor),
+            rule.heightAnchor.constraint(equalToConstant: 1),
+
+            triangle.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 7),
+            triangle.widthAnchor.constraint(equalToConstant: 10),
+            triangle.centerYAnchor.constraint(equalTo: centerYAnchor, constant: 2),
+
+            slashes.leadingAnchor.constraint(equalTo: triangle.trailingAnchor, constant: 2),
+            slashes.centerYAnchor.constraint(equalTo: triangle.centerYAnchor),
+
+            label.leadingAnchor.constraint(equalTo: slashes.trailingAnchor, constant: 4),
+            label.centerYAnchor.constraint(equalTo: triangle.centerYAnchor),
+
+            count.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 6),
+            count.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -9),
+            count.centerYAnchor.constraint(equalTo: triangle.centerYAnchor),
         ])
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        count.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        toolTip = group.path == SidebarModel.looseWebGroup ? "Web lanes" : group.path
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not a nib") }
+}
+
+/// A square, monospaced control. AppKit has no bezel that is not rounded, so the
+/// border is a layer and the title is drawn flat.
+final class SidebarButton: NSButton {
+    enum Look { case accent, quiet, chip }
+
+    private var look: Look = .quiet
+    private var text: String = ""
+    var isOn = false { didSet { restyle() } }
+
+    init(text: String, look: Look, size: CGFloat = 10, action: Selector?, target: AnyObject?) {
+        super.init(frame: .zero)
+        self.look = look
+        self.text = text
+        self.font = Theme.mono(size, weight: .medium)
+        self.isBordered = false
+        self.bezelStyle = .shadowlessSquare
+        self.wantsLayer = true
+        self.layer?.cornerRadius = 0
+        self.layer?.borderWidth = 1
+        self.target = target
+        self.action = action
+        translatesAutoresizingMaskIntoConstraints = false
+        restyle()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not a nib") }
+
+    func setText(_ next: String) {
+        text = next
+        restyle()
+    }
+
+    private func restyle() {
+        let ink: NSColor
+        let border: NSColor
+        switch look {
+        case .accent:
+            ink = Theme.accent
+            border = Theme.accent
+        case .quiet:
+            ink = isOn ? Theme.accent : Theme.dimText
+            border = isOn ? Theme.accent : Theme.laneBorder
+        case .chip:
+            ink = isOn ? Theme.accent : Theme.dimText
+            border = isOn ? Theme.accent : Theme.laneBorder
+        }
+        layer?.borderColor = border.cgColor
+        layer?.backgroundColor = isOn ? Theme.accent.withAlphaComponent(0.12).cgColor : NSColor.clear.cgColor
+        attributedTitle = NSAttributedString(
+            string: text,
+            attributes: [
+                .foregroundColor: ink,
+                .font: font ?? Theme.mono(10, weight: .medium),
+            ])
+    }
 }
