@@ -7,22 +7,28 @@ import Foundation
 /// The shim is a separate process the app cannot see into, so the only thing
 /// keeping them agreeing is this parser and the format string in
 /// `crates/maxpane-open`. These tests are that agreement.
-@Suite("maxpane-open protocol")
+@Suite("maxpane CLI protocol")
 struct OpenServerParsingTests {
-    @Test("accepts a well-formed request from a relay session")
-    func acceptsWellFormedRequest() {
-        let line = #"{"op":"open","url":"https://example.com/a?b=c","session":"a7ab2d3b","cwd":"/Users/s/code"}"#
-        let request = OpenServer.parse(line)
-        #expect(request?.url == "https://example.com/a?b=c")
-        #expect(request?.sessionId == "a7ab2d3b")
-        #expect(request?.cwd == "/Users/s/code")
+    /// Pull the fields out of an `.open`, or fail the test.
+    private func openFields(_ line: String) -> (url: String, session: String, cwd: String)? {
+        guard case .open(let url, let session, let cwd)? = OpenServer.parse(line) else { return nil }
+        return (url, session, cwd)
     }
 
-    @Test("accepts a request with no session, which lands at the end of the strip")
+    @Test("accepts a well-formed open from a relay session")
+    func acceptsWellFormedRequest() {
+        let line = #"{"op":"open","url":"https://example.com/a?b=c","session":"a7ab2d3b","cwd":"/Users/s/code"}"#
+        let f = openFields(line)
+        #expect(f?.url == "https://example.com/a?b=c")
+        #expect(f?.session == "a7ab2d3b")
+        #expect(f?.cwd == "/Users/s/code")
+    }
+
+    @Test("accepts an open with no session, which lands at the end of the strip")
     func acceptsRequestWithoutSession() {
-        let request = OpenServer.parse(#"{"op":"open","url":"https://example.com","session":"","cwd":"/tmp"}"#)
-        #expect(request?.sessionId == "")
-        #expect(request?.url == "https://example.com")
+        let f = openFields(#"{"op":"open","url":"https://example.com","session":"","cwd":"/tmp"}"#)
+        #expect(f?.session == "")
+        #expect(f?.url == "https://example.com")
     }
 
     @Test("refuses schemes a web pane has no business opening", arguments: [
@@ -36,12 +42,54 @@ struct OpenServerParsingTests {
         #expect(OpenServer.parse(line) == nil, "accepted \(url)")
     }
 
-    @Test("refuses anything that is not an open")
+    @Test("parses a run, with and without arguments")
+    func parsesRun() {
+        guard case .run(let command, let args, _, let cwd)?
+            = OpenServer.parse(#"{"op":"run","command":"htop","args":[],"session":"","cwd":"/tmp"}"#)
+        else { return #expect(Bool(false), "did not parse a run") }
+        #expect(command == "htop")
+        #expect(args.isEmpty)
+        #expect(cwd == "/tmp")
+
+        guard case .run(let c2, let a2, _, _)?
+            = OpenServer.parse(#"{"op":"run","command":"claude","args":["--foo","bar"],"session":"","cwd":"/"}"#)
+        else { return #expect(Bool(false), "did not parse a run with args") }
+        #expect(c2 == "claude")
+        #expect(a2 == ["--foo", "bar"])
+    }
+
+    @Test("an empty run command means the user's shell")
+    func emptyRunMeansShell() {
+        guard case .run(let command, _, _, _)?
+            = OpenServer.parse(#"{"op":"run","command":"","args":[],"session":"","cwd":"/tmp"}"#)
+        else { return #expect(Bool(false), "did not parse") }
+        #expect(command.isEmpty)
+    }
+
+    @Test("parses a list")
+    func parsesList() {
+        guard case .list? = OpenServer.parse(#"{"op":"ls"}"#) else {
+            return #expect(Bool(false), "did not parse ls")
+        }
+    }
+
+    @Test("refuses anything that is not a known op")
     func refusesOtherOps() {
         #expect(OpenServer.parse(#"{"op":"quit"}"#) == nil)
         #expect(OpenServer.parse(#"{"op":"open","url":""}"#) == nil)
         #expect(OpenServer.parse("not json at all") == nil)
         #expect(OpenServer.parse("") == nil)
+    }
+
+    @Test("a reply is one line of JSON the CLI can read back")
+    func encodesReply() {
+        #expect(OpenServer.encode(.handled) == #"{"ok":true}"#)
+        #expect(OpenServer.encode(.refused("nope")) == #"{"ok":false,"error":"nope"}"#)
+        #expect(OpenServer.encode(OpenServer.Reply(ok: true, session: "a7ab2d3b"))
+            == #"{"ok":true,"session":"a7ab2d3b"}"#)
+        // `ls` output is multi-line and must survive as one line on the wire.
+        let listed = OpenServer.encode(OpenServer.Reply(ok: true, lanes: "a\nb\n"))
+        #expect(!listed.dropLast().contains("\n"))
     }
 }
 
