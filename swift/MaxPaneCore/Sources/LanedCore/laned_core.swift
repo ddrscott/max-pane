@@ -642,6 +642,10 @@ public protocol CoreProtocol: AnyObject, Sendable {
      */
     func createLane(placement: Placement, kind: PaneKind, relaySessionId: String?, url: String?, inheritTagFromLane: String?) throws  -> StripState
     
+    /**
+     * [`Core::note_focus`], plus the snapshot. Use it when focus was a side
+     * effect of something structural, like search-to-scroll.
+     */
     func focusPane(paneId: String) throws  -> StripState
     
     /**
@@ -649,6 +653,12 @@ public protocol CoreProtocol: AnyObject, Sendable {
      * A filter over the snapshot; it writes nothing.
      */
     func gather(projectRoot: String) throws  -> StripState
+    
+    /**
+     * One lane, for when the shell knows exactly what changed. Costs what a
+     * single lane costs rather than what the strip costs.
+     */
+    func lane(laneId: String) throws  -> Lane
     
     /**
      * The shell has taken a snapshot and destroyed the `WKWebView`.
@@ -665,6 +675,15 @@ public protocol CoreProtocol: AnyObject, Sendable {
      * an ordinal outside of creation — and only ever because the user asked.
      */
     func moveLane(laneId: String, placement: Placement) throws  -> StripState
+    
+    /**
+     * Record focus without building a snapshot.
+     *
+     * Focus changes on every ⌘-arrow and every click, and it moves exactly two
+     * rows — `lane.last_focus_at` and one `app_state` key. Neither changes the
+     * shape of the strip, so the shell already knows how to draw the result.
+     */
+    func noteFocus(paneId: String) throws 
     
     /**
      * Swap a lane with its neighbour (⌘⇧← / ⌘⇧→).
@@ -703,6 +722,16 @@ public protocol CoreProtocol: AnyObject, Sendable {
      * Pushed from the shell on a debounce; capped at 200 lines per pane.
      */
     func pushScrollback(paneId: String, lines: [String]) 
+    
+    /**
+     * The current revision, without marshalling a snapshot.
+     *
+     * Spike M3 measured a 300-lane `state()` at 2.4 ms, 88% of it uniffi
+     * copying records into Swift. The shell holds the last snapshot and calls
+     * this first: unchanged revision means there is nothing to re-render and
+     * the 2.4 ms is not spent.
+     */
+    func revision()  -> UInt64
     
     func search(query: String, limit: UInt32) throws  -> [SearchHit]
     
@@ -885,6 +914,10 @@ open func createLane(placement: Placement, kind: PaneKind, relaySessionId: Strin
 })
 }
     
+    /**
+     * [`Core::note_focus`], plus the snapshot. Use it when focus was a side
+     * effect of something structural, like search-to-scroll.
+     */
 open func focusPane(paneId: String)throws  -> StripState  {
     return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
         uniffiCallStatus in
@@ -905,6 +938,20 @@ open func gather(projectRoot: String)throws  -> StripState  {
     uniffi_laned_core_fn_method_core_gather(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(projectRoot),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * One lane, for when the shell knows exactly what changed. Costs what a
+     * single lane costs rather than what the strip costs.
+     */
+open func lane(laneId: String)throws  -> Lane  {
+    return try  FfiConverterTypeLane_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_lane(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(laneId),uniffiCallStatus
     )
 })
 }
@@ -950,6 +997,22 @@ open func moveLane(laneId: String, placement: Placement)throws  -> StripState  {
         FfiConverterTypePlacement_lower(placement),uniffiCallStatus
     )
 })
+}
+    
+    /**
+     * Record focus without building a snapshot.
+     *
+     * Focus changes on every ⌘-arrow and every click, and it moves exactly two
+     * rows — `lane.last_focus_at` and one `app_state` key. Neither changes the
+     * shape of the strip, so the shell already knows how to draw the result.
+     */
+open func noteFocus(paneId: String)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_note_focus(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(paneId),uniffiCallStatus
+    )
+}
 }
     
     /**
@@ -1047,6 +1110,23 @@ open func pushScrollback(paneId: String, lines: [String])  {try! rustCall() {
         FfiConverterSequenceString.lower(lines),uniffiCallStatus
     )
 }
+}
+    
+    /**
+     * The current revision, without marshalling a snapshot.
+     *
+     * Spike M3 measured a 300-lane `state()` at 2.4 ms, 88% of it uniffi
+     * copying records into Swift. The shell holds the last snapshot and calls
+     * this first: unchanged revision means there is nothing to re-render and
+     * the 2.4 ms is not spent.
+     */
+open func revision() -> UInt64  {
+    return try!  FfiConverterUInt64.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_revision(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
 }
     
 open func search(query: String, limit: UInt32)throws  -> [SearchHit]  {
@@ -2681,10 +2761,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_create_lane() != 9560) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_laned_core_checksum_method_core_focus_pane() != 37622) {
+    if (uniffi_laned_core_checksum_method_core_focus_pane() != 18867) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_gather() != 60520) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_lane() != 31148) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_mark_evicted() != 1882) {
@@ -2694,6 +2777,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_move_lane() != 14936) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_note_focus() != 58566) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_nudge_lane() != 39243) {
@@ -2715,6 +2801,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_push_scrollback() != 4856) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_revision() != 56367) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_search() != 36861) {

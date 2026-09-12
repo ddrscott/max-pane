@@ -1,0 +1,11 @@
+[package]
+name = "maxpane-open"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Hand a URL from a terminal to the running Max Pane, so it opens as a web lane next to that terminal."
+
+[[bin]]
+name = "maxpane-open"
+path = "src/main.rs"

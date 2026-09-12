@@ -294,6 +294,11 @@ RustBuffer uniffi_laned_core_fn_method_core_focus_pane(uint64_t ptr, RustBuffer 
 RustBuffer uniffi_laned_core_fn_method_core_gather(uint64_t ptr, RustBuffer project_root, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_LANE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_LANE
+RustBuffer uniffi_laned_core_fn_method_core_lane(uint64_t ptr, RustBuffer lane_id, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_MARK_EVICTED
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_MARK_EVICTED
 RustBuffer uniffi_laned_core_fn_method_core_mark_evicted(uint64_t ptr, RustBuffer pane_id, RustBuffer snapshot_path, RustBuffer scroll_y, RustCallStatus *_Nonnull out_status
@@ -307,6 +312,11 @@ RustBuffer uniffi_laned_core_fn_method_core_mark_live(uint64_t ptr, RustBuffer p
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_MOVE_LANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_MOVE_LANE
 RustBuffer uniffi_laned_core_fn_method_core_move_lane(uint64_t ptr, RustBuffer lane_id, RustBuffer placement, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_NOTE_FOCUS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_NOTE_FOCUS
+void uniffi_laned_core_fn_method_core_note_focus(uint64_t ptr, RustBuffer pane_id, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_NUDGE_LANE
@@ -342,6 +352,11 @@ RustBuffer uniffi_laned_core_fn_method_core_project_root_of(uint64_t ptr, RustBu
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PUSH_SCROLLBACK
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PUSH_SCROLLBACK
 void uniffi_laned_core_fn_method_core_push_scrollback(uint64_t ptr, RustBuffer pane_id, RustBuffer lines, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_REVISION
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_REVISION
+uint64_t uniffi_laned_core_fn_method_core_revision(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SEARCH
@@ -700,6 +715,12 @@ uint16_t uniffi_laned_core_checksum_method_core_gather(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_LANE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_LANE
+uint16_t uniffi_laned_core_checksum_method_core_lane(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_MARK_EVICTED
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_MARK_EVICTED
 uint16_t uniffi_laned_core_checksum_method_core_mark_evicted(void
@@ -715,6 +736,12 @@ uint16_t uniffi_laned_core_checksum_method_core_mark_live(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_MOVE_LANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_MOVE_LANE
 uint16_t uniffi_laned_core_checksum_method_core_move_lane(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_NOTE_FOCUS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_NOTE_FOCUS
+uint16_t uniffi_laned_core_checksum_method_core_note_focus(void
     
 );
 #endif
@@ -757,6 +784,12 @@ uint16_t uniffi_laned_core_checksum_method_core_project_root_of(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PUSH_SCROLLBACK
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PUSH_SCROLLBACK
 uint16_t uniffi_laned_core_checksum_method_core_push_scrollback(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_REVISION
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_REVISION
+uint16_t uniffi_laned_core_checksum_method_core_revision(void
     
 );
 #endif

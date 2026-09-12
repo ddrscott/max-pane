@@ -28,14 +28,34 @@ let TRIALS      = argInt("trials", 25)
 let LANE_W: CGFloat = CGFloat(argInt("lane-width", 560))
 let LANE_H: CGFloat = CGFloat(argInt("lane-height", 1000))
 let OUT_DIR     = argValue("out", FileManager.default.currentDirectoryPath + "/out")
-let STAGES      = [25, 50, VIEW_COUNT]
+let STAGES      = ([25, 50].filter { $0 < VIEW_COUNT } + [VIEW_COUNT])
 
+let LOG_PATH = argValue("log", "")
+var logHandle: FileHandle? = {
+    guard !LOG_PATH.isEmpty else { return nil }
+    FileManager.default.createFile(atPath: LOG_PATH, contents: nil)
+    return FileHandle(forWritingAtPath: LOG_PATH)
+}()
 func log(_ s: String) {
     let t = String(format: "%8.2f", ProcessInfo.processInfo.systemUptime - startUptime)
-    print("M1 [\(t)s] \(s)")
+    let line = "M1 [\(t)s] \(s)"
+    print(line)
     fflush(stdout)
+    if let h = logHandle, let d = (line + "\n").data(using: .utf8) { h.write(d) }
 }
 let startUptime = ProcessInfo.processInfo.systemUptime
+
+// --- display / session state -------------------------------------------------
+// Every visibility-dependent measurement in this spike (rAF rate, first-frame
+// latency, idle CPU of a visible view) is meaningless if the display is asleep
+// or the screen is locked: macOS then marks every window occluded and WebKit
+// suspends rendering app-wide. Record it, and optionally refuse to start.
+func displayAsleep() -> Bool { CGDisplayIsAsleep(CGMainDisplayID()) != 0 }
+func screenLocked() -> Bool {
+    guard let d = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
+    return (d["CGSSessionScreenIsLocked"] as? Int) == 1
+}
+func sessionState() -> String { "display_asleep=\(displayAsleep()) screen_locked=\(screenLocked())" }
 
 // ---------------------------------------------------------------------------
 // Instrument user script. Injected into an ISOLATED content world so page CSP
@@ -94,6 +114,7 @@ final class Spike: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     // ---------- lifecycle ----------
     func applicationDidFinishLaunching(_ n: Notification) {
+        log("session at launch: \(sessionState())")
         baselinePids = ProcMetrics.baselineWebKitPids()
         log("baseline WebKit helper pids already on the machine: \(baselinePids.sorted())")
 
@@ -110,7 +131,10 @@ final class Spike: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             "baseline_webkit_pids": baselinePids.count,
             "pid": Int(getpid()),
             "date": ISO8601DateFormatter().string(from: Date()),
+            "display_asleep_at_start": displayAsleep(),
+            "screen_locked_at_start": screenLocked(),
         ]
+        Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in self.noteVis() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { self.runStages(0) }
     }
 
@@ -148,8 +172,31 @@ final class Spike: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         scroll.hasHorizontalScroller = true
         scroll.documentView = container
         window.contentView?.addSubview(scroll)
+        // The real app is a frontmost fullscreen window. If this spike's window
+        // is occluded by the terminal, AppKit reports .occluded and WebKit
+        // suspends EVERYTHING -- including the views we mean to use as the
+        // "parented and visible" control. Float it and keep it front.
+        window.level = .floating
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
+        Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
+            if !self.window.occlusionState.contains(.visible) {
+                self.window.orderFrontRegardless()
+                NSApp.activate(ignoringOtherApps: true)
+            }
+        }
+    }
+
+    func visDiag() -> String {
+        let occ = window.occlusionState.contains(.visible) ? "visible" : "OCCLUDED"
+        return "window: isVisible=\(window.isVisible) occlusion=\(occ) isKey=\(window.isKeyWindow) NSApp.isActive=\(NSApp.isActive) screen=\(window.screen != nil) \(sessionState())"
+    }
+    var everOccluded = false
+    var everVisible = false
+    func noteVis() {
+        if window.occlusionState.contains(.visible) { everVisible = true } else { everOccluded = true }
     }
 
     func laneFrame(_ slot: Int) -> NSRect {
@@ -277,6 +324,7 @@ final class Spike: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     // ---------- idle CPU ----------
     func idlePhase(label: String, next: @escaping () -> Void) {
+        log(visDiag())
         log("idle CPU sampling (\(label)) for \(IDLE_SECS)s — do not touch the machine")
         let interval = 5.0
         let n = max(1, Int(Double(IDLE_SECS) / interval))
@@ -334,7 +382,10 @@ final class Spike: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         // view 1  = anim fixture, PARENTED and visible  -> control
         // view 5  = anim fixture, UNPARENTED            -> subject
         // view 50 = anim fixture, UNPARENTED            -> subject 2 (reparented later)
-        let control = 1, subject = 5, subject2 = 50
+        let avail = URLSets.animIndices.filter { $0 < views.count }.sorted()
+        guard avail.count >= 2 else { log("not enough anim fixtures for suspension test"); return restoreLayoutThenLatency() }
+        let control = avail[0], subject = avail[1], subject2 = avail.count > 2 ? avail[2] : avail[1]
+        log(visDiag())
         log("suspension test: control=view\(control) (parented+visible), subject=view\(subject) (unparented), subject2=view\(subject2) (unparented)")
         startInstrument(control) { self.startInstrument(subject) { self.startInstrument(subject2) {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.suspensionWindow(control, subject, subject2) }
@@ -419,8 +470,7 @@ final class Spike: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     }
 
     func restoreLayoutThenLatency() {
-        views[URLSets.animIndices.contains(1) ? 1 : 1].removeFromSuperview()
-        views[5].removeFromSuperview()
+        for i in URLSets.animIndices where i < views.count { views[i].removeFromSuperview() }
         for i in 0..<PARENTED {
             views[i].frame = laneFrame(i)
             if views[i].superview == nil { container.addSubview(views[i]) }
@@ -530,6 +580,12 @@ final class Spike: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         let snap = MemSnapshot.take("final", baseline: baselinePids)
         snapshots.append(snap)
         report["snapshots"] = snapshots.map { $0.json }
+        report["window_diag"] = visDiag()
+        report["window_ever_visible"] = everVisible
+        report["window_ever_occluded"] = everOccluded
+        report["display_asleep_at_end"] = displayAsleep()
+        report["screen_locked_at_end"] = screenLocked()
+        report["valid_for_visibility_measurements"] = everVisible && !screenLocked()
         report["load_state"] = loadState.map { ["index": $0.key, "url": urls[$0.key].absoluteString, "status": $0.value] }
         report["load_ok"] = loadState.values.filter { $0 == "ok" }.count
         report["load_failed"] = loadState.values.filter { $0 != "ok" }.count
@@ -549,6 +605,18 @@ final class Spike: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         log("loads: \(report["load_ok"] ?? 0) ok, \(report["load_failed"] ?? 0) failed")
         log("DONE")
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { NSApp.terminate(nil) }
+    }
+}
+
+if ARGS.contains("--require-unlocked") {
+    let deadline = Date().addingTimeInterval(Double(argInt("wait-unlock-secs", 0)))
+    while screenLocked() || displayAsleep() {
+        if Date() >= deadline {
+            FileHandle.standardError.write("M1 ABORT: \(sessionState()) — visibility-dependent measurements would be invalid.\n".data(using: .utf8)!)
+            if !LOG_PATH.isEmpty { log("ABORT: \(sessionState())") }
+            exit(75)  // EX_TEMPFAIL
+        }
+        Thread.sleep(forTimeInterval: 5)
     }
 }
 

@@ -1,6 +1,8 @@
 import AppKit
 import QuartzCore
 import Foundation
+import IOKit.pwr_mgt
+import CoreGraphics
 
 let mainEntryEpoch = Date().timeIntervalSince1970
 let procStartEpoch = processStartEpoch()
@@ -16,6 +18,7 @@ struct Options {
     var buffer = 2
     var out = "results.json"
     var fullscreen = true
+    var fsMode = "borderless"   // borderless | native | none
     var settle = 2.0
 }
 
@@ -34,7 +37,8 @@ func parseArgs() -> Options {
         case "--buffer": o.buffer = Int(val()) ?? 2
         case "--out": o.out = val()
         case "--settle": o.settle = Double(val()) ?? 2.0
-        case "--no-fullscreen": o.fullscreen = false
+        case "--fs-mode": o.fsMode = val()
+        case "--no-fullscreen": o.fullscreen = false; o.fsMode = "none"
         default: break
         }
     }
@@ -42,6 +46,30 @@ func parseArgs() -> Options {
 }
 
 let opts = parseArgs()
+
+// Keep the panel awake for the whole run and declare user activity so a
+// sleeping display actually lights up; a blanked display would make every
+// frame-timing number meaningless.
+var noSleepAssertion: IOPMAssertionID = 0
+var userActivityAssertion: IOPMAssertionID = 0
+func assertDisplayAwake() {
+    IOPMAssertionCreateWithName("NoDisplaySleepAssertion" as CFString,
+                                IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                                "StripBench M4" as CFString, &noSleepAssertion)
+    IOPMAssertionDeclareUserActivity("StripBench M4" as CFString,
+                                     kIOPMUserActiveLocal, &userActivityAssertion)
+}
+func displayAsleep() -> Bool { CGDisplayIsAsleep(CGMainDisplayID()) != 0 }
+
+let logPath = opts.out + ".log"
+func elog(_ m: String) {
+    let line = "[bench +\(String(format: "%.2f", Date().timeIntervalSince1970 - mainEntryEpoch))s] " + m + "\n"
+    FileHandle.standardError.write(line.data(using: .utf8)!)
+    if let d = line.data(using: .utf8) {
+        if let fh = FileHandle(forWritingAtPath: logPath) { fh.seekToEndOfFile(); fh.write(d); try? fh.close() }
+        else { try? d.write(to: URL(fileURLWithPath: logPath)) }
+    }
+}
 
 // MARK: - Result model
 
@@ -111,9 +139,17 @@ struct Results: Encodable {
     var windowScreenMaxFPS: Int
     var displayLinkNominalIntervalMs: Double
     var frameBudgetMs: Double
+    var fullscreenMode: String
+    var windowCoversScreen: Bool
+    var windowLevel: Int
     var fullscreen: Bool
     var appActive: Bool
     var windowVisibleOcclusion: Bool
+    var requestedFrameRateHz: Double
+    var framesWindowNotVisible: Int
+    var framesDisplayAsleep: Int
+    var framesAppInactive: Int
+    var totalMeasuredFrames: Int
     var laneWidthMeanPt: Double
     var laneWidthMinPt: Double
     var laneWidthMaxPt: Double
@@ -159,6 +195,10 @@ final class Bench: NSObject {
     var lastLayoutCount = 0
     var events: [EventResult] = []
     var peakLive = 0
+    var framesNotVisible = 0
+    var framesDisplayAsleep = 0
+    var framesAppInactive = 0
+    var requestedFrameRate: Double = 0
 
     var frameBudget: Double = 1.0 / 60.0
     var nominalInterval: Double = 0
@@ -191,7 +231,11 @@ final class Bench: NSObject {
 
     func startLink() {
         guard link == nil, let cv = window.contentView else { return }
+        elog("starting display link")
         let l = cv.displayLink(target: self, selector: #selector(tick(_:)))
+        let fps = Float((window.screen ?? NSScreen.main!).maximumFramesPerSecond)
+        l.preferredFrameRateRange = CAFrameRateRange(minimum: fps, maximum: fps, preferred: fps)
+        requestedFrameRate = Double(fps)
         l.add(to: .main, forMode: .common)
         link = l
     }
@@ -199,6 +243,7 @@ final class Bench: NSObject {
     func stopLink() { link?.invalidate(); link = nil }
 
     func beginPhase(_ p: Phase) {
+        elog("phase -> \(p.rawValue)")
         phase = p
         phaseStart = CACurrentMediaTime()
         lastTs = 0
@@ -281,6 +326,9 @@ final class Bench: NSObject {
         lastLayoutCount = layoutNow
         let live = strip.liveLaneViewCount
         peakLive = max(peakLive, live)
+        if !window.occlusionState.contains(.visible) { framesNotVisible += 1 }
+        if displayAsleep() { framesDisplayAsleep += 1 }
+        if !NSApp.isActive { framesAppInactive += 1 }
         let work = (CACurrentMediaTime() - t0) * 1000.0
         frames.append(FrameSample(phase: phase.rawValue, ts: ts, dt: dt * 1000.0,
                                   work: work, layoutCalls: layoutDelta, live: live))
@@ -361,6 +409,7 @@ final class Bench: NSObject {
     var idleLastWall: Double = 0
 
     func beginIdle() {
+        elog("idle phase start")
         phase = .idle
         idleLastCpu = cpuSeconds()
         idleLastWall = CACurrentMediaTime()
@@ -383,6 +432,7 @@ final class Bench: NSObject {
     // MARK: restore
 
     func runRestoreTest() {
+        elog("restore test")
         let targets: [CGFloat] = [12345.0, 21734.25, strip.maxScrollX]
         for t in targets {
             strip.setScrollX(t)
@@ -403,6 +453,7 @@ final class Bench: NSObject {
     }
 
     func finish() {
+        elog("finish")
         let screens = NSScreen.screens.enumerated().map { (i, s) in
             ScreenInfo(index: i, name: s.localizedName,
                        pointSize: [Double(s.frame.width), Double(s.frame.height)],
@@ -429,9 +480,17 @@ final class Bench: NSObject {
             windowScreenMaxFPS: ws2.maximumFramesPerSecond,
             displayLinkNominalIntervalMs: nominalInterval * 1000,
             frameBudgetMs: frameBudget * 1000,
+            fullscreenMode: opts.fsMode,
+            windowCoversScreen: window.frame == (window.screen ?? NSScreen.screens[0]).frame,
+            windowLevel: window.level.rawValue,
             fullscreen: window.styleMask.contains(.fullScreen),
             appActive: NSApp.isActive,
             windowVisibleOcclusion: window.occlusionState.contains(.visible),
+            requestedFrameRateHz: requestedFrameRate,
+            framesWindowNotVisible: framesNotVisible,
+            framesDisplayAsleep: framesDisplayAsleep,
+            framesAppInactive: framesAppInactive,
+            totalMeasuredFrames: (cleanResult?.frames ?? 0) + (perturbResult?.frames ?? 0),
             laneWidthMeanPt: Double(widths.reduce(0,+)) / Double(widths.count),
             laneWidthMinPt: Double(widths.min() ?? 0),
             laneWidthMaxPt: Double(widths.max() ?? 0),
@@ -479,13 +538,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var fsStart: Double = 0
 
     func applicationDidFinishLaunching(_ n: Notification) {
+        assertDisplayAwake()
         NSApp.setActivationPolicy(.regular)
+        elog("display asleep at launch: \(displayAsleep())")
 
         let screens = NSScreen.screens
         let screen = screens.indices.contains(opts.screenIndex) ? screens[opts.screenIndex] : (NSScreen.main ?? screens[0])
 
+        let borderless = (opts.fsMode == "borderless")
         window = NSWindow(contentRect: screen.frame,
-                          styleMask: [.titled, .closable, .resizable],
+                          styleMask: borderless ? [.borderless] : [.titled, .closable, .resizable],
                           backing: .buffered, defer: false, screen: screen)
         window.title = "M4 strip scroll · \(opts.variant)"
         window.collectionBehavior = [.fullScreenPrimary]
@@ -515,8 +577,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        window.orderFrontRegardless()
         window.displayIfNeeded()
 
+        elog("strip built, window shown")
         let ready = Date().timeIntervalSince1970
         bench = Bench(window: window, strip: strip, widths: widths)
         bench.ttiFromExec = (procStartEpoch.map { (ready - $0) * 1000 }) ?? -1
@@ -524,23 +588,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let fps = (window.screen ?? screen).maximumFramesPerSecond
         bench.frameBudget = 1.0 / Double(fps > 0 ? fps : 60)
 
-        if opts.fullscreen {
+        switch opts.fsMode {
+        case "native":
             NotificationCenter.default.addObserver(self, selector: #selector(didEnterFS),
                                                    name: NSWindow.didEnterFullScreenNotification, object: window)
             fsStart = CACurrentMediaTime()
+            // Watchdog: if the Spaces transition never completes, proceed anyway.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                if self.bench.link == nil && self.bench.phase == .settle {
+                    elog("native fullscreen watchdog fired; proceeding windowed")
+                    self.startBench()
+                }
+            }
             window.toggleFullScreen(nil)
-        } else {
-            startBench()
+        case "borderless":
+            fsStart = CACurrentMediaTime()
+            window.level = .floating
+            window.setFrame(screen.frame, display: true)
+            NSApp.presentationOptions = [.autoHideMenuBar, .autoHideDock]
+            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+            NSApp.activate(ignoringOtherApps: true)
+            bench.fsTransitionMs = (CACurrentMediaTime() - fsStart) * 1000
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.startBench() }
+        default:
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { self.startBench() }
         }
     }
 
     @objc func didEnterFS() {
+        elog("didEnterFullScreen")
         bench.fsTransitionMs = (CACurrentMediaTime() - fsStart) * 1000
         // Layout has changed size; let it settle one runloop turn.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.startBench() }
     }
 
+    var benchStarted = false
     func startBench() {
+        if benchStarted { return }
+        benchStarted = true
+        elog("startBench; displayAsleep=\(displayAsleep()) appActive=\(NSApp.isActive) visible=\(window.occlusionState.contains(.visible)) screen=\(window.screen?.localizedName ?? "nil") fps=\((window.screen ?? NSScreen.main!).maximumFramesPerSecond)")
         window.contentView?.layoutSubtreeIfNeeded()
         if let r = bench.strip as? RecycledStrip { r.reconcile() }
         if let c = bench.strip as? CollectionStrip { c.layout.invalidateLayout(); c.collectionView.layoutSubtreeIfNeeded() }

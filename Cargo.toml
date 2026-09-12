@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/laned-core"]
+members = ["crates/laned-core", "crates/maxpane-open"]
 
 [workspace.package]
 version = "0.1.0"
