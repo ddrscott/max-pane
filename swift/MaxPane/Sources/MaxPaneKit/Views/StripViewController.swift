@@ -522,6 +522,26 @@ public final class StripViewController: NSViewController {
         var timer: Timer?
     }
 
+    /// ⌘= / ⌘- / ⌘0 on whatever has the keyboard.
+    ///
+    /// The pane decides what scaling means for it — a terminal re-derives its
+    /// grid from a bigger font, a page takes a page zoom — so this only walks
+    /// the ladder and hands over the result.
+    public func zoomFocusedPane(_ command: Command) {
+        guard let paneId = store.state.focusedPaneId,
+              let controller = paneControllers[paneId]
+        else { return }
+        switch command {
+        case .zoomReset:
+            controller.setZoom(1)
+        case .zoomIn, .zoomOut:
+            controller.setZoom(
+                PaneZoom.next(from: controller.zoom, up: command == .zoomIn))
+        default:
+            break
+        }
+    }
+
     /// Ask every live pane to write down what it would otherwise lose.
     ///
     /// Only web panes have anything to say — their history and scroll live in

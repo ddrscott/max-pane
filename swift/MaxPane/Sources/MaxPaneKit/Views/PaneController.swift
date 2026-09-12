@@ -21,6 +21,14 @@ protocol PaneController: AnyObject {
     /// Release everything; the pane is gone for good.
     func tearDown()
 
+    /// Scale what is inside the pane: 1.0 is actual size.
+    ///
+    /// A terminal changes its font size and re-derives its grid; a page changes
+    /// its page zoom. Both are "this column is too small to read", so both are
+    /// the same key.
+    var zoom: Double { get }
+    func setZoom(_ zoom: Double)
+
     /// Write anything the pane would otherwise lose, without tearing it down.
     ///
     /// Called on quit. A terminal has nothing to save — the session lives in
@@ -43,6 +51,24 @@ protocol PaneController: AnyObject {
 
 extension PaneController {
     func flushState() {}
+
+    /// A pane that does not scale reports actual size and ignores the keys.
+    var zoom: Double { 1 }
+    func setZoom(_ zoom: Double) {}
+}
+
+/// The rungs ⌘= and ⌘- climb.
+enum PaneZoom {
+    /// Multiplicative, and the ladder browsers use. A fixed ±1pt is a tenth of
+    /// a 10pt font and a twentieth of a 20pt one — the same key would do
+    /// something different depending on where you started.
+    static let ladder: [Double] = [0.5, 0.67, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0]
+
+    /// The next rung from wherever the pane is now, stopping at the ends.
+    static func next(from current: Double, up: Bool) -> Double {
+        if up { return ladder.first { $0 > current + 0.001 } ?? ladder.last! }
+        return ladder.last { $0 < current - 0.001 } ?? ladder.first!
+    }
 }
 
 /// What WebKit's content processes actually weigh, right now.

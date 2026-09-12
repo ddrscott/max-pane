@@ -20,7 +20,13 @@ public final class StripStore {
     private var observers: [UUID: (StripState) -> Void] = [:]
 
     /// Where the ledger lives. PRD §6.
+    ///
+    /// `MAXPANE_LEDGER` points a launch at a different one, which is how the
+    /// app gets driven — by a test, a critic, or anyone poking at it — without
+    /// touching the strip someone is working in. Pair it with `MAXPANE_SOCKET`
+    /// so the CLI talks to the instance you meant.
     public static var defaultLedgerPath: String {
+        if let override = ProcessInfo.processInfo.environment["MAXPANE_LEDGER"] { return override }
         let dir = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("MaxPane", isDirectory: true)

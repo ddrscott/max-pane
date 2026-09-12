@@ -7,6 +7,9 @@ import AppKit
 /// to declare its key here or it does not exist.
 public enum Command: String, CaseIterable {
     case newPane
+    case zoomIn
+    case zoomOut
+    case zoomReset
     case newTerminalLane
     case runCommand
     case newWebLane
@@ -39,6 +42,9 @@ public enum Command: String, CaseIterable {
     public var title: String {
         switch self {
         case .newPane: return "New Pane…"
+        case .zoomIn: return "Bigger Text"
+        case .zoomOut: return "Smaller Text"
+        case .zoomReset: return "Actual Size"
         case .newTerminalLane: return "New Terminal Lane"
         case .runCommand: return "Run Command…"
         case .newWebLane: return "New Web Lane…"
@@ -78,6 +84,12 @@ public enum Command: String, CaseIterable {
         // right of this", and which half of the app it lands in is the
         // picker's question, not a question about which key to press.
         case .newPane:         return ("t", [.command])
+        // The pane under the keyboard, terminal or page alike — one pair of
+        // keys, because "this column is too small to read" is one thought.
+        // ⌃⌘= and ⌃⌘- resize the *lane*; these resize what is inside it.
+        case .zoomIn:          return ("=", [.command])
+        case .zoomOut:         return ("-", [.command])
+        case .zoomReset:       return ("0", [.command])
         case .newTerminalLane: return ("t", [.command, .shift])
         case .runCommand:      return ("r", [.command])
         case .newWebLane:      return ("l", [.command])
@@ -138,6 +150,7 @@ public enum Command: String, CaseIterable {
              .widenLane, .narrowLane, .peekDesktop: return .view
         case .claimSession: return .file
         case .showMemory, .showHelp: return .view
+        case .zoomIn, .zoomOut, .zoomReset: return .view
         case .pairWithNext: return .navigate
         case .exportStrip, .importStrip: return .file
         case .toggleSpan: return .view

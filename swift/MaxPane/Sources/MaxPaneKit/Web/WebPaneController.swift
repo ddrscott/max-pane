@@ -420,7 +420,11 @@ final class DataStorePool {
         // `WKWebsiteDataStore.default()` would hand every shard the same store
         // and quietly undo the sharding. The identifier-based initialiser
         // (macOS 14+) is what actually gives separate persistent cookie jars.
-        let store = WKWebsiteDataStore(forIdentifier: Self.uuid(for: id))
+        // `MAXPANE_DATA_SALT` gives a launch its own cookie jars. A throwaway
+        // instance that logs into something must not write into the jar the
+        // real one reads, and a UUID derived from the shard name alone would.
+        let salt = ProcessInfo.processInfo.environment["MAXPANE_DATA_SALT"] ?? ""
+        let store = WKWebsiteDataStore(forIdentifier: Self.uuid(for: salt + id))
         stores[id] = store
         return store
     }

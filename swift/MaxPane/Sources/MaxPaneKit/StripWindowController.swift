@@ -306,6 +306,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             case .newPane:
                 showNewPanePicker(near: focusedLane)
 
+            case .zoomIn, .zoomOut, .zoomReset:
+                strip.zoomFocusedPane(command)
+
             case .newTerminalLane:
                 try newTerminal(near: focusedLane)
 
