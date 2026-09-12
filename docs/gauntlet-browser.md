@@ -55,7 +55,7 @@ running app — never the builder's account of it.
 | # | Piece | Files it owns | Builder | Critic verdict |
 |---|---|---|---|---|
 | 1 | OAuth, popups, `window.opener` | `Web/WebPaneController.swift` | done, committed | judging |
-| 2 | History: record, search, surface | `crates/laned-core`, a new palette | done, committed | judging |
+| 2 | History: record, search, surface | `crates/laned-core`, a new palette | round 1 committed | **THE BAR WINS** → [round 2](work/history-round-2.md) |
 | 3 | Appear/disappear animations, and the split-down reconcile | `Views/StripViewController.swift`, `Views/LaneView.swift` | building | — |
 | 4 | Browser chrome: URL, nav, security, find, zoom readout | a new chrome view + `Web/WebPaneController.swift` | building (worktree) | — |
 | 5 | Terminal zoom | `Terminal/TerminalPaneController.swift` | lead, done | pending |
@@ -169,6 +169,20 @@ Two bugs found while writing those briefs, before any builder started:
   found its opener, posted to it, the opener received the payload, and the
   popup's own HTTP request carried the cookie the opener had been given —
   still carried after a restart.
+
+- **Round 1, piece 2 judged: THE BAR WINS.** The critic did the thing that makes
+  a critic worth having — it measured Scott's real Vivaldi profile instead of
+  judging in the abstract. 112,840 URLs and 462,785 visits going back to
+  February 2024, against our 5,000-row store whose search only scans the newest
+  2,000. At his measured rate — 5,136 distinct URLs a month — that is a
+  fortnight of searchable history, and the 90-day age cap never even fires
+  because the row cap evicts him at 29 days first. It proved the cutoff with
+  planted needles rather than trusting the constant: depth 1,899 found, depth
+  2,499 "no page matches", with the row sitting in the table and the footer
+  reading `0 OF 5013 PAGES`.
+  The caps bought speed nobody was short of — the query costs 2 ms over 2,000
+  rows, measured. Full list in [round 2](work/history-round-2.md); the two
+  findings that change what is being built *right now* went to piece 9.
 
 - **A datum that narrows piece 1.** Scott's Gmail lane is signed in and the
   session survived a restart, so cookie persistence and the data-store sharding
