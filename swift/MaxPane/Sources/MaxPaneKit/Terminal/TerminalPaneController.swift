@@ -23,6 +23,11 @@ protocol RelayAttachment: AnyObject {
     func connect()
     func disconnect()
     func send(_ bytes: ArraySlice<UInt8>)
+
+    /// Send exactly one `RESIZE`. **Only ever called from the user's explicit
+    /// "claim this session" command** — see ADR-0007. Nothing automatic may
+    /// reach this.
+    func claimSize(cols: Int, rows: Int)
 }
 
 /// A terminal pane: a SwiftTerm view attached to a RelayTTY session.
@@ -56,6 +61,12 @@ final class TerminalPaneController: NSObject, PaneController {
     private var pane: Pane
     private var scrollbackDebounce: DispatchWorkItem?
     private var isSessionAvailable = true
+    /// Lines seen on the wire, so the index survives a `clear`. See pushScrollback.
+    private var seenLines: [String] = []
+    /// The PTY's size as the host last reported it. Authoritative — never read
+    /// this from the session JSON, which lags by seconds (ADR-0007).
+    private(set) var hostCols = 80
+    private(set) var hostRows = 40
 
     /// Last cwd seen, for ⌘T spawning a sibling in the right place and for
     /// tagging. Sourced from OSC 7 in the stream, backed by the session file.
@@ -107,12 +118,17 @@ final class TerminalPaneController: NSObject, PaneController {
             guard let self else { return }
             self.terminal.feed(byteArray: bytes)
             self.sniffOSC7(bytes)
+            self.rememberLiveLines(bytes)
             self.scheduleScrollbackPush()
         }
         attachment.onHostResize = { [weak self] cols, rows in
             // The host reshaped the PTY — possibly because a phone attached.
             // Follow it; never lead it.
-            self?.terminal.getTerminal().resize(cols: cols, rows: rows)
+            guard let self else { return }
+            self.hostCols = cols
+            self.hostRows = rows
+            self.terminal.getTerminal().resize(cols: cols, rows: rows)
+            self.fitLaneToSession()
         }
         attachment.onTitle = { [weak self] title in
             guard let self, let laneId = self.store.lane(containing: self.paneId)?.id else { return }
@@ -163,6 +179,86 @@ final class TerminalPaneController: NSObject, PaneController {
         } else {
             status.setState(.reconnecting)
         }
+    }
+
+    // MARK: - fitting the lane to the session (ADR-0007)
+
+    /// Size the lane to the session, not the session to the lane.
+    ///
+    /// The PTY's width belongs to whoever started it. A lane cannot change it
+    /// without reshaping the terminal for every other client, so the lane moves
+    /// instead: `clamp(hostCols × cellWidth + gutter, LANE_MIN, LANE_MAX)`.
+    ///
+    /// M2 measured that this is nearly always enough — real sessions on this
+    /// machine run 52 to 73 columns, and at 12 pt (a 7 pt cell) even 128 columns
+    /// fits in 896 pt. Shrinking the font is the fallback past that, not the
+    /// mechanism.
+    private func fitLaneToSession() {
+        guard let laneId = store.lane(containing: paneId)?.id else { return }
+
+        let wanted = Self.laneWidth(forCols: hostCols, cellWidth: cellWidth(at: config.fontSize))
+        let clamped = config.clampWidth(wanted)
+
+        if wanted > config.widthRange.upperBound {
+            // Wider than any lane may be: shrink the font until it fits, down to
+            // the floor, then stop and let the user scroll the rest.
+            let available = Double(config.widthRange.upperBound) - Self.gutter
+            var size = config.fontSize
+            while size > Self.minimumFontSize,
+                  Double(hostCols) * cellWidth(at: size) > available {
+                size -= 1
+            }
+            applyFontSize(max(size, Self.minimumFontSize))
+        } else if terminal.font.pointSize != config.fontSize {
+            // Back inside the range: return to the configured size.
+            applyFontSize(config.fontSize)
+        }
+
+        guard store.lane(laneId)?.widthPt != clamped else { return }
+        // Animated, because a phone can move this under the user and a column
+        // that jumps without explanation reads as a glitch.
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.2
+            try? store.setLaneWidth(laneId, clamped)
+        }
+    }
+
+    /// Points of lane needed for `cols` columns at a given cell width.
+    static func laneWidth(forCols cols: Int, cellWidth: Double) -> UInt32 {
+        UInt32(max(0, (Double(cols) * cellWidth + gutter).rounded(.up)))
+    }
+
+    /// Lane chrome either side of the terminal grid.
+    static let gutter: Double = 16
+    /// Below this the text stops being readable, so clip instead of shrinking.
+    static let minimumFontSize: Double = 9
+
+    private func cellWidth(at size: Double) -> Double {
+        let font = NSFont(name: config.fontName, size: size)
+            ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+        let advance = Double(font.advancement(forGlyph: font.glyph(withName: "space") ?? 0).width)
+        // A font that reports nothing useful still has to produce a cell width;
+        // 0.6em is the usual monospace ratio.
+        return advance > 0 ? advance.rounded() : size * 0.6
+    }
+
+    private func applyFontSize(_ size: Double) {
+        guard terminal.font.pointSize != size else { return }
+        terminal.font = NSFont(name: config.fontName, size: size)
+            ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+    }
+
+    /// The user's explicit "this session is mine at this width" (ADR-0007 §5).
+    ///
+    /// The **only** path that sends `RESIZE`. It reshapes the PTY for every
+    /// other attached client, including Scott's phone, which is why it is a
+    /// command and never a side effect.
+    func claimSessionAtLaneWidth() {
+        guard let lane = store.lane(containing: paneId) else { return }
+        let available = Double(lane.widthPt) - Self.gutter
+        let cols = max(20, Int(available / cellWidth(at: config.fontSize)))
+        let rows = max(10, Int((terminal.bounds.height - Theme.laneHeaderHeight) / terminal.font.boundingRectForFont.height))
+        attachment?.claimSize(cols: cols, rows: rows)
     }
 
     // MARK: - cwd
@@ -244,9 +340,8 @@ final class TerminalPaneController: NSObject, PaneController {
         // last real row is `totalLinesTrimmed + topVisibleRow + rows - 1`.
         //
         // All public API, and M2 measured the whole 200-line walk at 0.48 ms.
-        // The obvious alternative, `getBufferAsData()`, materialises the entire
-        // buffer — for 20 terminals with deep scrollback that is megabytes of
-        // allocation to keep 200 lines.
+        // `getBufferAsData()` would materialise the entire buffer — megabytes of
+        // allocation, for 20 terminals, to keep 200 lines.
         let term = terminal.getTerminal()
         var row = term.buffer.totalLinesTrimmed + term.getTopVisibleRow() + term.rows - 1
 
@@ -254,15 +349,101 @@ final class TerminalPaneController: NSObject, PaneController {
         lines.reserveCapacity(Self.scrollbackLines)
         while row >= 0, lines.count < Self.scrollbackLines {
             guard let line = term.getScrollInvariantLine(row: row) else { break }
-            let text = line.translateToString(trimRight: true)
+            let text = Self.text(of: line, cols: term.cols, in: term)
             if !text.trimmingCharacters(in: .whitespaces).isEmpty {
                 lines.append(text)
             }
             row -= 1
         }
-        guard !lines.isEmpty else { return }
-        // Oldest first, which is the order the index expects.
-        store.pushScrollback(paneId, lines.reversed())
+        // A fresh attach does not reliably fill the buffer: M2 saw 125 lines on
+        // a real session, because a full replay is truncated at the last
+        // `ESC[2J` and everything before the clear is simply gone. So the index
+        // also gets fed from live output as it arrives, and the two are merged
+        // newest-last here.
+        let merged = mergeWithSeenLines(lines.reversed())
+        guard !merged.isEmpty else { return }
+        store.pushScrollback(paneId, merged)
+    }
+
+    /// One buffer line as text.
+    ///
+    /// Per-cell rather than `BufferLine.translateToString`, which **silently
+    /// drops astral-plane scalars** — emoji and flags come back as blanks. M2
+    /// measured both paths at the same cost (0.474 vs 0.483 ms for 200 lines),
+    /// so there is nothing to trade off, and agent output is full of emoji.
+    private static func text(of line: BufferLine, cols: Int, in term: Terminal) -> String {
+        var out = ""
+        out.reserveCapacity(cols)
+        for col in 0..<min(cols, line.count) {
+            let cd = line[col]
+            if cd.width == 0 { continue }
+            out.append(term.getCharacter(for: cd))
+        }
+        while out.last == " " { out.removeLast() }
+        return out
+    }
+
+    /// Lines seen on the live stream, so the index survives a `clear`.
+    ///
+    /// Capped at the same 200: this is a way to find a lane, not a log.
+    private func rememberLiveLines(_ bytes: ArraySlice<UInt8>) {
+        guard let text = String(bytes: bytes, encoding: .utf8) else { return }
+        for raw in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            let line = Self.stripEscapes(String(raw))
+            guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+            seenLines.append(line)
+        }
+        if seenLines.count > Self.scrollbackLines {
+            seenLines.removeFirst(seenLines.count - Self.scrollbackLines)
+        }
+    }
+
+    /// Whatever is in the emulator's buffer, plus anything the live stream saw
+    /// that the buffer no longer holds. Newest last, capped.
+    private func mergeWithSeenLines(_ fromBuffer: [String]) -> [String] {
+        guard !seenLines.isEmpty else { return fromBuffer }
+        let known = Set(fromBuffer)
+        var merged = seenLines.filter { !known.contains($0) }
+        merged.append(contentsOf: fromBuffer)
+        if merged.count > Self.scrollbackLines {
+            merged.removeFirst(merged.count - Self.scrollbackLines)
+        }
+        return merged
+    }
+
+    /// Drop CSI/OSC escape sequences so the index holds text rather than
+    /// formatting. Deliberately crude — it only has to be good enough to search.
+    static func stripEscapes(_ s: String) -> String {
+        var out = ""
+        out.reserveCapacity(s.count)
+        var iterator = s.makeIterator()
+        var pending: Character? = nil
+        while let c = pending ?? iterator.next() {
+            pending = nil
+            guard c == "\u{1b}" else {
+                if c != "\r" { out.append(c) }
+                continue
+            }
+            guard let next = iterator.next() else { break }
+            if next == "[" {
+                // CSI: parameters, then a final byte in @-~.
+                while let p = iterator.next() {
+                    if ("@"..."~").contains(p) { break }
+                }
+            } else if next == "]" {
+                // OSC: runs to BEL, or to ST (ESC \). The backslash is part of
+                // the terminator and must be consumed, not emitted.
+                while let p = iterator.next() {
+                    if p == "\u{07}" { break }
+                    if p == "\u{1b}" {
+                        let after = iterator.next()
+                        if after != "\\" { pending = after }
+                        break
+                    }
+                }
+            }
+        }
+        return out
     }
 
     /// PRD §7.5's cap.

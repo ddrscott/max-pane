@@ -13,11 +13,12 @@ public struct Config: Codable {
     /// PRD §8.
     public var laneMinPt: UInt32 = 420
     public var laneMaxPt: UInt32 = 900
-    /// 640, not 560. Spike M2 measured cell widths: a 13 pt monospace cell is
+    /// 656, not 560. Spike M2 measured cell widths: a 13 pt monospace cell is
     /// 8 pt wide, so 80 columns — what almost every agent TUI assumes — needs
-    /// 640 pt of lane. At 560 the common case starts out horizontally scrolled,
-    /// and per ADR-0007 the lane cannot fix that by resizing the PTY.
-    public var laneDefaultPt: UInt32 = 640
+    /// 640 pt of grid, plus 16 pt of lane chrome. At 560 the common case opens
+    /// already clipped, and per ADR-0007 the lane may not fix that by resizing
+    /// the PTY.
+    public var laneDefaultPt: UInt32 = 656
 
     /// PRD §10.2 — lanes off-screen before a web pane is unparented.
     public var releaseDistance: UInt32 = 6

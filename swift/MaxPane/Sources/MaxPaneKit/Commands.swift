@@ -26,6 +26,7 @@ public enum Command: String, CaseIterable {
     case peekDesktop
     case widenLane
     case narrowLane
+    case claimSession
 
     public var title: String {
         switch self {
@@ -49,6 +50,7 @@ public enum Command: String, CaseIterable {
         case .peekDesktop: return "Peek Desktop"
         case .widenLane: return "Widen Lane"
         case .narrowLane: return "Narrow Lane"
+        case .claimSession: return "Resize Session to This Lane…"
         }
     }
 
@@ -79,6 +81,9 @@ public enum Command: String, CaseIterable {
         case .peekDesktop:     return ("\u{21e5}", [.command, .option])
         case .widenLane:       return ("=", [.command, .control])
         case .narrowLane:      return ("-", [.command, .control])
+        // Deliberately awkward. It reshapes the PTY for every other client,
+        // including a phone, so it should not sit next to anything routine.
+        case .claimSession:    return ("r", [.command, .control, .shift])
         }
     }
 
@@ -90,6 +95,7 @@ public enum Command: String, CaseIterable {
         case .focusLeft, .focusRight, .focusUp, .focusDown, .search, .gather, .ungather: return .navigate
         case .moveLaneLeft, .moveLaneRight, .toggleSidebar, .togglePinned,
              .widenLane, .narrowLane, .peekDesktop: return .view
+        case .claimSession: return .file
         }
     }
 }

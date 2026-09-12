@@ -47,16 +47,60 @@ app fighting itself.
 
 ## Decision
 
-**A MaxPane terminal pane attaches normally and never sends `RESIZE`.**
-
-It learns the PTY's size from the inbound `RESIZE` frame that precedes every
-replay, follows the host whenever that changes, and fits the content inside the
-lane — scrolling horizontally rather than reshaping the terminal.
+**A MaxPane terminal pane attaches normally, never sends `RESIZE`, and sizes the
+*lane to the session* rather than the session to the lane.**
 
 M2 measured the mitigation directly: a client that never sends `RESIZE` learned
 the host size purely from inbound frames (`["72x36", "100x30"]`), received
 1 459 bytes of redraw across the whole fight, and **caused zero `SIGWINCH`s
 itself**. It is a guest in the session rather than a claimant on it.
+
+The concrete rule, in order:
+
+1. **Never send `RESIZE` automatically.** Not on attach, not on focus, not on
+   lane resize, not on window resize, not on reconnect. This is a deliberate
+   divergence from `cli/attach.ts`, which asserts its size on every transition to
+   connected — right for a single-client CLI, harmful with a phone on the same
+   session.
+2. **Take `cols`/`rows` from the inbound `RESIZE` frame.** It is the first frame
+   of every handshake and is broadcast on every change.
+3. **Derive the lane's width from the session:**
+   `clamp(hostCols × cellWidth + gutter, LANE_MIN, LANE_MAX)`, re-derived on every
+   inbound `RESIZE` — animated, because a phone can change it under the user.
+4. **Scale the font only when `hostCols × cellWidth + gutter > LANE_MAX`,** down to a 9 pt
+   floor (84 columns at 420 pt, 180 at 900 pt). Below that, clip with a visible
+   affordance.
+5. **One explicit escape hatch:** a "claim this session at this width" command
+   that sends exactly one `RESIZE`, as a deliberate and visible act. Re-asserting
+   a size already in effect is free, so a claimed pane may safely re-assert on
+   reconnect — but never a *different* size without being asked again.
+
+### Why sizing the lane is better than scrolling it
+
+An earlier draft of this ADR said the pane would scroll horizontally inside a
+fixed lane. M2 rendered all three options and that one is wrong:
+
+| Option | Verdict |
+|---|---|
+| **Clip** | No. 13 columns amputated from every line; because the TUI had already wrapped, the cut lands mid-word on 44 of 53 lines. Prose becomes unreadable, not merely truncated. |
+| **Horizontal scroll** | No. Scrolling sideways to finish every sentence in a pane you are *supervising, not driving* is the opposite of the point. A supervision surface is read at a glance. |
+| **Size the lane to fit** | **Yes.** |
+
+And it turns out to be easy, because the PRD's own lane range already
+accommodates real sessions. At 12 pt a cell is 7 pt wide:
+
+| Host columns | Lane width needed | Inside 420–900 pt? |
+|---|---|---|
+| 52 | 364 pt → clamps to `LANE_MIN` | yes, with slack |
+| 73 | 511 pt | yes |
+| 100 | 700 pt | yes |
+| 126 | 898 pt | yes, at the very top |
+| 128 | 912 pt | no — M2 quotes 896 for the grid; 16 pt of lane chrome tips it over |
+| > 126 | > 900 pt | no — scale the font |
+
+The real sessions on this machine run **52 to 73 columns**. Every one fits in a
+PRD lane at a normal font size. Font scaling is the fallback for the rare
+>128-column session, not the mechanism.
 
 ## Consequences
 
@@ -67,18 +111,23 @@ itself**. It is a guest in the session rather than a claimant on it.
   after the fight, the live PTY was 100×30 while the JSON still said 50×50,
   because pty-host flushes metadata on a 5-second timer. The wire is the
   authority for size; the file is not.
-- **Wide content scrolls inside the lane.** Which is already the PRD's central
-  design invariant — §1 states it for web panes, and this makes terminals obey
-  the same rule instead of being the exception.
-- **A lane narrower than the PTY shows part of a wider terminal.** That is the
-  trade. It is the right one: an agent session's size should belong to the agent
-  and whoever started it, not to whichever viewer most recently resized a column.
+- **A terminal lane's width is not entirely the user's to choose.** It is derived
+  from the session and clamped to §8's range. Dragging a terminal lane's edge is
+  therefore a font-size gesture more than a width gesture, and the lane may move
+  on its own when a phone reshapes the PTY. That is worth an animation and worth
+  being visible.
+- **The design invariant holds.** §1's "wide content scrolls inside the lane;
+  the lane never widens past its max" is unchanged — the lane is still bounded by
+  `LANE_MAX`, and past 128 columns the font shrinks rather than the lane growing.
 
 ## Rejected
 
 - **Propagate the size, as §11 specifies.** Measured above: a full TUI redraw on
   every other client, every flip, and the phone and the lane permanently
   fighting.
+- **Horizontal scrolling inside a fixed lane.** What an earlier draft of this
+  ADR specified. M2 rendered it and it fails the product: a supervision surface
+  is read at a glance, not scrubbed sideways.
 - **`OBSERVE` mode (0x26).** It avoids the problem completely — an observer is
   not counted as an attached client — but it gets **no replay**, so the pane
   would be blank until the next byte of output. For watching agents that are
@@ -86,16 +135,23 @@ itself**. It is a guest in the session rather than a claimant on it.
 - **Resize only when we are the sole attached client.** Sounds reasonable, races
   badly: the phone attaches mid-session, and now the PTY is whatever the lane
   last set. Conditional ownership of shared state is worse than no ownership.
-- **Propose a per-client viewport to RelayTTY.** This is the right long-term
-  answer and it is a protocol change, which PRD §0.3 forbids without a proposal.
-  Not needed for Phase 1: the mitigation costs a horizontal scroll, and PRD §0.3
-  exists precisely so this kind of thing gets written down instead of built.
+- **Propose a per-client viewport to RelayTTY.** The real long-term fix, and a
+  protocol change, which PRD §0.3 forbids without a proposal. **No proposal is
+  being filed**, because it is not needed: a silent client already gets
+  everything MaxPane requires — authoritative size, full replay, live output —
+  and the PRD's own lane range accommodates every real session width. If Phase 1
+  shows the phone reshaping sessions disruptively often, the cheaper answer is a
+  MaxPane-side convention (a preferred size in `laned-core`, re-asserted only on
+  explicit user action) before anything in RelayTTY is touched.
 
 ## What would make us revisit
 
 - RelayTTY growing a per-client viewport, which would make §11 implementable as
-  written. If Phase 1 shows horizontal scrolling in terminals is a daily
-  annoyance, that proposal belongs in `docs/proposals/`.
+  written. If Phase 1 shows the phone reshaping sessions often enough to be
+  disruptive, that proposal belongs in `docs/proposals/` — after the cheaper
+  MaxPane-side convention has been tried.
+- A session wider than 128 columns becoming common, which would make the 9 pt
+  font floor the normal case rather than the rare one.
 - Scott deciding a given session belongs to MaxPane alone, which would make
   resizing safe for that session. A per-lane "own this session's size" toggle is
   a small change on top of this decision, not a contradiction of it.

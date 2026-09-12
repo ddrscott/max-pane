@@ -179,6 +179,11 @@ path defers the same drawing to the next run-loop display pass, which adds at mo
 | big (5.3 MB) | paint the 80×40 grid | 25 | 1.27 | 1.59 | 1.57 | 1.77 | 1.97 |
 | big (5.3 MB) | **connect → pixels on screen** | 25 | 175.88 | 207.41 | **209.61** | 219.13 | 219.92 |
 
+The small session's paint (4.88 ms) is slower than the big session's (1.57 ms) because those
+25 iterations ran first and paid SwiftTerm's glyph-atlas warm-up; by the time the big-session
+loop ran, the atlas was hot. Treat 4.88 ms as the cold-start paint and 1.57 ms as the steady
+state.
+
 A pane with a normal amount of scrollback is on screen in **5.5 ms**. The worst case measured —
 attaching to a session holding half the 10 MiB ring — is **210 ms**, inside PRD §10.1's 3 s
 relaunch budget with room for 14 such panes in series, and panes attach in parallel.
@@ -347,10 +352,13 @@ width too.
 
 ### 8.2 The proposed mitigation, built and measured
 
-A fourth client attached normally, **never sent `RESIZE`**, and let the phone reshape the PTY:
+A fourth client attached normally, **never sent `RESIZE`**, and let the phone reshape the PTY
+twice (72×36, then 100×30):
 
-> learned host size `["72x36", "100x30"]` purely from inbound `RESIZE` frames, received 12 175 B
-> of redraw, and caused 0 `SIGWINCH`s itself
+| session | sizes learned, purely from inbound `RESIZE` | redraw received | `SIGWINCH`s it caused |
+|---|---|---|---|
+| ruler fixture | `72x36`, `100x30` | 1 459 B | **0** |
+| `htop` | `72x36`, `100x30` | 12 175 B | **0** |
 
 It works exactly as the reference predicts. The host is authoritative, the inbound `RESIZE`
 arrives before every replay and on every change, and a silent client is invisible to the
@@ -460,7 +468,8 @@ RelayTTY is touched.
 Parenting 8 of them into a live window added 10.36 MB, about 1.3 MB per visible view for the
 backing store.
 
-Cost is almost entirely the scrollback ring, and it is linear: ~1.9 KB per 80-column line. That
+Cost is almost entirely the scrollback ring, and it is linear: **1.6–2.1 KB per 80-column
+line** across all four steps. That
 is a **tunable**, and PRD §7.5 only needs the last 200 lines for search. Note that Relay already
 holds 10 MiB of scrollback per session and replays it on demand — SwiftTerm's buffer does not
 need to be the archive.

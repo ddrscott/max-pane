@@ -407,6 +407,11 @@ public final class StripViewController: NSViewController {
 
     // MARK: - lookups used by the window controller
 
+    /// ADR-0007 §5's escape hatch, routed to the pane that owns the session.
+    public func claimSession(paneId: String) {
+        (paneControllers[paneId] as? TerminalPaneController)?.claimSessionAtLaneWidth()
+    }
+
     /// A pty pane's current working directory, for spawning a sibling in the
     /// right place (PRD §7.1).
     public func cwd(ofPane paneId: String) -> String? {

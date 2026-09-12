@@ -111,6 +111,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return store.isGathered
         case .gather:
             return store.focusedLane?.projectRoot != nil
+        case .claimSession:
+            // Only meaningful for a terminal pane.
+            return store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .pty
         case .closePane, .closeLane, .splitDown, .togglePinned,
              .moveLaneLeft, .moveLaneRight, .widenLane, .narrowLane:
             return store.focusedLane != nil
@@ -197,6 +200,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 // PRD §16's accepted v1 boundary: drop out of fullscreen so the
                 // rest of macOS is reachable, and let the user come back.
                 window?.toggleFullScreen(nil)
+
+            case .claimSession:
+                confirmClaimSession()
             }
         } catch {
             showError(error)
@@ -264,6 +270,26 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return "https://duckduckgo.com/?q=\(q)"
         }
         return "https://\(trimmed)"
+    }
+
+    /// ADR-0007 §5: the one path that sends `RESIZE`. It reshapes the PTY for
+    /// every other attached client — Scott's phone included — so it asks first,
+    /// every time, and names who else it affects.
+    private func confirmClaimSession() {
+        guard let paneId = store.state.focusedPaneId else { return }
+        let alert = NSAlert()
+        alert.messageText = "Resize this session to fit the lane?"
+        alert.informativeText =
+            "This changes the terminal's size for everyone attached to it, "
+            + "including the Relay web client on your phone, and will redraw "
+            + "whatever is running.\n\n"
+            + "Max Pane otherwise never resizes a session — it sizes the lane "
+            + "to the session instead."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Resize Session")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        strip.claimSession(paneId: paneId)
     }
 
     private func showError(_ error: Error) {
