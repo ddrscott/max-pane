@@ -1,0 +1,125 @@
+import Foundation
+import LanedCore
+
+/// Everything a lane header says, resolved from the two sources that know it.
+///
+/// Separated from the view because the interesting decisions here are all
+/// choices about *what* to show — which of two titles wins, what goes in the one
+/// spare column when a session is quiet — and those are worth a test rather than
+/// a screenshot.
+///
+/// The header answers the supervision question the bar answers: of the ten
+/// panes on this strip, which one is alive, which one is working, which one has
+/// been sitting on a prompt for thirteen hours, and which directory is it in.
+struct LaneHeaderModel: Equatable {
+    var kind: PaneGlyph = .web
+    /// Fills the status square. Liveness only — the same thing the bar's green
+    /// dot means — so it never has to be read together with the state chip.
+    var isLive: Bool = false
+    /// What the agent is doing, or nil for a lane with no Relay session behind
+    /// it. `idle` and `unknown` are states with nothing to say — they carry no
+    /// chip and no glyph — which is what keeps the one that does say something
+    /// worth looking at.
+    var state: AgentState?
+    var title: String = "untitled"
+    /// Unabbreviated and untruncated. The view decides how much of it fits.
+    var path: String = ""
+    /// Throughput while output is moving, otherwise how long it has been quiet.
+    /// Never the state's name, because the chip two columns to the left already
+    /// said that.
+    var badge: String = ""
+    var badgeIsThroughput: Bool = false
+    var pinned: Bool = false
+    var isTerminal: Bool = false
+    /// The long form, for the hover tip — the header is the only place the full
+    /// path exists, so truncating it must not destroy it.
+    var tooltip: String = ""
+
+    init() {}
+
+    init(lane: LaneHeaderSource, telemetry: SessionTelemetry?) {
+        kind = lane.kind
+        isTerminal = lane.kind == .pty
+        pinned = lane.pinned
+
+        // The ledger's title is the one the user can rename, so it wins; the
+        // session's own name is the fallback for a lane that was just attached
+        // and has not been titled yet. The command is the last real answer —
+        // RelayTTY's own header does `session.title || command + args`, and
+        // "htop" identifies a lane where "untitled" does not.
+        title = [lane.title, telemetry?.title, lane.host, telemetry?.command]
+            .compactMap { $0 }
+            .first(where: { !$0.isEmpty }) ?? "untitled"
+
+        // The session's cwd is the truth — it follows `cd`. The project root is
+        // a fallback for lanes with no session (a web lane, a dead terminal).
+        path = [telemetry?.cwd, lane.projectRoot]
+            .compactMap { $0 }
+            .first(where: { !$0.isEmpty }) ?? ""
+
+        if let telemetry {
+            isLive = telemetry.isRunning
+            state = telemetry.state
+            badge = telemetry.badgeIsThroughput
+                ? telemetry.throughputText
+                // "13h ago" → "13h". Three characters of "ago" buys nothing in a
+                // column that is four characters wide.
+                : telemetry.ageText.replacingOccurrences(of: " ago", with: "")
+            badgeIsThroughput = telemetry.badgeIsThroughput
+            tooltip = [
+                telemetry.title.isEmpty ? title : telemetry.title,
+                telemetry.cwd,
+                [telemetry.state.rawValue, telemetry.ageText, telemetry.throughputText]
+                    .filter { !$0.isEmpty }.joined(separator: " · "),
+                telemetry.command,
+            ].filter { !$0.isEmpty }.joined(separator: "\n")
+        } else if lane.hasRelaySession {
+            // A pty lane that names a session Relay has never heard of: the
+            // session is gone, not quiet. Saying "live" here is the one lie the
+            // header must not tell, because it is the reason the dot exists.
+            isLive = false
+            state = .exited
+            tooltip = [title, path, "session gone"].filter { !$0.isEmpty }.joined(separator: "\n")
+        } else {
+            // No session behind this lane at all: liveness is whatever the pane
+            // itself reports, which is all a web pane ever has.
+            isLive = lane.hasLivePane
+            tooltip = [title, path].filter { !$0.isEmpty }.joined(separator: "\n")
+        }
+    }
+}
+
+/// The slice of a `Lane` the header reads. A protocol so the model can be tested
+/// without building a whole ledger snapshot — the header does not care where its
+/// strings came from.
+protocol LaneHeaderSource {
+    var kind: PaneGlyph { get }
+    var title: String? { get }
+    var host: String? { get }
+    var projectRoot: String? { get }
+    var pinned: Bool { get }
+    var hasLivePane: Bool { get }
+    /// True when a pane on this lane names a Relay session, whether or not
+    /// Relay still knows about it.
+    var hasRelaySession: Bool { get }
+}
+
+extension Lane: LaneHeaderSource {
+    var kind: PaneGlyph {
+        switch panes.first?.kind {
+        case .pty: return .pty
+        case .web: return .web
+        case .placeholder: return .placeholder
+        case nil: return .web
+        }
+    }
+
+    /// A web lane with no title is best identified by its host, not its URL.
+    var host: String? { panes.first?.url.flatMap { URL(string: $0)?.host } }
+
+    var hasLivePane: Bool { panes.contains { $0.state == .live } }
+
+    var hasRelaySession: Bool {
+        panes.contains { $0.kind == .pty && $0.relaySessionId != nil }
+    }
+}
