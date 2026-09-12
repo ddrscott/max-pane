@@ -5,6 +5,7 @@
 > "another major feature is like is pinning a pane to the left or right. another
 > option should allow the pinned pane to hover over the strip, or reduce the
 > space of the strip. i often have a page that's for background music."
+> "but pinning i mean docking a pane to the left or right side"
 
 So: a pane that stays put at one edge while the strip scrolls behind or beside
 it, in one of two modes — **overlay** (floats above the strip) or **inset** (the
@@ -22,8 +23,11 @@ goes silent is a failure.
 memory flag with no position in it. Two different meanings of "pinned" in one
 app is how a user ends up pinning a lane and wondering why it did not move.
 
-Resolve it deliberately. The most promising reading is that **docking subsumes
-pinning**: a docked pane is on screen permanently, so it must never be evicted,
+**The owner has settled this**: pinning means docking. The word belongs to the
+new feature, so it is the *old* flag that needs a different name — or no
+user-facing name at all.
+
+The most promising reading is that **docking subsumes pinning**: a docked pane is on screen permanently, so it must never be evicted,
 which makes today's flag an implementation detail of the new feature rather than
 a second concept. If that holds, `pinned` should stop being user-facing. If it
 does not hold — if there is a real reason to protect a lane you are *not*
@@ -80,10 +84,12 @@ ADR should say why both exist.
 
 ## Constraints
 
-- Blocked on the motion round-2 work merging: it owns `StripViewController`,
-  `StripMotion`, `StripEdges`, `LaneView` and `WebPaneController` right now, and
-  two builders rewriting the strip's layout at once produces a merge nobody can
-  verify.
+- Split in two. The **model half is building now** — the ledger, the naming
+  decision, the eviction guarantee, and a written contract for the layout. The
+  **view half waits** on the motion round-2 work merging: it owns
+  `StripViewController`, `StripMotion`, `StripEdges`, `LaneView` and
+  `WebPaneController`, and two builders rewriting the strip's layout at once
+  produces a merge nobody can verify.
 - A docked web pane must never be unparented by the eviction policy. Read
   ADR-0003 and `eviction.rs` before assuming `pinned` already guarantees that —
   it prevents *eviction*, and unparenting is a separate action.
