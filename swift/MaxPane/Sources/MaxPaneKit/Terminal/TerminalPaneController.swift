@@ -1,6 +1,6 @@
 import AppKit
+import GhosttyTerminal
 import LanedCore
-import SwiftTerm
 
 /// The byte stream a terminal pane is attached to.
 ///
@@ -12,8 +12,7 @@ protocol RelayAttachment: AnyObject {
     var sessionId: String { get }
     /// Terminal output, already inflated and in wire order.
     var onData: ((ArraySlice<UInt8>) -> Void)? { get set }
-    /// The PTY's size, as the host reports it. **Inbound only** — see the
-    /// resize note on `TerminalPaneController`.
+    /// The PTY's size as the host reports it.
     var onHostResize: ((_ cols: Int, _ rows: Int) -> Void)? { get set }
     var onTitle: ((String) -> Void)? { get set }
     var onExit: ((Int32) -> Void)? { get set }
@@ -24,56 +23,54 @@ protocol RelayAttachment: AnyObject {
     func disconnect()
     func send(_ bytes: ArraySlice<UInt8>)
 
-    /// Send exactly one `RESIZE`. **Only ever called from the user's explicit
-    /// "claim this session" command** — see ADR-0007. Nothing automatic may
-    /// reach this.
+    /// Reshape the PTY. This changes the terminal for **every** client attached
+    /// to the session, the phone included, which is why it is debounced to the
+    /// size the user settles on. See ADR-0007.
     func claimSize(cols: Int, rows: Int)
 }
 
-/// A terminal pane: a SwiftTerm view attached to a RelayTTY session.
+/// A terminal pane: Ghostty's terminal core attached to a RelayTTY session.
 ///
-/// **On resize.** RelayTTY's PTY resize is global last-writer-wins — one PTY,
-/// one `winsize`, no per-client viewport. PRD §3 keeps the phone client on the
-/// same sessions and §8 makes lanes narrow portrait columns, so a MaxPane column
-/// that asserted its own size would reshape the PTY for every other client and
-/// force a full TUI redraw on each flip. This pane therefore **never sends
-/// RESIZE**: it takes the host's size from the inbound frame and fits the
-/// content inside the column.
+/// Ghostty owns the grid. The view's size decides the columns and rows, the
+/// session reports when that changed, and we pass the new shape to Relay — so
+/// dragging a lane wider genuinely reflows the text. Inbound `RESIZE` is
+/// therefore informational: another client may reshape the PTY, and the
+/// terminal renders at that size inside the lane the user chose.
 ///
-/// Spike M2 measured both sides of that: flipping between a 50-column lane and a
-/// 100-column phone forced 6 671 bytes of redraw on every other attached client
-/// per flip for `htop`, while a client that never sends RESIZE learned the host
-/// size from inbound frames alone and caused zero `SIGWINCH`s.
-/// [ADR-0007](../../../../docs/decisions/0007-terminal-panes-never-resize-the-pty.md).
-///
-/// pty panes are never unparented and never evicted (PRD §10.3): SwiftTerm is
-/// cheap, and the attachment is the thing holding the session's continuity.
+/// pty panes are never unparented and never evicted (PRD §10.3): the emulator
+/// is cheap, and the attachment is what holds the session's continuity.
 @MainActor
 final class TerminalPaneController: NSObject, PaneController {
     let paneId: String
     private let store: StripStore
     private let config: Config
-    private let container = NSView()
-    private let terminal: TerminalView
+    private let container = TerminalPaneContainer()
+    private let terminal = TerminalView(frame: .zero)
     private let status = ReconnectingBanner()
 
+    /// Ghostty's side of the pipe: bytes in from Relay, bytes out from the
+    /// keyboard, and a resize whenever the view's grid changes.
+    private var session: InMemoryTerminalSession!
     private var attachment: RelayAttachment?
     private var pane: Pane
     private var scrollbackDebounce: DispatchWorkItem?
-    private var resizeDebounce: DispatchWorkItem?
-    /// The lane's width as last seen, for when the ledger has not caught up.
-    private var lastLaneWidth: CGFloat = 0
     private var isSessionAvailable = true
-    /// Lines seen on the wire, so the index survives a `clear`. See pushScrollback.
+
+    /// Lines seen on the wire, so the search index survives a `clear` and can
+    /// see past the viewport — Ghostty's viewport read deliberately ignores
+    /// scrollback.
     private var seenLines: [String] = []
-    /// The PTY's size as the host last reported it. Authoritative — never read
-    /// this from the session JSON, which lags by seconds (ADR-0007).
+
+    /// The grid as Ghostty last reported it.
     private(set) var hostCols = 80
     private(set) var hostRows = 40
 
-    /// Last cwd seen, for ⌘T spawning a sibling in the right place and for
-    /// tagging. Sourced from OSC 7 in the stream, backed by the session file.
+    /// Last cwd seen. Ghostty reports OSC 7 natively, so this is no longer
+    /// sniffed out of the byte stream by hand.
     private(set) var currentCwd: String?
+
+    /// Set by the strip so a newly opened lane can be scrolled to.
+    var onRevealLane: ((String?) -> Void)?
 
     var view: NSView { container }
 
@@ -82,24 +79,65 @@ final class TerminalPaneController: NSObject, PaneController {
         self.pane = pane
         self.store = store
         self.config = config
-        self.terminal = AutoCopyTerminalView(frame: .zero)
         super.init()
+
+        // Ghostty's own tracing, behind the same flag as ours. Its lifecycle
+        // and metrics categories are the only way to see why a surface did not
+        // build, which is otherwise entirely silent.
+        if ProcessInfo.processInfo.environment["MAXPANE_DEBUG"] != nil, !TerminalDebugLog.isEnabled {
+            // Its default sink is `print`, and stdout to a file is block
+            // buffered — so the output simply never appears. stderr is not.
+            TerminalDebugLog.sink = { message in
+                FileHandle.standardError.write(Data((message + "\n").utf8))
+            }
+            TerminalDebugLog.enable([.lifecycle, .metrics])
+        }
 
         container.wantsLayer = true
         container.layer?.backgroundColor = Theme.laneBackground.cgColor
+        // Ghostty derives its grid from the view's size and only builds its
+        // surface once it has one. Without a nudge on every layout pass the
+        // pane renders nothing at all while bytes arrive perfectly happily —
+        // which is exactly how this first came up: a header reading 254B/s
+        // above an empty black column.
+        container.onLayout = { [weak self] in self?.terminal.fitToSize() }
 
-        terminal.autoresizingMask = [.width, .height]
-        terminal.frame = container.bounds
-        terminal.terminalDelegate = self
-        if let clickable = terminal as? AutoCopyTerminalView {
-            clickable.resolveCwd = { [weak self] in self?.currentCwd ?? "" }
-            clickable.onOpenToken = { [weak self] token in self?.open(token) }
-        }
+        session = InMemoryTerminalSession(
+            write: { [weak self] data in
+                // Keyboard and paste, on their way to the PTY.
+                Task { @MainActor in self?.attachment?.send(ArraySlice(data)) }
+            },
+            resize: { [weak self] viewport in
+                Task { @MainActor in
+                    self?.gridChanged(cols: Int(viewport.columns), rows: Int(viewport.rows))
+                }
+            },
+            // We only read columns and rows, so a pixel-only change during a
+            // divider drag is noise — and each one would ask the far end for a
+            // full repaint.
+            suppressesPixelOnlyResizes: true)
+
+        // The controller carries the font and palette, and is what actually
+        // mints a surface. Ghostty refuses to build one without it — silently,
+        // logging only "surface rebuild skipped: missing controller", which is
+        // how this cost an hour of looking at a black column while the header
+        // happily reported 254 B/s arriving.
+        terminal.controller = TerminalControllerPool.shared.controller(for: config)
+        terminal.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
+        terminal.delegate = self
+        terminal.translatesAutoresizingMaskIntoConstraints = false
+        terminal.setAccessibilityElement(true)
+        terminal.setAccessibilityLabel("Terminal")
         container.addSubview(terminal)
 
         status.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(status)
         NSLayoutConstraint.activate([
+            terminal.topAnchor.constraint(equalTo: container.topAnchor),
+            terminal.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            terminal.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            terminal.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+
             status.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             status.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             status.topAnchor.constraint(equalTo: container.topAnchor),
@@ -107,8 +145,8 @@ final class TerminalPaneController: NSObject, PaneController {
         ])
         status.isHidden = true
 
-        // Seed cwd from the session file so a freshly restored lane is tagged
-        // before a single byte has arrived.
+        // Seed cwd from the session file so a restored lane is tagged before a
+        // single byte has arrived.
         if let sessionId = pane.relaySessionId {
             currentCwd = RelaySessionDirectory().session(sessionId)?.cwd
             reportCwd()
@@ -123,36 +161,26 @@ final class TerminalPaneController: NSObject, PaneController {
 
         attachment.onData = { [weak self] bytes in
             guard let self else { return }
-            self.terminal.feed(byteArray: bytes)
-            self.sniffOSC7(bytes)
+            self.session.receive(Data(bytes))
             self.rememberLiveLines(bytes)
             self.scheduleScrollbackPush()
         }
         attachment.onHostResize = { [weak self] cols, rows in
-            // The host reshaped the PTY — possibly because a phone attached.
-            // Follow it; never lead it.
-            guard let self else { return }
-            self.hostCols = cols
-            self.hostRows = rows
-            // Keep the emulator's grid in step with the PTY, always — this is
-            // the frame that precedes every replay, and ignoring it renders the
-            // buffer at the wrong width.
-            self.terminal.getTerminal().resize(cols: cols, rows: rows)
-            // Deliberately NOT resizing the lane to match. Max Pane now drives
-            // the PTY from the lane's width, so deriving the lane back from the
-            // PTY would fight the user's drag on every frame. If another client
-            // reshapes the session the terminal simply renders at the new size
-            // inside the lane the user chose.
+            // Informational. Ghostty's grid comes from the view, and deriving
+            // it back from the PTY would fight the user's lane width on every
+            // frame. Recorded so the header can show the real shape.
+            self?.hostCols = cols
+            self?.hostRows = rows
         }
         attachment.onTitle = { [weak self] title in
-            guard let self, let laneId = self.store.lane(containing: self.paneId)?.id else { return }
-            try? self.store.setLaneTitle(laneId, title)
+            self?.adoptTitle(title)
         }
         attachment.onConnectionChange = { [weak self] connected in
             self?.status.isHidden = connected
             self?.status.setState(connected ? .connected : .reconnecting)
         }
         attachment.onExit = { [weak self] code in
+            self?.session.finish(exitCode: UInt32(bitPattern: code), runtimeMilliseconds: 0)
             self?.status.isHidden = false
             self?.status.setState(.exited(code))
         }
@@ -172,7 +200,7 @@ final class TerminalPaneController: NSObject, PaneController {
     }
 
     // pty panes are exempt from all four of these (PRD §10.3). The policy in
-    // `laned-core` never emits anything but `.keep` for them; these are here
+    // `laned-core` never emits anything but `.keep` for them; these exist
     // because the protocol asks, and they do nothing on purpose.
     func unparent() {}
     func reparentIfNeeded() {}
@@ -180,10 +208,6 @@ final class TerminalPaneController: NSObject, PaneController {
     func rehydrate() {}
 
     /// The session appeared in, or vanished from, RelayTTY's directory.
-    ///
-    /// Vanishing is not the same as the process exiting: the relay host can be
-    /// restarted under us. Either way the lane stays put and the banner
-    /// explains itself.
     func sessionAvailabilityChanged(_ available: Bool) {
         guard available != isSessionAvailable else { return }
         isSessionAvailable = available
@@ -195,186 +219,34 @@ final class TerminalPaneController: NSObject, PaneController {
         }
     }
 
-    // MARK: - fitting the lane to the session (ADR-0007)
+    // MARK: - size
 
-    /// Size the lane to the session, not the session to the lane.
+    /// Ghostty's grid changed because the view did. Pass the new shape on.
     ///
-    /// The PTY's width belongs to whoever started it. A lane cannot change it
-    /// without reshaping the terminal for every other client, so the lane moves
-    /// instead: `clamp(hostCols × cellWidth + gutter, LANE_MIN, LANE_MAX)`.
-    ///
-    /// M2 measured that this is nearly always enough — real sessions on this
-    /// machine run 52 to 73 columns, and at 12 pt (a 7 pt cell) even 128 columns
-    /// fits in 896 pt. Shrinking the font is the fallback past that, not the
-    /// mechanism.
-    private func fitLaneToSession() {
-        guard let laneId = store.lane(containing: paneId)?.id else { return }
-
-        let wanted = Self.laneWidth(forCols: hostCols, cellWidth: cellWidth(at: config.fontSize))
-        let clamped = config.clampWidth(wanted)
-
-        if wanted > config.widthRange.upperBound {
-            // Wider than any lane may be: shrink the font until it fits, down to
-            // the floor, then stop and let the user scroll the rest.
-            let available = Double(config.widthRange.upperBound) - Self.gutter
-            var size = config.fontSize
-            while size > Self.minimumFontSize,
-                  Double(hostCols) * cellWidth(at: size) > available {
-                size -= 1
-            }
-            applyFontSize(max(size, Self.minimumFontSize))
-        } else if terminal.font.pointSize != config.fontSize {
-            // Back inside the range: return to the configured size.
-            applyFontSize(config.fontSize)
-        }
-
-        guard store.lane(laneId)?.widthPt != clamped else { return }
-        // Animated, because a phone can move this under the user and a column
-        // that jumps without explanation reads as a glitch.
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.2
-            try? store.setLaneWidth(laneId, clamped)
-        }
-    }
-
-    /// Points of lane needed for `cols` columns at a given cell width.
-    static func laneWidth(forCols cols: Int, cellWidth: Double) -> UInt32 {
-        UInt32(max(0, (Double(cols) * cellWidth + gutter).rounded(.up)))
-    }
-
-    /// Lane chrome either side of the terminal grid.
-    static let gutter: Double = 16
-    /// Below this the text stops being readable, so clip instead of shrinking.
-    static let minimumFontSize: Double = 9
-
-    private func cellWidth(at size: Double) -> Double {
-        let font = NSFont(name: config.fontName, size: size)
-            ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
-        let advance = Double(font.advancement(forGlyph: font.glyph(withName: "space") ?? 0).width)
-        // A font that reports nothing useful still has to produce a cell width;
-        // 0.6em is the usual monospace ratio.
-        return advance > 0 ? advance.rounded() : size * 0.6
-    }
-
-    private func applyFontSize(_ size: Double) {
-        guard terminal.font.pointSize != size else { return }
-        terminal.font = NSFont(name: config.fontName, size: size)
-            ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
-    }
-
-    /// The user's explicit "this session is mine at this width" (ADR-0007 §5).
-    ///
-    /// The **only** path that sends `RESIZE`. It reshapes the PTY for every
-    /// other attached client, including Scott's phone, which is why it is a
-    /// command and never a side effect.
-    func claimSessionAtLaneWidth() {
-        sendSize(for: currentLaneWidth())
-    }
-
-    /// The lane was resized — reshape the PTY so the text actually reflows.
-    ///
-    /// This is Max Pane telling Relay the new size, which reshapes the terminal
-    /// for **every** client attached to that session, the phone included. That
-    /// is a deliberate reversal of what ADR-0007 originally decided, made by
-    /// Scott: dragging a lane wider and getting no more columns is not a
-    /// terminal, and the app he is replacing resizes too.
-    ///
-    /// Debounced, because a drag produces one of these per frame and each costs
-    /// every other client a full redraw. Only the size you settle on is sent.
-    func laneWidthDidChange(to width: CGFloat) {
-        lastLaneWidth = width
-        resizeDebounce?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.sendSize(for: width) }
-        resizeDebounce = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
-    }
-
-    private func currentLaneWidth() -> CGFloat {
-        store.lane(containing: paneId).map { CGFloat($0.widthPt) } ?? lastLaneWidth
-    }
-
-    /// Columns and rows for a given lane width, then the RESIZE.
-    private func sendSize(for width: CGFloat) {
-        let cols = max(20, Int((Double(width) - Self.gutter) / cellWidth(at: terminal.font.pointSize)))
-        // Measure rows from SwiftTerm's own cell metric, not the font's bounding
-        // box, which is several points taller and costs a row or two a lane.
-        let ctFont = terminal.font as CTFont
-        let cellHeight = ceil(CTFontGetAscent(ctFont) + CTFontGetDescent(ctFont) + CTFontGetLeading(ctFont))
-        let usable = Double(container.bounds.height) - Double(Theme.laneHeaderHeight)
-        let rows = max(10, Int(usable / max(cellHeight, 1)))
-
-        guard cols != hostCols || rows != hostRows else { return }
+    /// This is the whole of the resize story now: the lane's width decides the
+    /// view's width, the view's width decides Ghostty's grid, and Ghostty tells
+    /// us what it became. Nothing converts points to columns by hand any more,
+    /// which is where the old implementation kept losing rows to a font metric
+    /// that did not match the one the renderer actually used.
+    private func gridChanged(cols: Int, rows: Int) {
+        guard cols > 0, rows > 0, cols != hostCols || rows != hostRows else { return }
+        hostCols = cols
+        hostRows = rows
         attachment?.claimSize(cols: cols, rows: rows)
     }
 
-    /// Open a clicked path or URL in a new lane immediately right of this one.
-    ///
-    /// Right of the terminal that mentioned it, not at the end of the strip:
-    /// the thing and the thing that referred to it belong side by side, which
-    /// is the entire premise of putting web panes on the same strip as shells.
-    private func open(_ token: TerminalToken) {
-        guard let laneId = store.lane(containing: paneId)?.id,
-              let url = token.openURL
-        else { return }
-        try? store.newWebLane(url: url.absoluteString, near: laneId)
-        onRevealLane?(store.state.lanes.last?.id)
+    /// The explicit "claim this session" command (ADR-0007 §5).
+    func claimSessionAtLaneWidth() {
+        attachment?.claimSize(cols: hostCols, rows: hostRows)
     }
 
-    /// Set by the strip so a newly opened lane can be scrolled to.
-    var onRevealLane: ((String?) -> Void)?
-
-    // MARK: - cwd
-
-    /// Pull the working directory out of OSC 7 as it goes past.
-    ///
-    /// pty-host reads OSC 7 to update its own session metadata but does not
-    /// strip it from the output stream — its escape extractor removes only OSC
-    /// 9, 52 and 1337. So the sequence is still here in bytes already being fed
-    /// to the terminal, and sniffing it is three orders of magnitude fresher
-    /// than the ≤5 s session-file flush. ADR-0005.
-    ///
-    /// Format: `ESC ] 7 ; file://<host>/<path> BEL` (or `ESC \` as terminator).
-    private func sniffOSC7(_ bytes: ArraySlice<UInt8>) {
-        guard let path = Self.extractOSC7Path(bytes) else { return }
-        guard path != currentCwd else { return }
-        currentCwd = path
-        reportCwd()
+    /// The lane's width changed. Ghostty re-derives its grid from the view, so
+    /// this only has to make sure the view has laid out.
+    func laneWidthDidChange(to width: CGFloat) {
+        terminal.fitToSize()
     }
 
-    static func extractOSC7Path(_ bytes: ArraySlice<UInt8>) -> String? {
-        let prefix = Array("\u{1b}]7;file://".utf8)
-        let buf = Array(bytes)
-        guard buf.count > prefix.count else { return nil }
-
-        // Scan for the last occurrence: a burst can contain several prompts and
-        // only the newest is true.
-        var found: String? = nil
-        var i = 0
-        while i + prefix.count <= buf.count {
-            guard Array(buf[i..<(i + prefix.count)]) == prefix else {
-                i += 1
-                continue
-            }
-            var j = i + prefix.count
-            var payload: [UInt8] = []
-            while j < buf.count {
-                let b = buf[j]
-                // BEL, or ESC \ (ST).
-                if b == 0x07 { break }
-                if b == 0x1b, j + 1 < buf.count, buf[j + 1] == 0x5c { break }
-                payload.append(b)
-                j += 1
-            }
-            // `file://host/path` — drop the host, keep the path.
-            if let text = String(bytes: payload, encoding: .utf8),
-               let slash = text.firstIndex(of: "/") {
-                let raw = String(text[slash...])
-                found = raw.removingPercentEncoding ?? raw
-            }
-            i = j
-        }
-        return found
-    }
+    // MARK: - cwd and title
 
     private func reportCwd() {
         guard let cwd = currentCwd, let laneId = store.lane(containing: paneId)?.id else { return }
@@ -382,11 +254,31 @@ final class TerminalPaneController: NSObject, PaneController {
         store.observeCwd(laneId, cwd)
     }
 
+    private func adoptTitle(_ title: String) {
+        guard !title.isEmpty, let laneId = store.lane(containing: paneId)?.id else { return }
+        guard store.lane(laneId)?.title != title else { return }
+        try? store.setLaneTitle(laneId, title)
+    }
+
+    /// Open a clicked path or URL in a new lane immediately right of this one.
+    ///
+    /// Right of the terminal that mentioned it, not at the end of the strip:
+    /// the thing and the thing that referred to it belong side by side, which
+    /// is the entire premise of putting web panes on the same strip as shells.
+    func open(_ token: TerminalToken) {
+        guard let laneId = store.lane(containing: paneId)?.id, let url = token.openURL else { return }
+        try? store.newWebLane(url: url.absoluteString, near: laneId)
+        onRevealLane?(store.state.lanes.last?.id)
+    }
+
     // MARK: - search index
 
-    /// Push the last 200 lines to `laned-core` so ⌘P can find them (PRD §7.5).
+    /// PRD §7.5's cap.
+    private static let scrollbackLines = 200
+
+    /// Push recent lines to `laned-core` so ⌘P can find them.
     ///
-    /// Debounced hard. A busy agent produces output continuously, and the index
+    /// Debounced hard. A busy agent produces output continuously and the index
     /// only needs to be roughly current — it is a way to find a lane, not a log.
     private func scheduleScrollbackPush() {
         scrollbackDebounce?.cancel()
@@ -396,58 +288,26 @@ final class TerminalPaneController: NSObject, PaneController {
     }
 
     private func pushScrollback() {
-        // Walk back from the bottom of the scrollback, taking only the lines we
-        // keep. `getScrollInvariantLine` indexes from the start of the scroll
-        // buffer including what has already been trimmed off the top, so the
-        // last real row is `totalLinesTrimmed + topVisibleRow + rows - 1`.
-        //
-        // All public API, and M2 measured the whole 200-line walk at 0.48 ms.
-        // `getBufferAsData()` would materialise the entire buffer — megabytes of
-        // allocation, for 20 terminals, to keep 200 lines.
-        let term = terminal.getTerminal()
-        var row = term.buffer.totalLinesTrimmed + term.getTopVisibleRow() + term.rows - 1
-
-        var lines: [String] = []
-        lines.reserveCapacity(Self.scrollbackLines)
-        while row >= 0, lines.count < Self.scrollbackLines {
-            guard let line = term.getScrollInvariantLine(row: row) else { break }
-            let text = Self.text(of: line, cols: term.cols, in: term)
-            if !text.trimmingCharacters(in: .whitespaces).isEmpty {
-                lines.append(text)
+        // Ghostty's viewport read is exactly the visible rows and ignores
+        // scrollback by design, so the live stream is what gives the index any
+        // history at all: whatever is on screen now, plus what went past before
+        // it scrolled off.
+        var lines = seenLines
+        if let viewport = session.readViewportText() {
+            for line in viewport.split(separator: "\n", omittingEmptySubsequences: true) {
+                let text = String(line)
+                guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+                if lines.last != text { lines.append(text) }
             }
-            row -= 1
         }
-        // A fresh attach does not reliably fill the buffer: M2 saw 125 lines on
-        // a real session, because a full replay is truncated at the last
-        // `ESC[2J` and everything before the clear is simply gone. So the index
-        // also gets fed from live output as it arrives, and the two are merged
-        // newest-last here.
-        let merged = mergeWithSeenLines(lines.reversed())
-        guard !merged.isEmpty else { return }
-        store.pushScrollback(paneId, merged)
+        if lines.count > Self.scrollbackLines {
+            lines.removeFirst(lines.count - Self.scrollbackLines)
+        }
+        guard !lines.isEmpty else { return }
+        store.pushScrollback(paneId, lines)
     }
 
-    /// One buffer line as text.
-    ///
-    /// Per-cell rather than `BufferLine.translateToString`, which **silently
-    /// drops astral-plane scalars** — emoji and flags come back as blanks. M2
-    /// measured both paths at the same cost (0.474 vs 0.483 ms for 200 lines),
-    /// so there is nothing to trade off, and agent output is full of emoji.
-    private static func text(of line: BufferLine, cols: Int, in term: Terminal) -> String {
-        var out = ""
-        out.reserveCapacity(cols)
-        for col in 0..<min(cols, line.count) {
-            let cd = line[col]
-            if cd.width == 0 { continue }
-            out.append(term.getCharacter(for: cd))
-        }
-        while out.last == " " { out.removeLast() }
-        return out
-    }
-
-    /// Lines seen on the live stream, so the index survives a `clear`.
-    ///
-    /// Capped at the same 200: this is a way to find a lane, not a log.
+    /// Lines seen on the live stream, capped at what the index keeps.
     private func rememberLiveLines(_ bytes: ArraySlice<UInt8>) {
         guard let text = String(bytes: bytes, encoding: .utf8) else { return }
         for raw in text.split(separator: "\n", omittingEmptySubsequences: true) {
@@ -458,19 +318,6 @@ final class TerminalPaneController: NSObject, PaneController {
         if seenLines.count > Self.scrollbackLines {
             seenLines.removeFirst(seenLines.count - Self.scrollbackLines)
         }
-    }
-
-    /// Whatever is in the emulator's buffer, plus anything the live stream saw
-    /// that the buffer no longer holds. Newest last, capped.
-    private func mergeWithSeenLines(_ fromBuffer: [String]) -> [String] {
-        guard !seenLines.isEmpty else { return fromBuffer }
-        let known = Set(fromBuffer)
-        var merged = seenLines.filter { !known.contains($0) }
-        merged.append(contentsOf: fromBuffer)
-        if merged.count > Self.scrollbackLines {
-            merged.removeFirst(merged.count - Self.scrollbackLines)
-        }
-        return merged
     }
 
     /// Drop CSI/OSC escape sequences so the index holds text rather than
@@ -507,66 +354,44 @@ final class TerminalPaneController: NSObject, PaneController {
         }
         return out
     }
-
-    /// PRD §7.5's cap.
-    private static let scrollbackLines = 200
 }
 
-// MARK: - SwiftTerm
+// MARK: - Ghostty delegates
 
-/// SwiftTerm's delegate predates strict concurrency; every callback here
-/// arrives on the main thread in practice, which `@preconcurrency` lets us say
-/// without scattering assumeIsolated through the file.
-extension TerminalPaneController: @preconcurrency TerminalViewDelegate {
-    func send(source: TerminalView, data: ArraySlice<UInt8>) {
-        attachment?.send(data)
-    }
+extension TerminalPaneController: TerminalSurfaceTitleDelegate {
+    func terminalDidChangeTitle(_ title: String) { adoptTitle(title) }
+}
 
-    /// SwiftTerm telling us its view geometry changed.
+extension TerminalPaneController: TerminalSurfacePwdDelegate {
+    /// OSC 7, reported natively.
     ///
-    /// Deliberately does **not** forward to Relay. See the class note: the PTY
-    /// has one size shared by every client, and a narrow lane must not impose
-    /// its own on a phone that is also watching.
-    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {}
-
-    func setTerminalTitle(source: TerminalView, title: String) {
-        guard let laneId = store.lane(containing: paneId)?.id else { return }
-        try? store.setLaneTitle(laneId, title)
-    }
-
-    /// OSC 7 also arrives here when SwiftTerm parses it, which is a second,
-    /// cheaper path to the same answer.
-    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
-        guard let directory else { return }
-        let path = URL(string: directory)?.path ?? directory
-        guard path != currentCwd else { return }
-        currentCwd = path
+    /// The previous implementation sniffed this out of the raw byte stream by
+    /// hand, because SwiftTerm's own parse of it was not exposed. All of that
+    /// code is gone.
+    func terminalDidChangeWorkingDirectory(_ path: String) {
+        let resolved = URL(string: path)?.path ?? path
+        guard !resolved.isEmpty, resolved != currentCwd else { return }
+        currentCwd = resolved
         reportCwd()
     }
+}
 
-    func scrolled(source: TerminalView, position: Double) {}
-    /// OSC 52 — the terminal asking for something to be put on the clipboard.
-    ///
-    /// Agents use this to hand you a command or a path without you selecting it.
-    /// Dropping it on the floor, which is what an empty implementation does,
-    /// looks exactly like the feature not existing.
-    func clipboardCopy(source: TerminalView, content: Data) {
-        guard let text = String(data: content, encoding: .utf8), !text.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+extension TerminalPaneController: TerminalSurfaceOpenURLDelegate {
+    /// A hyperlink the terminal recognised — including OSC 8 links, which is a
+    /// good deal more than a regex over the visible text.
+    func terminalDidRequestOpenURL(_ url: String, kind: TerminalOpenURLKind) {
+        guard let scheme = URL(string: url)?.scheme?.lowercased(),
+              scheme == "http" || scheme == "https"
+        else { return }
+        open(.url(url))
     }
-    func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+}
 
-    func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
-        // A clicked link in a terminal is the same gesture as the BROWSER shim:
-        // a web pane right of this one.
-        guard let laneId = store.lane(containing: paneId)?.id else { return }
-        try? store.newWebLane(url: link, near: laneId)
+extension TerminalPaneController: TerminalSurfaceCloseDelegate {
+    func terminalDidClose(processAlive: Bool) {
+        status.isHidden = false
+        status.setState(.exited(0))
     }
-
-    func bell(source: TerminalView) {}
-
-    func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
 }
 
 /// The thin banner across the top of a terminal pane when it is not attached.
@@ -606,93 +431,75 @@ final class ReconnectingBanner: NSView {
             isHidden = true
         case .reconnecting:
             isHidden = false
-            label.stringValue = "// RECONNECTING"
+            label.stringValue = "RECONNECTING"
             label.textColor = Theme.accent
             layer?.backgroundColor = Theme.accent.withAlphaComponent(0.12).cgColor
         case .exited(let code):
             isHidden = false
-            label.stringValue = code == 0 ? "// EXITED" : "// EXITED \(code)"
+            label.stringValue = code == 0 ? "EXITED" : "EXITED \(code)"
             label.textColor = Theme.dimText
             layer?.backgroundColor = Theme.laneBorder.withAlphaComponent(0.3).cgColor
         }
     }
 }
 
-/// A `TerminalView` that copies the selection the moment you finish making one.
+/// A pane's container, which tells Ghostty to re-measure whenever it lays out.
+@MainActor
+final class TerminalPaneContainer: NSView {
+    var onLayout: (() -> Void)?
+
+    override func layout() {
+        super.layout()
+        onLayout?()
+    }
+}
+
+
+/// One Ghostty controller for the whole strip.
 ///
-/// RelayTTY does this, and it is the reason a daily user of it has never pressed
-/// ⌘C in a terminal: you drag over a stack trace and it is already on the
-/// clipboard. Without it the gesture silently does nothing, which reads as the
-/// selection not having worked at all.
-final class AutoCopyTerminalView: TerminalView {
-    /// A click landed on something worth opening — a URL, or a file that exists.
-    var onOpenToken: ((TerminalToken) -> Void)?
-    /// Where the session is, so relative paths resolve.
-    var resolveCwd: (() -> String)?
-    private var downAt: NSPoint = .zero
+/// A controller owns a libghostty *app*, and surfaces are minted from it — one
+/// controller can back every pane. Making one per pane would stand up a
+/// renderer, config and event loop per lane, which for a strip that routinely
+/// holds a dozen sessions is a real cost for no gain: every pane wants the same
+/// font and the same palette.
+@MainActor
+enum TerminalControllerPool {
+    static let shared = TerminalControllerPool.Store()
 
-    override func mouseDown(with event: NSEvent) {
-        downAt = event.locationInWindow
-        super.mouseDown(with: event)
-    }
+    @MainActor
+    final class Store {
+        private var controller: TerminalController?
 
-    /// Open on a click that did not drag.
-    ///
-    /// A drag is a selection and must stay one, so movement disqualifies the
-    /// gesture. Anything that is not a URL or an existing file falls through to
-    /// ordinary behaviour, which is what keeps this from firing on every word.
-    override func mouseUp(with event: NSEvent) {
-        let moved = hypot(event.locationInWindow.x - downAt.x, event.locationInWindow.y - downAt.y)
-        super.mouseUp(with: event)
-
-        // A drag is a selection: copy it, the way RelayTTY does, which is why a
-        // daily user of it has never pressed ⌘C in a terminal.
-        if moved >= 3 {
-            if let selected = getSelection(), !selected.isEmpty {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(selected, forType: .string)
-            }
-            return
+        /// The shared controller, built on first use from the app's config.
+        func controller(for config: Config) -> TerminalController {
+            if let controller { return controller }
+            let made = TerminalController(
+                terminalConfiguration: TerminalConfiguration { builder in
+                    builder.withFontFamily(config.fontName)
+                    builder.withFontSize(Float(config.fontSize))
+                    // The lane paints its own background; a terminal painting a
+                    // second one on top shows a seam under the header.
+                    builder.withBackgroundOpacity(0)
+                    builder.withBackground(hex(Theme.laneBackground))
+                    builder.withForeground(hex(NSColor.labelColor))
+                    builder.withSelectionBackground(hex(Theme.accent))
+                    builder.withSelectionForeground(hex(Theme.laneBackground))
+                    builder.withCursorColor(hex(Theme.accent))
+                    // Matching the lane's own gutter, so text does not start
+                    // hard against the divider.
+                    builder.withWindowPaddingX(6)
+                    builder.withWindowPaddingY(4)
+                })
+            controller = made
+            return made
         }
-
-        // A click that did not move may be on something worth opening.
-        let token = tokenUnder(event)
-        Log.debug("terminal click -> \(token.map(String.init(describing:)) ?? "nothing")")
-        if let token { onOpenToken?(token) }
     }
 
-    private func tokenUnder(_ event: NSEvent) -> TerminalToken? {
-        let point = convert(event.locationInWindow, from: nil)
-        let term = getTerminal()
-
-        // SwiftTerm keeps its own hit-testing internal, so measure the cell the
-        // same way it does: `ceil(ascent + descent + leading)` and the advance
-        // of a space.
-        let ctFont = font as CTFont
-        let cellHeight = ceil(CTFontGetAscent(ctFont) + CTFontGetDescent(ctFont) + CTFontGetLeading(ctFont))
-        let advance = Double(font.advancement(forGlyph: font.glyph(withName: "space") ?? 0).width)
-        let cellWidth = advance > 0 ? advance.rounded() : Double(font.pointSize) * 0.6
-        guard cellWidth > 0, cellHeight > 0 else { return nil }
-
-        // The view is not flipped, so row 0 is at the top of `bounds`.
-        let row = Int((bounds.height - point.y) / cellHeight)
-        let col = Int(point.x / cellWidth)
-        guard row >= 0, row < term.rows, col >= 0 else { return nil }
-
-        let absolute = term.buffer.totalLinesTrimmed + term.getTopVisibleRow() + row
-        guard let bufferLine = term.getScrollInvariantLine(row: absolute) else { return nil }
-
-        var text = ""
-        text.reserveCapacity(term.cols)
-        for c in 0..<min(term.cols, bufferLine.count) {
-            let cd = bufferLine[c]
-            text.append(cd.width == 0 ? " " : term.getCharacter(for: cd))
-        }
-
-        let word = TerminalTokenizer.word(in: text, column: col)
-        Log.debug("  row \(row) col \(col) word=\(word ?? "-") cwd=\(resolveCwd?() ?? "-")")
-        guard let word else { return nil }
-        return TerminalTokenizer.classify(word, cwd: resolveCwd?() ?? "")
+    /// `#rrggbb`, which is how Ghostty takes colours — so the theme is
+    /// converted here rather than duplicated as literals.
+    static func hex(_ color: NSColor) -> String {
+        let resolved = color.usingColorSpace(.sRGB) ?? .black
+        let channels = [resolved.redComponent, resolved.greenComponent, resolved.blueComponent]
+        return "#" + channels.map { String(format: "%02x", Int(($0 * 255).rounded())) }.joined()
     }
-
 }

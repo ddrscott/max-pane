@@ -16,7 +16,9 @@ let package = Package(
     platforms: [.macOS(.v14)],
     dependencies: [
         .package(path: "../MaxPaneCore"),
-        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: "1.2.0"),
+        // Ghostty's terminal core, as a prebuilt XCFramework. See ADR-0009 for
+        // why this replaced SwiftTerm.
+        .package(url: "https://github.com/Lakr233/libghostty-spm.git", from: "1.5.2"),
     ],
     targets: [
         // zlib's gzip container. BUFFER_REPLAY_GZ (0x13) is a complete RFC 1952
@@ -32,7 +34,7 @@ let package = Package(
             name: "MaxPaneKit",
             dependencies: [
                 .product(name: "LanedCore", package: "MaxPaneCore"),
-                .product(name: "SwiftTerm", package: "SwiftTerm"),
+                .product(name: "GhosttyTerminal", package: "libghostty-spm"),
                 "RelayClient",
             ],
             path: "Sources/MaxPaneKit"

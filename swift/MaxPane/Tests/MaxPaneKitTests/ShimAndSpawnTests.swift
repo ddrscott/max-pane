@@ -155,55 +155,13 @@ struct RelaySpawnTests {
     }
 }
 
-/// OSC 7 sniffing — ADR-0005's sub-second cwd path.
-@Suite("OSC 7 extraction")
-@MainActor
-struct OSC7Tests {
-    private func bytes(_ s: String) -> ArraySlice<UInt8> { ArraySlice(Array(s.utf8)) }
-
-    @Test("finds a BEL-terminated sequence")
-    func findsBelTerminated() {
-        let path = TerminalPaneController.extractOSC7Path(
-            bytes("some output\u{1b}]7;file://mac/Users/s/code/max-pane\u{07}more"))
-        #expect(path == "/Users/s/code/max-pane")
-    }
-
-    @Test("finds an ST-terminated sequence")
-    func findsStTerminated() {
-        let path = TerminalPaneController.extractOSC7Path(
-            bytes("\u{1b}]7;file://mac/Users/s/life\u{1b}\\"))
-        #expect(path == "/Users/s/life")
-    }
-
-    @Test("takes the newest when a burst contains several")
-    func takesTheNewest() {
-        let path = TerminalPaneController.extractOSC7Path(
-            bytes("\u{1b}]7;file://mac/first\u{07}out\u{1b}]7;file://mac/second\u{07}"))
-        #expect(path == "/second")
-    }
-
-    @Test("decodes percent-escaped paths")
-    func decodesPercentEscapes() {
-        let path = TerminalPaneController.extractOSC7Path(
-            bytes("\u{1b}]7;file://mac/Users/s/My%20Projects/a%2Bb\u{07}"))
-        #expect(path == "/Users/s/My Projects/a+b")
-    }
-
-    @Test("ignores ordinary output and other OSC sequences")
-    func ignoresOtherSequences() {
-        #expect(TerminalPaneController.extractOSC7Path(bytes("just some text")) == nil)
-        // OSC 0 is a title, not a directory.
-        #expect(TerminalPaneController.extractOSC7Path(bytes("\u{1b}]0;a title\u{07}")) == nil)
-        #expect(TerminalPaneController.extractOSC7Path(bytes("")) == nil)
-    }
-
-    @Test("does not crash on a truncated sequence at the end of a frame")
-    func survivesTruncation() {
-        // A frame boundary can land mid-sequence; the next frame carries the rest.
-        #expect(TerminalPaneController.extractOSC7Path(bytes("\u{1b}]7;file://mac/Users/s")) == "/Users/s")
-        #expect(TerminalPaneController.extractOSC7Path(bytes("\u{1b}]7;fi")) == nil)
-    }
-}
+/// OSC 7 is no longer parsed here.
+///
+/// The tests that lived at this spot exercised a hand-rolled scan for
+/// `ESC ]7;file://…` in the raw byte stream, written because SwiftTerm did not
+/// expose its own parse of it. Ghostty reports the working directory natively
+/// through `TerminalSurfacePwdDelegate`, so the code and its tests are both
+/// gone rather than kept as decoration. See ADR-0009.
 
 /// Data-store sharding (PRD §9, ADR-0003).
 @Suite("WKWebsiteDataStore sharding")
