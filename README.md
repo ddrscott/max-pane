@@ -182,6 +182,8 @@ else keeps its default.
 {
   "snapToLanes": true,
   "laneDefaultPt": 656,
+  "lanePeekPt": 28,
+  "stripEdgeRails": true,
   "fontName": "JetBrains Mono",
   "fontSize": 13
 }
@@ -191,6 +193,30 @@ else keeps its default.
 than leaving two lanes half-readable. It is on by default; set it to `false` to
 have the scroll stop exactly where the gesture put it. `snapSeconds` (default
 `0.18`) is how long that takes.
+
+`laneDefaultPt` is the width every new lane is born at. Lanes are uniform on
+purpose — pages on a desk are the same size — so this is one number, not a
+range, and a lane you have dragged or spanned keeps the width you gave it.
+`laneMinPt` and `laneMaxPt` bound both.
+
+Uniform widths have one failure, and the next two settings are about it: when a
+whole number of lanes happens to fit the window, the strip comes to rest flush
+with a lane boundary, nothing shows at either edge, and there is no evidence
+left on screen that the strip continues at all — a strip of twenty lanes looks
+exactly like a strip of three.
+
+`lanePeekPt` is the smallest sliver of the next lane the strip will settle
+with. When centring a lane would leave an edge flush while lanes continue past
+it, the settle lands up to this many points off centre instead, so a corner of
+the next lane always shows. It never moves further than that, and at the two
+ends of the strip it does not move at all — the end of the strip is a fact
+worth seeing. `0` turns it off and gives you exactly centred snapping.
+
+`stripEdgeRails` is the other half: an 18 pt column at each end of the strip
+with a count of the lanes hidden that way (`◀ 7`, `5 ▶`), and a plain wall when
+there are none. A sliver says *there is more, this way*; it cannot say how many,
+and at the ends of the strip there is nothing to show a sliver of. `false`
+removes both rails and gives their 36 points back to the lanes.
 
 Every field of `Config` is a key here. A value of the wrong type is skipped —
 with a line on stderr saying which — rather than taking the rest of the file

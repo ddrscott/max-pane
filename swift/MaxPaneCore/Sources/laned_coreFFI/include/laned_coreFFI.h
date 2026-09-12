@@ -429,6 +429,11 @@ uint64_t uniffi_laned_core_fn_method_core_revision(uint64_t ptr, RustCallStatus 
 RustBuffer uniffi_laned_core_fn_method_core_search(uint64_t ptr, RustBuffer query, uint32_t limit, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_DEFAULT_LANE_WIDTH
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_DEFAULT_LANE_WIDTH
+void uniffi_laned_core_fn_method_core_set_default_lane_width(uint64_t ptr, uint32_t width_pt, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_LANE_SPAN
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_LANE_SPAN
 RustBuffer uniffi_laned_core_fn_method_core_set_lane_span(uint64_t ptr, RustBuffer lane_id, uint32_t span, RustCallStatus *_Nonnull out_status
@@ -949,6 +954,12 @@ uint16_t uniffi_laned_core_checksum_method_core_revision(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SEARCH
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SEARCH
 uint16_t uniffi_laned_core_checksum_method_core_search(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_DEFAULT_LANE_WIDTH
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_DEFAULT_LANE_WIDTH
+uint16_t uniffi_laned_core_checksum_method_core_set_default_lane_width(void
     
 );
 #endif

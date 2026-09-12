@@ -89,6 +89,10 @@ public final class StripViewController: NSViewController {
     /// Shown when the strip is empty, because a blank window that says nothing
     /// is indistinguishable from a broken one.
     private lazy var emptyState = EmptyStripView()
+    /// How many lanes are off each end of the screen. See `StripEdges` for why
+    /// the sliver alone is not enough.
+    private let leadingRail = StripEdgeRail(side: .leading)
+    private let trailingRail = StripEdgeRail(side: .trailing)
 
     public init(store: StripStore, config: Config) {
         self.store = store
@@ -117,12 +121,32 @@ public final class StripViewController: NSViewController {
         scrollView.contentView.postsBoundsChangedNotifications = true
 
         view.addSubview(scrollView)
+        // The rails take their width from the strip rather than floating over
+        // it. An overlay would sit exactly where the sliver of the next lane
+        // is — the one piece of the screen this whole piece exists to keep.
+        let rail = config.stripEdgeRails ? StripEdgeRail.width : 0
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: rail),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -rail),
         ])
+
+        if config.stripEdgeRails {
+            for railView in [leadingRail, trailingRail] {
+                railView.translatesAutoresizingMaskIntoConstraints = false
+                view.addSubview(railView)
+                NSLayoutConstraint.activate([
+                    railView.topAnchor.constraint(equalTo: view.topAnchor),
+                    railView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+                    railView.widthAnchor.constraint(equalToConstant: StripEdgeRail.width),
+                ])
+            }
+            NSLayoutConstraint.activate([
+                leadingRail.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                trailingRail.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            ])
+        }
 
         emptyState.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(emptyState)
@@ -452,6 +476,9 @@ public final class StripViewController: NSViewController {
     }
 
     private func updateMaterialization() {
+        // Before the empty-strip guard: closing the last lane is exactly when
+        // the rails must stop claiming there are lanes off the left.
+        updateEdgeRails()
         let state = store.state
         guard !state.lanes.isEmpty else { return }
         let window = materializationWindow(for: state)
@@ -1007,6 +1034,14 @@ public final class StripViewController: NSViewController {
     @objc private func clipViewResized() {
         relayout()
         updateMaterialization()
+        // A resize is the one event that can *create* the alignment this piece
+        // exists to break: the lanes did not move, the window did, and a width
+        // that now fits a whole number of them leaves the strip resting flush
+        // with nothing peeking in from either side. Re-settling is the same
+        // debounced snap a scroll gets, which is also what keeps it out of the
+        // way of a live drag of the window's edge — it fires when the drag
+        // pauses, not sixty times a second during it.
+        scheduleSnap()
         // The strip got shorter or taller, so every terminal has a different
         // number of rows now. Same debounce as a width drag.
         for lane in store.state.lanes {
@@ -1015,6 +1050,22 @@ public final class StripViewController: NSViewController {
                     .laneWidthDidChange(to: CGFloat(lane.widthPt))
             }
         }
+    }
+
+    /// Tell the rails how much is off each end.
+    ///
+    /// Called from everything that can change the answer — a scroll, a resize, a
+    /// lane arriving or leaving — rather than from a timer, because the count is
+    /// only ever wrong for as long as it is stale, and the whole point of it is
+    /// that it can be trusted at a glance. It is a filter over ≤150 slots, which
+    /// is nothing beside the layout pass that provoked it.
+    private func updateEdgeRails() {
+        guard config.stripEdgeRails else { return }
+        let clip = scrollView.contentView
+        let hidden = StripEdges.hidden(
+            lanes: laneLayout, offset: clip.bounds.origin.x, viewport: clip.bounds.width)
+        leadingRail.update(hidden: hidden.left)
+        trailingRail.update(hidden: hidden.right)
     }
 
     @objc private func didScroll() {
@@ -1060,7 +1111,8 @@ public final class StripViewController: NSViewController {
         guard let target = LaneSnap.offset(
             forCentre: clip.bounds.origin.x + viewport / 2,
             viewport: viewport,
-            lanes: store.state.lanes)
+            lanes: store.state.lanes,
+            minPeek: CGFloat(config.lanePeekPt))
         else { return }
 
         // Within a couple of points is centred; moving anyway would look like a
@@ -1094,7 +1146,15 @@ public final class StripViewController: NSViewController {
         let viewportWidth = scrollView.contentView.bounds.width
         let centred = origin - (viewportWidth - CGFloat(lane.widthPt)) / 2
         let maxX = max(0, content.frame.width - viewportWidth)
-        let target = NSPoint(x: min(max(0, centred), maxX), y: 0)
+        // The same peek the snap takes. ⌘P lands you somewhere you have never
+        // been, which is the moment "is there more that way" matters most, and a
+        // reveal that centres perfectly onto a clean edge answers it wrongly.
+        let x = LanePeek.adjust(
+            offset: min(max(0, centred), maxX),
+            viewport: viewportWidth,
+            lanes: state.lanes,
+            minimum: CGFloat(config.lanePeekPt))
+        let target = NSPoint(x: x, y: 0)
 
         suppressSnapUntil = CFAbsoluteTimeGetCurrent() + 0.6
         NSAnimationContext.runAnimationGroup { ctx in
@@ -1151,6 +1211,11 @@ public final class StripViewController: NSViewController {
     /// Scroll only far enough to bring a lane fully on screen. Unlike `reveal`,
     /// this does not recentre — arrow-key focus that jumps the strip around is
     /// disorienting.
+    ///
+    /// No peek here either, for the same reason: this moves the strip as little
+    /// as it can, and shaving 28 pt off the lane the user just focused to prove
+    /// that another one exists is worse than the ambiguity it fixes. The snap
+    /// that follows the next scroll picks it up.
     private func ensureVisible(_ laneId: String) {
         let state = store.state
         guard let origin = originOfLane(laneId, in: state),
@@ -1305,7 +1370,16 @@ final class StripContentView: NSView {
 enum LaneSnap {
     /// The scroll offset that centres whichever lane is nearest `centre`, or
     /// nil when there are no lanes.
-    static func offset(forCentre centre: CGFloat, viewport: CGFloat, lanes: [Lane]) -> CGFloat? {
+    ///
+    /// `minPeek` is the second half of the rule, and it runs *after* the
+    /// centring rather than instead of it: centre the lane, then — only if that
+    /// leaves the screen flush with a lane boundary while the strip continues
+    /// past it — slide by up to `minPeek` so a sliver of the next lane shows.
+    /// `LanePeek` argues the case; the bound is that no snap ever lands more
+    /// than `minPeek` from centred.
+    static func offset(
+        forCentre centre: CGFloat, viewport: CGFloat, lanes: [Lane], minPeek: CGFloat = 0
+    ) -> CGFloat? {
         var x: CGFloat = 0
         var best: (distance: CGFloat, origin: CGFloat, width: CGFloat)?
         for lane in lanes {
@@ -1319,6 +1393,8 @@ enum LaneSnap {
         guard let best else { return nil }
 
         let centred = best.origin - (viewport - best.width) / 2
-        return min(max(0, centred), max(0, x - viewport))
+        let clamped = min(max(0, centred), max(0, x - viewport))
+        return LanePeek.adjust(
+            offset: clamped, viewport: viewport, lanes: lanes, minimum: minPeek)
     }
 }

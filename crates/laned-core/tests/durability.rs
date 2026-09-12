@@ -762,3 +762,48 @@ fn an_old_ledger_gains_span_without_losing_anything() {
     assert_eq!(st.lanes[0].span, 1, "existing lanes must default to span 1");
     assert_eq!(st.lanes[0].panes[0].url.as_deref(), Some("https://old"));
 }
+
+/// The config file's `laneDefaultPt` reaches a new lane.
+///
+/// It did not, for the life of the setting: `create_lane` read the
+/// `LANE_DEFAULT_PT` constant and the Swift `Config.laneDefaultPt` was a number
+/// nothing consulted. The two agreed, so nothing looked wrong — which is the
+/// failure mode a duplicated constant has.
+#[test]
+fn a_new_lane_is_born_at_the_width_the_shell_asked_for() {
+    let core = Core::open_in_memory().unwrap();
+    core.set_default_lane_width(700);
+    let st = core.create_lane(Placement::End, PaneKind::Web, None, Some("https://a".into()), None).unwrap();
+    assert_eq!(st.lanes[0].width_pt, 700);
+
+    // A width the user chose outlives a later change of default: the strip is
+    // theirs, not the config file's.
+    let lane = st.lanes[0].id.clone();
+    core.set_lane_width(lane, 480).unwrap();
+    core.set_default_lane_width(880);
+    let st = core.create_lane(Placement::End, PaneKind::Web, None, Some("https://b".into()), None).unwrap();
+    assert_eq!(st.lanes[0].width_pt, 480, "an existing lane was reflowed by a default");
+    assert_eq!(st.lanes[1].width_pt, 880);
+}
+
+/// A config file with a silly number in it still opens a readable strip.
+#[test]
+fn the_default_width_is_clamped_like_a_resize() {
+    let core = Core::open_in_memory().unwrap();
+    core.set_default_lane_width(40);
+    let st = core.create_lane(Placement::End, PaneKind::Web, None, Some("https://a".into()), None).unwrap();
+    assert_eq!(st.lanes[0].width_pt, laned_core::LANE_MIN_PT);
+
+    core.set_default_lane_width(40_000);
+    let st = core.create_lane(Placement::End, PaneKind::Web, None, Some("https://b".into()), None).unwrap();
+    assert_eq!(st.lanes[1].width_pt, laned_core::LANE_MAX_PT);
+}
+
+/// Nothing said, nothing changed: a caller that never states a width — the
+/// tests, the CLI, a shell that has not read its config yet — gets the constant.
+#[test]
+fn the_constant_is_still_what_an_unconfigured_caller_gets() {
+    let core = Core::open_in_memory().unwrap();
+    let st = core.create_lane(Placement::End, PaneKind::Web, None, Some("https://a".into()), None).unwrap();
+    assert_eq!(st.lanes[0].width_pt, laned_core::LANE_DEFAULT_PT);
+}
