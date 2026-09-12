@@ -115,10 +115,14 @@ public final class StripViewController: NSViewController {
 
     /// Which lanes get views right now.
     ///
-    /// **This is the §14 decision, in one place.** Everything else in this file
-    /// is the same whether the strip virtualizes or not. A lane outside this
-    /// window has its view recycled; its *pane controllers* survive, because a
-    /// `WKWebView` is expensive to build and cheap to unparent (PRD §10.2).
+    /// **This is the §14 decision, in one place** ([ADR-0004](../../../../docs/decisions/0004-strip-view-strategy.md)).
+    /// Spike M4 measured all 150 lanes parented at **16.16% dropped frames**,
+    /// and this recycling window at **0.00%**, with a peak of 13 live views and
+    /// half the memory. Virtualization is required, not optional.
+    ///
+    /// A lane outside this window has its view recycled; its *pane controllers*
+    /// survive, because a `WKWebView` is expensive to build and cheap to
+    /// unparent (PRD §10.2).
     ///
     /// The window is deliberately wider than the viewport: `RELEASE_DISTANCE`
     /// lanes of slack on each side means a normal scroll never waits for a lane

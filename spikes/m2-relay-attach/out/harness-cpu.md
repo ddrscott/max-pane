@@ -9,4 +9,3 @@
 | the same 20 attached but unparented (off-screen lane) | 0.01 | 61.50 MB |
 | 3 of the 20 emitting 20 lines/s (a working agent) | 0.76 | 64.64 MB |
 | all 20 emitting 200 lines/s (worst case) | 7.83 | 84.06 MB |
-EXIT=0
