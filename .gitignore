@@ -7,3 +7,6 @@ target/
 /spikes/**/.build/
 /spikes/**/target/
 *.app/
+
+# Agent worktrees, created by the harness for isolated builders.
+.claude/
