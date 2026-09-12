@@ -11,6 +11,7 @@
 > docked with it. the order of the docked lane is remembered so it returns to
 > the same spot when it's undocked."
 > "two docks at once, one each side. dock width resizable and persisted."
+> "docked lane should be skipped in the cmd-[ cmd-] cycle"
 
 So: a pane that stays put at one edge while the strip scrolls behind or beside
 it, in one of two modes — **overlay** (floats above the strip) or **inset** (the
@@ -39,10 +40,10 @@ does not hold — if there is a real reason to protect a lane you are *not*
 docking — then the two need different names in the UI and in the model, and the
 ADR should say why both exist.
 
-## The design questions that decide whether this is any good
+## The design questions, all now answered by the owner
 
-**Two of these are answered** — the owner settled them and they are no longer
-open:
+Every open question in this brief has been settled by the owner except the
+consequence noted in the last bullet, which the builder owns:
 
 - **The unit is the LANE.** Every pane in it docks with it, and it goes on
   behaving as a lane: ⇧⌘D still splits it, height weights still apply. A lane
@@ -74,10 +75,13 @@ Still open:
   *under* the overlay is occluded, which the edge rails and the "can I tell
   there is more" work exist to prevent. Overlay mode arguably needs the peek to
   treat the covered strip as an edge.
-- **Keyboard.** Do ⌘[ / ⌘] skip the docked lane, or does it join the cycle at
-  one end? Focus has to be reachable and escapable without the mouse. The one
-  question the owner has not answered, and better argued from use than asked
-  about.
+- **⌘[ / ⌘] skip the docks** and walk only the strip. Which creates the
+  question the owner did not ask and which follows directly: a docked lane is
+  then unreachable from the keyboard, against PRD §8's rule that every action
+  has a shortcut and the mouse is optional. His own use case makes it concrete —
+  a music page you cannot focus is one you cannot pause without the trackpad. So
+  there must be a separate, deliberate way in *and back out*, and it must be
+  obvious which of the two docks you are in.
 - **Overlay needs to say it is floating**, or it reads as a lane that will not
   scroll. A shadow, an edge, something.
 
