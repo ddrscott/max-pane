@@ -17,7 +17,13 @@ enum Fuzzy {
     /// Characters after which the next one reads as the start of a word. Paths
     /// and session titles are full of them, and a match on a word start is
     /// nearly always the one the user meant.
-    private static let boundaries = Set<Character>(" /-_.:~@")
+    ///
+    /// `?`, `&`, `=` and `#` join the set that `scan` uses because ⌘O's corpus
+    /// is half addresses, where they separate words as plainly as a slash does.
+    /// They cost nothing in a path or a session title, which never contain them.
+    static let boundaries = Set<Character>(" /-_.:~@?&=#")
+
+    static func isBoundary(_ c: Character) -> Bool { boundaries.contains(c) }
 
     /// Subsequence match, scored so that `mxp` prefers `max-pane` over a title
     /// that merely happens to contain those letters far apart.
@@ -80,6 +86,114 @@ enum Fuzzy {
         guard qi == q.count else { return nil }
         if indices.first == 0 { score += 6 }
         return Match(score: score, indices: indices)
+    }
+}
+
+/// How much of a row the query explains.
+///
+/// # Why ⌘O needs this and `Fuzzy.score` is not enough
+///
+/// ⌘O ranks four things at once: a command you ran twice today, a page you
+/// visited four hundred times last month, a Relay session that is blocked
+/// waiting for you, and the literal text you just typed. Their scores are not
+/// on one scale and never can be — history is scored in Rust by
+/// `history::rank`, sessions and recents are scored here by `Fuzzy`, and the
+/// two scorers weight runs and boundaries differently. Adding a per-source
+/// multiplier to paper over that is picking a number that is wrong the moment
+/// either corpus changes shape, with no way for the user to tell.
+///
+/// This is the axis that *is* comparable, because it is a property of the match
+/// rather than of the corpus or the scorer: did the row literally start with
+/// what you typed, did a word inside it, did it merely contain it, or are the
+/// letters just in there somewhere. A person reading the list can see which of
+/// the four happened without being told, which is the test a ranking rule has
+/// to pass.
+///
+/// The order is deliberately the same ladder as `history::MatchTier` in Rust,
+/// and the two are computed separately on purpose: recomputing it here over the
+/// ≤80 rows that came back costs nothing, while adding a field to
+/// `HistoryEntry` would push a ranking detail through the FFI into a record
+/// that three other things already read.
+enum MatchQuality: Int, Comparable, Sendable {
+    /// The row *is* what was typed. Assigned, never computed: see `OmniRanking`.
+    case typed
+    /// The row starts with it.
+    case prefix
+    /// A word inside the row starts with it.
+    case wordPrefix
+    /// The row contains it, mid-word.
+    case substring
+    /// The letters are in there, in order, apart. A guess.
+    case scattered
+
+    static func < (a: MatchQuality, b: MatchQuality) -> Bool { a.rawValue < b.rawValue }
+
+    /// Anything better than a guess.
+    var isLiteral: Bool { self < .scattered }
+
+    /// The best quality `query` reaches anywhere in `candidate`, or nil.
+    ///
+    /// Every occurrence is weighed, not just the first: `com` is mid-word in
+    /// `example.com` and a word start in `/compare`, and taking the first hit
+    /// would rank the row by the worse of the two matches it actually has.
+    static func of(_ query: String, in candidate: String) -> MatchQuality? {
+        guard !query.isEmpty else { return .prefix }
+        guard !candidate.isEmpty else { return nil }
+        let hay = Array(candidate.lowercased())
+        let needle = Array(query.lowercased())
+        var best: MatchQuality?
+        if needle.count <= hay.count {
+            for start in 0...(hay.count - needle.count) {
+                guard Array(hay[start..<start + needle.count]) == needle else { continue }
+                let here: MatchQuality =
+                    start == 0 ? .prefix
+                    : Fuzzy.isBoundary(hay[start - 1]) ? .wordPrefix : .substring
+                if best == nil || here < best! { best = here }
+                if best == .prefix { break }
+            }
+        }
+        if let best { return best }
+        return Fuzzy.match(query, in: candidate) == nil ? nil : .scattered
+    }
+
+    /// The best quality across several fields — a page's title and its URL, a
+    /// session's title and command and directory.
+    static func of(_ query: String, inAny fields: [String]) -> MatchQuality? {
+        fields.compactMap { of(query, in: $0) }.min()
+    }
+
+    /// Which characters of `candidate` to light up, given how the row matched.
+    ///
+    /// `literal` is the row's own answer, not this field's. A page whose URL is
+    /// `doc.rust-lang.org/…` matched the query `doc` outright; asking a
+    /// subsequence matcher to explain that in the page's *title* lights the d of
+    /// `std`, the o of `collections` and a c further along — three orange
+    /// letters that had nothing to do with why the row is on screen. A
+    /// highlight exists so a hit can be trusted, so a field with no literal hit
+    /// in a row that won on one says nothing at all.
+    static func offsets(_ query: String, in candidate: String, literal: Bool) -> [Int] {
+        // Whitespace goes first because both scorers treat a space as a gap
+        // between terms rather than a character to find — `max pane` matches
+        // `maxpane` there, and asking for the literal string back would return
+        // nothing for exactly the queries that did match.
+        let needle = query.filter { !$0.isWhitespace }
+        guard !needle.isEmpty, !candidate.isEmpty else { return [] }
+        guard literal else { return Fuzzy.match(needle, in: candidate)?.indices ?? [] }
+
+        let hay = Array(candidate.lowercased())
+        let want = Array(needle.lowercased())
+        guard want.count <= hay.count else { return [] }
+        var best: (start: Int, quality: MatchQuality)?
+        for start in 0...(hay.count - want.count) {
+            guard Array(hay[start..<start + want.count]) == want else { continue }
+            let here: MatchQuality =
+                start == 0 ? .prefix
+                : Fuzzy.isBoundary(hay[start - 1]) ? .wordPrefix : .substring
+            if best == nil || here < best!.quality { best = (start, here) }
+            if here == .prefix { break }
+        }
+        guard let best else { return [] }
+        return Array(best.start..<best.start + want.count)
     }
 }
 

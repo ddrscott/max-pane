@@ -502,7 +502,7 @@ final class SidebarViewController: NSViewController {
 
     @objc private func showSettingsMenu(_ sender: SidebarButton) {
         let menu = NSMenu()
-        let commands: [Command] = [.showHelp, .showMemory, .attachSession, .exportStrip, .importStrip]
+        let commands: [Command] = [.showHelp, .showMemory, .openSessions, .exportStrip, .importStrip]
         for command in commands {
             let item = menu.addItem(
                 withTitle: command.title, action: #selector(runCommand(_:)), keyEquivalent: "")

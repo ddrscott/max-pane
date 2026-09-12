@@ -515,6 +515,20 @@ impl Core {
         inner.ledger.history_count()
     }
 
+    /// How many pages a query can actually reach.
+    ///
+    /// Not the same number as [`Core::history_count`], and the gap is the
+    /// point: the table holds [`history::HISTORY_MAX_ROWS`] and one query scores
+    /// the newest [`history::HISTORY_SCAN_ROWS`] of them. A footer that prints
+    /// the table's size while describing a search that cannot see all of it —
+    /// "0 of 5013 pages" over a corpus where row 2 499 is unfindable — is a
+    /// label that lies about the thing it labels. Whatever the caps become, a
+    /// picker asking this question gets the truthful answer.
+    pub fn history_searchable_count(&self) -> Result<u32> {
+        let inner = self.inner.lock();
+        Ok(inner.ledger.history_count()?.min(history::HISTORY_SCAN_ROWS))
+    }
+
     /// Drop one page, and every redirect that pointed at it. The palette's ⌘⌫.
     pub fn forget_visit(&self, url: String) -> Result<()> {
         let url = history::normalize_url(&url).unwrap_or(url);

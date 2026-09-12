@@ -6,13 +6,13 @@ import AppKit
 /// Keeping the whole map in one enum is how that stays true — a new action has
 /// to declare its key here or it does not exist.
 public enum Command: String, CaseIterable {
-    case newPane
+    case openAnything
+    case openPages
+    case openSessions
     case zoomIn
     case zoomOut
     case zoomReset
     case newTerminalLane
-    case runCommand
-    case newWebLane
     case splitDown
     case closePane
     case closeLane
@@ -24,10 +24,8 @@ public enum Command: String, CaseIterable {
     case moveLaneRight
     case toggleSidebar
     case search
-    case showHistory
     case gather
     case ungather
-    case attachSession
     case togglePinned
     case peekDesktop
     case widenLane
@@ -42,13 +40,13 @@ public enum Command: String, CaseIterable {
 
     public var title: String {
         switch self {
-        case .newPane: return "New Pane…"
+        case .openAnything: return "Open…"
+        case .openPages: return "Open a Page…"
+        case .openSessions: return "Attach a Session…"
         case .zoomIn: return "Bigger Text"
         case .zoomOut: return "Smaller Text"
         case .zoomReset: return "Actual Size"
         case .newTerminalLane: return "New Terminal Lane"
-        case .runCommand: return "Run Command…"
-        case .newWebLane: return "New Web Lane…"
         case .splitDown: return "Split Down"
         case .closePane: return "Close Pane"
         case .closeLane: return "Close Lane"
@@ -60,10 +58,8 @@ public enum Command: String, CaseIterable {
         case .moveLaneRight: return "Move Lane Right"
         case .toggleSidebar: return "Toggle Sidebar"
         case .search: return "Search…"
-        case .showHistory: return "History…"
         case .gather: return "Gather Project"
         case .ungather: return "Leave Gather View"
-        case .attachSession: return "Attach Relay Session…"
         case .togglePinned: return "Pin Lane"
         case .peekDesktop: return "Peek Desktop"
         case .widenLane: return "Widen Lane"
@@ -82,10 +78,18 @@ public enum Command: String, CaseIterable {
     /// an explicit `.shift` when the binding is shifted.
     public var shortcut: (String, NSEvent.ModifierFlags) {
         switch self {
-        // ⌘T, with ⌘D as its twin: the decision is "something goes to the
-        // right of this", and which half of the app it lands in is the
-        // picker's question, not a question about which key to press.
-        case .newPane:         return ("t", [.command])
+        // ⌘O is the only door. "Something new goes on the strip" was three keys
+        // — ⌘T for a command or a URL, ⌘Y for a page you have been to, ⌘O for a
+        // session that is already running — and each of them could see a third
+        // of the answer. ⌘T and ⌘D stay as alternates below, because they are
+        // the keys the README taught and they now open the same thing.
+        //
+        // ⌘Y and ⌥⌘O open that same picker with its scope already narrowed, so
+        // "pages only" costs one key instead of ⌘O and two presses of ⇥. They
+        // are not other pickers; the window, the rows and the keys are the same.
+        case .openAnything:    return ("o", [.command])
+        case .openPages:       return ("y", [.command])
+        case .openSessions:    return ("o", [.command, .option])
         // The pane under the keyboard, terminal or page alike — one pair of
         // keys, because "this column is too small to read" is one thought.
         // ⌃⌘= and ⌃⌘- resize the *lane*; these resize what is inside it.
@@ -93,8 +97,6 @@ public enum Command: String, CaseIterable {
         case .zoomOut:         return ("-", [.command])
         case .zoomReset:       return ("0", [.command])
         case .newTerminalLane: return ("t", [.command, .shift])
-        case .runCommand:      return ("r", [.command])
-        case .newWebLane:      return ("l", [.command])
         case .splitDown:       return ("d", [.command, .shift])
         case .closePane:       return ("w", [.command])
         case .closeLane:       return ("w", [.command, .shift])
@@ -107,12 +109,9 @@ public enum Command: String, CaseIterable {
         case .moveLaneRight:   return ("\u{2192}", [.command, .shift])
         case .toggleSidebar:   return ("b", [.command])
         case .search:          return ("p", [.command])
-        // ⌘Y, because that is where a hand already goes for it.
-        case .showHistory:     return ("y", [.command])
         case .gather:          return ("g", [.command])
         // Esc, which is not a menu key equivalent — handled in the responder chain.
         case .ungather:        return ("\u{1b}", [])
-        case .attachSession:   return ("o", [.command])
         case .togglePinned:    return ("p", [.command, .shift])
         // PRD §16: the escape hatch to the rest of macOS.
         case .peekDesktop:     return ("\u{21e5}", [.command, .option])
@@ -131,26 +130,29 @@ public enum Command: String, CaseIterable {
         }
     }
 
-    /// A second key for the same action, for the ones muscle memory has two
-    /// names for. AppKit gives a menu item exactly one key equivalent, so these
-    /// are matched in the window's key monitor — but they are declared here,
-    /// because a shortcut that is not in this file is a shortcut nobody can
-    /// find.
-    public var alternateShortcut: (String, NSEvent.ModifierFlags)? {
+    /// Other keys for the same action, for the ones muscle memory has more than
+    /// one name for. AppKit gives a menu item exactly one key equivalent, so
+    /// these are matched in the window's key monitor — but they are declared
+    /// here, because a shortcut that is not in this file is a shortcut nobody
+    /// can find.
+    public var alternateShortcuts: [(String, NSEvent.ModifierFlags)] {
         switch self {
-        // ⌘D is "split" everywhere else a developer works.
-        case .newPane: return ("d", [.command])
-        default: return nil
+        // ⌘T and ⌘D used to open a picker of their own. They now open ⌘O, and
+        // they open it identically — same window, same rows, same placement.
+        // Keeping them as near-variants was the tempting move and the wrong
+        // one: a second picker that looks like the first and behaves slightly
+        // differently is worse than the three honest ones this replaced.
+        case .openAnything: return [("t", [.command]), ("d", [.command])]
+        default: return []
         }
     }
 
     /// Which menu this belongs under.
     public var menu: MenuSection {
         switch self {
-        case .newPane, .newTerminalLane, .newWebLane, .runCommand, .splitDown, .attachSession: return .file
+        case .openAnything, .openPages, .openSessions, .newTerminalLane, .splitDown: return .file
         case .closePane, .closeLane: return .file
         case .focusLeft, .focusRight, .focusUp, .focusDown, .search, .gather, .ungather: return .navigate
-        case .showHistory: return .navigate
         case .moveLaneLeft, .moveLaneRight, .toggleSidebar, .togglePinned,
              .widenLane, .narrowLane, .peekDesktop: return .view
         case .claimSession: return .file

@@ -47,9 +47,7 @@ public final class HelpPanel: NSPanel {
     /// A command with a second key shows both — `⌘T ⌘D` — because a shortcut
     /// nobody can see is a shortcut nobody uses.
     public static func describe(_ command: Command) -> String {
-        let primary = render(command.shortcut)
-        guard let alternate = command.alternateShortcut else { return primary }
-        return primary + " " + render(alternate)
+        ([command.shortcut] + command.alternateShortcuts).map(render).joined(separator: " ")
     }
 
     private static func render(_ shortcut: (String, NSEvent.ModifierFlags)) -> String {

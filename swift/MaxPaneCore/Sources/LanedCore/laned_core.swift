@@ -709,6 +709,19 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func historyCount() throws  -> UInt32
     
     /**
+     * How many pages a query can actually reach.
+     *
+     * Not the same number as [`Core::history_count`], and the gap is the
+     * point: the table holds [`history::HISTORY_MAX_ROWS`] and one query scores
+     * the newest [`history::HISTORY_SCAN_ROWS`] of them. A footer that prints
+     * the table's size while describing a search that cannot see all of it —
+     * "0 of 5013 pages" over a corpus where row 2 499 is unfindable — is a
+     * label that lies about the thing it labels. Whatever the caps become, a
+     * picker asking this question gets the truthful answer.
+     */
+    func historySearchableCount() throws  -> UInt32
+    
+    /**
      * Append an exported strip to the right-hand end of this one.
      *
      * Appends rather than replaces, because the destructive version of this is
@@ -1161,6 +1174,26 @@ open func historyCount()throws  -> UInt32  {
     return try  FfiConverterUInt32.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
         uniffiCallStatus in
     uniffi_laned_core_fn_method_core_history_count(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * How many pages a query can actually reach.
+     *
+     * Not the same number as [`Core::history_count`], and the gap is the
+     * point: the table holds [`history::HISTORY_MAX_ROWS`] and one query scores
+     * the newest [`history::HISTORY_SCAN_ROWS`] of them. A footer that prints
+     * the table's size while describing a search that cannot see all of it —
+     * "0 of 5013 pages" over a corpus where row 2 499 is unfindable — is a
+     * label that lies about the thing it labels. Whatever the caps become, a
+     * picker asking this question gets the truthful answer.
+     */
+open func historySearchableCount()throws  -> UInt32  {
+    return try  FfiConverterUInt32.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_history_searchable_count(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
@@ -3861,6 +3894,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_history_count() != 17535) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_history_searchable_count() != 9026) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_import_strip() != 55913) {

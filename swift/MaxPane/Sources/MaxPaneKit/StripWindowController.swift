@@ -14,7 +14,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private var palette: SearchPaletteController?
     /// Held while it is on screen, like `palette` — for the same reason: the
     /// table's data source is weak.
-    private var newPanePicker: NewPanePicker?
+    private var omni: OmniPicker?
     private var openServer: OpenServer?
     private var alternateMonitor: Any?
     private var memoryDashboard: MemoryDashboard?
@@ -92,7 +92,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
         sidebar.registry = sessions
         sidebar.onSelect = { [weak self] laneId in self?.strip.reveal(laneId: laneId, flash: true) }
-        sidebar.onNewSession = { [weak self] in self?.perform(.runCommand) }
+        sidebar.onNewSession = { [weak self] in self?.perform(.openAnything) }
         sidebar.onAttach = { [weak self] sessionId in
             try? self?.store.attachSessionAtEnd(relaySessionId: sessionId)
         }
@@ -102,9 +102,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
     /// Keys a command has besides its menu one.
     ///
-    /// A menu item carries exactly one key equivalent, and ⌘T and ⌘D are the
-    /// same thought — so the second one is matched here, ahead of the responder
-    /// chain, and declared in `Command.alternateShortcut` so the map in
+    /// A menu item carries exactly one key equivalent, and ⌘O, ⌘T and ⌘D are
+    /// one thought — so the other two are matched here, ahead of the responder
+    /// chain, and declared in `Command.alternateShortcuts` so the map in
     /// `Commands.swift` is still the whole truth about what the keyboard does.
     private func installAlternateShortcuts() {
         alternateMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -113,12 +113,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             // into the picker must not open a second picker.
             guard NSApp.keyWindow === self.window else { return event }
             for command in Command.allCases {
-                guard let (key, mask) = command.alternateShortcut,
-                      event.charactersIgnoringModifiers?.lowercased() == key,
-                      event.modifierFlags.intersection(.deviceIndependentFlagsMask) == mask
-                else { continue }
-                self.perform(command)
-                return nil
+                for (key, mask) in command.alternateShortcuts
+                where event.charactersIgnoringModifiers?.lowercased() == key
+                    && event.modifierFlags.intersection(.deviceIndependentFlagsMask) == mask {
+                    self.perform(command)
+                    return nil
+                }
             }
             return event
         }
@@ -153,7 +153,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             self.sidebar.sessionsChanged(telemetry)
             self.refreshStatus()
         }
-        statusBar.onClickSessions = { [weak self] in self?.perform(.attachSession) }
+        statusBar.onClickSessions = { [weak self] in self?.perform(.openSessions) }
         statusBar.onClickMemory = { [weak self] in self?.perform(.showMemory) }
         // WebKit's footprint is sampled, not pushed, so the footer needs its own
         // slow tick to stay honest about it.
@@ -282,7 +282,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return store.isGathered
         case .gather:
             return store.focusedLane?.projectRoot != nil
-        case .runCommand, .showHelp:
+        case .showHelp:
             return true
         case .claimSession:
             // Only meaningful for a terminal pane.
@@ -303,8 +303,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
         do {
             switch command {
-            case .newPane:
-                showNewPanePicker(near: focusedLane)
+            case .openAnything:
+                showOmniPicker(scope: .everything, near: focusedLane)
+            case .openPages:
+                showOmniPicker(scope: .pages, near: focusedLane)
+            case .openSessions:
+                showOmniPicker(scope: .sessions, near: focusedLane)
 
             case .zoomIn, .zoomOut, .zoomReset:
                 strip.zoomFocusedPane(command)
@@ -312,26 +316,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             case .newTerminalLane:
                 try newTerminal(near: focusedLane)
 
-            case .runCommand:
-                promptForCommand { [weak self] line in
-                    guard let self, let line, !line.isEmpty else { return }
-                    // Split on whitespace the way a shell would for the simple
-                    // case; anything quoted goes through $SHELL -c anyway.
-                    let parts = line.split(separator: " ").map(String.init)
-                    _ = self.runFromCLI(
-                        command: parts[0], args: Array(parts.dropFirst()),
-                        sessionId: "", cwd: "")
-                }
-
             case .showHelp:
                 showHelp()
-
-            case .newWebLane:
-                promptForURL { [weak self] url in
-                    guard let self, let url else { return }
-                    try? self.store.newWebLane(url: url, near: focusedLane?.id)
-                    self.store.noteRecent(.url, url)
-                }
 
             case .splitDown:
                 guard let lane = focusedLane, let focused = store.state.focusedPaneId,
@@ -345,10 +331,11 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                         .spawn(cwd: cwd, cols: size.cols, rows: size.rows)
                     try store.addPane(to: lane.id, kind: .pty, relaySessionId: session, url: nil)
                 } else {
-                    promptForURL { [weak self] url in
-                        guard let self, let url else { return }
-                        try? self.store.addPane(to: lane.id, kind: .web, relaySessionId: nil, url: url)
-                    }
+                    // The same picker, pointed at this lane instead of a new
+                    // one. Splitting a web pane used to open an `NSAlert` with
+                    // a text field in it — a fourth way to say "open a page",
+                    // and the only one that could not see your history.
+                    showOmniPicker(scope: .pages, into: lane)
                 }
 
             case .closePane:
@@ -382,23 +369,11 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             case .search:
                 showPalette()
 
-            case .showHistory:
-                // Chosen from history, a page opens the way every other URL in
-                // this app opens: a lane immediately right of the one you were
-                // looking at, not a replacement for it.
-                HistoryPaletteController.present(store: store, over: window) { [weak self] url in
-                    guard let self else { return }
-                    self.launch(.url(url), near: self.store.focusedLane)
-                }
-
             case .gather:
                 if let root = focusedLane?.projectRoot { try store.gather(projectRoot: root) }
 
             case .ungather:
                 try store.ungather()
-
-            case .attachSession:
-                showSessionPicker()
 
             case .togglePinned:
                 if let lane = focusedLane { try store.setPinned(lane.id, !lane.pinned) }
@@ -453,26 +428,54 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         try store.newTerminalLane(relaySessionId: session, near: lane?.id)
     }
 
-    /// ⌘T / ⌘D — the picker, and what to do with what it hands back.
-    private func showNewPanePicker(near lane: Lane?) {
-        let controller = NewPanePicker(store: store) { [weak self] choice in
-            guard let self, let choice else { return }
-            self.launch(choice, near: lane)
+    /// ⌘O (and ⌘T, ⌘D, ⌘Y, ⌥⌘O) — the picker, and what to do with what it
+    /// hands back.
+    ///
+    /// `into` is the only thing that differs between the keys, and it is not a
+    /// subtle difference: the picker prints where the result will land in the
+    /// header above the first row, so there is never a question of which of two
+    /// identical-looking windows you are in.
+    private func showOmniPicker(scope: OmniScope, near lane: Lane?) {
+        present(scope: scope, destination: "→ new lane") { [weak self] action in
+            self?.launch(action, near: lane)
         }
-        newPanePicker = controller
+    }
+
+    private func showOmniPicker(scope: OmniScope, into lane: Lane) {
+        present(scope: scope, destination: "↓ into this lane") { [weak self] action in
+            guard let self, case .open(let raw) = action, let url = self.normalizeURL(raw) else {
+                // A command or a session would need a second pane kind decision
+                // that §7.1's "same kind as focused" has already made.
+                return
+            }
+            try? self.store.addPane(to: lane.id, kind: .web, relaySessionId: nil, url: url)
+            self.store.noteRecent(.url, url)
+        }
+    }
+
+    private func present(
+        scope: OmniScope, destination: String, onChoose: @escaping (OmniAction) -> Void
+    ) {
+        let controller = OmniPicker(
+            store: store, registry: sessions, scope: scope, destination: destination
+        ) { action in
+            guard let action else { return }
+            onChoose(action)
+        }
+        omni = controller
         controller.present(over: window)
     }
 
     /// Put a choice on the strip, immediately right of `lane`.
-    func launch(_ choice: NewPaneChoice, near lane: Lane?) {
+    func launch(_ action: OmniAction, near lane: Lane?) {
         do {
-            switch choice {
-            case .url(let raw):
+            switch action {
+            case .open(let raw):
                 guard let url = normalizeURL(raw) else { return }
                 try store.newWebLane(url: url, near: lane?.id)
                 store.noteRecent(.url, url)
 
-            case .command(let line, let remembered):
+            case .run(let line, let remembered):
                 let parts = line.split(separator: " ").map(String.init)
                 guard let program = parts.first else { return }
                 // A remembered command carries the directory it last ran in,
@@ -489,6 +492,16 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                            cols: size.cols, rows: size.rows)
                 try store.newTerminalLane(relaySessionId: session, near: lane?.id)
                 store.noteRecent(.command, line, cwd: cwd)
+
+            case .attach(let sessionId):
+                // PRD §7.1: attaching an existing session creates a lane at the
+                // end. Never beside the focused lane — an attach is not a
+                // consequence of what you were reading, and the old picker put
+                // it at the end for the same reason.
+                try store.attachSessionAtEnd(relaySessionId: sessionId)
+                if let laneId = store.state.lanes.last?.id {
+                    strip.reveal(laneId: laneId, flash: true)
+                }
             }
         } catch {
             showError(error)
@@ -503,38 +516,6 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             self.strip.reveal(laneId: hit.laneId, flash: true)
         }
         palette = controller
-        controller.present(over: window)
-    }
-
-    private func showSessionPicker() {
-        // Every session Relay knows about, not just the unattached ones: the
-        // picker marks what is already on the strip and reveals it rather than
-        // attaching a second copy of it.
-        let controller = SessionPickerController(registry: sessions) { [weak self] choice in
-            guard let self, let choice else { return }
-            switch choice {
-            case .attach(let picked):
-                if let pane = self.store.state.lanes.lazy.flatMap(\.panes)
-                    .first(where: { $0.relaySessionId == picked.sessionId }),
-                    let lane = self.store.lane(containing: pane.id) {
-                    try? self.store.focusPane(pane.id)
-                    self.strip.reveal(laneId: lane.id, flash: true)
-                } else {
-                    // PRD §7.1: attaching an existing session creates a lane at the end.
-                    try? self.store.attachSessionAtEnd(relaySessionId: picked.sessionId)
-                }
-            case .launch(let command, let cwd):
-                do {
-                    let size = self.newSessionSize()
-                    let id = try RelaySessionSpawner(config: self.config)
-                        .spawn(cwd: cwd, command: command, cols: size.cols, rows: size.rows)
-                    try self.store.newTerminalLane(relaySessionId: id, near: nil)
-                } catch {
-                    self.showError(error)
-                }
-            }
-        }
-        palette = nil
         controller.present(over: window)
     }
 
@@ -587,20 +568,6 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
     private func attachedSessionIDs() -> Set<String> {
         Set(store.state.lanes.flatMap(\.panes).compactMap(\.relaySessionId))
-    }
-
-    private func promptForURL(_ completion: @escaping (String?) -> Void) {
-        let alert = NSAlert()
-        alert.messageText = "Open URL"
-        alert.addButton(withTitle: "Open")
-        alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 420, height: 24))
-        field.placeholderString = "https://"
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        let response = alert.runModal()
-        guard response == .alertFirstButtonReturn else { return completion(nil) }
-        completion(normalizeURL(field.stringValue))
     }
 
     /// What the user typed, as something `WKWebView` will load. Bare hostnames
@@ -698,21 +665,6 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             panel.setFrameOrigin(NSPoint(x: frame.midX - 280, y: frame.midY - 260))
         }
         panel.orderFront(nil)
-    }
-
-    /// ⌘R — what to run in a new terminal lane.
-    private func promptForCommand(_ completion: @escaping (String?) -> Void) {
-        let alert = NSAlert()
-        alert.messageText = "Run a command"
-        alert.informativeText = "Starts a Relay session in a new lane. Empty runs your shell."
-        alert.addButton(withTitle: "Run")
-        alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 420, height: 24))
-        field.placeholderString = "htop"
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return completion(nil) }
-        completion(field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// PRD §13 Phase 2's memory dashboard. Floating, so it can sit beside the

@@ -228,6 +228,12 @@ public final class StripStore {
     /// How many pages are on record, for the palette's footer.
     var historyCount: UInt32 { (try? core.historyCount()) ?? 0 }
 
+    /// How many of those a query can actually reach. Smaller than
+    /// `historyCount` once the table outgrows one scan — and a footer that
+    /// prints the larger number while describing the smaller search is a label
+    /// that lies about its own list.
+    var searchableHistoryCount: UInt32 { (try? core.historySearchableCount()) ?? 0 }
+
     func forgetVisit(_ url: String) { try? core.forgetVisit(url: url) }
 
     func clearHistory() { try? core.clearHistory() }

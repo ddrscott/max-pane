@@ -32,10 +32,9 @@ final class EmptyStripView: NSView {
             attributes: [.foregroundColor: Theme.accent, .font: Theme.mono(13, weight: .bold)]))
 
         for (key, what) in [
-            (HelpPanel.describe(.newPane), "a command or a page, in a new lane"),
+            (HelpPanel.describe(.openAnything), "a command, a page, or a running session"),
             (HelpPanel.describe(.newTerminalLane), "a terminal lane running your shell"),
-            (HelpPanel.describe(.newWebLane), "a web lane"),
-            (HelpPanel.describe(.attachSession), "attach an existing Relay session"),
+            (HelpPanel.describe(.openPages), "the same picker, pages only"),
             (HelpPanel.describe(.showHelp), "every other shortcut"),
         ] {
             out.append(NSAttributedString(
