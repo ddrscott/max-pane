@@ -57,7 +57,7 @@ running app — never the builder's account of it.
 | 1 | OAuth, popups, `window.opener` | `Web/WebPaneController.swift` | done, committed | **PASSES** (3 fixes routed) |
 | 2 | History: record, search, surface | `crates/laned-core`, a new palette | round 1 committed | **THE BAR WINS** → [round 2](work/history-round-2.md) |
 | 3 | Appear/disappear animations, and the split-down reconcile | `Views/StripViewController.swift`, `Views/LaneView.swift` | round 1 merged | **THE BAR WINS** → round 2 building |
-| 4 | Browser chrome: URL, nav, security, find, zoom readout | a new chrome view + `Web/WebPaneController.swift` | merged | judging |
+| 4 | Browser chrome: URL, nav, security, find, zoom readout | a new chrome view + `Web/WebPaneController.swift` | merged | **PASSES** 5/5 → [round 2](work/chrome-round-2.md) |
 | 5 | Terminal zoom | `Terminal/TerminalPaneController.swift` | lead, done | pending |
 | 6 | Copy/paste between panes | `Terminal/TerminalPaneController.swift`, `RelayAttachmentAdapter.swift`, `AppDelegate.swift` | done, committed | — |
 | 7 | Lane widths: one configurable default, and always visible evidence of more | `Views/StripViewController.swift`, `Config.swift`, `crates/laned-core` | merged | — |
