@@ -221,4 +221,132 @@ struct PaneSplitTests {
         let heights = PaneSplit.heights(weights: weights, available: roomy)
         for height in heights { #expect(abs(height - roomy / 4) < 0.0001) }
     }
+
+    // MARK: - a pane opening into the stack
+
+    /// The frames of a ⇧⌘D, as numbers.
+    ///
+    /// The failure these replace was measured rather than guessed: letting
+    /// `NSStackView` animate its own attach made the incumbent pane go
+    /// `[66,1411] → [554,1225] → [288,295] → [214,443] → [66,737]` — imploding
+    /// and reopening at half height over 167 ms — while the arriving pane went
+    /// from undetected to 85% of its final size in one frame. Every case here
+    /// is about the two properties that failure lacked: **monotonic**, so
+    /// nothing ever travels the wrong way, and **ending exactly where the
+    /// finished layout puts it**, so the last frame of the entrance and the
+    /// first frame after it are the same picture.
+    @Test("an opening pane starts at the floor, not at nothing, and lands exactly")
+    func openingStartsAtTheFloorAndLands() {
+        let weights: [Double] = [1, 1]
+        let start = PaneSplit.opening(weights: weights, arriving: 1, progress: 0, available: roomy)
+        let end = PaneSplit.opening(weights: weights, arriving: 1, progress: 1, available: roomy)
+        // Never 0: a live terminal in a 654 × 0 view is the size Ghostty
+        // refuses, and this app's log says so in its own words.
+        #expect(start[1] == PaneSplit.minPaneHeight)
+        #expect(start[0] == roomy - PaneSplit.minPaneHeight)
+        #expect(end == PaneSplit.heights(weights: weights, available: roomy))
+    }
+
+    @Test("no frame of an entrance puts any pane below the floor")
+    func openingNeverGoesUnderTheFloor() {
+        for step in 0...12 {
+            let heights = PaneSplit.opening(
+                weights: [1, 1], arriving: 1, progress: CGFloat(step) / 12, available: roomy)
+            #expect(heights.allSatisfy { $0 >= PaneSplit.minPaneHeight })
+        }
+    }
+
+    @Test("a lane too short to hold the floor twice still lands on the finished layout")
+    func openingIntoALaneWithNoRoom() {
+        // 100 pt of room for two panes that each want 72. The floor cannot be
+        // honoured, `heights` says so by splitting proportionally, and the
+        // entrance must not invent a slot bigger than the one it is opening to.
+        let available: CGFloat = 100
+        for step in 0...6 {
+            let heights = PaneSplit.opening(
+                weights: [1, 1], arriving: 1, progress: CGFloat(step) / 6, available: available)
+            #expect(abs(heights.reduce(0, +) - available) < 0.0001)
+            #expect(heights.allSatisfy { $0 >= CGFloat(0) })
+        }
+        #expect(
+            PaneSplit.opening(weights: [1, 1], arriving: 1, progress: 1, available: available)
+            == PaneSplit.heights(weights: [1, 1], available: available))
+    }
+
+    @Test("every pane moves in one direction for the whole entrance")
+    func openingIsMonotonic() {
+        // Three panes, unevenly arranged, with the newcomer in the middle —
+        // the case with the most room to go wrong.
+        let weights: [Double] = [2, 1, 3]
+        var previous = PaneSplit.opening(weights: weights, arriving: 1, progress: 0, available: roomy)
+        for step in 1...12 {
+            let now = PaneSplit.opening(
+                weights: weights, arriving: 1, progress: CGFloat(step) / 12, available: roomy)
+            // The newcomer only grows; everyone else only gives up room. A
+            // point of rounding either way is the residual `exact` moves about,
+            // not a change of direction.
+            #expect(now[1] >= previous[1] - 1)
+            #expect(now[0] <= previous[0] + 1)
+            #expect(now[2] <= previous[2] + 1)
+            previous = now
+        }
+    }
+
+    @Test("the stack adds up to the lane on every frame, not just the last one")
+    func openingIsExactThroughout() {
+        // These are constraint constants inside a stack pinned top and bottom,
+        // so a frame that sums to a point over is a conflict mid-animation —
+        // which is the shape of bug that only shows up as a flicker.
+        for arriving in 0..<3 {
+            for step in 0...12 {
+                let heights = PaneSplit.opening(
+                    weights: [1, 2, 1], arriving: arriving,
+                    progress: CGFloat(step) / 12, available: 733)
+                #expect(abs(heights.reduce(0, +) - CGFloat(733)) < 0.0001)
+                #expect(heights.allSatisfy { $0 >= CGFloat(0) })
+            }
+        }
+    }
+
+    @Test("the panes making room keep their ratio to each other all the way through")
+    func incumbentsKeepTheirRatio() {
+        // A lane the user dragged to 70/30 that gains a third pane: the two they
+        // arranged are still 70/30 at every step, so the entrance never looks
+        // like it is re-proportioning the lane behind the newcomer.
+        for step in 0...10 {
+            let heights = PaneSplit.opening(
+                weights: [0.7, 0.3, 0.5], arriving: 2,
+                progress: CGFloat(step) / 10, available: roomy)
+            #expect(abs(heights[0] / heights[1] - 7.0 / 3.0) < 0.02)
+        }
+    }
+
+    @Test("the only pane in a lane has no entrance to make")
+    func openingTheOnlyPane() {
+        // Nothing to come out of and nobody to take the room from. Opening it
+        // against the lane would be a pane growing out of its own header — and
+        // would walk a live terminal down to no rows to say it.
+        let heights = PaneSplit.opening(weights: [1], arriving: 0, progress: 0.5, available: 800)
+        #expect(heights == [CGFloat(800)])
+    }
+
+    @Test("a progress of 1 is the finished layout, whoever arrived")
+    func finishedOpeningIsJustTheLayout() {
+        for arriving in 0..<4 {
+            #expect(
+                PaneSplit.opening(
+                    weights: [1, 1, 2, 1], arriving: arriving, progress: 1, available: roomy)
+                == PaneSplit.heights(weights: [1, 1, 2, 1], available: roomy))
+        }
+    }
+
+    @Test("an index that is not in the stack lays the stack out normally")
+    func openingAnIndexThatIsNotThere() {
+        // A snapshot can land mid-entrance and take the arriving pane away
+        // again. Laying out as if nothing were opening is the right answer;
+        // trapping is not.
+        #expect(
+            PaneSplit.opening(weights: [1, 1], arriving: 5, progress: 0.4, available: roomy)
+            == PaneSplit.heights(weights: [1, 1], available: roomy))
+    }
 }

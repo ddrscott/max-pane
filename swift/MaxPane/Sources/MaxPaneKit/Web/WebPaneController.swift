@@ -34,6 +34,10 @@ final class WebPaneController: NSObject, PaneController {
 
     private var webView: WKWebView?
     private var placeholder: PlaceholderView?
+    /// The panel covering a web view that has not painted yet, and the timer
+    /// that lifts it if the page never arrives. See `showFirstPaintCover`.
+    private var firstPaintCover: PlaceholderView?
+    private var firstPaintDeadline: DispatchWorkItem?
     private var pane: Pane
     private var laneWidth: CGFloat
     private var isParented = false
@@ -120,6 +124,7 @@ final class WebPaneController: NSObject, PaneController {
         isDeferred = false
         placeholder?.removeFromSuperview()
         placeholder = nil
+        forgetFirstPaintCover()
         buildWebView(dataStoreId: dataStoreId)
     }
 
@@ -619,6 +624,16 @@ final class WebPaneController: NSObject, PaneController {
 
         let webView = WKWebView(frame: container.bounds, configuration: configuration)
         wire(webView)
+        // A panel over the top until the page has something to show. The colour
+        // `wire` sets fixes the flash of *white*; it cannot fix the flash of
+        // *nothing*, and a lane that arrives already saying which host it is
+        // going to is what makes the arrival animation worth watching.
+        //
+        // Deliberately not done for an adopted popup: that view is already
+        // mid-navigation and may have finished loading before this pane existed,
+        // so a cover over it would sit there for the whole grace period with a
+        // sign-in form underneath it.
+        showFirstPaintCover()
 
         // The session, if this pane has one, in place of a bare load. It
         // carries the back/forward list, the scroll offset and form state, so
@@ -650,6 +665,23 @@ final class WebPaneController: NSObject, PaneController {
 
     /// Everything a web view needs to be this pane's, whoever built it.
     private func wire(_ webView: WKWebView) {
+        // Before anything is parented or loaded: a `WKWebView` with no document
+        // paints its own background, and that background is white. On a dark
+        // strip every arriving web lane therefore strobed — measured at a mean
+        // luminance of 253 against a strip of 16, for 65–100 ms on a fast page
+        // and 550 ms on a slow one. Brighter and longer than the entrance
+        // animation it steps on, and twice over if you open two lanes.
+        //
+        // `underPageBackgroundColor` is the public lever for it; the private
+        // `drawsBackground`/`_backgroundColor` pair is the usual answer and is
+        // not worth the risk. It is never reset to the page's own colour: this
+        // is a dark app, and a dark gutter behind a page is what the rest of the
+        // window already looks like.
+        //
+        // Here rather than in `buildWebView` so an adopted popup gets it too —
+        // that is the one web view this pane does not create, and an OAuth
+        // window is exactly where a white flash is least welcome.
+        webView.underPageBackgroundColor = Theme.laneBackground
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
@@ -740,7 +772,72 @@ final class WebPaneController: NSObject, PaneController {
         // After the view is gone, so the arrows go grey rather than keep
         // promising a back list that no longer exists.
         refreshChrome()
+        // A pane evicted before it ever painted still has its cover up, and that
+        // panel is exactly what an evicted pane shows anyway — so it stays, and
+        // stops being the load's to remove.
+        forgetFirstPaintCover()
         showPlaceholder()
+    }
+
+    /// The dark panel a fresh web pane shows until its page has painted.
+    ///
+    /// It is a `PlaceholderView` with no snapshot — the dimmed panel with the
+    /// host on it that an evicted pane already falls back to — because a pane
+    /// that has not loaded yet and a pane whose picture is missing are the same
+    /// situation and should not be two different rectangles.
+    ///
+    /// It is removed a beat after `didFinish` rather than at `didCommit`:
+    /// commit is the response arriving, which is before the first paint, so
+    /// lifting the cover there would put the white back. The cost is that a page
+    /// which never finishes keeps its cover, so `firstPaintDeadline` lifts it
+    /// anyway — a cover that outstays a slow page would hide a page that is
+    /// already readable, which is worse than the flash.
+    private func showFirstPaintCover() {
+        guard placeholder == nil else { return }
+        showPlaceholder()
+        firstPaintCover = placeholder
+        firstPaintDeadline = DispatchWorkItem { [weak self] in self?.hideFirstPaintCover() }
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.firstPaintGraceSeconds, execute: firstPaintDeadline!)
+    }
+
+    /// How long a cover may wait for a page that is not coming.
+    ///
+    /// Long enough for a page on a bad connection to get its first bytes out,
+    /// short enough that a lane is never a dark panel you have to wonder about.
+    private static let firstPaintGraceSeconds: TimeInterval = 2.5
+
+    /// Let go of the cover without taking it off screen.
+    ///
+    /// For the two moments when the panel on screen stops being a *cover* and
+    /// becomes something else's: an evicted pane, where the same view is now the
+    /// snapshot placeholder, and a deferred pane being built, where it has
+    /// already been removed by hand. Either way the deadline must not fire and
+    /// pull a view that is no longer this one's to pull.
+    private func forgetFirstPaintCover() {
+        firstPaintDeadline?.cancel()
+        firstPaintDeadline = nil
+        firstPaintCover = nil
+    }
+
+    private func hideFirstPaintCover() {
+        guard let cover = firstPaintCover else { return forgetFirstPaintCover() }
+        forgetFirstPaintCover()
+        // Only the cover goes. `placeholder` is also what an *evicted* pane
+        // shows, and clearing the field blind would leak that view the next time
+        // one was built.
+        if placeholder === cover { placeholder = nil }
+        guard !Motion.isReduced else { return cover.removeFromSuperview() }
+        NSAnimationContext.runAnimationGroup { context in
+            // The page underneath is already painted, so this is a cross-fade
+            // between two finished pictures rather than a reveal. Short: the
+            // pane has nothing left to say.
+            context.duration = Motion.pane
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            cover.animator().alphaValue = 0
+        } completionHandler: {
+            cover.removeFromSuperview()
+        }
     }
 
     private func showPlaceholder() {
@@ -849,11 +946,20 @@ extension WebPaneController: WKNavigationDelegate {
         // A navigation is exactly when the history changed, so do not wait for
         // the next sample to record it.
         captureSession()
+        // One turn of the run loop after the load finished. `didFinish` is the
+        // document being done, not the compositor having drawn it, and lifting
+        // the cover in the same turn puts one frame of unpainted view back on
+        // screen — which is the whole thing this is here to prevent.
+        DispatchQueue.main.async { [weak self] in self?.hideFirstPaintCover() }
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         // A failed load leaves the pane where it was rather than blanking it;
-        // the URL in the ledger is still the right thing to retry.
+        // the URL in the ledger is still the right thing to retry. The cover
+        // goes, though: WebKit's own error page is the only thing that can say
+        // what went wrong, and a dark panel over it would hide it until the
+        // grace period ran out.
+        hideFirstPaintCover()
     }
 }
 
