@@ -44,6 +44,8 @@ public final class StripViewController: NSViewController {
     private var focusedPaneInView: String?
     /// Swallows horizontal scrolls anywhere over the strip. See `startScrollCapture`.
     private var scrollMonitor: Any?
+    /// Focuses whatever pane you click. See `startClickCapture`.
+    private var clickMonitor: Any?
     /// `(lane, width)` while its right edge is being dragged. View-only.
     private var liveResize: (laneId: String, width: CGFloat)?
     /// Lane widths as of the last snapshot, so a change from *any* source —
@@ -109,6 +111,7 @@ public final class StripViewController: NSViewController {
         observer = store.observe { [weak self] state in self?.apply(state) }
         startMemorySampling()
         startScrollCapture()
+        startClickCapture()
         // PRD §8: strip scroll position persists across launches.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -154,6 +157,43 @@ public final class StripViewController: NSViewController {
             self.scrollView.reflectScrolledClipView(clip)
             return nil
         }
+    }
+
+    /// Clicking a pane focuses it.
+    ///
+    /// A terminal view and a `WKWebView` both consume mouse events for their own
+    /// purposes, so neither tells us it was clicked. This watches the event on
+    /// its way down and moves focus without consuming it — the click still
+    /// places a cursor, starts a selection, or presses a button as it should.
+    private func startClickCapture() {
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            guard let self, let window = self.view.window, event.window === window else { return event }
+            let inStrip = self.view.convert(event.locationInWindow, from: nil)
+            guard self.view.bounds.contains(inStrip) else { return event }
+            if let paneId = self.pane(at: event.locationInWindow) {
+                self.focus(paneId)
+            }
+            return event
+        }
+    }
+
+    /// Which pane is under a point in window coordinates.
+    private func pane(at windowPoint: NSPoint) -> String? {
+        for (laneId, laneView) in laneViews {
+            let local = laneView.convert(windowPoint, from: nil)
+            guard laneView.bounds.contains(local) else { continue }
+            guard let lane = store.lane(laneId) else { return nil }
+            // A lane can hold a stack, so find the pane whose view owns the point.
+            for pane in lane.panes {
+                if let view = laneView.paneView(for: pane.id),
+                   view.bounds.contains(view.convert(windowPoint, from: nil)) {
+                    return pane.id
+                }
+            }
+            // The header or a gap: focus the lane's first pane.
+            return lane.panes.first?.id
+        }
+        return nil
     }
 
     deinit {
@@ -360,6 +400,10 @@ public final class StripViewController: NSViewController {
             // A pty pane without a session id is a lane whose session could not
             // be started. It keeps its ordinal and its tag and shows why
             // (PRD §11, §15.8); it just has nothing to attach to.
+            controller.onRevealLane = { [weak self] laneId in
+                guard let self, let laneId else { return }
+                self.reveal(laneId: laneId, flash: true)
+            }
             if let sessionId = pane.relaySessionId {
                 controller.attach(RelayAttachmentAdapter(sessionId: sessionId))
             } else {

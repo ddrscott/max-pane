@@ -91,6 +91,10 @@ final class TerminalPaneController: NSObject, PaneController {
         terminal.autoresizingMask = [.width, .height]
         terminal.frame = container.bounds
         terminal.terminalDelegate = self
+        if let clickable = terminal as? AutoCopyTerminalView {
+            clickable.resolveCwd = { [weak self] in self?.currentCwd ?? "" }
+            clickable.onOpenToken = { [weak self] token in self?.open(token) }
+        }
         container.addSubview(terminal)
 
         status.translatesAutoresizingMaskIntoConstraints = false
@@ -302,6 +306,22 @@ final class TerminalPaneController: NSObject, PaneController {
         guard cols != hostCols || rows != hostRows else { return }
         attachment?.claimSize(cols: cols, rows: rows)
     }
+
+    /// Open a clicked path or URL in a new lane immediately right of this one.
+    ///
+    /// Right of the terminal that mentioned it, not at the end of the strip:
+    /// the thing and the thing that referred to it belong side by side, which
+    /// is the entire premise of putting web panes on the same strip as shells.
+    private func open(_ token: TerminalToken) {
+        guard let laneId = store.lane(containing: paneId)?.id,
+              let url = token.openURL
+        else { return }
+        try? store.newWebLane(url: url.absoluteString, near: laneId)
+        onRevealLane?(store.state.lanes.last?.id)
+    }
+
+    /// Set by the strip so a newly opened lane can be scrolled to.
+    var onRevealLane: ((String?) -> Void)?
 
     // MARK: - cwd
 
@@ -605,12 +625,74 @@ final class ReconnectingBanner: NSView {
 /// clipboard. Without it the gesture silently does nothing, which reads as the
 /// selection not having worked at all.
 final class AutoCopyTerminalView: TerminalView {
-    override func mouseUp(with event: NSEvent) {
-        super.mouseUp(with: event)
-        // `getSelection` is nil unless a selection is actually active, so an
-        // ordinary click into a pane never clobbers the clipboard.
-        guard let selected = getSelection(), !selected.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(selected, forType: .string)
+    /// A click landed on something worth opening — a URL, or a file that exists.
+    var onOpenToken: ((TerminalToken) -> Void)?
+    /// Where the session is, so relative paths resolve.
+    var resolveCwd: (() -> String)?
+    private var downAt: NSPoint = .zero
+
+    override func mouseDown(with event: NSEvent) {
+        downAt = event.locationInWindow
+        super.mouseDown(with: event)
     }
+
+    /// Open on a click that did not drag.
+    ///
+    /// A drag is a selection and must stay one, so movement disqualifies the
+    /// gesture. Anything that is not a URL or an existing file falls through to
+    /// ordinary behaviour, which is what keeps this from firing on every word.
+    override func mouseUp(with event: NSEvent) {
+        let moved = hypot(event.locationInWindow.x - downAt.x, event.locationInWindow.y - downAt.y)
+        super.mouseUp(with: event)
+
+        // A drag is a selection: copy it, the way RelayTTY does, which is why a
+        // daily user of it has never pressed ⌘C in a terminal.
+        if moved >= 3 {
+            if let selected = getSelection(), !selected.isEmpty {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(selected, forType: .string)
+            }
+            return
+        }
+
+        // A click that did not move may be on something worth opening.
+        let token = tokenUnder(event)
+        Log.debug("terminal click -> \(token.map(String.init(describing:)) ?? "nothing")")
+        if let token { onOpenToken?(token) }
+    }
+
+    private func tokenUnder(_ event: NSEvent) -> TerminalToken? {
+        let point = convert(event.locationInWindow, from: nil)
+        let term = getTerminal()
+
+        // SwiftTerm keeps its own hit-testing internal, so measure the cell the
+        // same way it does: `ceil(ascent + descent + leading)` and the advance
+        // of a space.
+        let ctFont = font as CTFont
+        let cellHeight = ceil(CTFontGetAscent(ctFont) + CTFontGetDescent(ctFont) + CTFontGetLeading(ctFont))
+        let advance = Double(font.advancement(forGlyph: font.glyph(withName: "space") ?? 0).width)
+        let cellWidth = advance > 0 ? advance.rounded() : Double(font.pointSize) * 0.6
+        guard cellWidth > 0, cellHeight > 0 else { return nil }
+
+        // The view is not flipped, so row 0 is at the top of `bounds`.
+        let row = Int((bounds.height - point.y) / cellHeight)
+        let col = Int(point.x / cellWidth)
+        guard row >= 0, row < term.rows, col >= 0 else { return nil }
+
+        let absolute = term.buffer.totalLinesTrimmed + term.getTopVisibleRow() + row
+        guard let bufferLine = term.getScrollInvariantLine(row: absolute) else { return nil }
+
+        var text = ""
+        text.reserveCapacity(term.cols)
+        for c in 0..<min(term.cols, bufferLine.count) {
+            let cd = bufferLine[c]
+            text.append(cd.width == 0 ? " " : term.getCharacter(for: cd))
+        }
+
+        let word = TerminalTokenizer.word(in: text, column: col)
+        Log.debug("  row \(row) col \(col) word=\(word ?? "-") cwd=\(resolveCwd?() ?? "-")")
+        guard let word else { return nil }
+        return TerminalTokenizer.classify(word, cwd: resolveCwd?() ?? "")
+    }
+
 }

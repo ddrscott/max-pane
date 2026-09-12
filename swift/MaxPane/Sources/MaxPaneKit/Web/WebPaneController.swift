@@ -250,7 +250,15 @@ final class WebPaneController: NSObject, PaneController {
 
     private func load(_ url: String) {
         guard let webView, let parsed = URL(string: url) else { return }
-        webView.load(URLRequest(url: parsed))
+        if parsed.isFileURL {
+            // WebKit refuses a plain request for file://; it needs to be told
+            // which directory the page may read from. Granting the file's own
+            // folder is enough for a source file or an image and is a great
+            // deal narrower than granting the volume.
+            webView.loadFileURL(parsed, allowingReadAccessTo: parsed.deletingLastPathComponent())
+        } else {
+            webView.load(URLRequest(url: parsed))
+        }
         if let y = pane.scrollY, y > 0 {
             pendingScrollRestore = y
         }
