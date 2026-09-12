@@ -231,7 +231,14 @@ public final class StripViewController: NSViewController {
     private func makeController(for pane: Pane, in lane: Lane) -> PaneController {
         switch pane.kind {
         case .pty:
-            return TerminalPaneController(pane: pane, store: store, config: config)
+            let controller = TerminalPaneController(pane: pane, store: store, config: config)
+            // A pty pane without a session id is a lane whose session could not
+            // be started. It keeps its ordinal and its tag and shows why
+            // (PRD §11, §15.8); it just has nothing to attach to.
+            if let sessionId = pane.relaySessionId {
+                controller.attach(RelayAttachmentAdapter(sessionId: sessionId))
+            }
+            return controller
         case .web, .placeholder:
             return WebPaneController(pane: pane, lane: lane, store: store, config: config)
         }
@@ -429,7 +436,7 @@ public final class StripViewController: NSViewController {
     /// A session that has gone leaves its lane exactly where it is (PRD §11:
     /// "the lane and ordinal are unaffected"); the pane says so instead. A
     /// session that has come back is reattached.
-    public func sessionsChanged(_ sessions: [RelaySession]) {
+    public func sessionsChanged(_ sessions: [RelaySessionInfo]) {
         let live = Set(sessions.map(\.id))
         for (paneId, controller) in paneControllers {
             guard let terminal = controller as? TerminalPaneController,

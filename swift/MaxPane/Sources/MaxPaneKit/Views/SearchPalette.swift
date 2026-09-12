@@ -206,11 +206,11 @@ final class SearchPaletteController: PaletteController {
 /// ⌘O — PRD §7.1's picker of Relay sessions not currently attached.
 @MainActor
 final class SessionPickerController: PaletteController {
-    private let all: [RelaySession]
-    private var shown: [RelaySession] = []
-    private let completion: (RelaySession?) -> Void
+    private let all: [RelaySessionInfo]
+    private var shown: [RelaySessionInfo] = []
+    private let completion: (RelaySessionInfo?) -> Void
 
-    init(sessions: [RelaySession], completion: @escaping (RelaySession?) -> Void) {
+    init(sessions: [RelaySessionInfo], completion: @escaping (RelaySessionInfo?) -> Void) {
         self.all = sessions
         self.shown = sessions
         self.completion = completion

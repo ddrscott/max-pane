@@ -1,11 +1,17 @@
 import Foundation
+import RelayClient
 
 /// One RelayTTY session, as its metadata file describes it.
+///
+/// Named `…Info` rather than `RelaySession` because `RelayClient.RelaySession`
+/// is the live connection. This is the description on disk; that is the thing
+/// on the wire, and confusing them is how you end up reading a stale size from
+/// a JSON file (ADR-0007).
 ///
 /// Field names follow `shared/types.ts`. Everything past `status` is optional
 /// because pty-host writes metadata on a ≤5 s dirty flush and a freshly spawned
 /// session's file is sparse until the first one lands.
-public struct RelaySession: Codable, Identifiable, Sendable {
+public struct RelaySessionInfo: Codable, Identifiable, Sendable {
     public let id: String
     public let command: String
     public let args: [String]
@@ -57,15 +63,15 @@ public struct RelaySessionDirectory {
     /// `status` is not enough on its own: pty-host writes "running" and a
     /// crashed host never gets to correct it, so the pid is checked too. This is
     /// the same liveness rule RelayTTY's own disk directory applies.
-    public func live() -> [RelaySession] {
+    public func live() -> [RelaySessionInfo] {
         let fm = FileManager.default
         guard let names = try? fm.contentsOfDirectory(atPath: Self.sessionsDir.path) else { return [] }
         let decoder = JSONDecoder()
-        var out: [RelaySession] = []
+        var out: [RelaySessionInfo] = []
         for name in names where name.hasSuffix(".json") {
             let path = Self.sessionsDir.appendingPathComponent(name)
             guard let data = try? Data(contentsOf: path),
-                  let session = try? decoder.decode(RelaySession.self, from: data),
+                  let session = try? decoder.decode(RelaySessionInfo.self, from: data),
                   session.isRunning
             else { continue }
             guard let pid = session.pid, isAlive(pid) else { continue }
@@ -74,13 +80,13 @@ public struct RelaySessionDirectory {
         return out.sorted { ($0.lastActivity ?? $0.createdAt) > ($1.lastActivity ?? $1.createdAt) }
     }
 
-    public func session(_ id: String) -> RelaySession? {
+    public func session(_ id: String) -> RelaySessionInfo? {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: Self.sessionPath(id))) else { return nil }
-        return try? JSONDecoder().decode(RelaySession.self, from: data)
+        return try? JSONDecoder().decode(RelaySessionInfo.self, from: data)
     }
 
     /// PRD §7.1's picker: live sessions not already on the strip.
-    public func attachable(excluding attached: Set<String>) -> [RelaySession] {
+    public func attachable(excluding attached: Set<String>) -> [RelaySessionInfo] {
         live().filter { !attached.contains($0.id) }
     }
 
@@ -102,11 +108,11 @@ public final class RelaySessionWatcher: @unchecked Sendable {
     private var fd: Int32 = -1
     private var debounce: DispatchWorkItem?
     private var timer: DispatchSourceTimer?
-    private let onChange: @Sendable ([RelaySession]) -> Void
+    private let onChange: @Sendable ([RelaySessionInfo]) -> Void
     private let directory = RelaySessionDirectory()
     private let queue = DispatchQueue(label: "maxpane.relay.sessions")
 
-    public init(pollInterval: TimeInterval, onChange: @escaping @Sendable ([RelaySession]) -> Void) {
+    public init(pollInterval: TimeInterval, onChange: @escaping @Sendable ([RelaySessionInfo]) -> Void) {
         self.onChange = onChange
         startWatching()
         startPolling(every: pollInterval)
