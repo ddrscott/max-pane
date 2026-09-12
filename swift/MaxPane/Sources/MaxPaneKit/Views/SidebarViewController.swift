@@ -1,18 +1,45 @@
 import AppKit
 import LanedCore
 
-/// PRD §7.6 — the left-edge list of lanes in strip order.
+/// PRD §7.6 — the left edge. A session *browser*, not a list of lanes.
 ///
-/// Ordinal order, always. The sidebar may *visually* group past 50 lanes, but it
-/// never implies the strip is grouped, and clicking a row scrolls the strip
-/// rather than rearranging it.
+/// The thing the RelayTTY web app gets right, and the reason this was rewritten:
+/// it shows every session that exists, grouped by project, with enough state per
+/// row (dot, agent glyph, throughput, age) that you can tell at a glance which
+/// of ten agents is working and which is waiting on you. A list of the lanes you
+/// already pulled onto the strip cannot answer either question, because the
+/// session you most need to see is exactly the one that is not on the strip yet.
+///
+/// So the rows come from the registry first and the strip second. A row with a
+/// lane scrolls the strip to it; a row without one attaches it. Web lanes have
+/// no session at all and file under their project tag beside the agent that
+/// opened them.
 @MainActor
 final class SidebarViewController: NSViewController {
     private let store: StripStore
     private let scrollView = NSScrollView()
-    private let outline = NSOutlineView()
-    private var rows: [Row] = []
+    private let table = NSTableView()
+    private var rows: [SidebarModel.Row] = []
+    private var controls = SidebarModel.Controls()
     private var observer: UUID?
+
+    // Chrome.
+    private let header = NSView()
+    private let filterBar = NSView()
+    private let footer = NSView()
+    private let queryField = NSTextField()
+    private var sortButton: SidebarButton!
+    private var foldButton: SidebarButton!
+    private var filterButton: SidebarButton!
+    private var chips: [SidebarModel.Scope: SidebarButton] = [:]
+    private let countLabel = NSTextField(labelWithString: "")
+    private var filterBarHeight: NSLayoutConstraint!
+
+    /// Session `createdAt`, which only the session file knows and telemetry does
+    /// not carry. Read once per session id — the bar's default sort is by
+    /// creation, and re-reading ten JSON files a second to keep it would be a
+    /// silly price for a number that never changes.
+    private var createdAt: [String: Double] = [:]
 
     /// Click a lane row → search-to-scroll to it.
     var onSelect: ((String) -> Void)?
@@ -34,13 +61,26 @@ final class SidebarViewController: NSViewController {
     /// New session telemetry arrived.
     func sessionsChanged(_ next: [String: SessionTelemetry]) {
         telemetry = next
+        readCreationTimes(for: next)
         rebuild(store.state)
     }
 
-    /// A group header only exists once the list is long enough to need one.
-    private enum Row {
-        case group(String, count: Int)
-        case lane(Lane)
+    /// The one fact the session file has that telemetry drops: when a session
+    /// was created. Read once per id — it never changes, and the bar's default
+    /// sort is by it.
+    private func readCreationTimes(for next: [String: SessionTelemetry]) {
+        let directory = RelaySessionDirectory()
+        for id in next.keys where createdAt[id] == nil {
+            if let file = directory.session(id) {
+                createdAt[id] = file.createdAt / 1000
+            } else {
+                // Fall back rather than leave the sort key at zero, which would
+                // pin the row to the bottom forever.
+                createdAt[id] = next[id]?.lastActivity?.timeIntervalSince1970
+                    ?? Date().timeIntervalSince1970
+            }
+        }
+        createdAt = createdAt.filter { next[$0.key] != nil }
     }
 
     init(store: StripStore) {
@@ -51,37 +91,234 @@ final class SidebarViewController: NSViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not a nib") }
 
+    // MARK: - chrome
+
     override func loadView() {
         view = NSView()
         view.wantsLayer = true
+        // A sidebar split item is vibrant translucent chrome by default, which
+        // is a different material from the strip it indexes. The browser is part
+        // of the strip, so it takes the strip's ground.
+        view.layer?.backgroundColor = Theme.stripBackground.cgColor
 
-        outline.headerView = nil
-        outline.rowSizeStyle = .custom
-        outline.rowHeight = 26
-        outline.indentationPerLevel = 0
-        outline.style = .sourceList
-        outline.dataSource = self
-        outline.delegate = self
-        outline.target = self
-        outline.action = #selector(rowClicked)
-        outline.menu = contextMenu()
+        buildHeader()
+        buildFilterBar()
+        buildTable()
+        buildFooter()
 
-        let column = NSTableColumn(identifier: .init("lane"))
-        column.resizingMask = .autoresizingMask
-        outline.addTableColumn(column)
-        outline.outlineTableColumn = column
+        for v in [header, filterBar, scrollView, footer] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(v)
+        }
+        filterBarHeight = filterBar.heightAnchor.constraint(equalToConstant: 0)
 
-        scrollView.documentView = outline
-        scrollView.hasVerticalScroller = true
-        scrollView.drawsBackground = false
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(scrollView)
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            header.topAnchor.constraint(equalTo: view.topAnchor),
+            header.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            header.heightAnchor.constraint(equalToConstant: 34),
+
+            filterBar.topAnchor.constraint(equalTo: header.bottomAnchor),
+            filterBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            filterBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            filterBarHeight,
+
+            scrollView.topAnchor.constraint(equalTo: filterBar.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: footer.topAnchor),
+
+            footer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            footer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            footer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            footer.heightAnchor.constraint(equalToConstant: 24),
         ])
+
+        // A width the browser is actually legible at. Low priority so the split
+        // view's own min/max still win when the user drags the divider.
+        let width = view.widthAnchor.constraint(equalToConstant: 290)
+        width.priority = .defaultLow
+        width.isActive = true
+    }
+
+    private func buildHeader() {
+        let newButton = SidebarButton(
+            text: "+ NEW", look: .accent, size: 11,
+            action: #selector(newSession), target: self)
+        newButton.toolTip = "New session (⌘R)"
+
+        foldButton = SidebarButton(
+            text: "⌃⌄", look: .quiet, size: 9,
+            action: #selector(toggleFold), target: self)
+        foldButton.toolTip = "Collapse all projects"
+
+        filterButton = SidebarButton(
+            text: "▽", look: .quiet, size: 11,
+            action: #selector(toggleFilter), target: self)
+        filterButton.toolTip = "Filter sessions"
+
+        sortButton = SidebarButton(
+            text: "↓ CREATED", look: .quiet, size: 9,
+            action: #selector(showSortMenu), target: self)
+        sortButton.toolTip = "Sort sessions within each project"
+
+        let rule = NSView()
+        rule.wantsLayer = true
+        rule.layer?.backgroundColor = Theme.laneBorder.cgColor
+        rule.translatesAutoresizingMaskIntoConstraints = false
+
+        for v: NSView in [newButton, foldButton, filterButton, sortButton, rule] {
+            header.addSubview(v)
+        }
+
+        NSLayoutConstraint.activate([
+            newButton.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 8),
+            newButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            newButton.widthAnchor.constraint(equalToConstant: 52),
+            newButton.heightAnchor.constraint(equalToConstant: 20),
+
+            foldButton.leadingAnchor.constraint(greaterThanOrEqualTo: newButton.trailingAnchor, constant: 6),
+            foldButton.trailingAnchor.constraint(equalTo: filterButton.leadingAnchor, constant: -4),
+            foldButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            foldButton.widthAnchor.constraint(equalToConstant: 22),
+            foldButton.heightAnchor.constraint(equalToConstant: 20),
+
+            filterButton.trailingAnchor.constraint(equalTo: sortButton.leadingAnchor, constant: -4),
+            filterButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            filterButton.widthAnchor.constraint(equalToConstant: 22),
+            filterButton.heightAnchor.constraint(equalToConstant: 20),
+
+            sortButton.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -8),
+            sortButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            sortButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 66),
+            sortButton.heightAnchor.constraint(equalToConstant: 20),
+
+            rule.bottomAnchor.constraint(equalTo: header.bottomAnchor),
+            rule.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            rule.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            rule.heightAnchor.constraint(equalToConstant: 1),
+        ])
+    }
+
+    private func buildFilterBar() {
+        filterBar.wantsLayer = true
+        filterBar.clipsToBounds = true
+
+        // NSSearchField is a rounded capsule with no square variant, and even a
+        // square-bezelled NSTextField draws system chrome that is lighter than
+        // anything else here. So: no bezel, one hard border, the strip's ground.
+        queryField.isBezeled = false
+        queryField.drawsBackground = true
+        queryField.backgroundColor = Theme.laneBackground
+        queryField.wantsLayer = true
+        queryField.layer?.cornerRadius = 0
+        queryField.layer?.borderWidth = 1
+        queryField.layer?.borderColor = Theme.laneBorder.cgColor
+        queryField.font = Theme.mono(11)
+        queryField.placeholderString = "filter…"
+        queryField.focusRingType = .none
+        queryField.target = self
+        queryField.action = #selector(queryChanged)
+        queryField.delegate = self
+        queryField.translatesAutoresizingMaskIntoConstraints = false
+        filterBar.addSubview(queryField)
+
+        var previous: NSView?
+        for scope in SidebarModel.Scope.allCases {
+            let chip = SidebarButton(
+                text: scope.label, look: .chip, size: 9,
+                action: #selector(chipClicked(_:)), target: self)
+            chip.isOn = scope == controls.scope
+            chips[scope] = chip
+            filterBar.addSubview(chip)
+            NSLayoutConstraint.activate([
+                chip.topAnchor.constraint(equalTo: queryField.bottomAnchor, constant: 5),
+                chip.heightAnchor.constraint(equalToConstant: 17),
+                chip.leadingAnchor.constraint(
+                    equalTo: previous?.trailingAnchor ?? filterBar.leadingAnchor,
+                    constant: previous == nil ? 8 : 4),
+            ])
+            previous = chip
+        }
+
+        NSLayoutConstraint.activate([
+            queryField.topAnchor.constraint(equalTo: filterBar.topAnchor, constant: 6),
+            queryField.leadingAnchor.constraint(equalTo: filterBar.leadingAnchor, constant: 8),
+            queryField.trailingAnchor.constraint(equalTo: filterBar.trailingAnchor, constant: -8),
+            queryField.heightAnchor.constraint(equalToConstant: 20),
+        ])
+    }
+
+    private func buildTable() {
+        table.headerView = nil
+        table.rowSizeStyle = .custom
+        table.intercellSpacing = .zero
+        table.backgroundColor = .clear
+        table.style = .plain
+        table.selectionHighlightStyle = .regular
+        table.dataSource = self
+        table.delegate = self
+        table.target = self
+        table.action = #selector(rowClicked)
+        table.menu = NSMenu()
+        table.menu?.delegate = self
+        table.usesAutomaticRowHeights = false
+        table.allowsEmptySelection = true
+
+        let column = NSTableColumn(identifier: .init("entry"))
+        column.resizingMask = .autoresizingMask
+        table.addTableColumn(column)
+
+        scrollView.documentView = table
+        scrollView.hasVerticalScroller = true
+        scrollView.drawsBackground = false
+        scrollView.automaticallyAdjustsContentInsets = false
+    }
+
+    private func buildFooter() {
+        let rule = NSView()
+        rule.wantsLayer = true
+        rule.layer?.backgroundColor = Theme.laneBorder.cgColor
+        rule.translatesAutoresizingMaskIntoConstraints = false
+
+        let version = NSTextField(labelWithString: "v" + Self.versionString)
+        version.font = Theme.mono(9)
+        version.textColor = Theme.dimText
+        version.translatesAutoresizingMaskIntoConstraints = false
+
+        countLabel.font = Theme.mono(9)
+        countLabel.textColor = Theme.dimText
+        countLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let gear = SidebarButton(
+            text: "⚙", look: .quiet, size: 11,
+            action: #selector(showSettingsMenu), target: self)
+        gear.layer?.borderWidth = 0
+        gear.toolTip = "Settings and help"
+
+        for v: NSView in [rule, version, countLabel, gear] { footer.addSubview(v) }
+
+        NSLayoutConstraint.activate([
+            rule.topAnchor.constraint(equalTo: footer.topAnchor),
+            rule.leadingAnchor.constraint(equalTo: footer.leadingAnchor),
+            rule.trailingAnchor.constraint(equalTo: footer.trailingAnchor),
+            rule.heightAnchor.constraint(equalToConstant: 1),
+
+            version.leadingAnchor.constraint(equalTo: footer.leadingAnchor, constant: 9),
+            version.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
+
+            countLabel.leadingAnchor.constraint(equalTo: version.trailingAnchor, constant: 8),
+            countLabel.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
+
+            gear.trailingAnchor.constraint(equalTo: footer.trailingAnchor, constant: -6),
+            gear.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
+            gear.widthAnchor.constraint(equalToConstant: 20),
+            gear.heightAnchor.constraint(equalToConstant: 18),
+        ])
+    }
+
+    static var versionString: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
     }
 
     override func viewDidLoad() {
@@ -94,59 +331,220 @@ final class SidebarViewController: NSViewController {
         if let observer { MainActor.assumeIsolated { store.stopObserving(observer) } }
     }
 
-    /// Past 50 lanes the flat list stops being scannable, so rows get grouped by
-    /// project tag — visually, in the sidebar, and nowhere else.
-    private func rebuild(_ state: StripState) {
-        let lanes = state.lanes
-        if lanes.count <= 50 {
-            rows = lanes.map { .lane($0) }
-        } else {
-            var built: [Row] = []
-            var lastGroup: String? = nil
-            var counts: [String: Int] = [:]
-            for lane in lanes {
-                counts[lane.projectRoot ?? "", default: 0] += 1
-            }
-            for lane in lanes {
-                let key = lane.projectRoot ?? ""
-                if key != lastGroup {
-                    let label = key.isEmpty ? "Untagged" : (key as NSString).lastPathComponent
-                    built.append(.group(label, count: counts[key] ?? 0))
-                    lastGroup = key
-                }
-                built.append(.lane(lane))
-            }
-            rows = built
-        }
-        outline.reloadData()
+    // MARK: - model
 
-        if let focused = state.focusedPaneId,
-           let laneId = store.lane(containing: focused)?.id,
-           let index = rows.firstIndex(where: { if case .lane(let l) = $0 { return l.id == laneId } else { return false } }) {
-            outline.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+    /// Rebuild and diff. Telemetry ticks once a second so the age stays honest,
+    /// and nearly every one of those ticks changes nothing — reloading the table
+    /// anyway would drop the selection and fight the scroller for no reason.
+    private func rebuild(_ state: StripState) {
+        let next = SidebarModel.rows(
+            lanes: state.lanes,
+            telemetry: telemetry,
+            created: createdAt,
+            controls: controls)
+        updateFooter(state)
+        guard next != rows else {
+            syncSelection(state)
+            return
+        }
+        rows = next
+        table.reloadData()
+        syncSelection(state)
+    }
+
+    /// The footer is the one line that is always on screen, however far the list
+    /// is scrolled — so it carries the count, and the alarm.
+    private func updateFooter(_ state: StripState) {
+        let count = SidebarModel.footerCount(telemetry: telemetry, lanes: state.lanes)
+        let blocked = SidebarModel.blockedCount(telemetry)
+        let text = NSMutableAttributedString(
+            string: count,
+            attributes: [.foregroundColor: Theme.dimText, .font: Theme.mono(9)])
+        if blocked > 0 {
+            text.append(NSAttributedString(
+                string: "  \(blocked) BLOCKED",
+                attributes: [
+                    .foregroundColor: Theme.accent,
+                    .font: Theme.mono(9, weight: .bold),
+                ]))
+        }
+        countLabel.attributedStringValue = text
+    }
+
+    /// The focused lane is selected in the browser, so the two halves of the
+    /// window always agree about where you are.
+    private func syncSelection(_ state: StripState) {
+        guard let focused = state.focusedPaneId,
+              let laneId = store.lane(containing: focused)?.id,
+              let index = rows.firstIndex(where: {
+                  if case .entry(let e) = $0 { return e.laneId == laneId } else { return false }
+              })
+        else { return }
+        guard table.selectedRow != index else { return }
+        table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+    }
+
+    private func entry(at row: Int) -> SidebarModel.Entry? {
+        guard row >= 0, row < rows.count, case .entry(let e) = rows[row] else { return nil }
+        return e
+    }
+
+    private func group(at row: Int) -> SidebarModel.Group? {
+        guard row >= 0, row < rows.count, case .group(let g) = rows[row] else { return nil }
+        return g
+    }
+
+    // MARK: - actions
+
+    @objc private func rowClicked() {
+        let row = table.clickedRow
+        if let group = group(at: row) {
+            if controls.collapsed.contains(group.path) {
+                controls.collapsed.remove(group.path)
+            } else {
+                controls.collapsed.insert(group.path)
+            }
+            rebuild(store.state)
+            return
+        }
+        guard let entry = entry(at: row) else { return }
+        if let laneId = entry.laneId {
+            onSelect?(laneId)
+        } else if let sessionId = entry.sessionId {
+            // The row you most need is the one not on the strip yet, so a click
+            // on it does the obvious thing rather than selecting nothing.
+            onAttach?(sessionId)
         }
     }
 
-    @objc private func rowClicked() {
-        guard outline.clickedRow >= 0, outline.clickedRow < rows.count else { return }
-        if case .lane(let lane) = rows[outline.clickedRow] { onSelect?(lane.id) }
+    @objc private func newSession() { onNewSession?() }
+
+    /// Collapse everything, or open everything back up — the bar's second
+    /// button, and the only way to get ten projects onto one screen.
+    @objc private func toggleFold() {
+        let paths = Set(rows.compactMap {
+            if case .group(let g) = $0 { return g.path } else { return nil }
+        })
+        let folding = !paths.isEmpty && !paths.isSubset(of: controls.collapsed)
+        controls.collapsed = folding ? controls.collapsed.union(paths) : []
+        foldButton.isOn = folding
+        foldButton.setText(folding ? "⌄⌃" : "⌃⌄")
+        foldButton.toolTip = folding ? "Expand all projects" : "Collapse all projects"
+        rebuild(store.state)
+    }
+
+    @objc private func toggleFilter() {
+        let opening = filterBarHeight.constant == 0
+        filterBarHeight.constant = opening ? 52 : 0
+        filterButton.isOn = opening
+        if opening {
+            view.window?.makeFirstResponder(queryField)
+        } else {
+            // Closing the drawer has to clear the filter, or rows stay missing
+            // with nothing on screen explaining why.
+            queryField.stringValue = ""
+            controls.query = ""
+            setScope(.all)
+        }
+        rebuild(store.state)
+    }
+
+    @objc private func queryChanged() {
+        controls.query = queryField.stringValue
+        rebuild(store.state)
+    }
+
+    @objc private func chipClicked(_ sender: SidebarButton) {
+        guard let scope = chips.first(where: { $0.value === sender })?.key else { return }
+        setScope(scope)
+        rebuild(store.state)
+    }
+
+    private func setScope(_ scope: SidebarModel.Scope) {
+        controls.scope = scope
+        for (key, chip) in chips { chip.isOn = key == scope }
+    }
+
+    @objc private func showSortMenu() {
+        let menu = NSMenu()
+        for field in SidebarModel.SortField.allCases {
+            let item = menu.addItem(
+                withTitle: field.label.capitalized, action: #selector(pickSort(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = field.rawValue
+            item.state = controls.sort == field ? .on : .off
+        }
+        menu.addItem(.separator())
+        let direction = menu.addItem(
+            withTitle: controls.descending ? "Newest first" : "Oldest first",
+            action: #selector(flipSort), keyEquivalent: "")
+        direction.target = self
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sortButton.bounds.height + 2), in: sortButton)
+    }
+
+    @objc private func pickSort(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let field = SidebarModel.SortField(rawValue: raw) else { return }
+        controls.sort = field
+        refreshSortButton()
+        rebuild(store.state)
+    }
+
+    @objc private func flipSort() {
+        controls.descending.toggle()
+        refreshSortButton()
+        rebuild(store.state)
+    }
+
+    private func refreshSortButton() {
+        sortButton.setText("\(controls.descending ? "↓" : "↑") \(controls.sort.label)")
+    }
+
+    @objc private func showSettingsMenu(_ sender: SidebarButton) {
+        let menu = NSMenu()
+        let commands: [Command] = [.showHelp, .showMemory, .attachSession, .exportStrip, .importStrip]
+        for command in commands {
+            let item = menu.addItem(
+                withTitle: command.title, action: #selector(runCommand(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = command.rawValue
+        }
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Max Pane v\(Self.versionString)", action: nil, keyEquivalent: "")
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -2), in: sender)
+    }
+
+    @objc private func runCommand(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let command = Command(rawValue: raw) else { return }
+        commandHandler?.perform(command)
+    }
+
+    private var commandHandler: CommandHandling? {
+        view.window?.windowController as? CommandHandling
     }
 
     // MARK: - context menu (§7.6: pin/unpin, set manual tag, close)
 
-    private func contextMenu() -> NSMenu {
-        let menu = NSMenu()
-        menu.addItem(withTitle: "Pin", action: #selector(togglePin), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Set Project Tag…", action: #selector(setTag), keyEquivalent: "").target = self
-        menu.addItem(.separator())
-        menu.addItem(withTitle: "Close Lane", action: #selector(closeLane), keyEquivalent: "").target = self
-        return menu
+    private func clickedLane() -> Lane? {
+        guard let entry = entry(at: table.clickedRow), let laneId = entry.laneId else { return nil }
+        return store.state.lanes.first { $0.id == laneId }
     }
 
-    private func clickedLane() -> Lane? {
-        guard outline.clickedRow >= 0, outline.clickedRow < rows.count,
-              case .lane(let lane) = rows[outline.clickedRow] else { return nil }
-        return lane
+    @objc private func attachClicked() {
+        guard let entry = entry(at: table.clickedRow), let sessionId = entry.sessionId else { return }
+        onAttach?(sessionId)
+    }
+
+    @objc private func revealClicked() {
+        guard let lane = clickedLane() else { return }
+        onSelect?(lane.id)
+    }
+
+    @objc private func copySessionId() {
+        guard let entry = entry(at: table.clickedRow), let sessionId = entry.sessionId else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(sessionId, forType: .string)
     }
 
     @objc private func togglePin() {
@@ -174,38 +572,88 @@ final class SidebarViewController: NSViewController {
         guard let lane = clickedLane() else { return }
         try? store.closeLane(lane.id)
     }
-}
 
-extension SidebarViewController: NSOutlineViewDataSource {
-    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-        item == nil ? rows.count : 0
+    @objc private func collapseAll() {
+        controls.collapsed = Set(rows.compactMap { if case .group(let g) = $0 { return g.path } else { return nil } })
+        rebuild(store.state)
     }
 
-    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-        index
+    @objc private func expandAll() {
+        controls.collapsed.removeAll()
+        rebuild(store.state)
     }
-
-    func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool { false }
 }
 
-extension SidebarViewController: NSOutlineViewDelegate {
-    func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
-        guard let index = item as? Int, index < rows.count else { return nil }
-        switch rows[index] {
-        case .group(let label, let count):
-            return SidebarGroupView(label: label, count: count)
-        case .lane(let lane):
-            return SidebarLaneView(lane: lane, isLive: lane.panes.contains { $0.state == .live })
+// MARK: - menu
+
+extension SidebarViewController: NSMenuDelegate {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let add = { (title: String, action: Selector) in
+            menu.addItem(withTitle: title, action: action, keyEquivalent: "").target = self
+        }
+        if group(at: table.clickedRow) != nil {
+            add("Collapse All", #selector(collapseAll))
+            add("Expand All", #selector(expandAll))
+            return
+        }
+        guard let entry = entry(at: table.clickedRow) else {
+            add("Expand All", #selector(expandAll))
+            return
+        }
+        if entry.laneId != nil {
+            add("Reveal on Strip", #selector(revealClicked))
+            add(entry.pinned ? "Unpin Lane" : "Pin Lane", #selector(togglePin))
+            add("Set Project Tag…", #selector(setTag))
+        } else if entry.sessionId != nil {
+            add("Attach to Strip", #selector(attachClicked))
+        }
+        if entry.sessionId != nil {
+            add("Copy Session ID", #selector(copySessionId))
+        }
+        if entry.laneId != nil {
+            menu.addItem(.separator())
+            add("Close Lane", #selector(closeLane))
+        }
+    }
+}
+
+// MARK: - filter field
+
+extension SidebarViewController: NSTextFieldDelegate {
+    func controlTextDidChange(_ obj: Notification) { queryChanged() }
+}
+
+// MARK: - table
+
+extension SidebarViewController: NSTableViewDataSource {
+    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+}
+
+extension SidebarViewController: NSTableViewDelegate {
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        guard row < rows.count else { return SidebarEntryView.height }
+        switch rows[row] {
+        case .group: return SidebarGroupView.height
+        case .entry: return SidebarEntryView.height
         }
     }
 
-    func outlineView(_ outlineView: NSOutlineView, isGroupItem item: Any) -> Bool {
-        guard let index = item as? Int, index < rows.count else { return false }
-        if case .group = rows[index] { return true }
-        return false
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard row < rows.count else { return nil }
+        switch rows[row] {
+        case .group(let g): return SidebarGroupView(group: g)
+        case .entry(let e): return SidebarEntryView(entry: e)
+        }
     }
 
-    func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
-        !self.outlineView(outlineView, isGroupItem: item)
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        let view = SidebarRowView()
+        view.isTargetable = entry(at: row) != nil
+        return view
+    }
+
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        entry(at: row) != nil
     }
 }
