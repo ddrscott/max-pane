@@ -39,6 +39,59 @@ enum Motion {
     static var isReduced: Bool {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
+
+    /// Run `step` with linear progress 0…1 over `duration`, then `completion`.
+    ///
+    /// A timer rather than Core Animation because none of what this file
+    /// animates is a view property: the strip's layout is computed by summing
+    /// lane widths and a lane's stack by resolving weights, and both have to run
+    /// through their own layout pass or the things *beside* the animated one
+    /// would not move with it.
+    ///
+    /// It lives here rather than in either of its two callers because they have
+    /// to agree: a column opening and a pane opening inside it are the same
+    /// clock at two scales, and two hand-rolled timers is how they stop being.
+    @MainActor
+    @discardableResult
+    static func run(
+        duration: TimeInterval,
+        step: @escaping @MainActor (CGFloat) -> Void,
+        completion: @escaping @MainActor () -> Void
+    ) -> MotionTimer {
+        let start = CACurrentMediaTime()
+        let running = MotionTimer()
+        // Scheduled on the main run loop in `.common`, so the block is already
+        // on the main thread — `assumeIsolated` states that rather than hopping
+        // through a Task, which would deliver frames a run loop late and let the
+        // timer fire again before the last frame drew.
+        running.timer = Timer(timeInterval: 1.0 / 60, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                let t = min(1, (CACurrentMediaTime() - start) / duration)
+                step(CGFloat(t))
+                if t >= 1 {
+                    running.timer?.invalidate()
+                    running.timer = nil
+                    completion()
+                }
+            }
+        }
+        RunLoop.main.add(running.timer!, forMode: .common)
+        return running
+    }
+}
+
+/// A transition in flight, and the handle that stops it.
+///
+/// The timer is held here rather than captured by the block that runs it: the
+/// block's own `Timer` argument is not main-actor isolated, so it cannot stop
+/// the thing calling it without this.
+@MainActor
+final class MotionTimer {
+    var timer: Timer?
+    func cancel() {
+        timer?.invalidate()
+        timer = nil
+    }
 }
 
 /// A lane drawn differently from what the ledger says, for as long as something
@@ -188,6 +241,68 @@ struct StripDiff: Equatable {
                 .map(\.element)
         }
         return diff
+    }
+}
+
+/// Where the strip has to come to rest for a given lane to be readable.
+///
+/// **Every number here comes from the ledger's lanes. There is deliberately no
+/// view in this file**, and that is the whole fix rather than a style
+/// preference. The reveal used to clamp its target against
+/// `content.frame.width` — the *document view's* width — and a lane's column
+/// opens from zero, so at the instant a lane is inserted the document view does
+/// not yet contain it. `setBoundsOrigin` is clamped by that width, so the strip
+/// was told to go somewhere it could not yet reach and stopped short by up to a
+/// whole lane. On a strip already wider than the window that put the newest,
+/// focused lane off the right edge: measured at 66 pt of scroll with 26 pt of a
+/// 654 pt lane showing, and in a window that fits a whole number of lanes, no
+/// scroll at all.
+///
+/// Computing against the post-insert lanes makes the target right. Running the
+/// scroll on the *insert's own* timer (see `StripViewController.arrivalScroll`)
+/// is what makes it reachable: the document view grows over those same frames,
+/// and an eased scroll toward a target that is `d` inside the final limit is
+/// `d·(1-eased)` inside the growing one at every step — never clamped, ending
+/// exactly on target.
+enum StripReveal {
+    /// Centre `laneId`, clamped to the strip, then let `LanePeek` keep a sliver
+    /// of the next lane showing. What ⌘P and an arriving lane both want.
+    static func centred(
+        on laneId: String, lanes: [Lane], viewport: CGFloat, peek: CGFloat
+    ) -> CGFloat? {
+        guard viewport > 0, let index = lanes.firstIndex(where: { $0.id == laneId }) else { return nil }
+        let slot = StripEdges.slots(of: lanes)[index]
+        let centred = slot.origin - (viewport - slot.width) / 2
+        return LanePeek.adjust(
+            offset: clamp(centred, lanes: lanes, viewport: viewport),
+            viewport: viewport, lanes: lanes, minimum: peek)
+    }
+
+    /// The least movement that brings `laneId` fully on screen, and no peek.
+    ///
+    /// Arrow-key focus moves the strip as little as it can, and shaving 28 pt
+    /// off the lane you just focused to prove another one exists is worse than
+    /// the ambiguity it fixes. The snap after the next scroll picks it up.
+    static func minimal(
+        from offset: CGFloat, to laneId: String, lanes: [Lane], viewport: CGFloat
+    ) -> CGFloat? {
+        guard viewport > 0, let index = lanes.firstIndex(where: { $0.id == laneId }) else { return nil }
+        let slot = StripEdges.slots(of: lanes)[index]
+        // Left edge first, so a lane wider than the viewport shows its start
+        // rather than its end — the header, the address and the top of the page
+        // are all there.
+        var x = offset
+        if slot.origin < offset {
+            x = slot.origin
+        } else if slot.end > offset + viewport {
+            x = slot.end - viewport
+        }
+        return clamp(x, lanes: lanes, viewport: viewport)
+    }
+
+    /// Inside the strip, measured from the lanes rather than from a view.
+    private static func clamp(_ x: CGFloat, lanes: [Lane], viewport: CGFloat) -> CGFloat {
+        min(max(0, x), max(0, StripEdges.contentWidth(of: lanes) - viewport))
     }
 }
 

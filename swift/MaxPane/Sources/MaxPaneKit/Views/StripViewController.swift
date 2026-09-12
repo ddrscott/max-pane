@@ -54,7 +54,16 @@ public final class StripViewController: NSViewController {
     /// Transitions in flight, keyed by lane id, so a lane that changes twice in
     /// a row animates once from where it currently is rather than having two
     /// timers fight over its geometry.
-    private var transitions: [String: RunningAnimation] = [:]
+    private var transitions: [String: MotionTimer] = [:]
+    /// A scroll the strip owes a lane whose column is still opening, carried by
+    /// that lane's own transition.
+    ///
+    /// **Not a second animation.** `boundsOrigin` already has two owners — the
+    /// snap and `reveal` — and a third writing it on its own clock is a bug
+    /// wearing a fix's clothes. This is the insert's existing timer doing one
+    /// more thing per frame, after the layout pass that grew the content view,
+    /// which is also the only order in which the scroll is not clamped short.
+    private var arrivalScroll: (laneId: String, from: CGFloat, to: CGFloat, flash: Bool)?
     private var snapDebounce: DispatchWorkItem?
     /// True while the snap animation is running, so the bounds changes it
     /// causes do not schedule another snap.
@@ -320,6 +329,8 @@ public final class StripViewController: NSViewController {
         // Materialization is what gives an arriving lane its view, so its
         // column can only start opening once that has run.
         runPendingArrivals()
+        // And only once it has started can the strip hand it a scroll to carry.
+        revealArrival(diff.inserted, in: state)
 
         // Lanes that changed place. Measured in points between the two
         // snapshots rather than in indices, because that is the distance the
@@ -713,13 +724,69 @@ public final class StripViewController: NSViewController {
                 laneView.alphaValue = eased
                 self.laneOverrides[id] = LaneOverride(slot: full * eased, masked: true)
                 self.relayout()
+                // After the layout that grew the content view, never before:
+                // the clip view clamps to the document's width, and asking it
+                // to scroll into a column that has not been laid out yet is the
+                // whole of the bug this carries the scroll to avoid.
+                self.stepArrivalScroll(id, eased: eased)
             } completion: { [weak self] in
                 guard let self else { return }
                 laneView.alphaValue = 1
                 self.laneOverrides[id] = nil
                 self.relayout()
+                self.finishArrivalScroll(id)
             }
         }
+    }
+
+    /// A lane that arrived holding the focus is a lane the app moved you to, so
+    /// the strip owes you a look at where it went.
+    ///
+    /// Nothing did this before. ⌘O put a lane beside the focused one and
+    /// scrolled nowhere at all; in a 1600 pt window the third and fourth lanes
+    /// arrived with no pixel on screen changing except the footer's count. The
+    /// rule is stated in terms of focus rather than of "the last lane" because
+    /// focus is the thing the mutation already decided: a lane the ledger
+    /// focused is a lane the user is meant to be looking at, whichever door it
+    /// came in by — ⌘O, the shim, an adopted popup, an imported strip.
+    private func revealArrival(_ inserted: [String], in state: StripState) {
+        guard !isColdLaunch, !inserted.isEmpty, let focused = state.focusedPaneId else { return }
+        guard let laneId = inserted.first(where: { id in
+            state.lanes.first { $0.id == id }?.panes.contains { $0.id == focused } ?? false
+        }) else { return }
+        // A lane that will be whole on screen once its column has opened needs
+        // no scroll at all: the column opening in place is the entire story, and
+        // recentring on it would shove three other lanes off the screen to
+        // narrate something already in front of you. `minimal` is asked against
+        // the ledger's widths, so it answers about the *finished* column rather
+        // than the zero-width slot it currently occupies.
+        let clip = scrollView.contentView
+        if StripReveal.minimal(
+            from: clip.bounds.origin.x, to: laneId,
+            lanes: state.lanes, viewport: clip.bounds.width) == clip.bounds.origin.x { return }
+        reveal(laneId: laneId, flash: false)
+    }
+
+    /// One frame of a scroll being carried by an arriving lane's transition.
+    private func stepArrivalScroll(_ laneId: String, eased: CGFloat) {
+        guard let scroll = arrivalScroll, scroll.laneId == laneId else { return }
+        let clip = scrollView.contentView
+        clip.setBoundsOrigin(
+            NSPoint(x: scroll.from + (scroll.to - scroll.from) * eased, y: clip.bounds.origin.y))
+        scrollView.reflectScrolledClipView(clip)
+    }
+
+    private func finishArrivalScroll(_ laneId: String) {
+        guard let scroll = arrivalScroll, scroll.laneId == laneId else { return }
+        arrivalScroll = nil
+        // Land on the number rather than on the last eased sample: the column's
+        // final layout ran a line above this, so the target is reachable now
+        // whether or not it was on the frame before.
+        let clip = scrollView.contentView
+        clip.setBoundsOrigin(NSPoint(x: scroll.to, y: clip.bounds.origin.y))
+        scrollView.reflectScrolledClipView(clip)
+        updateMaterialization()
+        if scroll.flash { laneViews[laneId]?.flash() }
     }
 
     /// A lane that has left the ledger: its column closes where it stood, and
@@ -810,55 +877,16 @@ public final class StripViewController: NSViewController {
         step: @escaping @MainActor (CGFloat) -> Void,
         completion: @escaping @MainActor () -> Void
     ) {
-        transitions.removeValue(forKey: laneId)?.timer?.invalidate()
+        transitions.removeValue(forKey: laneId)?.cancel()
         guard !Motion.isReduced, view.window != nil else {
             step(1)
             completion()
             return
         }
-        transitions[laneId] = animate(duration: duration, step: step) { [weak self] in
+        transitions[laneId] = Motion.run(duration: duration, step: step) { [weak self] in
             self?.transitions[laneId] = nil
             completion()
         }
-    }
-
-    /// Run `step` with eased progress 0…1 over `duration`, then `completion`.
-    ///
-    /// A timer rather than Core Animation because what is being animated is not
-    /// a view property: the strip's layout is computed from lane widths, and the
-    /// collapse has to run through that same layout or the lanes to the right
-    /// would not move with it.
-    @discardableResult
-    private func animate(
-        duration: TimeInterval,
-        step: @escaping @MainActor (CGFloat) -> Void,
-        completion: @escaping @MainActor () -> Void
-    ) -> RunningAnimation {
-        let start = CACurrentMediaTime()
-        // Scheduled on the main run loop in `.common`, so the block is already
-        // on the main thread — `assumeIsolated` states that rather than hopping
-        // through a Task, which would deliver frames a run loop late and let the
-        // timer fire again before the last frame drew.
-        let running = RunningAnimation()
-        running.timer = Timer(timeInterval: 1.0 / 60, repeats: true) { _ in
-            MainActor.assumeIsolated {
-                let t = min(1, (CACurrentMediaTime() - start) / duration)
-                step(CGFloat(t))
-                if t >= 1 {
-                    running.timer?.invalidate()
-                    completion()
-                }
-            }
-        }
-        RunLoop.main.add(running.timer!, forMode: .common)
-        return running
-    }
-
-    /// Holds the timer so the block can stop the thing that is running it —
-    /// the block's own `Timer` argument is not main-actor isolated.
-    @MainActor
-    private final class RunningAnimation {
-        var timer: Timer?
     }
 
     /// ⌘= / ⌘- / ⌘0 on whatever has the keyboard.
@@ -1054,15 +1082,6 @@ public final class StripViewController: NSViewController {
         return first..<(last + 1)
     }
 
-    private func originOfLane(_ laneId: String, in state: StripState) -> CGFloat? {
-        var x: CGFloat = 0
-        for lane in state.lanes {
-            if lane.id == laneId { return x }
-            x += CGFloat(lane.widthPt) + Theme.borderWidth
-        }
-        return nil
-    }
-
     // MARK: - scrolling
 
     @objc private func clipViewResized() {
@@ -1171,30 +1190,68 @@ public final class StripViewController: NSViewController {
 
     /// Centre a lane and optionally flash its border — PRD §7.5's
     /// search-to-scroll, and what the sidebar does on click.
+    ///
+    /// The target comes from `StripReveal`, off the ledger's lanes, and not from
+    /// `content.frame.width`: see that type for why a view's width is the wrong
+    /// ruler at exactly the moment this matters most.
     public func reveal(laneId: String, flash: Bool) {
-        let state = store.state
-        guard let origin = originOfLane(laneId, in: state),
-              let lane = state.lanes.first(where: { $0.id == laneId })
+        guard let target = StripReveal.centred(
+            on: laneId,
+            lanes: store.state.lanes,
+            viewport: scrollView.contentView.bounds.width,
+            // The same peek the snap takes. ⌘P lands you somewhere you have
+            // never been, which is the moment "is there more that way" matters
+            // most, and a reveal that centres perfectly onto a clean edge
+            // answers it wrongly.
+            peek: CGFloat(config.lanePeekPt))
         else { return }
+        scroll(to: target, revealing: laneId, flash: flash)
+    }
 
-        let viewportWidth = scrollView.contentView.bounds.width
-        let centred = origin - (viewportWidth - CGFloat(lane.widthPt)) / 2
-        let maxX = max(0, content.frame.width - viewportWidth)
-        // The same peek the snap takes. ⌘P lands you somewhere you have never
-        // been, which is the moment "is there more that way" matters most, and a
-        // reveal that centres perfectly onto a clean edge answers it wrongly.
-        let x = LanePeek.adjust(
-            offset: min(max(0, centred), maxX),
-            viewport: viewportWidth,
-            lanes: state.lanes,
-            minimum: CGFloat(config.lanePeekPt))
-        let target = NSPoint(x: x, y: 0)
+    /// Move the strip to `target`, by whichever clock is already running.
+    ///
+    /// Three cases, and only the first is new. A lane whose column is *still
+    /// opening* hands its scroll to that column's transition, so the arrival and
+    /// the scroll are one movement rather than a sideways jolt with no cause on
+    /// screen — and, less prettily, so that the scroll is not clamped by a
+    /// document view that has not finished growing. Reduce Motion goes straight
+    /// to the answer. Everything else takes the same 0.22 s ease-out every other
+    /// transition in the strip takes; it used to take 0.25, for no reason anyone
+    /// wrote down, which is a quarter of a frame's worth of disagreement between
+    /// a lane opening and the strip moving to show it.
+    private func scroll(to target: CGFloat, revealing laneId: String, flash: Bool) {
+        let clip = scrollView.contentView
+        let from = clip.bounds.origin.x
+        // Reaching past the end of the column's own animation. Set only when the
+        // strip is actually going somewhere: a reveal that turns out to be a
+        // no-op has decided nothing, and muting the snap for half a second on
+        // the strength of it would leave a scroll the user made unsettled.
+        func holdOffTheSnap() {
+            suppressSnapUntil = CFAbsoluteTimeGetCurrent() + Motion.lane + 0.4
+        }
 
-        suppressSnapUntil = CFAbsoluteTimeGetCurrent() + 0.6
+        if transitions[laneId] != nil, laneOverrides[laneId]?.masked == true {
+            arrivalScroll = (laneId, from, target, flash)
+            holdOffTheSnap()
+            return
+        }
+
+        guard abs(target - from) > 0.5 else {
+            if flash { laneViews[laneId]?.flash() }
+            return
+        }
+        holdOffTheSnap()
+        guard !Motion.isReduced, view.window != nil else {
+            clip.setBoundsOrigin(NSPoint(x: target, y: clip.bounds.origin.y))
+            scrollView.reflectScrolledClipView(clip)
+            updateMaterialization()
+            if flash { laneViews[laneId]?.flash() }
+            return
+        }
         NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.25
+            ctx.duration = Motion.lane
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            scrollView.contentView.animator().setBoundsOrigin(target)
+            clip.animator().setBoundsOrigin(NSPoint(x: target, y: clip.bounds.origin.y))
         } completionHandler: { [weak self] in
             guard let self else { return }
             self.scrollView.reflectScrolledClipView(self.scrollView.contentView)
@@ -1251,21 +1308,12 @@ public final class StripViewController: NSViewController {
     /// that another one exists is worse than the ambiguity it fixes. The snap
     /// that follows the next scroll picks it up.
     private func ensureVisible(_ laneId: String) {
-        let state = store.state
-        guard let origin = originOfLane(laneId, in: state),
-              let lane = state.lanes.first(where: { $0.id == laneId })
+        let clip = scrollView.contentView
+        guard let target = StripReveal.minimal(
+            from: clip.bounds.origin.x, to: laneId,
+            lanes: store.state.lanes, viewport: clip.bounds.width)
         else { return }
-        let viewport = scrollView.contentView.bounds
-        let right = origin + CGFloat(lane.widthPt)
-
-        var x = viewport.origin.x
-        if origin < viewport.minX { x = origin }
-        else if right > viewport.maxX { x = right - viewport.width }
-        guard x != viewport.origin.x else { return }
-
-        suppressSnapUntil = CFAbsoluteTimeGetCurrent() + 0.6
-        scrollView.contentView.animator().setBoundsOrigin(NSPoint(x: max(0, x), y: 0))
-        scrollView.reflectScrolledClipView(scrollView.contentView)
+        scroll(to: target, revealing: laneId, flash: false)
     }
 
     // MARK: - eviction (§10.3)

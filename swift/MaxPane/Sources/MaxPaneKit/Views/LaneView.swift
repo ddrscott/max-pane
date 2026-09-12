@@ -34,6 +34,12 @@ final class LaneView: NSView {
     /// pass loses its tracking area, and the cursor stops changing halfway
     /// through a drag.
     private var dividers: [PaneDividerView] = []
+    /// A pane whose slot is still opening, and how far it has got. Purely
+    /// visual: the weights the ledger stores are untouched, so a snapshot
+    /// arriving mid-entrance re-lays the lane out without knocking it off
+    /// course. See `animatePaneViewIn`.
+    private var opening: (paneId: String, progress: CGFloat)?
+    private var openingTimer: MotionTimer?
 
     /// Dragging the right edge. Reports live during the drag and once at the end
     /// so the ledger takes one write rather than one per frame.
@@ -279,51 +285,88 @@ final class LaneView: NSView {
         }
     }
 
-    /// A pane joining the stack: the panes that were already there give up their
-    /// height and the new slot opens between them.
+    /// A pane joining the stack: its slot opens out of the seam, the panes that
+    /// were already there give up the height for it, and it fades up inside it.
     ///
-    /// What moves is deliberately *not* the new pane. A pane arriving from
-    /// ⇧⌘D is an empty shell — black text-free rectangle — so fading or sliding
-    /// it in animates nothing a person can see; the only thing on screen with
-    /// pixels in it is the pane that is making room. Watching the terminal above
-    /// shrink upward is what tells you the lane divided and where the new half
-    /// came from.
+    /// The exit is the shape to match, because a critic watching a recording
+    /// judged it good: a closing pane collapses *into* the seam over 117 ms and
+    /// you can see which one went. This is that, reversed — same seam, same
+    /// direction of travel, opposite sign.
     ///
-    /// Hidden first and shown inside the group, because that is how
-    /// `NSStackView` is asked to animate: it detaches hidden arranged subviews,
-    /// so this is a layout change from two slots to three, and
-    /// `layoutSubtreeIfNeeded` inside the group is what makes the siblings
-    /// travel rather than snap at the end.
+    /// **Why the arriving pane gets motion of its own after all.** The previous
+    /// version moved only the incumbent, reasoning that a fresh shell is a black
+    /// rectangle so animating it shows nothing. The reasoning was sound and the
+    /// result was not: `NSStackView`'s own attach animation made the incumbent
+    /// implode and reopen at half height in 167 ms while the new pane appeared
+    /// at 85% of its final size in a single frame. Nobody can read that. So the
+    /// stack no longer animates itself — `PaneSplit.opening` resolves every
+    /// frame's heights and this drives it — and the newcomer is no longer
+    /// invisible either: the seam it comes out of is lit for the length of the
+    /// entrance, and a web pane now shows a dark first-paint panel with its host
+    /// on it (`WebPaneController`) rather than nothing.
     ///
-    /// `isHidden` is back to `false` before this method returns — the animator
-    /// sets the model value immediately and animates only the presentation — so
-    /// the caller can still give the new pane the keyboard in the same turn. A
-    /// split that swallows its first keystroke would be worse than a split with
-    /// no animation at all.
+    /// Nothing is hidden at any point, so the caller can still give the new pane
+    /// the keyboard in the same turn. A split that swallows its first keystroke
+    /// would be worse than a split with no animation at all.
     func animatePaneViewIn(for paneId: String, duration: TimeInterval) {
         guard let view = paneViews[paneId] else { return }
-        view.isHidden = true
+        openingTimer?.cancel()
+        // The first frame, now: a timer's first tick is a run loop away, and the
+        // lane must never paint the finished split before the motion that
+        // explains it.
+        opening = (paneId, 0)
+        view.alphaValue = 0
+        litDivider = dividerIndex(opening: paneId)
         needsLayout = true
         layoutSubtreeIfNeeded()
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = duration
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            context.allowsImplicitAnimation = true
-            view.animator().isHidden = false
-            // As in `fadeOutPaneView`: the arriving pane's height is decided in
-            // `layout`, and nothing else invalidates it, so without this the
-            // new pane animates from nothing to nothing.
+
+        openingTimer = Motion.run(duration: duration) { [weak self, weak view] t in
+            guard let self else { return }
+            let eased = Motion.easeOut(t)
+            self.opening = (paneId, eased)
+            view?.alphaValue = eased
+            self.needsLayout = true
+            self.layoutSubtreeIfNeeded()
+        } completion: { [weak self, weak view] in
+            guard let self else { return }
+            self.opening = nil
+            self.openingTimer = nil
+            self.litDivider = nil
+            view?.alphaValue = 1
             self.needsLayout = true
             self.layoutSubtreeIfNeeded()
         }
     }
 
+    /// The seam an arriving pane comes out of: the one between it and the
+    /// neighbour that is giving up the room. For a pane joining at the top there
+    /// is no seam above it, so it comes out of the one below.
+    private func dividerIndex(opening paneId: String) -> Int? {
+        guard let index = visiblePaneIds.firstIndex(of: paneId) else { return nil }
+        return max(0, index - 1)
+    }
+
+    /// The seam an entrance is currently coming out of, lit while it runs.
+    private var litDivider: Int?
+
     /// Remove every pane view, for when the lane scrolls far enough off-screen
     /// that the strip is recycling it.
     func clearPaneViews() {
+        // Before the views go. An entrance left running would keep ticking
+        // against a lane this view no longer represents, and would hand the
+        // recycled chrome a lit seam and a half-open slot belonging to a pane
+        // that is not in it.
+        openingTimer?.cancel()
+        openingTimer = nil
+        opening = nil
+        litDivider = nil
         for (_, view) in paneViews {
             stack.removeArrangedSubview(view)
             view.removeFromSuperview()
+            // A pane controller outlives its lane view (ADR-0004) and can be
+            // parented again later; one that was mid-entrance would come back
+            // transparent, which looks like a bug in whatever brought it back.
+            view.alphaValue = 1
         }
         paneViews.removeAll()
         for (_, constraint) in heightConstraints { constraint.isActive = false }
@@ -425,7 +468,17 @@ final class LaneView: NSView {
 
         let seams = CGFloat(ids.count - 1) * PaneSplit.seam
         let available = max(0, bounds.height - Theme.laneHeaderHeight - seams)
-        let heights = PaneSplit.heights(weights: ids.map(weight(of:)), available: available)
+        let weights = ids.map(weight(of:))
+        // `available` counts the finished number of seams even mid-entrance, so
+        // the seam the new pane comes out of is drawn on the first frame rather
+        // than arriving with it. See `PaneSplit.opening`.
+        let heights: [CGFloat]
+        if let opening, let index = ids.firstIndex(of: opening.paneId) {
+            heights = PaneSplit.opening(
+                weights: weights, arriving: index, progress: opening.progress, available: available)
+        } else {
+            heights = PaneSplit.heights(weights: weights, available: available)
+        }
 
         // A pane that is not showing gets nought rather than an *inactive*
         // constraint. Activating and deactivating is a change to the constraint
@@ -475,6 +528,7 @@ final class LaneView: NSView {
             }
             offset += heights[index]
             divider.isHidden = false
+            divider.isOpening = index == litDivider
             // Centred on the gap and taller than it, so the grab area reaches a
             // few points into each neighbour. The seam it draws is still
             // exactly the gap.
@@ -493,6 +547,9 @@ final class LaneView: NSView {
             divider.frame = frame
             CATransaction.commit()
             window?.invalidateCursorRects(for: divider)
+            // The seam just moved, and a seam that moves out from under the
+            // pointer is not told so. See `pointerMayHaveLeft`.
+            divider.pointerMayHaveLeft()
             offset += PaneSplit.seam
         }
     }

@@ -109,6 +109,64 @@ enum PaneSplit {
         return exact(heights, summingTo: available)
     }
 
+    /// The heights to lay a stack out at while the pane at `arriving` is still
+    /// opening — its slot at `progress` of the height it will end up with, and
+    /// everybody else sharing what is left in the proportions they already
+    /// stood in.
+    ///
+    /// The seam count is the *finished* one throughout, which is what makes the
+    /// entrance readable: the rule appears on the first frame and the new pane's
+    /// slot opens away from it, so there is an edge the pane came out of. A seam
+    /// that arrived with the pane would have nothing to come from.
+    ///
+    /// **This exists because `NSStackView` could not be talked into it.** ⇧⌘D
+    /// used to unhide the arriving view inside an animation group and let the
+    /// stack animate its own attach. Measured frame by frame, the incumbent pane
+    /// went `[66,1411] → [554,1225] → [288,295] → [214,443] → [66,737]` — it
+    /// imploded and reopened at half height in 167 ms while the arriving pane
+    /// went from not-detected to full size in three frames. You saw the lane
+    /// blink; you could not see where the new pane came from. Every height here
+    /// is monotonic in `progress` by construction, so there is no frame in which
+    /// anything moves the wrong way.
+    static func opening(
+        weights: [Double], arriving: Int, progress: CGFloat, available: CGFloat
+    ) -> [CGFloat] {
+        let full = heights(weights: weights, available: available)
+        guard weights.indices.contains(arriving), progress < 1 else { return full }
+        // The only pane in the lane has no seam to come out of and nobody to
+        // take the room from, so there is no entrance to make: opening it
+        // against the lane itself would be a pane growing out of its own
+        // header, which says nothing and walks a live terminal down to no rows
+        // on the way.
+        guard weights.count > 1 else { return full }
+
+        // **A pane never exists at a height it could not be dragged to.** The
+        // entrance opens from `minPaneHeight` rather than from nothing, and that
+        // is not a rounding choice: a live view at 654 × 0 is what Ghostty
+        // refuses with `surface rebuild skipped: invalid view size=654.00x0.00`,
+        // measured in this app's own log during a ⇧⌘D. It costs 72 pt of the
+        // first frame out of the ~400 the slot travels, and buys a stack in
+        // which no pane is ever a degenerate rectangle with a live terminal
+        // inside it.
+        let slot = min(full[arriving], max(minPaneHeight, full[arriving] * max(0, progress))).rounded()
+        var rest = weights
+        rest.remove(at: arriving)
+        // The floor is deliberately not honoured for the incumbents mid-opening.
+        // `heights` will refuse to squeeze them below 72 pt and the sum would
+        // then exceed the lane — a constraint conflict, in a stack pinned top
+        // and bottom, for the two tenths of a second nobody is dragging
+        // anything. Proportional is the honest rendering of a lane that is
+        // momentarily too short.
+        let room = max(0, available - slot)
+        let total = rest.map { $0.isFinite && $0 > 0 ? $0 : 1 }.reduce(0, +)
+        var out = rest.map { w -> CGFloat in
+            let sane = w.isFinite && w > 0 ? w : 1
+            return total > 0 ? room * CGFloat(sane / total) : room / CGFloat(rest.count)
+        }
+        out.insert(slot, at: arriving)
+        return exact(out, summingTo: available)
+    }
+
     /// The weights after dragging the seam below pane `divider` by `delta`
     /// points, positive meaning the pane *above* the seam grows.
     ///
@@ -201,6 +259,14 @@ final class PaneDividerView: NSView {
     /// ledger takes one write per drag rather than one per frame.
     var onDrag: ((CGFloat, Bool) -> Void)?
 
+    /// True for the length of a pane's entrance out of this seam.
+    ///
+    /// The same lit rule the pointer gets, for the same reason and with the same
+    /// lifetime — a momentary "this is where that came from" that is gone in
+    /// 160 ms. It does not break the accent's two reserved meanings: focus and
+    /// BLOCKED are *states a lane is in*, and this outlives nothing.
+    var isOpening = false { didSet { if isOpening != oldValue { needsDisplay = true } } }
+
     private var lastY: CGFloat = 0
     private var tracking: NSTrackingArea?
     private var hovering = false { didSet { if hovering != oldValue { needsDisplay = true } } }
@@ -237,6 +303,26 @@ final class PaneDividerView: NSView {
     override func cursorUpdate(with event: NSEvent) { NSCursor.resizeUpDown.set() }
     override func mouseEntered(with event: NSEvent) { hovering = true }
     override func mouseExited(with event: NSEvent) { hovering = false }
+
+    /// Re-derive `hovering` from where the pointer actually is, for the seams
+    /// that have just been moved.
+    ///
+    /// A tracking area answers *the pointer crossed this boundary*, and AppKit
+    /// is only reliable about that when the thing that moved is the pointer.
+    /// When the **view** travels under a stationary pointer it delivers the
+    /// `mouseEntered` and then, often, no matching `mouseExited` at all — so the
+    /// seam stays lit for the rest of the session. Measured: a ⇧⌘D whose seam
+    /// swept 340 pt past a parked cursor left an orange rule across the lane
+    /// two and a half seconds later, and it was still there after the next
+    /// split. A drag or a window resize could always do this; the entrance does
+    /// it every time, which is what turned a latent bug into a visible one.
+    ///
+    /// `mouseLocationOutsideOfEventStream` rather than the last event's
+    /// location: this is asked from inside `layout`, where there is no event.
+    func pointerMayHaveLeft() {
+        guard let window, !dragging else { return }
+        hovering = bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
+    }
 
     override func mouseDown(with event: NSEvent) {
         // Window coordinates, not our own: this view moves as the panes resize,
@@ -282,7 +368,7 @@ final class PaneDividerView: NSView {
         Theme.stripBackground.setFill()
         seam.fill()
 
-        let lit = hovering || dragging
+        let lit = hovering || dragging || isOpening
         // Under the pointer the rules thicken as well as changing colour. Hue
         // is the one channel a colour-blind reader may not have, and this
         // affordance has to answer "can I grab this" *before* the press.
