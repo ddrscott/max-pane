@@ -1,6 +1,19 @@
 import AppKit
 import LanedCore
 
+/// A panel with square corners.
+///
+/// macOS gives every `.titled` window rounded chrome regardless of what its
+/// content layer says, and a rounded card is the one thing the house style
+/// prohibits outright. Borderless gets the square edge back; the two overrides
+/// get back the focus behaviour `.titled` would otherwise have provided, without
+/// which the search field never becomes first responder and the palette is
+/// decorative.
+final class SquarePanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
 /// A floating list over the strip, used by both ⌘P (search) and ⌘O (attach a
 /// session). Both are "type, filter, pick one, dismiss".
 ///
@@ -29,13 +42,21 @@ class PaletteController: NSWindowController, NSTextFieldDelegate, NSWindowDelega
     private var whileOpen: PaletteController?
 
     init(placeholder: String, size: NSSize = NSSize(width: 720, height: 420)) {
-        let panel = NSPanel(
+        let panel = SquarePanel(
             contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel],
+            // Borderless, because a `.titled` panel gets macOS's rounded window
+            // chrome no matter what its content layer says — and a 10pt rounded
+            // card is precisely the house style's one prohibition. `canBecomeKey`
+            // is overridden below to get back the focus behaviour `.titled`
+            // would have given us for free.
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: false)
-        panel.titleVisibility = .hidden
-        panel.titlebarAppearsTransparent = true
         panel.isMovableByWindowBackground = true
+        panel.hasShadow = true
+        // A borderless window is transparent by default, so the square edge has
+        // to be painted rather than inherited.
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
         panel.level = .floating
         panel.hidesOnDeactivate = true
         super.init(window: panel)
