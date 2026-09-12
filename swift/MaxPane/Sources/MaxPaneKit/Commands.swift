@@ -29,6 +29,9 @@ public enum Command: String, CaseIterable {
     case claimSession
     case showMemory
     case pairWithNext
+    case exportStrip
+    case importStrip
+    case toggleSpan
 
     public var title: String {
         switch self {
@@ -55,6 +58,9 @@ public enum Command: String, CaseIterable {
         case .claimSession: return "Resize Session to This Lane…"
         case .showMemory: return "Memory"
         case .pairWithNext: return "Pair With Lane to the Right"
+        case .exportStrip: return "Export Strip…"
+        case .importStrip: return "Import Strip…"
+        case .toggleSpan: return "Span Lane (2× Width)"
         }
     }
 
@@ -90,6 +96,9 @@ public enum Command: String, CaseIterable {
         case .claimSession:    return ("r", [.command, .control, .shift])
         case .showMemory:      return ("i", [.command, .option])
         case .pairWithNext:    return ("p", [.command, .option])
+        case .exportStrip:     return ("s", [.command, .shift])
+        case .importStrip:     return ("o", [.command, .shift])
+        case .toggleSpan:      return ("\\", [.command])
         }
     }
 
@@ -104,6 +113,8 @@ public enum Command: String, CaseIterable {
         case .claimSession: return .file
         case .showMemory: return .view
         case .pairWithNext: return .navigate
+        case .exportStrip, .importStrip: return .file
+        case .toggleSpan: return .view
         }
     }
 }

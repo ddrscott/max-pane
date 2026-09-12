@@ -28,11 +28,13 @@ final class LaneView: NSView {
     var onHeaderDrag: ((_ x: CGFloat, _ final: Bool) -> Void)?
 
     private var widthConstraint: NSLayoutConstraint!
-    private var bounds_: ClosedRange<UInt32> = 420...900
+    /// A spanned lane may be twice as wide (PRD §13 Phase 3), so this is per
+    /// lane rather than a constant.
+    var widthBounds: ClosedRange<UInt32> = 420...900
 
     init(lane: Lane, widthBounds: ClosedRange<UInt32>) {
         self.laneId = lane.id
-        self.bounds_ = widthBounds
+        self.widthBounds = widthBounds
         super.init(frame: .zero)
 
         wantsLayer = true
@@ -76,8 +78,8 @@ final class LaneView: NSView {
 
         resizeHandle.onDrag = { [weak self] delta, final in
             guard let self else { return }
-            let next = UInt32(max(Double(self.bounds_.lowerBound),
-                                  min(Double(self.bounds_.upperBound),
+            let next = UInt32(max(Double(self.widthBounds.lowerBound),
+                                  min(Double(self.widthBounds.upperBound),
                                       Double(self.widthConstraint.constant) + delta)))
             self.widthConstraint.constant = CGFloat(next)
             self.onResize?(next, final)

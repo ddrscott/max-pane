@@ -133,6 +133,11 @@ public final class StripStore {
         publish(try core.setLaneTitle(laneId: laneId, title: title))
     }
 
+    /// PRD §13 Phase 3's landscape exception. 1 or 2; the core clamps.
+    func setLaneSpan(_ laneId: String, _ span: UInt32) throws {
+        publish(try core.setLaneSpan(laneId: laneId, span: span))
+    }
+
     func setPinned(_ laneId: String, _ pinned: Bool) throws {
         publish(try core.setPinned(laneId: laneId, pinned: pinned))
     }
@@ -185,6 +190,16 @@ public final class StripStore {
     var isGathered: Bool { state.gatherFilter != nil }
 
     // MARK: - search (§7.5)
+
+    // MARK: - export / import (§13 Phase 3)
+
+    /// The whole strip as JSON, whatever the gather filter currently shows.
+    func exportStrip() throws -> String { try core.exportStrip() }
+
+    /// Append an exported strip to the right-hand end of this one.
+    func importStrip(_ json: String) throws {
+        publish(try core.importStrip(json: json))
+    }
 
     // MARK: - pairing (§6, §13 Phase 2)
 

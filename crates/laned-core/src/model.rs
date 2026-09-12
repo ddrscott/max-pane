@@ -67,6 +67,14 @@ pub struct Lane {
     pub last_focus_at: i64,
     /// Pinned lanes are never evicted.
     pub pinned: bool,
+    /// How many lane-widths this lane may occupy. 1 almost always.
+    ///
+    /// PRD §13 Phase 3's escape hatch for "the rare landscape site" — a wide
+    /// dashboard or a diff that genuinely cannot be read in portrait. It
+    /// multiplies the maximum width for this lane and nothing else, and the
+    /// default of 1 is what keeps §1's invariant true everywhere the user has
+    /// not deliberately opted out.
+    pub span: u32,
     /// Top-to-bottom stack.
     pub panes: Vec<Pane>,
 }

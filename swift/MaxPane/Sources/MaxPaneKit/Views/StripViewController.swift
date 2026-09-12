@@ -214,6 +214,7 @@ public final class StripViewController: NSViewController {
             guard isFinal, let self else { return }
             try? self.store.setLaneWidth(lane.id, width)
         }
+        laneView.widthBounds = config.widthRange.lowerBound...(config.laneMaxPt * max(lane.span, 1))
         laneView.onHeaderDrag = { [weak self] x, isFinal in
             self?.handleLaneDrag(laneId: lane.id, toX: x, isFinal: isFinal)
         }

@@ -643,6 +643,15 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func createLane(placement: Placement, kind: PaneKind, relaySessionId: String?, url: String?, inheritTagFromLane: String?) throws  -> StripState
     
     /**
+     * The whole strip as JSON. Order, widths, titles, tags, URLs, and which
+     * Relay session each terminal was on.
+     *
+     * Not a ledger backup: ids are not exported, so importing into a machine
+     * that already has a strip merges rather than collides.
+     */
+    func exportStrip() throws  -> String
+    
+    /**
      * [`Core::note_focus`], plus the snapshot. Use it when focus was a side
      * effect of something structural, like search-to-scroll.
      */
@@ -653,6 +662,20 @@ public protocol CoreProtocol: AnyObject, Sendable {
      * A filter over the snapshot; it writes nothing.
      */
     func gather(projectRoot: String) throws  -> StripState
+    
+    /**
+     * Append an exported strip to the right-hand end of this one.
+     *
+     * Appends rather than replaces, because the destructive version of this is
+     * a thing the user can build out of it (export, close everything, import)
+     * and the safe version is not recoverable from the destructive one.
+     *
+     * pty panes come back attached to whatever session id they had. On another
+     * machine that session will not exist, and the lane renders "reconnecting"
+     * with its ordinal and tag intact — which is the same thing that happens
+     * when Relay is down (PRD §11).
+     */
+    func importStrip(json: String) throws  -> StripState
     
     /**
      * One lane, for when the shell knows exactly what changed. Costs what a
@@ -734,6 +757,17 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func revision()  -> UInt64
     
     func search(query: String, limit: UInt32) throws  -> [SearchHit]
+    
+    /**
+     * How many lane-widths a lane may occupy (PRD §13 Phase 3).
+     *
+     * Clamped to 1..=2. §1's invariant is that a lane is a portrait column, and
+     * "2× for the rare landscape site" is the whole of the exception — there is
+     * no span 3. Narrowing back to 1 brings the width back inside the normal
+     * bound at the same time, so a lane cannot be left wider than a lane is
+     * allowed to be.
+     */
+    func setLaneSpan(laneId: String, span: UInt32) throws  -> StripState
     
     func setLaneTitle(laneId: String, title: String?) throws  -> StripState
     
@@ -915,6 +949,22 @@ open func createLane(placement: Placement, kind: PaneKind, relaySessionId: Strin
 }
     
     /**
+     * The whole strip as JSON. Order, widths, titles, tags, URLs, and which
+     * Relay session each terminal was on.
+     *
+     * Not a ledger backup: ids are not exported, so importing into a machine
+     * that already has a strip merges rather than collides.
+     */
+open func exportStrip()throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_export_strip(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * [`Core::note_focus`], plus the snapshot. Use it when focus was a side
      * effect of something structural, like search-to-scroll.
      */
@@ -938,6 +988,28 @@ open func gather(projectRoot: String)throws  -> StripState  {
     uniffi_laned_core_fn_method_core_gather(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(projectRoot),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Append an exported strip to the right-hand end of this one.
+     *
+     * Appends rather than replaces, because the destructive version of this is
+     * a thing the user can build out of it (export, close everything, import)
+     * and the safe version is not recoverable from the destructive one.
+     *
+     * pty panes come back attached to whatever session id they had. On another
+     * machine that session will not exist, and the lane renders "reconnecting"
+     * with its ordinal and tag intact — which is the same thing that happens
+     * when Relay is down (PRD §11).
+     */
+open func importStrip(json: String)throws  -> StripState  {
+    return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_import_strip(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(json),uniffiCallStatus
     )
 })
 }
@@ -1136,6 +1208,26 @@ open func search(query: String, limit: UInt32)throws  -> [SearchHit]  {
             self.uniffiCloneHandle(),
         FfiConverterString.lower(query),
         FfiConverterUInt32.lower(limit),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * How many lane-widths a lane may occupy (PRD §13 Phase 3).
+     *
+     * Clamped to 1..=2. §1's invariant is that a lane is a portrait column, and
+     * "2× for the rare landscape site" is the whole of the exception — there is
+     * no span 3. Narrowing back to 1 brings the width back inside the normal
+     * bound at the same time, so a lane cannot be left wider than a lane is
+     * allowed to be.
+     */
+open func setLaneSpan(laneId: String, span: UInt32)throws  -> StripState  {
+    return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_set_lane_span(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(laneId),
+        FfiConverterUInt32.lower(span),uniffiCallStatus
     )
 })
 }
@@ -1341,6 +1433,16 @@ public struct Lane: Equatable, Hashable {
      */
     public var pinned: Bool
     /**
+     * How many lane-widths this lane may occupy. 1 almost always.
+     *
+     * PRD §13 Phase 3's escape hatch for "the rare landscape site" — a wide
+     * dashboard or a diff that genuinely cannot be read in portrait. It
+     * multiplies the maximum width for this lane and nothing else, and the
+     * default of 1 is what keeps §1's invariant true everywhere the user has
+     * not deliberately opted out.
+     */
+    public var span: UInt32
+    /**
      * Top-to-bottom stack.
      */
     public var panes: [Pane]
@@ -1364,6 +1466,15 @@ public struct Lane: Equatable, Hashable {
          * Pinned lanes are never evicted.
          */pinned: Bool, 
         /**
+         * How many lane-widths this lane may occupy. 1 almost always.
+         *
+         * PRD §13 Phase 3's escape hatch for "the rare landscape site" — a wide
+         * dashboard or a diff that genuinely cannot be read in portrait. It
+         * multiplies the maximum width for this lane and nothing else, and the
+         * default of 1 is what keeps §1's invariant true everywhere the user has
+         * not deliberately opted out.
+         */span: UInt32, 
+        /**
          * Top-to-bottom stack.
          */panes: [Pane]) {
         self.id = id
@@ -1375,6 +1486,7 @@ public struct Lane: Equatable, Hashable {
         self.createdAt = createdAt
         self.lastFocusAt = lastFocusAt
         self.pinned = pinned
+        self.span = span
         self.panes = panes
     }
 
@@ -1403,6 +1515,7 @@ public struct FfiConverterTypeLane: FfiConverterRustBuffer {
                 createdAt: FfiConverterInt64.read(from: &buf), 
                 lastFocusAt: FfiConverterInt64.read(from: &buf), 
                 pinned: FfiConverterBool.read(from: &buf), 
+                span: FfiConverterUInt32.read(from: &buf), 
                 panes: FfiConverterSequenceTypePane.read(from: &buf)
         )
     }
@@ -1417,6 +1530,7 @@ public struct FfiConverterTypeLane: FfiConverterRustBuffer {
         FfiConverterInt64.write(value.createdAt, into: &buf)
         FfiConverterInt64.write(value.lastFocusAt, into: &buf)
         FfiConverterBool.write(value.pinned, into: &buf)
+        FfiConverterUInt32.write(value.span, into: &buf)
         FfiConverterSequenceTypePane.write(value.panes, into: &buf)
     }
 }
@@ -1787,6 +1901,151 @@ public func FfiConverterTypePaneFootprint_lift(_ buf: RustBuffer) throws -> Pane
 #endif
 public func FfiConverterTypePaneFootprint_lower(_ value: PaneFootprint) -> RustBuffer {
     return FfiConverterTypePaneFootprint.lower(value)
+}
+
+
+/**
+ * One lane from an exported strip, ready to be re-created.
+ */
+public struct PortableLane: Equatable, Hashable {
+    public var widthPt: UInt32
+    public var pinned: Bool
+    /**
+     * 1 unless the user widened this lane for landscape content.
+     */
+    public var span: UInt32
+    public var title: String?
+    public var projectRoot: String?
+    public var projectSource: ProjectSource
+    public var panes: [PortablePane]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(widthPt: UInt32, pinned: Bool, 
+        /**
+         * 1 unless the user widened this lane for landscape content.
+         */span: UInt32, title: String?, projectRoot: String?, projectSource: ProjectSource, panes: [PortablePane]) {
+        self.widthPt = widthPt
+        self.pinned = pinned
+        self.span = span
+        self.title = title
+        self.projectRoot = projectRoot
+        self.projectSource = projectSource
+        self.panes = panes
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PortableLane: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePortableLane: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PortableLane {
+        return
+            try PortableLane(
+                widthPt: FfiConverterUInt32.read(from: &buf), 
+                pinned: FfiConverterBool.read(from: &buf), 
+                span: FfiConverterUInt32.read(from: &buf), 
+                title: FfiConverterOptionString.read(from: &buf), 
+                projectRoot: FfiConverterOptionString.read(from: &buf), 
+                projectSource: FfiConverterTypeProjectSource.read(from: &buf), 
+                panes: FfiConverterSequenceTypePortablePane.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PortableLane, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.widthPt, into: &buf)
+        FfiConverterBool.write(value.pinned, into: &buf)
+        FfiConverterUInt32.write(value.span, into: &buf)
+        FfiConverterOptionString.write(value.title, into: &buf)
+        FfiConverterOptionString.write(value.projectRoot, into: &buf)
+        FfiConverterTypeProjectSource.write(value.projectSource, into: &buf)
+        FfiConverterSequenceTypePortablePane.write(value.panes, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePortableLane_lift(_ buf: RustBuffer) throws -> PortableLane {
+    return try FfiConverterTypePortableLane.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePortableLane_lower(_ value: PortableLane) -> RustBuffer {
+    return FfiConverterTypePortableLane.lower(value)
+}
+
+
+public struct PortablePane: Equatable, Hashable {
+    public var kind: PaneKind
+    public var relaySessionId: String?
+    public var url: String?
+    public var scrollY: Double?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: PaneKind, relaySessionId: String?, url: String?, scrollY: Double?) {
+        self.kind = kind
+        self.relaySessionId = relaySessionId
+        self.url = url
+        self.scrollY = scrollY
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PortablePane: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePortablePane: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PortablePane {
+        return
+            try PortablePane(
+                kind: FfiConverterTypePaneKind.read(from: &buf), 
+                relaySessionId: FfiConverterOptionString.read(from: &buf), 
+                url: FfiConverterOptionString.read(from: &buf), 
+                scrollY: FfiConverterOptionDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PortablePane, into buf: inout [UInt8]) {
+        FfiConverterTypePaneKind.write(value.kind, into: &buf)
+        FfiConverterOptionString.write(value.relaySessionId, into: &buf)
+        FfiConverterOptionString.write(value.url, into: &buf)
+        FfiConverterOptionDouble.write(value.scrollY, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePortablePane_lift(_ buf: RustBuffer) throws -> PortablePane {
+    return try FfiConverterTypePortablePane.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePortablePane_lower(_ value: PortablePane) -> RustBuffer {
+    return FfiConverterTypePortablePane.lower(value)
 }
 
 
@@ -2842,6 +3101,31 @@ fileprivate struct FfiConverterSequenceTypePaneFootprint: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypePortablePane: FfiConverterRustBuffer {
+    typealias SwiftType = [PortablePane]
+
+    public static func write(_ value: [PortablePane], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePortablePane.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PortablePane] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PortablePane]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePortablePane.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeSearchHit: FfiConverterRustBuffer {
     typealias SwiftType = [SearchHit]
 
@@ -2891,10 +3175,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_create_lane() != 9560) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_export_strip() != 42494) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_focus_pane() != 18867) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_gather() != 60520) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_import_strip() != 55913) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_lane() != 31148) {
@@ -2937,6 +3227,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_search() != 36861) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_set_lane_span() != 29040) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_set_lane_title() != 42488) {

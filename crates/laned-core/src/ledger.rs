@@ -7,7 +7,10 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use std::path::Path;
 
 /// Applied in order on open. Never edit a file that has shipped.
-const MIGRATIONS: &[(&str, &str)] = &[("0001_initial", include_str!("../migrations/0001_initial.sql"))];
+const MIGRATIONS: &[(&str, &str)] = &[
+    ("0001_initial", include_str!("../migrations/0001_initial.sql")),
+    ("0002_lane_span", include_str!("../migrations/0002_lane_span.sql")),
+];
 
 pub struct Ledger {
     conn: Connection,
@@ -69,7 +72,7 @@ impl Ledger {
     pub fn lanes(&self) -> Result<Vec<Lane>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, ordinal, width_pt, title, project_root, project_source,
-                    created_at, last_focus_at, pinned
+                    created_at, last_focus_at, pinned, span
              FROM lane ORDER BY ordinal ASC",
         )?;
         let mut lanes: Vec<Lane> = stmt.query_map([], row_to_lane)?.collect::<rusqlite::Result<_>>()?;
@@ -99,7 +102,7 @@ impl Ledger {
             .conn
             .query_row(
                 "SELECT id, ordinal, width_pt, title, project_root, project_source,
-                        created_at, last_focus_at, pinned FROM lane WHERE id = ?1",
+                        created_at, last_focus_at, pinned, span FROM lane WHERE id = ?1",
                 [id],
                 row_to_lane,
             )
@@ -178,8 +181,8 @@ impl Ledger {
     pub fn insert_lane(&self, lane: &Lane) -> Result<()> {
         self.conn.execute(
             "INSERT INTO lane (id, ordinal, width_pt, title, project_root, project_source,
-                               created_at, last_focus_at, pinned)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                               created_at, last_focus_at, pinned, span)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 lane.id,
                 lane.ordinal,
@@ -190,8 +193,14 @@ impl Ledger {
                 lane.created_at,
                 lane.last_focus_at,
                 lane.pinned as i32,
+                lane.span,
             ],
         )?;
+        Ok(())
+    }
+
+    pub fn set_span(&self, lane_id: &str, span: u32) -> Result<()> {
+        self.conn.execute("UPDATE lane SET span = ?2 WHERE id = ?1", params![lane_id, span])?;
         Ok(())
     }
 
@@ -383,6 +392,7 @@ fn row_to_lane(r: &Row) -> rusqlite::Result<Lane> {
         created_at: r.get(6)?,
         last_focus_at: r.get(7)?,
         pinned: r.get::<_, i64>(8)? != 0,
+        span: r.get::<_, i64>(9)? as u32,
         panes: Vec::new(),
     })
 }

@@ -547,3 +547,218 @@ fn pairing_does_not_affect_gather() {
     let gathered = core.gather("/src/foo".into()).unwrap();
     assert_eq!(gathered.lanes.len(), 1);
 }
+
+/// §13 Phase 3 — export and import of a strip, through the real ledger.
+#[test]
+fn a_strip_exports_and_imports_through_the_ledger() {
+    let source = Core::open_in_memory().unwrap();
+    let mut ids = Vec::new();
+    for i in 0..4 {
+        let kind = if i % 2 == 0 { PaneKind::Web } else { PaneKind::Pty };
+        let st = source
+            .create_lane(
+                Placement::End,
+                kind,
+                if kind == PaneKind::Pty { Some(format!("sess{i}")) } else { None },
+                if kind == PaneKind::Web { Some(format!("https://example.com/{i}")) } else { None },
+                None,
+            )
+            .unwrap();
+        let id = st.lanes.last().unwrap().id.clone();
+        source.set_lane_title(id.clone(), Some(format!("lane {i}"))).unwrap();
+        source.set_manual_tag(id.clone(), Some(format!("/src/p{i}"))).unwrap();
+        source.set_lane_width(id.clone(), 500 + i * 60).unwrap();
+        ids.push(id);
+    }
+    source.set_pinned(ids[2].clone(), true).unwrap();
+
+    let json = source.export_strip().unwrap();
+
+    // A fresh machine.
+    let destination = Core::open_in_memory().unwrap();
+    let st = destination.import_strip(json).unwrap();
+
+    assert_eq!(st.lanes.len(), 4);
+    for (i, lane) in st.lanes.iter().enumerate() {
+        assert_eq!(lane.title.as_deref(), Some(format!("lane {i}").as_str()));
+        assert_eq!(lane.project_root.as_deref(), Some(format!("/src/p{i}").as_str()));
+        assert_eq!(lane.width_pt, 500 + i as u32 * 60);
+        assert_eq!(lane.pinned, i == 2);
+        // Ids are regenerated, so a strip can be imported next to an existing one.
+        assert_ne!(lane.id, ids[i]);
+    }
+    assert_eq!(st.lanes[1].panes[0].relay_session_id.as_deref(), Some("sess1"));
+    assert_eq!(st.lanes[0].panes[0].url.as_deref(), Some("https://example.com/0"));
+    assert!(st.lanes.windows(2).all(|w| w[0].ordinal < w[1].ordinal));
+}
+
+/// Importing appends, so a strip can be merged into a machine that already has
+/// one without losing either.
+#[test]
+fn importing_appends_rather_than_replacing() {
+    let source = Core::open_in_memory().unwrap();
+    source.create_lane(Placement::End, PaneKind::Web, None, Some("https://imported".into()), None).unwrap();
+    let json = source.export_strip().unwrap();
+
+    let destination = Core::open_in_memory().unwrap();
+    destination
+        .create_lane(Placement::End, PaneKind::Web, None, Some("https://existing".into()), None)
+        .unwrap();
+
+    let st = destination.import_strip(json).unwrap();
+    let urls: Vec<&str> = st.lanes.iter().filter_map(|l| l.panes[0].url.as_deref()).collect();
+    assert_eq!(urls, vec!["https://existing", "https://imported"]);
+}
+
+/// Exporting while gathered gives the whole strip, not the view — the view is a
+/// filter, and nobody means "export three of my forty lanes" by pressing ⌘G.
+#[test]
+fn export_ignores_the_gather_filter() {
+    let core = Core::open_in_memory().unwrap();
+    for i in 0..4 {
+        let st = core
+            .create_lane(Placement::End, PaneKind::Web, None, Some(format!("https://{i}")), None)
+            .unwrap();
+        let id = st.lanes.last().unwrap().id.clone();
+        core.set_manual_tag(id, Some(if i % 2 == 0 { "/a".into() } else { "/b".into() })).unwrap();
+    }
+
+    core.gather("/a".into()).unwrap();
+    assert_eq!(core.state().unwrap().lanes.len(), 2, "gather should be filtering");
+
+    let destination = Core::open_in_memory().unwrap();
+    let st = destination.import_strip(core.export_strip().unwrap()).unwrap();
+    assert_eq!(st.lanes.len(), 4, "export gave the view rather than the strip");
+}
+
+/// A corrupt or foreign file is refused, and refusing leaves the strip alone.
+#[test]
+fn a_bad_import_changes_nothing() {
+    let core = Core::open_in_memory().unwrap();
+    core.create_lane(Placement::End, PaneKind::Web, None, Some("https://kept".into()), None).unwrap();
+    let before = core.state().unwrap();
+
+    for bad in ["", "{}", "not json", r#"{"format":"something-else","lanes":[]}"#] {
+        assert!(core.import_strip(bad.into()).is_err(), "accepted {bad:?}");
+    }
+
+    let after = core.state().unwrap();
+    assert_eq!(after.lanes.len(), before.lanes.len());
+    assert_eq!(after.lanes[0].id, before.lanes[0].id);
+}
+
+/// An imported width outside the allowed range is clamped, not trusted.
+#[test]
+fn imported_widths_are_clamped() {
+    let json = r#"{"format":"maxpane.strip","version":1,"lanes":[
+        {"width_pt":99999,"panes":[{"kind":"web","url":"https://wide"}]},
+        {"width_pt":1,"panes":[{"kind":"web","url":"https://narrow"}]}
+    ]}"#;
+    let core = Core::open_in_memory().unwrap();
+    let st = core.import_strip(json.into()).unwrap();
+    assert_eq!(st.lanes[0].width_pt, laned_core::LANE_MAX_PT);
+    assert_eq!(st.lanes[1].width_pt, laned_core::LANE_MIN_PT);
+}
+
+/// §13 Phase 3 — lane spanning. A deliberate, bounded exception to §1's
+/// portrait invariant, so the thing to prove is that it stays bounded.
+#[test]
+fn a_spanned_lane_may_be_twice_as_wide_and_no_wider() {
+    let core = Core::open_in_memory().unwrap();
+    let st = core
+        .create_lane(Placement::End, PaneKind::Web, None, Some("https://dashboard".into()), None)
+        .unwrap();
+    let lane = st.lanes[0].id.clone();
+
+    // Span 1 is the default and holds the normal bound.
+    assert_eq!(st.lanes[0].span, 1);
+    assert_eq!(core.set_lane_width(lane.clone(), 99_999).unwrap().lanes[0].width_pt, laned_core::LANE_MAX_PT);
+
+    // Span 2 doubles the ceiling.
+    let st = core.set_lane_span(lane.clone(), 2).unwrap();
+    assert_eq!(st.lanes[0].span, 2);
+    assert_eq!(
+        core.set_lane_width(lane.clone(), 99_999).unwrap().lanes[0].width_pt,
+        laned_core::LANE_MAX_PT * 2
+    );
+
+    // And no further: "2x for the rare landscape site" is the whole exception.
+    let st = core.set_lane_span(lane.clone(), 5).unwrap();
+    assert_eq!(st.lanes[0].span, 2, "span must stay inside 1..=2");
+
+    // Narrowing back to 1 brings the width back with it, so a lane cannot be
+    // left wider than a lane is allowed to be.
+    let st = core.set_lane_span(lane, 1).unwrap();
+    assert_eq!(st.lanes[0].span, 1);
+    assert_eq!(st.lanes[0].width_pt, laned_core::LANE_MAX_PT);
+}
+
+#[test]
+fn span_survives_a_restart_and_an_export() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("ledger.db").to_string_lossy().into_owned();
+
+    let json = {
+        let core = Core::open(db.clone()).unwrap();
+        let st =
+            core.create_lane(Placement::End, PaneKind::Web, None, Some("https://wide".into()), None).unwrap();
+        let lane = st.lanes[0].id.clone();
+        core.set_lane_span(lane.clone(), 2).unwrap();
+        core.set_lane_width(lane, 1800).unwrap();
+        core.export_strip().unwrap()
+    };
+
+    let core = Core::open(db).unwrap();
+    let st = core.state().unwrap();
+    assert_eq!(st.lanes[0].span, 2);
+    assert_eq!(st.lanes[0].width_pt, laned_core::LANE_MAX_PT * 2);
+
+    let elsewhere = Core::open_in_memory().unwrap();
+    let st = elsewhere.import_strip(json).unwrap();
+    assert_eq!(st.lanes[0].span, 2, "span did not travel with the export");
+    assert_eq!(st.lanes[0].width_pt, laned_core::LANE_MAX_PT * 2);
+}
+
+/// Migration 0002 runs against a ledger written before `span` existed.
+#[test]
+fn an_old_ledger_gains_span_without_losing_anything() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ledger.db");
+
+    // A ledger at schema 0001, written by hand the way the old code would have.
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(include_str!("../migrations/0001_initial.sql")).unwrap();
+        conn.execute(
+            "CREATE TABLE schema_migration (name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO schema_migration (name, applied_at) VALUES ('0001_initial', 0)", [])
+            .unwrap();
+        conn.execute(
+            "INSERT INTO lane (id, ordinal, width_pt, title, project_root, project_source,
+                               created_at, last_focus_at, pinned)
+             VALUES ('old', 0.0, 700, 'from before', '/src/old', 'manual', 1, 2, 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO pane (id, lane_id, position, kind, url, state)
+             VALUES ('oldpane', 'old', 0, 'web', 'https://old', 'live')",
+            [],
+        )
+        .unwrap();
+    }
+
+    let core = Core::open(path.to_string_lossy().into_owned()).unwrap();
+    let st = core.state().unwrap();
+    assert_eq!(st.lanes.len(), 1);
+    assert_eq!(st.lanes[0].id, "old");
+    assert_eq!(st.lanes[0].title.as_deref(), Some("from before"));
+    assert_eq!(st.lanes[0].project_root.as_deref(), Some("/src/old"));
+    assert_eq!(st.lanes[0].width_pt, 700);
+    assert!(st.lanes[0].pinned);
+    assert_eq!(st.lanes[0].span, 1, "existing lanes must default to span 1");
+    assert_eq!(st.lanes[0].panes[0].url.as_deref(), Some("https://old"));
+}

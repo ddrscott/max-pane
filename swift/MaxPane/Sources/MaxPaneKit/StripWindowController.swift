@@ -1,5 +1,6 @@
 import AppKit
 import LanedCore
+import UniformTypeIdentifiers
 
 /// The one window. PRD §3 rules out multi-window and multi-display for v1, and
 /// §5.2 wants it fullscreen with the menu bar auto-hidden.
@@ -118,7 +119,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         case .pairWithNext:
             return pairCandidates() != nil
         case .closePane, .closeLane, .splitDown, .togglePinned,
-             .moveLaneLeft, .moveLaneRight, .widenLane, .narrowLane:
+             .moveLaneLeft, .moveLaneRight, .widenLane, .narrowLane, .toggleSpan:
             return store.focusedLane != nil
         default:
             return true
@@ -212,6 +213,25 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .pairWithNext:
                 try pairFocusedWithNeighbour()
+
+            case .exportStrip:
+                exportStrip()
+
+            case .importStrip:
+                importStrip()
+
+            case .toggleSpan:
+                // §1's invariant is that a lane is a portrait column; §13 Phase 3
+                // allows one deliberate exception at 2×, for content that
+                // genuinely cannot be read in portrait.
+                if let lane = focusedLane {
+                    try store.setLaneSpan(lane.id, lane.span == 1 ? 2 : 1)
+                    if lane.span == 1 {
+                        // Widening is only useful if the lane actually takes the
+                        // room, so give it to the new ceiling.
+                        try store.setLaneWidth(lane.id, config.laneMaxPt * 2)
+                    }
+                }
             }
         } catch {
             showError(error)
@@ -279,6 +299,47 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return "https://duckduckgo.com/?q=\(q)"
         }
         return "https://\(trimmed)"
+    }
+
+    /// Write the strip somewhere (§13 Phase 3). Useful between machines, and
+    /// more useful during the trial as a copy of a layout that took days to
+    /// arrange, taken before doing something that might disturb it.
+    private func exportStrip() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "strip-\(Self.dateStamp()).json"
+        panel.allowedContentTypes = [.json]
+        panel.message = "The whole strip: order, widths, titles, tags and URLs."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try store.exportStrip().write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            showError(error)
+        }
+    }
+
+    /// Read a strip in, appended to the right-hand end. Appending rather than
+    /// replacing because the user can build "replace" out of it, and cannot
+    /// build "append" out of "replace".
+    private func importStrip() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.message = "Lanes are added to the right-hand end of the strip."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try store.importStrip(String(contentsOf: url, encoding: .utf8))
+            if let last = store.state.lanes.last?.id {
+                strip.reveal(laneId: last, flash: true)
+            }
+        } catch {
+            showError(error)
+        }
+    }
+
+    private static func dateStamp() -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: Date())
     }
 
     /// The focused pane and its right-hand neighbour, when one is a terminal

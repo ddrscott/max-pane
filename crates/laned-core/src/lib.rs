@@ -15,6 +15,7 @@ pub mod eviction;
 pub mod ledger;
 pub mod model;
 pub mod ordinal;
+pub mod portable;
 pub mod project;
 pub mod search;
 
@@ -148,6 +149,7 @@ impl Core {
             created_at: now,
             last_focus_at: now,
             pinned: false,
+            span: 1,
             panes: Vec::new(),
         };
         let pane = Pane {
@@ -270,7 +272,28 @@ impl Core {
 
     pub fn set_lane_width(&self, lane_id: String, width_pt: u32) -> Result<StripState> {
         let mut inner = self.inner.lock();
-        inner.ledger.update_lane_width(&lane_id, width_pt.clamp(LANE_MIN_PT, LANE_MAX_PT))?;
+        let span = inner.ledger.lane(&lane_id)?.span.max(1);
+        inner.ledger.update_lane_width(&lane_id, width_pt.clamp(LANE_MIN_PT, LANE_MAX_PT * span))?;
+        Self::bump(&mut inner);
+        Self::snapshot(&inner)
+    }
+
+    /// How many lane-widths a lane may occupy (PRD §13 Phase 3).
+    ///
+    /// Clamped to 1..=2. §1's invariant is that a lane is a portrait column, and
+    /// "2× for the rare landscape site" is the whole of the exception — there is
+    /// no span 3. Narrowing back to 1 brings the width back inside the normal
+    /// bound at the same time, so a lane cannot be left wider than a lane is
+    /// allowed to be.
+    pub fn set_lane_span(&self, lane_id: String, span: u32) -> Result<StripState> {
+        let mut inner = self.inner.lock();
+        let span = span.clamp(1, 2);
+        inner.ledger.set_span(&lane_id, span)?;
+        let current = inner.ledger.lane(&lane_id)?.width_pt;
+        let allowed = LANE_MAX_PT * span;
+        if current > allowed {
+            inner.ledger.update_lane_width(&lane_id, allowed)?;
+        }
         Self::bump(&mut inner);
         Self::snapshot(&inner)
     }
@@ -479,6 +502,71 @@ impl Core {
     }
 
     // ---- housekeeping ------------------------------------------------------
+
+    // ---- export / import (§13 Phase 3) -------------------------------------
+
+    /// The whole strip as JSON. Order, widths, titles, tags, URLs, and which
+    /// Relay session each terminal was on.
+    ///
+    /// Not a ledger backup: ids are not exported, so importing into a machine
+    /// that already has a strip merges rather than collides.
+    pub fn export_strip(&self) -> Result<String> {
+        let inner = self.inner.lock();
+        // Deliberately the unfiltered strip: exporting while gathered should
+        // give the whole thing, not the view.
+        Ok(portable::export(&inner.ledger.lanes()?))
+    }
+
+    /// Append an exported strip to the right-hand end of this one.
+    ///
+    /// Appends rather than replaces, because the destructive version of this is
+    /// a thing the user can build out of it (export, close everything, import)
+    /// and the safe version is not recoverable from the destructive one.
+    ///
+    /// pty panes come back attached to whatever session id they had. On another
+    /// machine that session will not exist, and the lane renders "reconnecting"
+    /// with its ordinal and tag intact — which is the same thing that happens
+    /// when Relay is down (PRD §11).
+    pub fn import_strip(&self, json: String) -> Result<StripState> {
+        let lanes = portable::import(&json)?;
+        let mut inner = self.inner.lock();
+        let now = now_ms();
+
+        for incoming in lanes {
+            let ordinal = Self::place(&mut inner.ledger, &Placement::End)?;
+            let lane = Lane {
+                id: new_id(),
+                ordinal,
+                width_pt: incoming.width_pt.clamp(LANE_MIN_PT, LANE_MAX_PT * incoming.span.clamp(1, 2)),
+                title: incoming.title,
+                project_root: incoming.project_root,
+                project_source: incoming.project_source,
+                created_at: now,
+                last_focus_at: now,
+                pinned: incoming.pinned,
+                span: incoming.span.clamp(1, 2),
+                panes: Vec::new(),
+            };
+            inner.ledger.insert_lane(&lane)?;
+
+            for (position, p) in incoming.panes.iter().enumerate() {
+                inner.ledger.insert_pane(&Pane {
+                    id: new_id(),
+                    lane_id: lane.id.clone(),
+                    position: position as u32,
+                    kind: p.kind,
+                    relay_session_id: p.relay_session_id.clone(),
+                    url: p.url.clone(),
+                    scroll_y: p.scroll_y,
+                    data_store_id: None,
+                    snapshot_path: None,
+                    state: PaneState::Live,
+                })?;
+            }
+        }
+        Self::bump(&mut inner);
+        Self::snapshot(&inner)
+    }
 
     /// Resolve a working directory to a git root without touching the ledger.
     /// The shell uses it to label things that aren't lanes yet, like the

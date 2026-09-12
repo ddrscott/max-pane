@@ -284,6 +284,11 @@ RustBuffer uniffi_laned_core_fn_method_core_close_pane(uint64_t ptr, RustBuffer 
 RustBuffer uniffi_laned_core_fn_method_core_create_lane(uint64_t ptr, RustBuffer placement, RustBuffer kind, RustBuffer relay_session_id, RustBuffer url, RustBuffer inherit_tag_from_lane, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_EXPORT_STRIP
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_EXPORT_STRIP
+RustBuffer uniffi_laned_core_fn_method_core_export_strip(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_FOCUS_PANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_FOCUS_PANE
 RustBuffer uniffi_laned_core_fn_method_core_focus_pane(uint64_t ptr, RustBuffer pane_id, RustCallStatus *_Nonnull out_status
@@ -292,6 +297,11 @@ RustBuffer uniffi_laned_core_fn_method_core_focus_pane(uint64_t ptr, RustBuffer 
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_GATHER
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_GATHER
 RustBuffer uniffi_laned_core_fn_method_core_gather(uint64_t ptr, RustBuffer project_root, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_IMPORT_STRIP
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_IMPORT_STRIP
+RustBuffer uniffi_laned_core_fn_method_core_import_strip(uint64_t ptr, RustBuffer json, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_LANE
@@ -362,6 +372,11 @@ uint64_t uniffi_laned_core_fn_method_core_revision(uint64_t ptr, RustCallStatus 
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SEARCH
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SEARCH
 RustBuffer uniffi_laned_core_fn_method_core_search(uint64_t ptr, RustBuffer query, uint32_t limit, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_LANE_SPAN
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_LANE_SPAN
+RustBuffer uniffi_laned_core_fn_method_core_set_lane_span(uint64_t ptr, RustBuffer lane_id, uint32_t span, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_LANE_TITLE
@@ -703,6 +718,12 @@ uint16_t uniffi_laned_core_checksum_method_core_create_lane(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_EXPORT_STRIP
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_EXPORT_STRIP
+uint16_t uniffi_laned_core_checksum_method_core_export_strip(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_FOCUS_PANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_FOCUS_PANE
 uint16_t uniffi_laned_core_checksum_method_core_focus_pane(void
@@ -712,6 +733,12 @@ uint16_t uniffi_laned_core_checksum_method_core_focus_pane(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_GATHER
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_GATHER
 uint16_t uniffi_laned_core_checksum_method_core_gather(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_IMPORT_STRIP
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_IMPORT_STRIP
+uint16_t uniffi_laned_core_checksum_method_core_import_strip(void
     
 );
 #endif
@@ -796,6 +823,12 @@ uint16_t uniffi_laned_core_checksum_method_core_revision(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SEARCH
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SEARCH
 uint16_t uniffi_laned_core_checksum_method_core_search(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_LANE_SPAN
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_LANE_SPAN
+uint16_t uniffi_laned_core_checksum_method_core_set_lane_span(void
     
 );
 #endif

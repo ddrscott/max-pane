@@ -288,6 +288,7 @@ mod tests {
             created_at: 0,
             last_focus_at,
             pinned,
+            span: 1,
             panes,
         }
     }
