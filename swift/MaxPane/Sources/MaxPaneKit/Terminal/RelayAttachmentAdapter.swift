@@ -8,8 +8,14 @@ import RelayClient
 /// thin piece between it and the pane: it moves callbacks onto the main actor
 /// and owns the reconnect policy.
 ///
-/// **It never sends `RESIZE` on its own.** The only path to `claimSize` is the
-/// user's explicit command (ADR-0007).
+/// **It never decides to send `RESIZE`.** `claimSize` is reached from exactly
+/// two places, both of them the user saying so: the explicit claim command
+/// (ADR-0007 §5), and the drop at the end of a seam drag — dragging a pane's
+/// height *is* asking for a different number of rows, and a TUI that thinks it
+/// has fifty rows will paint fifty into a pane showing twenty. The drag holds
+/// the claim back until the mouse comes up, because a 400pt drag crosses a row
+/// boundary every 17 points and spike M2 measured one `htop` reshape at 6,671
+/// bytes of forced redraw on every other client — including a phone.
 @MainActor
 final class RelayAttachmentAdapter: RelayAttachment {
     let sessionId: String

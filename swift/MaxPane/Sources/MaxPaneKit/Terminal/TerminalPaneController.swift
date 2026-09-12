@@ -66,6 +66,8 @@ final class TerminalPaneController: NSObject, PaneController {
     private var pane: Pane
     private var scrollbackDebounce: DispatchWorkItem?
     private var isSessionAvailable = true
+    /// True between `beginLiveResize` and `endLiveResize`. See those.
+    private var isLiveResizing = false
 
     /// Lines seen on the wire, so the search index survives a `clear` and can
     /// see past the viewport — Ghostty's viewport read deliberately ignores
@@ -339,7 +341,54 @@ final class TerminalPaneController: NSObject, PaneController {
         guard cols > 0, rows > 0, cols != hostCols || rows != hostRows else { return }
         hostCols = cols
         hostRows = rows
+        // Mid-drag, the shape the pointer is passing through is not a decision.
+        guard !isLiveResizing else { return }
         attachment?.claimSize(cols: cols, rows: rows)
+    }
+
+    /// The user has grabbed something that changes this pane's size and has not
+    /// let go — today, the seam between two stacked panes.
+    ///
+    /// The grid still follows the view the whole way down: the terminal must
+    /// reflow under the pointer or the drag is a lie. What is held back is the
+    /// word to the far end. A pane's rows *do* have to reach the PTY — one
+    /// `winsize`, and a full-screen TUI that thinks it has fifty rows paints
+    /// fifty into a pane showing twenty — but dragging a seam across 400 points
+    /// crosses a row boundary every seventeen, and spike M2 measured a single
+    /// reshape of an `htop` session at **6 671 bytes of forced redraw on every
+    /// other client attached to it**, a phone included. Twenty-three of those
+    /// during one drag is the app fighting itself, which is the exact cost
+    /// [ADR-0007](../../../../docs/decisions/0007-terminal-panes-never-resize-the-pty.md)
+    /// was written about — and the supersede that lets a lane reshape the PTY
+    /// at all bought "the text reflows when I resize", not "the text reflows
+    /// twenty-three times while I am still deciding".
+    ///
+    /// So the far end learns the shape the drag *landed* on, once. The same
+    /// one-commit-per-decision rule the ledger write beside it follows, applied
+    /// to the only other thing a drag can spam.
+    ///
+    /// Deliberately not the mask that `LaneView.revealWidth` uses for a column
+    /// opening. A mask is right when the user did not ask for a resize and the
+    /// pane inside must not be told: it keeps its real size behind a hole in
+    /// the shape of the animation. A seam drag is the opposite — the user *is*
+    /// changing the pane's height, and a terminal masked to a shorter rectangle
+    /// is one whose cursor and last three lines are simply under the edge.
+    func beginLiveResize() {
+        isLiveResizing = true
+    }
+
+    /// The drag ended. Tell the far end the shape it finished at.
+    ///
+    /// Unconditionally, even when the drag ended on the row count it started
+    /// from: ADR-0007 §5 establishes that re-asserting a size already in effect
+    /// is free, and "was there a net change" is state this would otherwise have
+    /// to keep correct across a surface rebuild, an inbound `RESIZE` from a
+    /// phone, and a lane view being recycled mid-drag.
+    func endLiveResize() {
+        guard isLiveResizing else { return }
+        isLiveResizing = false
+        guard hostCols > 0, hostRows > 0 else { return }
+        attachment?.claimSize(cols: hostCols, rows: hostRows)
     }
 
     /// The explicit "claim this session" command (ADR-0007 §5).

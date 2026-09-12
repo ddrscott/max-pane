@@ -897,6 +897,27 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func setPaneDataStore(paneId: String, dataStoreId: String) throws 
     
     /**
+     * Set the height weights of some or all of a lane's panes.
+     *
+     * A *list*, because the gesture that produces it moves two panes at once
+     * and they have to land together — see `Ledger::set_height_weights`. The
+     * caller sends only the panes it changed; a divider drag therefore writes
+     * exactly two rows however tall the stack is, and every other pane's
+     * weight stays bit-identical rather than being rewritten with a rounded
+     * version of itself.
+     *
+     * Weights are a ratio, so the only thing refused here is a value that
+     * cannot be one. A non-finite or non-positive weight would make `Σw`
+     * meaningless for the whole lane — one NaN and every sibling's height is
+     * NaN — so it is rejected at the boundary rather than clamped quietly: a
+     * caller sending it has a bug, and a lane that silently reshapes itself is
+     * a worse way to find out. The *point* floor a pane may not shrink past is
+     * not here on purpose; it depends on how tall the lane is right now, which
+     * is a fact about the window and not about the ledger.
+     */
+    func setPaneHeights(weights: [PaneHeight]) throws  -> StripState
+    
+    /**
      * Store (or clear, with `None`) a web pane's `WKWebView.interactionState`.
      *
      * No `StripState` is published: the blob is not part of the layout, and
@@ -1595,6 +1616,35 @@ open func setPaneDataStore(paneId: String, dataStoreId: String)throws   {try rus
 }
     
     /**
+     * Set the height weights of some or all of a lane's panes.
+     *
+     * A *list*, because the gesture that produces it moves two panes at once
+     * and they have to land together — see `Ledger::set_height_weights`. The
+     * caller sends only the panes it changed; a divider drag therefore writes
+     * exactly two rows however tall the stack is, and every other pane's
+     * weight stays bit-identical rather than being rewritten with a rounded
+     * version of itself.
+     *
+     * Weights are a ratio, so the only thing refused here is a value that
+     * cannot be one. A non-finite or non-positive weight would make `Σw`
+     * meaningless for the whole lane — one NaN and every sibling's height is
+     * NaN — so it is rejected at the boundary rather than clamped quietly: a
+     * caller sending it has a bug, and a lane that silently reshapes itself is
+     * a worse way to find out. The *point* floor a pane may not shrink past is
+     * not here on purpose; it depends on how tall the lane is right now, which
+     * is a fact about the window and not about the ledger.
+     */
+open func setPaneHeights(weights: [PaneHeight])throws  -> StripState  {
+    return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_set_pane_heights(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceTypePaneHeight.lower(weights),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * Store (or clear, with `None`) a web pane's `WKWebView.interactionState`.
      *
      * No `StripState` is published: the blob is not part of the layout, and
@@ -2156,6 +2206,15 @@ public struct Pane: Equatable, Hashable {
      */
     public var snapshotPath: String?
     public var state: PaneState
+    /**
+     * This pane's share of its lane's height, relative to its siblings.
+     *
+     * A weight and not a point height: the lane is as tall as the window, and
+     * the window changes. Only the ratio between siblings is ever read, so
+     * nothing normalizes these — 1 everywhere is the equal split that was the
+     * only thing a lane could do before this existed.
+     */
+    public var heightWeight: Double
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -2177,7 +2236,15 @@ public struct Pane: Equatable, Hashable {
          */dataStoreId: String?, 
         /**
          * `placeholder` only: on-disk snapshot rendered while evicted.
-         */snapshotPath: String?, state: PaneState) {
+         */snapshotPath: String?, state: PaneState, 
+        /**
+         * This pane's share of its lane's height, relative to its siblings.
+         *
+         * A weight and not a point height: the lane is as tall as the window, and
+         * the window changes. Only the ratio between siblings is ever read, so
+         * nothing normalizes these — 1 everywhere is the equal split that was the
+         * only thing a lane could do before this existed.
+         */heightWeight: Double) {
         self.id = id
         self.laneId = laneId
         self.position = position
@@ -2188,6 +2255,7 @@ public struct Pane: Equatable, Hashable {
         self.dataStoreId = dataStoreId
         self.snapshotPath = snapshotPath
         self.state = state
+        self.heightWeight = heightWeight
     }
 
     
@@ -2215,7 +2283,8 @@ public struct FfiConverterTypePane: FfiConverterRustBuffer {
                 scrollY: FfiConverterOptionDouble.read(from: &buf), 
                 dataStoreId: FfiConverterOptionString.read(from: &buf), 
                 snapshotPath: FfiConverterOptionString.read(from: &buf), 
-                state: FfiConverterTypePaneState.read(from: &buf)
+                state: FfiConverterTypePaneState.read(from: &buf), 
+                heightWeight: FfiConverterDouble.read(from: &buf)
         )
     }
 
@@ -2230,6 +2299,7 @@ public struct FfiConverterTypePane: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.dataStoreId, into: &buf)
         FfiConverterOptionString.write(value.snapshotPath, into: &buf)
         FfiConverterTypePaneState.write(value.state, into: &buf)
+        FfiConverterDouble.write(value.heightWeight, into: &buf)
     }
 }
 
@@ -2362,6 +2432,74 @@ public func FfiConverterTypePaneFootprint_lower(_ value: PaneFootprint) -> RustB
 
 
 /**
+ * One pane's new share of its lane's height.
+ *
+ * Its own record rather than two parallel `Vec`s across the FFI: a pane id and
+ * a weight that disagree in length is a silent mis-assignment, and the one
+ * caller is a mouse drag that must never put the top pane's height on the
+ * bottom one.
+ */
+public struct PaneHeight: Equatable, Hashable {
+    public var paneId: String
+    /**
+     * Relative to the pane's siblings. Finite and > 0.
+     */
+    public var weight: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(paneId: String, 
+        /**
+         * Relative to the pane's siblings. Finite and > 0.
+         */weight: Double) {
+        self.paneId = paneId
+        self.weight = weight
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PaneHeight: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePaneHeight: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PaneHeight {
+        return
+            try PaneHeight(
+                paneId: FfiConverterString.read(from: &buf), 
+                weight: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PaneHeight, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.paneId, into: &buf)
+        FfiConverterDouble.write(value.weight, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePaneHeight_lift(_ buf: RustBuffer) throws -> PaneHeight {
+    return try FfiConverterTypePaneHeight.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePaneHeight_lower(_ value: PaneHeight) -> RustBuffer {
+    return FfiConverterTypePaneHeight.lower(value)
+}
+
+
+/**
  * One lane from an exported strip, ready to be re-created.
  */
 public struct PortableLane: Equatable, Hashable {
@@ -2449,14 +2587,24 @@ public struct PortablePane: Equatable, Hashable {
     public var relaySessionId: String?
     public var url: String?
     public var scrollY: Double?
+    /**
+     * This pane's share of its lane's height. 1 for a file written before the
+     * field existed, or hand-edited to drop it.
+     */
+    public var heightWeight: Double
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(kind: PaneKind, relaySessionId: String?, url: String?, scrollY: Double?) {
+    public init(kind: PaneKind, relaySessionId: String?, url: String?, scrollY: Double?, 
+        /**
+         * This pane's share of its lane's height. 1 for a file written before the
+         * field existed, or hand-edited to drop it.
+         */heightWeight: Double) {
         self.kind = kind
         self.relaySessionId = relaySessionId
         self.url = url
         self.scrollY = scrollY
+        self.heightWeight = heightWeight
     }
 
     
@@ -2478,7 +2626,8 @@ public struct FfiConverterTypePortablePane: FfiConverterRustBuffer {
                 kind: FfiConverterTypePaneKind.read(from: &buf), 
                 relaySessionId: FfiConverterOptionString.read(from: &buf), 
                 url: FfiConverterOptionString.read(from: &buf), 
-                scrollY: FfiConverterOptionDouble.read(from: &buf)
+                scrollY: FfiConverterOptionDouble.read(from: &buf), 
+                heightWeight: FfiConverterDouble.read(from: &buf)
         )
     }
 
@@ -2487,6 +2636,7 @@ public struct FfiConverterTypePortablePane: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.relaySessionId, into: &buf)
         FfiConverterOptionString.write(value.url, into: &buf)
         FfiConverterOptionDouble.write(value.scrollY, into: &buf)
+        FfiConverterDouble.write(value.heightWeight, into: &buf)
     }
 }
 
@@ -3775,6 +3925,31 @@ fileprivate struct FfiConverterSequenceTypePaneFootprint: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypePaneHeight: FfiConverterRustBuffer {
+    typealias SwiftType = [PaneHeight]
+
+    public static func write(_ value: [PaneHeight], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePaneHeight.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PaneHeight] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PaneHeight]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePaneHeight.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypePortablePane: FfiConverterRustBuffer {
     typealias SwiftType = [PortablePane]
 
@@ -3977,6 +4152,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_set_pane_data_store() != 42955) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_set_pane_heights() != 14492) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_set_pane_interaction_state() != 65254) {

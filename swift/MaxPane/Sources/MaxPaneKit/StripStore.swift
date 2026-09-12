@@ -146,6 +146,13 @@ public final class StripStore {
         publish(try core.setLaneWidth(laneId: laneId, widthPt: widthPt))
     }
 
+    /// A seam drag, committed. Only the two panes it moved.
+    func setPaneHeights(_ weights: [(paneId: String, weight: Double)]) throws {
+        guard !weights.isEmpty else { return }
+        publish(try core.setPaneHeights(
+            weights: weights.map { PaneHeight(paneId: $0.paneId, weight: $0.weight) }))
+    }
+
     func setLaneTitle(_ laneId: String, _ title: String?) throws {
         publish(try core.setLaneTitle(laneId: laneId, title: title))
     }

@@ -1,0 +1,17 @@
+-- How tall each pane in a lane's stack is.
+--
+-- A *weight*, not points. A lane is as tall as the window and the window
+-- changes height — fullscreen, a second display, the owner dragging a corner —
+-- so a stored point height is wrong the moment anything moves, and correcting
+-- it would mean writing to the ledger on every window resize. A weight is
+-- resolution-independent: a pane's height is always `available * w / Σw`, so
+-- the split the user set survives every height the lane is ever given without
+-- a single write.
+--
+-- Only ratios are ever read, so nothing renormalizes these. `DEFAULT 1` is
+-- therefore exactly the layout that existed before this column did — every
+-- pane equal — which is what `.fillEqually` gave every lane already in the
+-- ledger. A pane joining a stack is given the *mean* of the weights already
+-- there, which is the same statement in the other direction: it lands on an
+-- equal share of the new total, and nobody else's ratio moves.
+ALTER TABLE pane ADD COLUMN height_weight REAL NOT NULL DEFAULT 1;
