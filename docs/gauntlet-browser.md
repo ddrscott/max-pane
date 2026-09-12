@@ -59,7 +59,10 @@ running app — never the builder's account of it.
 | 3 | Appear/disappear animations, and the split-down reconcile | `Views/StripViewController.swift`, `Views/LaneView.swift` | building | — |
 | 4 | Browser chrome: URL, nav, security, find, zoom readout | a new chrome view + `Web/WebPaneController.swift` | building (worktree) | — |
 | 5 | Terminal zoom | `Terminal/TerminalPaneController.swift` | lead, done | pending |
-| 6 | Copy/paste between panes | `Terminal/TerminalPaneController.swift`, `RelayAttachmentAdapter.swift`, `AppDelegate.swift` | — | — |
+| 6 | Copy/paste between panes | `Terminal/TerminalPaneController.swift`, `RelayAttachmentAdapter.swift`, `AppDelegate.swift` | building | — |
+| 7 | Lane widths: one configurable default, and always visible evidence of more | `Views/StripViewController.swift`, `Config.swift`, `crates/laned-core` | building (worktree) | — |
+| 8 | Horizontal splits: a visible seam, draggable to resize heights | `Views/LaneView.swift`, `crates/laned-core` | building (worktree) | — |
+| 9 | ⌘O: one place anything starts | `Commands.swift`, the palettes | building (worktree) | — |
 
 Pieces 1 and 4 both own `WebPaneController`, so they run in different waves.
 The **seams are the lead's**, already in place before any builder starts:
@@ -89,6 +92,36 @@ A piece fails its round if, with a fresh critic driving a real instance:
    no motion is a fail; so is anything slow enough to wait for.
 5. **History** — a page visited in a pane is findable by title and by URL after
    a restart, and the record has no hole where a redirect was.
+
+## Added mid-run, in the owner's words
+
+> "horizontal splits need borders between them, too, so we can see which see and
+> resize the splits and resize their heights." (piece 8)
+
+> "The widths of the vertical panes seem too evenly distributed. i can't tell if
+> there are more panes to the right or left. the vertical panels should default
+> to a configurable width for consistency. and a high unlikelyhood of even full
+> width distribution. a messy desk isn't perfect, but pages on a desk are
+> usually uniform." … "all these ideas lead to spatial reasoning of the
+> interface." (piece 7)
+
+> "in our app, cmd-r should be refresh, not run. cmd-o is better for open/run
+> and allow a direct command or url (with or without scheme) and fuzzy search
+> history of everything. again, this app should be my full time terminal and
+> browser!" (piece 9, and ⌘R goes to piece 4 — reload is a nav control)
+
+Two bugs found while writing those briefs, before any builder started:
+
+- **`Config.laneDefaultPt` is decorative.** `crates/laned-core/src/lib.rs` keeps
+  its own `LANE_DEFAULT_PT` with a comment that it "must match" the Swift one,
+  and `create_lane` uses the Rust constant — so editing the config file changes
+  nothing about new lanes. A constant that must match by hand is a bug waiting
+  for someone to edit one of them.
+- **Esc is bound to nothing.** `Command.ungather` declares `("\u{1b}", [])` and
+  is deliberately skipped when the menu is built, with a comment saying it
+  "lives in the responder chain" — but nothing handles it. A keymap that lists a
+  key nobody listens for is worse than one that omits it. Queued with the
+  configurable-hotkeys work.
 
 ## Log
 
