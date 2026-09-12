@@ -16,6 +16,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ),
     ("0004_history", include_str!("../migrations/0004_history.sql")),
     ("0005_pane_height", include_str!("../migrations/0005_pane_height.sql")),
+    ("0006_pane_zoom", include_str!("../migrations/0006_pane_zoom.sql")),
 ];
 
 pub struct Ledger {
@@ -86,7 +87,7 @@ impl Ledger {
         // One pass over every pane beats one query per lane at 150 lanes.
         let mut stmt = self.conn.prepare(
             "SELECT id, lane_id, position, kind, relay_session_id, url, scroll_y,
-                    data_store_id, snapshot_path, state, height_weight
+                    data_store_id, snapshot_path, state, height_weight, zoom
              FROM pane ORDER BY lane_id, position ASC",
         )?;
         let panes: Vec<Pane> = stmt.query_map([], row_to_pane)?.collect::<rusqlite::Result<_>>()?;
@@ -116,7 +117,7 @@ impl Ledger {
             .ok_or_else(|| CoreError::NotFound { kind: "lane".into(), id: id.into() })?;
         let mut stmt = self.conn.prepare(
             "SELECT id, lane_id, position, kind, relay_session_id, url, scroll_y,
-                    data_store_id, snapshot_path, state, height_weight
+                    data_store_id, snapshot_path, state, height_weight, zoom
              FROM pane WHERE lane_id = ?1 ORDER BY position ASC",
         )?;
         lane.panes = stmt.query_map([id], row_to_pane)?.collect::<rusqlite::Result<_>>()?;
@@ -127,7 +128,7 @@ impl Ledger {
         self.conn
             .query_row(
                 "SELECT id, lane_id, position, kind, relay_session_id, url, scroll_y,
-                        data_store_id, snapshot_path, state, height_weight FROM pane WHERE id = ?1",
+                        data_store_id, snapshot_path, state, height_weight, zoom FROM pane WHERE id = ?1",
                 [id],
                 row_to_pane,
             )
@@ -213,8 +214,8 @@ impl Ledger {
     pub fn insert_pane(&self, pane: &Pane) -> Result<()> {
         self.conn.execute(
             "INSERT INTO pane (id, lane_id, position, kind, relay_session_id, url, scroll_y,
-                               data_store_id, snapshot_path, state, height_weight)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                               data_store_id, snapshot_path, state, height_weight, zoom)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 pane.id,
                 pane.lane_id,
@@ -227,6 +228,7 @@ impl Ledger {
                 pane.snapshot_path,
                 state_str(pane.state),
                 pane.height_weight,
+                pane.zoom,
             ],
         )?;
         Ok(())
@@ -552,6 +554,17 @@ impl Ledger {
     }
 
     /// The weights already in a lane's stack, in stack order.
+    /// Scale for one pane. Rejected at the boundary rather than clamped: a
+    /// zero or a NaN here is a bug in the caller, and silently storing 1.0
+    /// would hide it until someone wondered why their zoom never stuck.
+    pub fn update_pane_zoom(&self, pane_id: &str, zoom: f64) -> Result<()> {
+        if !zoom.is_finite() || zoom <= 0.0 {
+            return Err(CoreError::Ledger { message: format!("zoom must be positive and finite, got {zoom}") });
+        }
+        self.conn.execute("UPDATE pane SET zoom = ?2 WHERE id = ?1", params![pane_id, zoom])?;
+        Ok(())
+    }
+
     pub fn height_weights(&self, lane_id: &str) -> Result<Vec<f64>> {
         let mut stmt = self
             .conn
@@ -641,6 +654,7 @@ fn row_to_pane(r: &Row) -> rusqlite::Result<Pane> {
         snapshot_path: r.get(8)?,
         state: parse_state(&r.get::<_, String>(9)?),
         height_weight: r.get(10)?,
+        zoom: r.get(11)?,
     })
 }
 

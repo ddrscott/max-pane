@@ -479,6 +479,11 @@ void uniffi_laned_core_fn_method_core_set_pane_scroll(uint64_t ptr, RustBuffer p
 void uniffi_laned_core_fn_method_core_set_pane_url(uint64_t ptr, RustBuffer pane_id, RustBuffer url, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PANE_ZOOM
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PANE_ZOOM
+void uniffi_laned_core_fn_method_core_set_pane_zoom(uint64_t ptr, RustBuffer pane_id, double zoom, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PINNED
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PINNED
 RustBuffer uniffi_laned_core_fn_method_core_set_pinned(uint64_t ptr, RustBuffer lane_id, int8_t pinned, RustCallStatus *_Nonnull out_status
@@ -1019,6 +1024,12 @@ uint16_t uniffi_laned_core_checksum_method_core_set_pane_scroll(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_PANE_URL
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_PANE_URL
 uint16_t uniffi_laned_core_checksum_method_core_set_pane_url(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_PANE_ZOOM
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_PANE_ZOOM
+uint16_t uniffi_laned_core_checksum_method_core_set_pane_zoom(void
     
 );
 #endif

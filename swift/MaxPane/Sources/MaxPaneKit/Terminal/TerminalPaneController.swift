@@ -165,6 +165,9 @@ final class TerminalPaneController: NSObject, PaneController {
         // logging only "surface rebuild skipped: missing controller", which is
         // how this cost an hour of looking at a black column while the header
         // happily reported 254 B/s arriving.
+        // A pane you made bigger stays bigger: the ledger carries it, so it
+        // survives a relaunch and a lane view being recycled alike.
+        zoom = pane.zoom
         terminal.controller = TerminalControllerPool.shared.controller(for: config)
         terminal.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
         terminal.delegate = self
@@ -409,6 +412,7 @@ final class TerminalPaneController: NSObject, PaneController {
     func setZoom(_ next: Double) {
         let ladder = PaneZoom.ladder
         zoom = min(max(next, ladder.first!), ladder.last!)
+        store.setPaneZoom(paneId, zoom)
         applyZoom()
     }
 

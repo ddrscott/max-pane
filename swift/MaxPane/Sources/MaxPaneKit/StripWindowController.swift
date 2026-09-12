@@ -129,7 +129,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private func startSideChannels() {
         // Snapshots outlive the panes that made them when the app is killed;
         // sweep the ones with no pane before anything can read a stale path.
-        SnapshotStore.sweep(keeping: Set(store.state.lanes.flatMap(\.panes).map(\.id)))
+        let live = Set(store.state.lanes.flatMap(\.panes).map(\.id))
+        SnapshotStore.sweep(keeping: live)
 
         do {
             openServer = try OpenServer { [weak self] request in
@@ -308,6 +309,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .zoomIn, .zoomOut, .zoomReset:
                 strip.zoomFocusedPane(command)
+
+            case .reload, .hardReload:
+                strip.reloadFocusedPane(fromOrigin: command == .hardReload)
 
             case .newTerminalLane:
                 try newTerminal(near: focusedLane)

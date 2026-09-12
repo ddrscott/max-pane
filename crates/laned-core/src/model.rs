@@ -125,6 +125,9 @@ pub struct Pane {
     /// nothing normalizes these — 1 everywhere is the equal split that was the
     /// only thing a lane could do before this existed.
     pub height_weight: f64,
+    /// How far the pane's contents are scaled; 1.0 is actual size. A terminal
+    /// reads it as a font size and a page as a page zoom.
+    pub zoom: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]

@@ -7,6 +7,8 @@ import AppKit
 /// to declare its key here or it does not exist.
 public enum Command: String, CaseIterable {
     case newPane
+    case reload
+    case hardReload
     case zoomIn
     case zoomOut
     case zoomReset
@@ -43,6 +45,8 @@ public enum Command: String, CaseIterable {
     public var title: String {
         switch self {
         case .newPane: return "New Pane…"
+        case .reload: return "Reload"
+        case .hardReload: return "Reload Ignoring Cache"
         case .zoomIn: return "Bigger Text"
         case .zoomOut: return "Smaller Text"
         case .zoomReset: return "Actual Size"
@@ -93,7 +97,11 @@ public enum Command: String, CaseIterable {
         case .zoomOut:         return ("-", [.command])
         case .zoomReset:       return ("0", [.command])
         case .newTerminalLane: return ("t", [.command, .shift])
-        case .runCommand:      return ("r", [.command])
+        // ⌘R is reload, the way it is in every browser. Running a command
+        // moved to the picker, which is a better door for it than a prompt.
+        case .reload:          return ("r", [.command])
+        case .hardReload:      return ("r", [.command, .shift])
+        case .runCommand:      return ("r", [.command, .option])
         case .newWebLane:      return ("l", [.command])
         case .splitDown:       return ("d", [.command, .shift])
         case .closePane:       return ("w", [.command])
@@ -155,6 +163,7 @@ public enum Command: String, CaseIterable {
              .widenLane, .narrowLane, .peekDesktop: return .view
         case .claimSession: return .file
         case .showMemory, .showHelp: return .view
+        case .reload, .hardReload: return .navigate
         case .zoomIn, .zoomOut, .zoomReset: return .view
         case .pairWithNext: return .navigate
         case .exportStrip, .importStrip: return .file

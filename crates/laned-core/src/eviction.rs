@@ -306,6 +306,7 @@ mod tests {
             snapshot_path: None,
             state,
             height_weight: 1.0,
+            zoom: 1.0,
         }
     }
 

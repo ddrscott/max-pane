@@ -31,7 +31,7 @@ struct SidebarModelTests {
             panes: [Pane(
                 id: "p-" + id, laneId: id, position: 0, kind: kind,
                 relaySessionId: session, url: url, scrollY: nil,
-                dataStoreId: nil, snapshotPath: nil, state: state, heightWeight: 1)])
+                dataStoreId: nil, snapshotPath: nil, state: state, heightWeight: 1, zoom: 1)])
     }
 
     private func entries(_ rows: [SidebarModel.Row]) -> [SidebarModel.Entry] {

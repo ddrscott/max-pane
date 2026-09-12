@@ -93,6 +93,10 @@ fn the_session_blob_stays_out_of_the_layout_snapshot() {
         // blob is deliberately not: the shell needs it to lay out every frame,
         // and a `f64` per pane is the cheapest thing that crosses the FFI.
         height_weight: _,
+        // Same bargain, same reason: a pane has to be built at the right scale,
+        // and one that comes back at the wrong size is one you fix by hand on
+        // every launch.
+        zoom: _,
     } = pane.clone();
 }
 

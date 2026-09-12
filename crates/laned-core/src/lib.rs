@@ -235,6 +235,7 @@ impl Core {
             snapshot_path: None,
             state: PaneState::Live,
             height_weight: 1.0,
+            zoom: 1.0,
         };
         inner.ledger.insert_lane(&lane)?;
         inner.ledger.insert_pane(&pane)?;
@@ -271,6 +272,7 @@ impl Core {
             // still stand in the same relation to each other, and neither is
             // singled out to pay for the newcomer.
             height_weight: mean_weight(&inner.ledger.height_weights(&lane_id)?),
+            zoom: 1.0,
         };
         inner.ledger.insert_pane(&pane)?;
         inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane.id)?;
@@ -631,6 +633,13 @@ impl Core {
         Ok(gone as u32)
     }
 
+    /// Remember how far a pane's contents are scaled. No snapshot is
+    /// published: zoom changes what a pane draws, not the shape of the strip.
+    pub fn set_pane_zoom(&self, pane_id: String, zoom: f64) -> Result<()> {
+        let inner = self.inner.lock();
+        inner.ledger.update_pane_zoom(&pane_id, zoom)
+    }
+
     pub fn set_pane_data_store(&self, pane_id: String, data_store_id: String) -> Result<()> {
         let inner = self.inner.lock();
         inner.ledger.set_pane_data_store(&pane_id, &data_store_id)
@@ -840,6 +849,7 @@ impl Core {
                     snapshot_path: None,
                     state: PaneState::Live,
                     height_weight: p.height_weight,
+                    zoom: p.zoom,
                 })?;
             }
         }

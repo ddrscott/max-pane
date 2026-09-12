@@ -182,6 +182,9 @@ public final class StripStore {
 
     func setPaneUrl(_ paneId: String, _ url: String) { try? core.setPaneUrl(paneId: paneId, url: url) }
     func setPaneScroll(_ paneId: String, _ y: Double) { try? core.setPaneScroll(paneId: paneId, scrollY: y) }
+    /// How far a pane's contents are scaled. Not published as a snapshot: zoom
+    /// changes what a pane draws, not the shape of the strip.
+    func setPaneZoom(_ paneId: String, _ zoom: Double) { try? core.setPaneZoom(paneId: paneId, zoom: zoom) }
     func setPaneDataStore(_ paneId: String, _ id: String) { try? core.setPaneDataStore(paneId: paneId, dataStoreId: id) }
 
     /// A web pane's whole session — history, scroll, form state — as WebKit's

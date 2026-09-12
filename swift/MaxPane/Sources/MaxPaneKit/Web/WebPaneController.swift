@@ -21,7 +21,16 @@ final class WebPaneController: NSObject, PaneController {
     let paneId: String
     private let store: StripStore
     private let config: Config
-    private let container = NSView()
+    private let container = WebPaneContainer()
+
+    /// Everything above the chrome: the web view, or the placeholder standing
+    /// in for it. Separate from `container` so the chrome keeps its 26 pt
+    /// whatever state the pane is in — an evicted pane still has an address,
+    /// and that address is how you recognise it on the strip.
+    private let contentHost = NSView()
+    private let chrome = WebChromeBar()
+    private let findBar = WebFindBar()
+    private var findBarHeight: NSLayoutConstraint!
 
     private var webView: WKWebView?
     private var placeholder: PlaceholderView?
@@ -30,6 +39,25 @@ final class WebPaneController: NSObject, PaneController {
     private var isParented = false
     private var scrollObservation: Timer?
     private var titleObservation: NSKeyValueObservation?
+    /// `canGoBack`, `canGoForward`, `isLoading`, `estimatedProgress`, `url`.
+    private var chromeObservations: [NSKeyValueObservation] = []
+    private var focusToken: UUID?
+    private var hoverRelay: ScriptMessageRelay?
+    private var keyWindowObserver: (any NSObjectProtocol)?
+
+    /// Set by the strip so a lane this pane opens can be scrolled to.
+    ///
+    /// A lane created while its opener is off-screen is focused in the ledger
+    /// and nowhere on screen — and the strip only *builds* a pane's view when
+    /// the lane is inside the materialisation window, so a popup opened from a
+    /// pane fifteen lanes back was created, adopted by nobody, and ran
+    /// headlessly. A machine-to-machine OAuth round trip still completed; a
+    /// human saw an empty lane they had to scroll twenty lanes to find. A sign-in
+    /// is a form you type into, so "created" is not the same as "opened".
+    ///
+    /// The same closure `TerminalPaneController` uses for ⌘-click, for the same
+    /// reason.
+    var onRevealLane: ((String?) -> Void)?
 
     var view: NSView { container }
 
@@ -58,6 +86,12 @@ final class WebPaneController: NSObject, PaneController {
 
         container.wantsLayer = true
         container.layer?.backgroundColor = Theme.laneBackground.cgColor
+        installChrome()
+        // Before any web view exists, so a deferred or evicted pane's chrome is
+        // never blank — the ledger already knows the address.
+        chrome.setURL(pane.url)
+        zoom = pane.zoom
+        chrome.setZoom(zoom)
 
         // A pane that is already evicted comes back as a placeholder, not as a
         // web view that immediately gets torn down again.
@@ -89,11 +123,321 @@ final class WebPaneController: NSObject, PaneController {
         buildWebView(dataStoreId: dataStoreId)
     }
 
+    // MARK: - chrome
+
+    /// The pane's shape: content, then the find bar's zero height, then 26 pt of
+    /// browser chrome pinned to the bottom.
+    private func installChrome() {
+        for subview in [contentHost, findBar, chrome] {
+            subview.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(subview)
+        }
+        // Starts collapsed rather than hidden: animating a constraint from 0 is
+        // one code path for both directions, and a hidden view in a stack has to
+        // be un-hidden before it can be measured, which costs a frame of jump.
+        findBarHeight = findBar.heightAnchor.constraint(equalToConstant: 0)
+        findBar.alphaValue = 0
+        NSLayoutConstraint.activate([
+            contentHost.topAnchor.constraint(equalTo: container.topAnchor),
+            contentHost.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            contentHost.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            contentHost.bottomAnchor.constraint(equalTo: findBar.topAnchor),
+
+            findBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            findBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            findBar.bottomAnchor.constraint(equalTo: chrome.topAnchor),
+            findBarHeight,
+
+            chrome.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            chrome.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            chrome.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+
+        chrome.onBack = { [weak self] in self?.webView?.goBack() }
+        chrome.onForward = { [weak self] in self?.webView?.goForward() }
+        chrome.onReloadOrStop = { [weak self] in
+            guard let self else { return }
+            // The button and ⌘R are deliberately *not* the same action while a
+            // page is in flight. The button has, at that moment, changed into a
+            // stop button and says so, and clicking a thing labelled ✕ has to
+            // stop; ⌘R has no label and every browser restarts the load with
+            // it. They agree everywhere else, because both end up in `reload`.
+            if self.webView?.isLoading == true {
+                self.webView?.stopLoading()
+            } else {
+                self.reload(fromOrigin: false)
+            }
+        }
+        chrome.onFind = { [weak self] in self?.toggleFind() }
+        chrome.onZoomReset = { [weak self] in self?.setZoom(1) }
+        chrome.onNavigate = { [weak self] typed in self?.navigate(typed) }
+        chrome.onBackMenu = { [weak self] in self?.historyMenu(back: true) }
+        chrome.onForwardMenu = { [weak self] in self?.historyMenu(back: false) }
+
+        findBar.onSearch = { [weak self] query, forward in self?.find(query, forward: forward) }
+        findBar.onClose = { [weak self] in self?.setFindVisible(false) }
+
+        // Focus decides the chrome's contrast, and the ledger is the only thing
+        // that knows it — `takeFocus` is called but there is no matching "you
+        // lost it". Every mutation republishes, and focus is a mutation.
+        focusToken = store.observe { [weak self] state in
+            guard let self else { return }
+            self.chrome.isPaneFocused = state.focusedPaneId == self.paneId
+        }
+
+        // The pane's own keys. They are not in `Commands.swift` because they
+        // belong to whatever has the keyboard rather than to the app — and
+        // because ⌘R, ⌘L and ⌘[ are already spoken for there. See the report.
+        container.onKeyEquivalent = { [weak self] event in self?.handleKey(event) ?? false }
+        container.onMovedToWindow = { [weak self] in
+            // One turn later. `viewDidMoveToWindow` fires while AppKit is still
+            // moving the hierarchy around, and a `makeFirstResponder` from
+            // inside that is undone by the rest of the pass.
+            Task { @MainActor in self?.applyPendingFocus() }
+        }
+        // A lane opened by `maxpane open` from a terminal outside the app is
+        // built while the window is not key, and `makeFirstResponder` on a
+        // window that is not key does not stick. The ledger already says this
+        // pane is focused, so the moment the window comes forward it should be.
+        keyWindowObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applyPendingFocus() }
+        }
+    }
+
+    /// A line typed into the address field.
+    private func navigate(_ typed: String) {
+        guard let url = BrowserAddress.resolve(typed, searchTemplate: config.searchUrl) else { return }
+        // Record it the way ⌘T records what it launched: the address bar is a
+        // launcher too, and a URL typed here should come back in the picker.
+        store.noteRecent(.url, url)
+        // Written before anything reads it. A deferred or evicted pane rebuilds
+        // from `pane.url`, so setting it first means the rebuild loads where we
+        // are going — rather than loading where we were and then being
+        // navigated off it, which is two page loads and a visible flash of the
+        // wrong site.
+        pane.url = url
+        store.setPaneUrl(paneId, url)
+        // A typed address lands at the top. The saved scroll belongs to the page
+        // being left, and `load` would otherwise restore it onto the new one —
+        // 4 000 px down someone else's document.
+        pane.scrollY = 0
+        store.setPaneScroll(paneId, 0)
+        if isDeferred {
+            loadIfDeferred()
+        } else if webView == nil {
+            rehydrate()
+        } else {
+            load(url)
+        }
+        chrome.setURL(url)
+        takeFocus()
+    }
+
+    /// The back/forward list, as a menu. `WKBackForwardList` is otherwise
+    /// unreachable without a keyboard, and "go back four pages" is the thing a
+    /// long-press exists for.
+    private func historyMenu(back: Bool) -> NSMenu? {
+        guard let webView else { return nil }
+        let items = back
+            ? webView.backForwardList.backList.reversed()
+            : Array(webView.backForwardList.forwardList)
+        guard !items.isEmpty else { return nil }
+        let menu = NSMenu()
+        for item in items.prefix(12) {
+            let title = item.title?.isEmpty == false
+                ? item.title!
+                : (item.url.host ?? item.url.absoluteString)
+            let entry = NSMenuItem(
+                title: String(title.prefix(60)), action: #selector(goToHistoryItem(_:)), keyEquivalent: "")
+            entry.target = self
+            entry.representedObject = item
+            entry.toolTip = item.url.absoluteString
+            menu.addItem(entry)
+        }
+        return menu
+    }
+
+    @objc private func goToHistoryItem(_ sender: NSMenuItem) {
+        guard let item = sender.representedObject as? WKBackForwardListItem else { return }
+        webView?.go(to: item)
+    }
+
+    /// Keep the chrome in step with whatever the web view is doing.
+    ///
+    /// KVO rather than the navigation delegate: `didFinish` fires once per
+    /// document and misses everything a single-page app does with `pushState`,
+    /// which on a site like Gmail is *every* navigation the user makes. An
+    /// address bar that is right only on a full page load is an address bar you
+    /// stop believing.
+    private func observeChrome(_ webView: WKWebView) {
+        chromeObservations = [
+            webView.observe(\.canGoBack, options: [.initial, .new]) { [weak self] _, _ in
+                Task { @MainActor in self?.refreshChrome() }
+            },
+            webView.observe(\.canGoForward, options: [.new]) { [weak self] _, _ in
+                Task { @MainActor in self?.refreshChrome() }
+            },
+            webView.observe(\.isLoading, options: [.new]) { [weak self] _, _ in
+                Task { @MainActor in self?.refreshChrome() }
+            },
+            webView.observe(\.estimatedProgress, options: [.new]) { [weak self] view, _ in
+                Task { @MainActor in self?.chrome.setProgress(view.estimatedProgress) }
+            },
+            webView.observe(\.url, options: [.new]) { [weak self] view, _ in
+                Task { @MainActor in
+                    guard let self, let url = view.url?.absoluteString else { return }
+                    self.chrome.setURL(url)
+                    // A `pushState` never reaches `didFinish`, so the ledger
+                    // would keep the address the pane was opened at and a
+                    // restart would land you back at the app's front door.
+                    self.pane.url = url
+                    self.store.setPaneUrl(self.paneId, url)
+                }
+            },
+        ]
+        refreshChrome()
+    }
+
+    private func refreshChrome() {
+        guard let webView else {
+            return chrome.setNavigation(canGoBack: false, canGoForward: false, loading: false)
+        }
+        chrome.setNavigation(
+            canGoBack: webView.canGoBack,
+            canGoForward: webView.canGoForward,
+            loading: webView.isLoading)
+    }
+
+    // MARK: - find in page
+
+    private func toggleFind() { setFindVisible(findBarHeight.constant == 0) }
+
+    private func setFindVisible(_ visible: Bool) {
+        guard (findBarHeight.constant > 0) != visible else {
+            if visible { findBar.takeFocus() }
+            return
+        }
+        if visible { findBar.takeFocus() } else { takeFocus() }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.14
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            findBarHeight.animator().constant = visible ? WebFindBar.height : 0
+            findBar.animator().alphaValue = visible ? 1 : 0
+        }
+        if !visible {
+            // Leaving the highlight up after the bar has gone is how you end up
+            // with a yellow word you cannot get rid of.
+            webView?.find("", configuration: WKFindConfiguration()) { _ in }
+        }
+    }
+
+    private func find(_ query: String, forward: Bool) {
+        guard let webView else { return }
+        let configuration = WKFindConfiguration()
+        configuration.backwards = !forward
+        configuration.wraps = true
+        // Case-insensitive, which is what every browser's find bar does and what
+        // `WKFindConfiguration` does *not* default to.
+        configuration.caseSensitive = false
+        webView.find(query, configuration: configuration) { [weak self] result in
+            Task { @MainActor in self?.findBar.report(found: result.matchFound) }
+        }
+    }
+
+    // MARK: - keys
+
+    /// ⌘F, ⌘← and ⌘→ for the pane that has the keyboard.
+    ///
+    /// Deliberately the only three. ⌘R goes through `Commands.swift` and
+    /// `reload(fromOrigin:)` instead, because it now means reload for *every*
+    /// pane and belongs in the one file that is the whole truth about the
+    /// keyboard. ⌘L and ⌘[ / ⌘] are what a browser user reaches for next and
+    /// both already mean something else here (`newWebLane`, focus left/right);
+    /// claiming them from a pane would make one shortcut mean two things
+    /// depending on what is focused, which is what that file exists to prevent.
+    private func handleKey(_ event: NSEvent) -> Bool {
+        guard store.state.focusedPaneId == paneId else { return false }
+        // A text field owns its own keyboard. ⌘← in a field is "start of line".
+        guard !chrome.isEditingAddress else { return false }
+        guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.command],
+              let key = event.charactersIgnoringModifiers
+        else { return false }
+
+        switch key {
+        case "f":
+            toggleFind()
+            return true
+        case String(UnicodeScalar(NSLeftArrowFunctionKey)!):
+            guard webView?.canGoBack == true else { return false }
+            webView?.goBack()
+            return true
+        case String(UnicodeScalar(NSRightArrowFunctionKey)!):
+            guard webView?.canGoForward == true else { return false }
+            webView?.goForward()
+            return true
+        default:
+            return false
+        }
+    }
+
+    // MARK: - reload
+
+    /// ⌘R, ⇧⌘R, and the ⟳ button, all through here so they cannot drift apart.
+    ///
+    /// Three cases, because a "reload" in this app can arrive at a pane that has
+    /// nothing loaded. A deferred pane has never built its web view, an evicted
+    /// one has had it destroyed, and `WKWebView.reload()` on a view with no
+    /// current item is a silent no-op — which is exactly the shape of bug that
+    /// makes a key feel broken. In both of those the ledger's URL is the thing
+    /// to load, and loading it is what the user meant.
+    func reload(fromOrigin: Bool) {
+        if isDeferred { return loadIfDeferred() }
+        guard let webView else {
+            rehydrate()
+            return
+        }
+        guard webView.url != nil else {
+            if let url = pane.url { load(url) }
+            return
+        }
+        // `reloadFromOrigin` is ⇧⌘R: revalidate everything rather than trusting
+        // the cache. The distinction earns its key on exactly the pages where a
+        // plain reload is useless — a dev server behind a service worker, a
+        // dashboard that caches its own bundle.
+        _ = fromOrigin ? webView.reloadFromOrigin() : webView.reload()
+    }
+
+    // MARK: - zoom
+
+    /// ⌘= / ⌘- / ⌘0 on a page.
+    ///
+    /// `pageZoom` rather than injecting a CSS transform: it is WebKit's own
+    /// zoom, so media queries, fixed elements and the scroll offset all behave
+    /// the way they do in a browser. A transform would scale the rendered page
+    /// and leave the layout at the lane's width, which is the opposite of what
+    /// a narrow column needs — the point of zooming out in a 420 pt lane is to
+    /// get a *wider* layout.
+    private(set) var zoom: Double = 1
+
+    func setZoom(_ next: Double) {
+        let ladder = PaneZoom.ladder
+        zoom = min(max(next, ladder.first!), ladder.last!)
+        webView?.pageZoom = CGFloat(zoom)
+        chrome.setZoom(zoom)
+        store.setPaneZoom(paneId, zoom)
+    }
+
     // MARK: - PaneController
 
     func apply(_ pane: Pane) {
         self.pane = pane
         placeholder?.apply(pane)
+        // Only while there is no web view to ask. A live pane's address comes
+        // from `webView.url`, which is ahead of the ledger during a load and
+        // during anything a single-page app does.
+        if webView == nil { chrome.setURL(pane.url) }
         // A URL change from the ledger (not from navigation) means something
         // outside asked for a different page. Never for a popup: the URL the
         // lane was created with is a description of what `window.open` asked
@@ -107,10 +451,43 @@ final class WebPaneController: NSObject, PaneController {
         }
     }
 
-    func takeFocus() {
-        if let webView {
-            container.window?.makeFirstResponder(webView)
-        }
+    func takeFocus() { applyPendingFocus() }
+
+    /// Put the keyboard in the page, and keep putting it there.
+    ///
+    /// `takeFocus` is called once, when the ledger's focus moves. But the strip
+    /// *reparents* a pane's view as it materialises, recycles and reconciles
+    /// lanes, and a view that moves between superviews hands first-responder
+    /// status back to the window on the way. A one-shot `makeFirstResponder`
+    /// therefore leaves a freshly-opened lane focused according to the ledger
+    /// and deaf in fact — ⌘A ⌘C in it does nothing until you click something.
+    /// (The same bug, and the same fix, as `TerminalPaneController`.)
+    ///
+    /// So the *ledger* is the want, re-asserted whenever the view lands in a
+    /// window, and the two guards are what stop a re-assert from becoming a
+    /// focus thief:
+    ///
+    /// - the ledger still names this pane, so two panes reparenting in one pass
+    ///   cannot fight over the keyboard;
+    /// - nothing else is already typing. The strip's click monitor focuses a
+    ///   pane on *any* left click inside it, including a click on this pane's
+    ///   own address field, and it runs before the click is delivered — without
+    ///   this guard the page would take the keyboard back a moment before the
+    ///   field asked for it, and typing an address by mouse would be impossible.
+    private func applyPendingFocus() {
+        guard store.state.focusedPaneId == paneId else { return }
+        // "Something else is typing" means *this pane's* own two fields, and
+        // only those. An earlier version bailed on any `NSTextView` being first
+        // responder, which looks like the same rule and is not: the window
+        // always has a field editor somewhere — the sidebar's filter owns one
+        // from launch — so the guard fired every time and a lane opened by
+        // `maxpane open` came up deaf. Measured: `fr=<NSTextView>` on every
+        // attempt, ⌘A ⌘C in the new lane left the clipboard untouched.
+        guard !chrome.isEditingAddress, !findBar.isEditing else { return }
+        guard let webView, let window = container.window, window.isKeyWindow else { return }
+        if let current = window.firstResponder as? NSView,
+           current === webView || current.isDescendant(of: webView) { return }
+        window.makeFirstResponder(webView)
     }
 
     func flushState() { captureSession() }
@@ -125,6 +502,15 @@ final class WebPaneController: NSObject, PaneController {
         scrollObservation = nil
         titleObservation?.invalidate()
         titleObservation = nil
+        chromeObservations = []
+        focusToken.map(store.stopObserving)
+        focusToken = nil
+        keyWindowObserver.map(NotificationCenter.default.removeObserver)
+        keyWindowObserver = nil
+        // The pane is gone for good, so its zoom level is too — otherwise the
+        // sidecar grows a row for every pane ever opened.
+        webView.map(LinkHoverProbe.remove(from:))
+        hoverRelay = nil
         webView?.stopLoading()
         webView?.navigationDelegate = nil
         webView?.uiDelegate = nil
@@ -139,6 +525,10 @@ final class WebPaneController: NSObject, PaneController {
         // Record where the page is before it stops being able to tell us.
         captureScroll()
         captureSession()
+        // The pointer cannot still be on a link in a pane that is leaving the
+        // hierarchy, and the page will never send the `mouseout` that would say
+        // so — the listener goes away with the view.
+        chrome.setHoveredLink(nil)
         webView.removeFromSuperview()
         isParented = false
     }
@@ -268,6 +658,15 @@ final class WebPaneController: NSObject, PaneController {
         webView.autoresizingMask = [.width, .height]
 
         self.webView = webView
+        webView.pageZoom = CGFloat(zoom)
+        // Weak, and that matters: `WKUserContentController` holds its message
+        // handlers for the life of the configuration, which this pane owns.
+        let relay = ScriptMessageRelay { [weak self] body in
+            self?.chrome.setHoveredLink(body as? String)
+        }
+        hoverRelay = relay
+        LinkHoverProbe.install(on: webView, handler: relay)
+        observeChrome(webView)
         // `webView.title` is usually still empty when `didFinish` fires — the
         // document's <title> often lands a beat later — so observe it rather
         // than sampling it once. An end-to-end run with example.com produced a
@@ -276,6 +675,11 @@ final class WebPaneController: NSObject, PaneController {
             guard let title = change.newValue ?? nil, !title.isEmpty else { return }
             Task { @MainActor in self?.adoptTitle(title) }
         }
+        // And once, now. `.new` fires on *change*, and an adopted popup arrives
+        // with its document already built — a popup whose `<title>` was set
+        // before this pane existed never changes it again, so its lane header
+        // sat on the raw URL for the life of the pane.
+        if let title = webView.title, !title.isEmpty { adoptTitle(title) }
         store.setPaneDataStore(paneId, dataStoreId)
         install(webView)
     }
@@ -300,11 +704,25 @@ final class WebPaneController: NSObject, PaneController {
     /// gone and what is left is an ordinary page at an ordinary URL.
     private var isAdoptedPopup = false
 
+    /// Constraints rather than an autoresizing mask, and that is not a taste
+    /// call. `contentHost` is laid out by Auto Layout, so its bounds are still
+    /// zero when a pane is built; a springs-and-struts child pinned to a
+    /// zero-size parent resizes *proportionally* from nothing and ends up a
+    /// fraction of the lane's width. The symptom is a page that renders in the
+    /// left two-thirds of the column with dead background beside it.
     private func install(_ view: NSView) {
-        view.frame = container.bounds
-        view.autoresizingMask = [.width, .height]
-        container.addSubview(view)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        contentHost.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: contentHost.topAnchor),
+            view.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
+            view.bottomAnchor.constraint(equalTo: contentHost.bottomAnchor),
+        ])
         isParented = true
+        // The view just moved into a hierarchy, which is exactly when AppKit
+        // takes first-responder status away from it.
+        applyPendingFocus()
     }
 
     private func destroyWebView() {
@@ -312,20 +730,32 @@ final class WebPaneController: NSObject, PaneController {
         scrollObservation = nil
         titleObservation?.invalidate()
         titleObservation = nil
+        chromeObservations = []
+        webView.map(LinkHoverProbe.remove(from:))
+        hoverRelay = nil
+        chrome.setHoveredLink(nil)
         webView?.navigationDelegate = nil
         webView?.uiDelegate = nil
         webView?.removeFromSuperview()
         webView = nil
         isParented = false
+        // After the view is gone, so the arrows go grey rather than keep
+        // promising a back list that no longer exists.
+        refreshChrome()
         showPlaceholder()
     }
 
     private func showPlaceholder() {
         guard placeholder == nil else { return }
         let view = PlaceholderView(pane: pane)
-        view.frame = container.bounds
-        view.autoresizingMask = [.width, .height]
-        container.addSubview(view)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        contentHost.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: contentHost.topAnchor),
+            view.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
+            view.bottomAnchor.constraint(equalTo: contentHost.bottomAnchor),
+        ])
         placeholder = view
     }
 
@@ -454,7 +884,10 @@ extension WebPaneController: WKUIDelegate {
         case .lane:
             // A destination, not a conversation: open it ourselves so it lands
             // in the strip under the same ordering rules as everything else.
-            if let url { try? store.newWebLane(url: url, near: laneId) }
+            guard let url else { return nil }
+            let before = paneIds()
+            try? store.newWebLane(url: url, near: laneId)
+            revealLane(holding: paneIds().subtracting(before).first)
             return nil
         case .popup:
             return openPopup(with: configuration, url: url ?? "about:blank", near: laneId)
@@ -502,8 +935,19 @@ extension WebPaneController: WKUIDelegate {
         }
         // Usually already claimed: the write reconciles the strip before it
         // returns, and building the new lane is what builds the controller.
-        PopupHandoff.shared.resolvePending(to: paneIds().subtracting(before).first)
+        let created = paneIds().subtracting(before).first
+        PopupHandoff.shared.resolvePending(to: created)
+        // …unless the opener is off-screen, in which case the reconcile never
+        // built a view for the new lane and there is nothing to claim it. The
+        // reveal is what makes the strip materialise it — and what puts a
+        // sign-in form somewhere a person can see it.
+        revealLane(holding: created)
         return popup
+    }
+
+    private func revealLane(holding paneId: String?) {
+        guard let paneId, let laneId = store.lane(containing: paneId)?.id else { return }
+        onRevealLane?(laneId)
     }
 
     /// `window.close()`, from a popup that has finished its errand. OAuth
@@ -590,5 +1034,37 @@ final class DataStorePool {
         bytes[8] = (bytes[8] & 0x3f) | 0x80
         return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
                            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
+    }
+}
+
+/// The web pane's outermost view, and the only reason it is not a plain
+/// `NSView`.
+///
+/// A pane needs three key equivalents of its own (⌘F, ⌘←, ⌘→) and they cannot go
+/// through `Commands.swift`, because they belong to whichever pane has the
+/// keyboard rather than to the app. `performKeyEquivalent` is the only hook
+/// AppKit offers for that: the window walks the view tree with it *before* the
+/// main menu sees the event, so a pane's key can win over a global one without
+/// the global one having to know.
+///
+/// Subviews get first refusal, so the find field's own ⌘A and the address
+/// field's ⌘C still work.
+@MainActor
+final class WebPaneContainer: NSView {
+    var onKeyEquivalent: ((NSEvent) -> Bool)?
+    /// The strip recycles lane views, so a pane's container lands in a window
+    /// more than once in its life — and every one of those landings costs it
+    /// first-responder status.
+    var onMovedToWindow: (() -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        onMovedToWindow?()
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if super.performKeyEquivalent(with: event) { return true }
+        return onKeyEquivalent?(event) ?? false
     }
 }

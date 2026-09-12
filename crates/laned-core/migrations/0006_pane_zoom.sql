@@ -1,0 +1,12 @@
+-- How far a pane's contents are scaled: 1.0 is actual size.
+--
+-- This arrived as a JSON file beside the ledger, written by the shell, because
+-- the crate was busy when the chrome work needed it. That violated the rule
+-- this project is built on — the app owns no durable state (PRD §5.2) — and the
+-- file that held it said so in its own comment. A ratio is eight bytes; it
+-- belongs in the record it describes.
+--
+-- It is in `Pane` rather than behind a separate read, unlike the web session
+-- blob: the shell needs it to build a pane, it costs a `f64`, and a pane that
+-- comes back at the wrong size is a pane you have to fix by hand every launch.
+ALTER TABLE pane ADD COLUMN zoom REAL NOT NULL DEFAULT 1;

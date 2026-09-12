@@ -932,6 +932,12 @@ public protocol CoreProtocol: AnyObject, Sendable {
      */
     func setPaneUrl(paneId: String, url: String) throws 
     
+    /**
+     * Remember how far a pane's contents are scaled. No snapshot is
+     * published: zoom changes what a pane draws, not the shape of the strip.
+     */
+    func setPaneZoom(paneId: String, zoom: Double) throws 
+    
     func setPinned(laneId: String, pinned: Bool) throws  -> StripState
     
     /**
@@ -1683,6 +1689,20 @@ open func setPaneUrl(paneId: String, url: String)throws   {try rustCallWithError
 }
 }
     
+    /**
+     * Remember how far a pane's contents are scaled. No snapshot is
+     * published: zoom changes what a pane draws, not the shape of the strip.
+     */
+open func setPaneZoom(paneId: String, zoom: Double)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_set_pane_zoom(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(paneId),
+        FfiConverterDouble.lower(zoom),uniffiCallStatus
+    )
+}
+}
+    
 open func setPinned(laneId: String, pinned: Bool)throws  -> StripState  {
     return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
         uniffiCallStatus in
@@ -2215,6 +2235,11 @@ public struct Pane: Equatable, Hashable {
      * only thing a lane could do before this existed.
      */
     public var heightWeight: Double
+    /**
+     * How far the pane's contents are scaled; 1.0 is actual size. A terminal
+     * reads it as a font size and a page as a page zoom.
+     */
+    public var zoom: Double
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -2244,7 +2269,11 @@ public struct Pane: Equatable, Hashable {
          * the window changes. Only the ratio between siblings is ever read, so
          * nothing normalizes these — 1 everywhere is the equal split that was the
          * only thing a lane could do before this existed.
-         */heightWeight: Double) {
+         */heightWeight: Double, 
+        /**
+         * How far the pane's contents are scaled; 1.0 is actual size. A terminal
+         * reads it as a font size and a page as a page zoom.
+         */zoom: Double) {
         self.id = id
         self.laneId = laneId
         self.position = position
@@ -2256,6 +2285,7 @@ public struct Pane: Equatable, Hashable {
         self.snapshotPath = snapshotPath
         self.state = state
         self.heightWeight = heightWeight
+        self.zoom = zoom
     }
 
     
@@ -2284,7 +2314,8 @@ public struct FfiConverterTypePane: FfiConverterRustBuffer {
                 dataStoreId: FfiConverterOptionString.read(from: &buf), 
                 snapshotPath: FfiConverterOptionString.read(from: &buf), 
                 state: FfiConverterTypePaneState.read(from: &buf), 
-                heightWeight: FfiConverterDouble.read(from: &buf)
+                heightWeight: FfiConverterDouble.read(from: &buf), 
+                zoom: FfiConverterDouble.read(from: &buf)
         )
     }
 
@@ -2300,6 +2331,7 @@ public struct FfiConverterTypePane: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.snapshotPath, into: &buf)
         FfiConverterTypePaneState.write(value.state, into: &buf)
         FfiConverterDouble.write(value.heightWeight, into: &buf)
+        FfiConverterDouble.write(value.zoom, into: &buf)
     }
 }
 
@@ -2592,6 +2624,7 @@ public struct PortablePane: Equatable, Hashable {
      * field existed, or hand-edited to drop it.
      */
     public var heightWeight: Double
+    public var zoom: Double
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -2599,12 +2632,13 @@ public struct PortablePane: Equatable, Hashable {
         /**
          * This pane's share of its lane's height. 1 for a file written before the
          * field existed, or hand-edited to drop it.
-         */heightWeight: Double) {
+         */heightWeight: Double, zoom: Double) {
         self.kind = kind
         self.relaySessionId = relaySessionId
         self.url = url
         self.scrollY = scrollY
         self.heightWeight = heightWeight
+        self.zoom = zoom
     }
 
     
@@ -2627,7 +2661,8 @@ public struct FfiConverterTypePortablePane: FfiConverterRustBuffer {
                 relaySessionId: FfiConverterOptionString.read(from: &buf), 
                 url: FfiConverterOptionString.read(from: &buf), 
                 scrollY: FfiConverterOptionDouble.read(from: &buf), 
-                heightWeight: FfiConverterDouble.read(from: &buf)
+                heightWeight: FfiConverterDouble.read(from: &buf), 
+                zoom: FfiConverterDouble.read(from: &buf)
         )
     }
 
@@ -2637,6 +2672,7 @@ public struct FfiConverterTypePortablePane: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.url, into: &buf)
         FfiConverterOptionDouble.write(value.scrollY, into: &buf)
         FfiConverterDouble.write(value.heightWeight, into: &buf)
+        FfiConverterDouble.write(value.zoom, into: &buf)
     }
 }
 
@@ -4164,6 +4200,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_set_pane_url() != 13307) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_set_pane_zoom() != 8269) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_set_pinned() != 43959) {

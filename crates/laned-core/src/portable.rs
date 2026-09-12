@@ -57,7 +57,11 @@ pub fn export(lanes: &[Lane]) -> String {
             // The split the user arranged is layout, and layout is the whole of
             // what this format carries. A file written before the column existed
             // reads back as 1 everywhere, which is the equal split it described.
-            out.push_str(&format!("          \"height_weight\": {}\n", pane.height_weight));
+            out.push_str(&format!("          \"height_weight\": {},\n", pane.height_weight));
+            // Zoom travels with the split for the same reason: how big you made
+            // the text is part of how you arranged the strip, not a property of
+            // the machine you arranged it on.
+            out.push_str(&format!("          \"zoom\": {}\n", pane.zoom));
             out.push_str(if j + 1 == lane.panes.len() { "        }\n" } else { "        },\n" });
         }
         out.push_str("      ]\n");
@@ -89,6 +93,7 @@ pub struct PortablePane {
     /// This pane's share of its lane's height. 1 for a file written before the
     /// field existed, or hand-edited to drop it.
     pub height_weight: f64,
+    pub zoom: f64,
 }
 
 /// Parse an exported strip.
@@ -163,6 +168,10 @@ fn parse_pane(fields: &[(String, mini_json::Value)]) -> PortablePane {
         height_weight: get("height_weight")
             .and_then(|v| v.number())
             .filter(|w| w.is_finite() && *w > 0.0)
+            .unwrap_or(1.0),
+        zoom: get("zoom")
+            .and_then(|v| v.number())
+            .filter(|z| z.is_finite() && *z > 0.0)
             .unwrap_or(1.0),
     }
 }
@@ -406,6 +415,7 @@ mod tests {
             snapshot_path: None,
             state: PaneState::Live,
             height_weight: 1.0,
+            zoom: 1.0,
         }
     }
 

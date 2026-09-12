@@ -881,6 +881,14 @@ public final class StripViewController: NSViewController {
         }
     }
 
+    /// ⌘R / ⇧⌘R on whatever has the keyboard. What reloading means is the
+    /// pane's business — a page refetches, and a terminal has nothing to
+    /// refetch and says so rather than quietly running something.
+    public func reloadFocusedPane(fromOrigin: Bool) {
+        guard let paneId = store.state.focusedPaneId else { return }
+        paneControllers[paneId]?.reload(fromOrigin: fromOrigin)
+    }
+
     /// Ask every live pane to write down what it would otherwise lose.
     ///
     /// Only web panes have anything to say — their history and scroll live in
@@ -930,9 +938,18 @@ public final class StripViewController: NSViewController {
             // instantiated. Everything else waits as a placeholder until it is
             // scrolled to — which, at M1's 27–95 MB a pane, is the difference
             // between a 150-lane strip opening and a 150-lane strip thrashing.
-            return WebPaneController(
+            let controller = WebPaneController(
                 pane: pane, lane: lane, store: store, config: config,
                 deferLoad: isColdLaunch && distanceFromViewport(laneId: lane.id) > config.rehydrateDistance)
+            // A popup that opens while its opener is scrolled off the strip is
+            // created, focused in the ledger, and never brought on screen —
+            // which is fine for a machine-to-machine round trip and useless for
+            // a sign-in form you have to type into.
+            controller.onRevealLane = { [weak self] laneId in
+                guard let self, let laneId else { return }
+                self.reveal(laneId: laneId, flash: true)
+            }
+            return controller
         }
     }
 
