@@ -88,9 +88,34 @@ public struct RelaySessionSpawner {
         if isShellCommand(command) {
             return head + [command, "--login"] + args
         }
-        let inner = args.isEmpty
-            ? "exec \(shellEscape(command))"
-            : "exec \(shellEscape(command)) " + args.map(shellEscape).joined(separator: " ")
+        // Deliberately NOT `exec`, which is what RelayTTY's own CLI does.
+        //
+        // `exec` replaces the shell, making the agent the session leader. The
+        // classifier's first rule is:
+        //
+        //     let Some(process) = obs.foreground_process else { return Idle };
+        //
+        // and `foreground_process` is None precisely when the foreground pgrp
+        // *is* the leader. So an exec'd agent can never be anything but `idle` —
+        // never `blocked`, never `working` — and BLOCKED is the whole reason
+        // this app has a sidebar. Scott's two `relay claude` sessions have read
+        // `idle` for days for exactly this reason.
+        //
+        // Leaving the shell in place costs one extra process and buys the
+        // signal. It also means the lane survives the agent exiting, which is
+        // what you want from a supervision surface.
+        var inner = args.isEmpty
+            ? shellEscape(command)
+            : shellEscape(command) + " " + args.map(shellEscape).joined(separator: " ")
+        // The trailing `exit` is not decoration. Dropping `exec` is not enough
+        // on its own: both zsh and bash optimise `-c '<one simple command>'`
+        // into an exec anyway, which puts us straight back to the agent being
+        // the session leader. A second command defeats that optimisation, the
+        // shell forks, and the agent finally has a foreground pgrp of its own —
+        // which is the entire precondition for ever being classified `blocked`.
+        // `exit $?` keeps RelayTTY's behaviour of ending the session when the
+        // command ends.
+        inner += "; exit $?"
         return head + [userShell(), "-li", "-c", inner]
     }
 

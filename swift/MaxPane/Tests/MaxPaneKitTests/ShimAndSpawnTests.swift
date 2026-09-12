@@ -117,9 +117,11 @@ struct RelaySpawnTests {
         #expect(Array(argv.prefix(4)) == ["a1b2c3d4", "80", "40", "/Users/s/code"])
         #expect(argv[5] == "-li")
         #expect(argv[6] == "-c")
-        // `exec` is what makes the command the session leader — which is also
-        // why an agent lane's cwd is static. ADR-0005.
-        #expect(argv[7] == "exec 'claude' '--dangerously-skip-permissions'")
+        // No `exec`: it would make the agent the session leader, and the
+        // classifier returns Idle unconditionally when the foreground pgrp is
+        // the leader — so an exec'd agent can never report `blocked`, which is
+        // the one signal the sidebar exists for.
+        #expect(argv[7] == #"'claude' '--dangerously-skip-permissions'; exit $?"#)
     }
 
     @Test("arguments with quotes cannot break out of the wrapper")
@@ -127,7 +129,7 @@ struct RelaySpawnTests {
         let argv = RelaySessionSpawner.buildArgs(
             id: "a1b2c3d4", cols: 80, rows: 40, cwd: "/tmp",
             command: "echo", args: ["it's; rm -rf /"])
-        #expect(argv.last == #"exec 'echo' 'it'\''s; rm -rf /'"#)
+        #expect(argv.last == #"'echo' 'it'\''s; rm -rf /'; exit $?"#)
     }
 
     @Test("every shell basename is recognised", arguments: [
