@@ -58,7 +58,8 @@ running app — never the builder's account of it.
 | 2 | History: record, search, surface | `crates/laned-core`, a new palette | — | — |
 | 3 | Appear/disappear animations, and the split-down reconcile | `Views/StripViewController.swift`, `Views/LaneView.swift` | — | — |
 | 4 | Browser chrome: URL, nav, security, find, zoom readout | a new chrome view + `Web/WebPaneController.swift` | — | — |
-| 5 | Terminal zoom | `Terminal/TerminalPaneController.swift` | — | — |
+| 5 | Terminal zoom | `Terminal/TerminalPaneController.swift` | lead, done | pending |
+| 6 | Copy/paste between panes | `Terminal/TerminalPaneController.swift`, `RelayAttachmentAdapter.swift`, `AppDelegate.swift` | — | — |
 
 Pieces 1 and 4 both own `WebPaneController`, so they run in different waves.
 The **seams are the lead's**, already in place before any builder starts:
@@ -94,3 +95,32 @@ A piece fails its round if, with a fresh critic driving a real instance:
 - **Round 0 (lead).** Captured the bar from the running Vivaldi window. Put the
   two seams in: the zoom command/protocol, and the isolated-instance env
   overrides. Wrote this page.
+
+- **Round 0, a hazard found the hard way.** `build-app.sh` `rm -rf`s the bundle
+  before reassembling it. Doing that while an instance is running from it kills
+  the app — WKWebView loses the ability to spawn its XPC processes and the
+  process dies with no message. It killed Scott's app mid-sign-in. The script
+  now refuses, and `MAXPANE_APP` builds elsewhere. Every builder was told.
+
+- **Round 0, piece 5 done and seen.** ⌘= / ⌘- / ⌘0 resize a terminal's text.
+  Three presses took the grid from 80 columns to 53 and dispatched the resize,
+  so the far end reflows rather than clipping.
+
+- **Round 0, two symptoms from the owner mid-run**, both routed to builders
+  rather than guessed at:
+  - "This browser version is no longer supported" on Google apps → the user
+    agent, handed to piece 1 with instructions to measure what the panes
+    actually send rather than reason about it.
+  - "copy/paste from browser pane to terminal pane is not working" → became
+    **piece 6**, with evidence gathered first: ⌘C from a web pane *does* work;
+    ⌘V into a terminal fails two different ways in one session — in one lane the
+    text arrives as the literal `[200~PASTE_PROBE_123~` (bracketed-paste markers
+    reaching zsh's line editor as text), in a freshly created lane nothing
+    arrives at all. Two leads handed over: the local emulator's guess about a
+    *remote* program's bracketed-paste mode, which it cannot actually know; and
+    a `Task { @MainActor }` per outgoing write, which gives the byte stream no
+    ordering guarantee at all.
+
+- **A datum that narrows piece 1.** Scott's Gmail lane is signed in and the
+  session survived a restart, so cookie persistence and the data-store sharding
+  are fine. Whatever is wrong with OAuth is narrower than "logins do not stick".
