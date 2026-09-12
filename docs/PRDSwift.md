@@ -1,6 +1,9 @@
 # PRD — Max Pane for macOS
 
-**Status:** Draft 1 · 2026-09-12
+**Status:** Draft 1 · 2026-09-12 — Phase 0 complete, Phases 1–3 built.
+See [`docs/decisions/`](decisions/) for the eight ADRs and
+[`docs/acceptance.md`](acceptance.md) for where this document and reality
+disagree. Amendments below are marked **[AMENDED]** with the ADR that made them.
 **Owner:** Scott Pierce
 **Audience:** Claude Code (planning + implementation), future-Scott.
 **Scope:** A fullscreen macOS app. Nothing in this document concerns Linux, Wayland, or compositors. A separate PRD covers that later; ignore it.
@@ -169,6 +172,12 @@ Versioned migrations in `laned-core/migrations/`. Never edit a shipped migration
 
 ### 7.3 Project tagging
 - **pty:** poll the foreground process cwd of the attached Relay session every 5 s. On macOS, resolve via `proc_pidinfo(PROC_PIDVNODEPATHINFO)` on the local pid if the session is local; if the session is remote, use whatever cwd Relay already reports (observation only; do not extend the protocol). Resolve to git root (`git rev-parse --show-toplevel`, cached).
+  **[AMENDED — [ADR-0005](decisions/0005-cwd-for-relay-sessions.md)]** RelayTTY's
+  pty-host **already runs exactly this poll**, on the same syscall and cadence,
+  and writes the answer to the session file — so MaxPane observes rather than
+  duplicating it, and remote sessions get the same answer. It also does not strip
+  **OSC 7** from the output stream, which gives a sub-second path three orders of
+  magnitude fresher than the 5 s file.
 - **web:** inherit from spawning pane. `project_source='inherited'`.
 - **manual:** user override via sidebar; sticky.
 - Tag never moves a lane.
@@ -201,7 +210,13 @@ Versioned migrations in `laned-core/migrations/`. Never edit a shipped migration
 
 ## 9. Web panes
 
-- One `WKProcessPool` for the whole app (WebKit does process-per-site under it).
+- ~~One `WKProcessPool` for the whole app (WebKit does process-per-site under it).~~
+  **[AMENDED — [ADR-0003](decisions/0003-website-data-store-sharding.md)]** Both
+  halves are untrue on macOS 26. `WKProcessPool` has been a deprecated no-op
+  since macOS 12, and spike M1 measured **one `WebContent` process per
+  `WKWebView`** with no site coalescing — 100 views across 20 origins gave 100
+  processes. The model is *one web pane, one OS process*, ≈27 MB for a light page
+  and ≈95 MB for a real site.
 - A small fixed number of `WKWebsiteDataStore`s (default 3), assigned by project root so a project's panes share cookies/logins. Assignment recorded in `pane.data_store_id`.
 - Track navigation (`WKNavigationDelegate`) to keep `pane.url` and title current.
 - `WKUIDelegate` popups/new-window requests → new web pane right of the requesting pane.
@@ -220,11 +235,21 @@ Versioned migrations in `laned-core/migrations/`. Never edit a shipped migration
 | Sleep/wake | all panes intact; no reloads |
 
 ### 10.2 Off-screen behavior
-- Web panes more than `RELEASE_DISTANCE` (default 6) lanes off-screen are **removed from the view hierarchy** but kept alive (WebKit suspends rendering for unparented views). Re-parent on scroll-in.
+- Web panes more than `RELEASE_DISTANCE` (default 6) lanes off-screen are **removed from the view hierarchy** but kept alive. Re-parent on scroll-in.
+  **[AMENDED — [ADR-0003](decisions/0003-website-data-store-sharding.md)]** This
+  is a CPU strategy, **not a memory strategy**. M1 measured unparenting at
+  **3.5 MB per pane** regardless of page weight, against **24.7–90.8 MB** for
+  eviction. On a real site, unparenting buys 4% of what eviction buys.
 - pty panes stay parented; SwiftTerm is cheap.
 
 ### 10.3 Eviction
 - Policy in `laned-core`, inputs: process-pool memory (via `task_info`/`proc_pid_rusage` of WebKit content processes), distance from viewport, `last_focus_at`, `pinned`.
+  **[AMENDED — [ADR-0003](decisions/0003-website-data-store-sharding.md)]** The
+  budget is a **fraction of physical RAM**, not a pane count, because per-pane
+  cost varies 3.4× by page type: soft 0.25×, hard 0.35×, evict down to 0.20×. It
+  also has **hysteresis** — three consecutive over-budget samples and a 120 s
+  cooldown — because M1 watched the same 100 panes measure 5 275 MB and then
+  2 274 MB three and a half minutes later with nobody touching anything.
 - Evict = `takeSnapshot` → record `url`, `scroll_y` → destroy `WKWebView` → `state='evicted'`. Lane renders the snapshot dimmed with a kind glyph.
 - Rehydrate on focus, on scroll within `REHYDRATE_DISTANCE` (default 2), or on search selection.
 - Pinned panes are never evicted. pty panes are never evicted.
@@ -235,7 +260,13 @@ Versioned migrations in `laned-core/migrations/`. Never edit a shipped migration
 ## 11. Terminal panes
 
 - SwiftTerm view attached to a RelayTTY session via Relay's existing client library/protocol.
-- Resize → propagate to Relay; verify cell-accurate reflow.
+- ~~Resize → propagate to Relay; verify cell-accurate reflow.~~
+  **[AMENDED — [ADR-0007](decisions/0007-terminal-panes-never-resize-the-pty.md)]**
+  RelayTTY's PTY resize is **global last-writer-wins**, so a narrow lane
+  propagating its size reshapes the terminal for every other client — M2 measured
+  **6 671 bytes of forced redraw** on every attached client per flip for `htop`.
+  MaxPane **never sends `RESIZE`** and **sizes the lane to the session** instead.
+  One explicit "claim this session" command is the only path that resizes a PTY.
 - Local scrollback from SwiftTerm's buffer for search; Relay remains the source of truth for the session.
 - If Relay is unreachable at launch, pty panes render a "reconnecting" state and retry with backoff; the lane and ordinal are unaffected.
 
@@ -250,7 +281,7 @@ One evening each; report in `docs/spikes/NN-name.md` with measured numbers.
 | M1 | 100 `WKWebView`s in one process pool, 5 parented, 95 unparented: RSS, idle CPU, scroll smoothness when re-parenting | numbers recorded; re-parent < 100 ms; idle CPU < 2% |
 | M2 | SwiftTerm ↔ Relay attach: latency, resize correctness, 30 concurrent sessions | usable; no protocol changes needed |
 | M3 | `laned-core` via uniffi: `StripState` round-trip at 300 lanes / 400 panes | < 5 ms |
-| M4 | Fullscreen `NSWindow` + horizontal `NSScrollView` with 150 lane views: scroll at 120 Hz, no layout thrash | measured; lane views virtualized if needed |
+| M4 | Fullscreen `NSWindow` + horizontal `NSScrollView` with 150 lane views: scroll at 120 Hz, no layout thrash | measured; lane views virtualized if needed — **120 Hz unverifiable on this hardware, see [ADR-0004](decisions/0004-strip-view-strategy.md)** |
 | M5 | Sleep/wake with 100 web panes + 20 terminals | nothing reloads; Relay sessions reattached |
 
 If M1 fails on memory, revisit §10.3 thresholds and the data-store count before Phase 1.
@@ -280,14 +311,26 @@ If M1 fails on memory, revisit §10.3 thresholds and the data-store count before
 
 ---
 
-## 14. Open decisions (write ADRs before implementing)
+## 14. Open decisions — **all closed**
 
-- SwiftTerm vs. embedding Relay's existing web terminal client in a `WKWebView` (SwiftTerm preferred; the fallback proves "second frontend" fastest but costs memory per pane).
-- uniffi vs. cbindgen for the FFI.
-- 3 vs. N `WKWebsiteDataStore`s, and the assignment rule.
-- Virtualized strip (`NSCollectionView`) vs. plain `NSScrollView` with manual view recycling.
-- How cwd is obtained for remote Relay sessions (observation-only options; otherwise pty panes on remote sessions stay `inherited`).
-- Snapshot format/resolution for placeholders.
+Every one has an ADR in [`docs/decisions/`](decisions/), and every ADR names the
+measurement that decided it.
+
+| Decision | Answer | ADR | Decided by |
+|---|---|---|---|
+| SwiftTerm vs. Relay's web client in a `WKWebView` | **SwiftTerm** | [0001](decisions/0001-swiftterm-over-web-terminal.md) | M2 — 1.17 MB a pane vs ≥27 MB, and three better reasons than memory |
+| uniffi vs. cbindgen | **uniffi**, plus snapshot-free hot paths | [0002](decisions/0002-uniffi-over-cbindgen.md) | M3 — 2.4 ms round-trip, 88% of it the boundary |
+| 3 vs. N `WKWebsiteDataStore`s | **3**, hashed by project root | [0003](decisions/0003-website-data-store-sharding.md) | M1 — store count influenced nothing measurable |
+| Virtualized strip vs. manual recycling | **`NSScrollView` + manual recycling** | [0004](decisions/0004-strip-view-strategy.md) | M4 — 0.00% vs 16.16% dropped frames; ties `NSCollectionView`, fights the app less |
+| cwd for remote Relay sessions | **Observe pty-host**, OSC 7 first | [0005](decisions/0005-cwd-for-relay-sessions.md) | The pty-host source — it already does the poll §7.3 describes |
+| Placeholder snapshot format | **JPEG at 1× lane width** | [0006](decisions/0006-placeholder-snapshots.md) | Measured — HEIC costs 22× the encode time to save disk nobody needs |
+
+Two decisions were added that §14 did not anticipate:
+
+| Decision | ADR | Why it exists |
+|---|---|---|
+| Terminal panes never resize the PTY | [0007](decisions/0007-terminal-panes-never-resize-the-pty.md) | §11 contradicts RelayTTY's global last-writer-wins resize |
+| Multi-display is not built | [0008](decisions/0008-no-multi-display-yet.md) | Phase 3 is gated on Phase 2 holding, and that gate is a week of real use |
 
 ---
 
@@ -317,5 +360,25 @@ If M1 fails on memory, revisit §10.3 thresholds and the data-store count before
 ---
 
 ## 17. Definition of done (v1)
+
+**Still open, and only Scott can close it.** Everything §13 lists is built and
+tested; what remains is the part that is a fact about living in it rather than a
+fact about the code. Phase 1's exit is two weeks as the primary environment;
+Phase 2's is 150 lanes for one week within targets. Neither can be established by
+building more.
+
+Two measurements should be taken before that fortnight starts, both blocked on
+things a running spike could not reach:
+
+- **M1b — the process-count ceiling.** 130 web panes means ≥130 `WebContent`
+  processes, and nothing has found where macOS or WebKit pushes back. Every
+  threshold in §10.3 is irrelevant if the failure mode is "WebKit declines to
+  spawn process 137" rather than "memory got tight".
+- **M1 and M4, re-run unlocked.** Both ran with the screen locked, so macOS
+  occluded the windows. M1's memory figures are a floor, and its central
+  question — whether unparenting actually suspends rendering — is unanswered.
+  `spikes/m1-webkit-memory/run_when_unlocked.sh` closes it in one command.
+
+---
 
 Scott lives in it for two weeks. Terminals and web views side by side in portrait columns, organized only by where he left them. When the app crashes, he loses pixels and nothing else. The Linux question can wait until this answer is in.
