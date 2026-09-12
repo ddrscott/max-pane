@@ -170,10 +170,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 ?? FileManager.default.homeDirectoryForCurrentUser.path)
             : cwd
         do {
+            let size = newSessionSize()
             let session = try RelaySessionSpawner(config: config).spawn(
                 cwd: workingDirectory,
                 command: command.isEmpty ? nil : command,
-                args: args)
+                args: args,
+                cols: size.cols, rows: size.rows)
             try store.newTerminalLane(relaySessionId: session, near: near)
             if let laneId = store.state.lanes.last?.id {
                 strip.reveal(laneId: laneId, flash: true)
@@ -280,7 +282,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 // a terminal split is the only one that can happen silently.
                 if pane.kind == .pty {
                     let cwd = strip.cwd(ofPane: focused) ?? FileManager.default.homeDirectoryForCurrentUser.path
-                    let session = try RelaySessionSpawner(config: config).spawn(cwd: cwd)
+                    let size = newSessionSize()
+                    let session = try RelaySessionSpawner(config: config)
+                        .spawn(cwd: cwd, cols: size.cols, rows: size.rows)
                     try store.addPane(to: lane.id, kind: .pty, relaySessionId: session, url: nil)
                 } else {
                     promptForURL { [weak self] url in
@@ -376,7 +380,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         // PRD §7.1: the new session starts in the focused pane's cwd.
         let cwd = store.state.focusedPaneId.flatMap { strip.cwd(ofPane: $0) }
             ?? FileManager.default.homeDirectoryForCurrentUser.path
-        let session = try RelaySessionSpawner(config: config).spawn(cwd: cwd)
+        let size = newSessionSize()
+        let session = try RelaySessionSpawner(config: config)
+            .spawn(cwd: cwd, cols: size.cols, rows: size.rows)
         try store.newTerminalLane(relaySessionId: session, near: lane?.id)
     }
 
@@ -410,8 +416,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 }
             case .launch(let command, let cwd):
                 do {
+                    let size = self.newSessionSize()
                     let id = try RelaySessionSpawner(config: self.config)
-                        .spawn(cwd: cwd, command: command)
+                        .spawn(cwd: cwd, command: command, cols: size.cols, rows: size.rows)
                     try self.store.newTerminalLane(relaySessionId: id, near: nil)
                 } catch {
                     self.showError(error)
@@ -420,6 +427,40 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         }
         palette = nil
         controller.present(over: window)
+    }
+
+    /// The terminal size a *new* session should start at.
+    ///
+    /// ADR-0007 says Max Pane never resizes a session, because the PTY's size is
+    /// shared by every client including Scott's phone. It says nothing about the
+    /// size a session is *born* at — at that instant we are the only client, and
+    /// choosing it is not taking it from anyone.
+    ///
+    /// Getting this wrong is very visible: a session born at 80×40 in a lane
+    /// that can show 60 rows leaves a third of the column black forever, and
+    /// ADR-0007 then forbids us from fixing it.
+    private func newSessionSize() -> (cols: Int, rows: Int) {
+        let font = NSFont(name: config.fontName, size: config.fontSize)
+            ?? NSFont.monospacedSystemFont(ofSize: config.fontSize, weight: .regular)
+
+        // Match SwiftTerm's own cell metric rather than approximating it.
+        // `AppleTerminalView.computeFontDimensions` uses
+        // `ceil(ascent + descent + leading)`; `boundingRectForFont.height` is
+        // several points taller, and guessing high leaves a band of dead black
+        // at the bottom of every terminal lane that ADR-0007 then forbids
+        // fixing.
+        let ctFont = font as CTFont
+        let cellHeight = ceil(CTFontGetAscent(ctFont) + CTFontGetDescent(ctFont) + CTFontGetLeading(ctFont))
+        let advance = Double(font.advancement(forGlyph: font.glyph(withName: "space") ?? 0).width)
+        let cellWidth = advance > 0 ? advance.rounded() : config.fontSize * 0.6
+
+        let laneWidth = Double(config.laneDefaultPt) - 16
+        let usableHeight = Double(strip.view.bounds.height) - Double(Theme.laneHeaderHeight)
+
+        let cols = max(40, Int(laneWidth / max(cellWidth, 1)))
+        // Fall back to something sane before the strip has been laid out.
+        let rows = usableHeight > 100 ? max(20, Int(usableHeight / max(cellHeight, 1))) : 40
+        return (cols, rows)
     }
 
     private func refreshStatus() {

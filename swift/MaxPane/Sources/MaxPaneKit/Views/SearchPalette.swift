@@ -770,7 +770,7 @@ final class SearchPaletteController: PaletteController {
         let name = [
             lane?.title,
             telemetry?.title,
-            pane?.url.map(SidebarLaneView.hostOf),
+            pane?.url.flatMap { URL(string: $0)?.host },
             telemetry?.command,
             lane?.projectRoot.map { ($0 as NSString).lastPathComponent },
         ].compactMap { $0 }.first { !$0.isEmpty } ?? "untitled"
