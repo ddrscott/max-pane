@@ -6,6 +6,10 @@
 > option should allow the pinned pane to hover over the strip, or reduce the
 > space of the strip. i often have a page that's for background music."
 > "but pinning i mean docking a pane to the left or right side"
+> "a lane may contain several vertically stacked panes. lanes always initially
+> start with a single pane. when a lane is docked all its panes are inherently
+> docked with it. the order of the docked lane is remembered so it returns to
+> the same spot when it's undocked."
 
 So: a pane that stays put at one edge while the strip scrolls behind or beside
 it, in one of two modes — **overlay** (floats above the strip) or **inset** (the
@@ -36,13 +40,20 @@ ADR should say why both exist.
 
 ## The design questions that decide whether this is any good
 
-- **Is the docked thing a lane or a pane?** The owner said "pane". A lane is the
-  unit of everything else — ordinal, width, span, the stack, the header. Docking
-  a lane is consistent and probably cheaper; docking a single pane out of a
-  stack needs an answer for what happens to its siblings. Pick one and say why.
-- **Does the docked lane leave the strip's order?** If it keeps its ordinal,
-  scrolling to that position shows a gap where it used to be. If it leaves,
-  undocking has to put it back somewhere and "where" needs a rule.
+**Two of these are answered** — the owner settled them and they are no longer
+open:
+
+- **The unit is the LANE.** Every pane in it docks with it, and it goes on
+  behaving as a lane: ⇧⌘D still splits it, height weights still apply. A lane
+  starts with one pane but must never be built assuming one.
+- **The ordinal is remembered and undocking restores it** — the same spot, not
+  the end and not "next to where you are". That is stronger than it looks: the
+  strip uses fractional ordinals with renormalisation, so lanes created, moved
+  or renormalised while one sits docked will have taken ordinals around and
+  through its remembered position. "The same spot" needs a definition that
+  survives its neighbours changing.
+
+Still open:
 - **Everything that reads the viewport width has to agree with inset mode.**
   `LaneSnap.offset`, `LanePeek`, `StripEdgeRail`'s counts, `materializationWindow`
   and `visibleLaneRange` all compute against the clip view today. In inset mode
