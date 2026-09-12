@@ -54,10 +54,10 @@ running app — never the builder's account of it.
 
 | # | Piece | Files it owns | Builder | Critic verdict |
 |---|---|---|---|---|
-| 1 | OAuth, popups, `window.opener` | `Web/WebPaneController.swift` | — | — |
-| 2 | History: record, search, surface | `crates/laned-core`, a new palette | — | — |
-| 3 | Appear/disappear animations, and the split-down reconcile | `Views/StripViewController.swift`, `Views/LaneView.swift` | — | — |
-| 4 | Browser chrome: URL, nav, security, find, zoom readout | a new chrome view + `Web/WebPaneController.swift` | — | — |
+| 1 | OAuth, popups, `window.opener` | `Web/WebPaneController.swift` | done, committed | judging |
+| 2 | History: record, search, surface | `crates/laned-core`, a new palette | done, committed | judging |
+| 3 | Appear/disappear animations, and the split-down reconcile | `Views/StripViewController.swift`, `Views/LaneView.swift` | building | — |
+| 4 | Browser chrome: URL, nav, security, find, zoom readout | a new chrome view + `Web/WebPaneController.swift` | building (worktree) | — |
 | 5 | Terminal zoom | `Terminal/TerminalPaneController.swift` | lead, done | pending |
 | 6 | Copy/paste between panes | `Terminal/TerminalPaneController.swift`, `RelayAttachmentAdapter.swift`, `AppDelegate.swift` | — | — |
 
@@ -120,6 +120,22 @@ A piece fails its round if, with a fresh critic driving a real instance:
     *remote* program's bracketed-paste mode, which it cannot actually know; and
     a `Task { @MainActor }` per outgoing write, which gives the byte stream no
     ordering guarantee at all.
+
+- **Round 1, piece 1 done — and the cause was one thing, not two.** The panes
+  were sending `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)
+  AppleWebKit/605.1.15 (KHTML, like Gecko)` — measured off the wire against a
+  local echo server, not reasoned about. No `Version/`, no `Safari/`: the
+  canonical embedded-webview shape, which is exactly what Google refuses to
+  sign in *and* what raises "this browser is no longer supported". The version
+  token now comes from Safari's own Info.plist at launch rather than being
+  pinned, so it is true today and still true in a year.
+  The second half: `window.open` returned nil and loaded the URL in an unrelated
+  lane, so the popup could never reach `window.opener` — the sign-in completed
+  somewhere with no way to hand the result back, which is precisely "it triggers
+  sessions outside the app". Proven fixed against a local server: the popup
+  found its opener, posted to it, the opener received the payload, and the
+  popup's own HTTP request carried the cookie the opener had been given —
+  still carried after a restart.
 
 - **A datum that narrows piece 1.** Scott's Gmail lane is signed in and the
   session survived a restart, so cookie persistence and the data-store sharding
