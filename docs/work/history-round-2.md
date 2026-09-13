@@ -46,14 +46,11 @@ the palette's footer reads `0 OF 5013 PAGES` — proved with planted needles at
 depths 500, 1,899, 2,499 and 4,499; the first two were found, the last two were
 not, with the row sitting in the table the whole time.
 
-The caps were bought with speed nobody was short of: the candidate query costs
-**2 ms** over 2,000 rows, measured. Index it — substring or FTS over every row —
-and drop `HISTORY_MAX_ROWS` to something that matches a year of real use, or
-retire it in favour of the age cap alone. A 642 MB SQLite file is what Vivaldi
-spends on this; the ledger can afford a great deal more than 5,000 rows.
+The caps were bought with speed nobody was short of. Per section 1 they are
+going entirely rather than being lowered — this section is here for the evidence
+that the truncation was real and silent, not to propose a smaller number.
 
-Whatever the new limits are, **the footer must describe the search's actual
-reach**, not the table's size. A label that is wrong about the thing it labels
+**The footer must describe the search's actual reach**, not the table's size. A label that is wrong about the thing it labels
 is worse than no label.
 
 ## 2. Substring beats subsequence on a corpus this size
