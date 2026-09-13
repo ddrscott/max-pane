@@ -317,15 +317,15 @@ public final class StripStore {
     /// A web pane settled on a page.
     ///
     /// One call from the navigation delegate, with everything the web view
-    /// already knows. `requestedUrl` is `backForwardList.currentItem?.initialURL`
-    /// — the address the navigation started from, which differs from `url` only
-    /// when something redirected, and is what keeps the thing the user typed
-    /// findable after it does.
+    /// already knows. `redirectChain` is every address passed through on the
+    /// way here, oldest first — see `RedirectTrail`. Each becomes an alias of
+    /// this page: searchable, never listed, and if one of them had already been
+    /// recorded as a page of its own, it stops being one.
     ///
     /// No snapshot: a visit is not layout, so this costs a row and does not
     /// redraw the strip.
-    func recordVisit(paneId: String, url: String, title: String?, requestedUrl: String? = nil) {
-        try? core.recordVisit(paneId: paneId, url: url, title: title, requestedUrl: requestedUrl)
+    func recordVisit(paneId: String, url: String, title: String?, redirectChain: [String] = []) {
+        try? core.recordVisit(paneId: paneId, url: url, title: title, redirectChain: redirectChain)
     }
 
     /// The page's `<title>`, which lands a beat after the navigation finishes.
@@ -346,10 +346,10 @@ public final class StripStore {
     /// How many pages are on record, for the palette's footer.
     var historyCount: UInt32 { (try? core.historyCount()) ?? 0 }
 
-    /// How many of those a query can actually reach. Smaller than
-    /// `historyCount` once the table outgrows one scan — and a footer that
-    /// prints the larger number while describing the smaller search is a label
-    /// that lies about its own list.
+    /// How many of those a query can actually reach — all of them, since the
+    /// scan cap went. Asked rather than assumed: a footer that prints the
+    /// table's size while describing a search that cannot see all of it is a
+    /// label that lies about its own list, and that is what it used to be.
     var searchableHistoryCount: UInt32 { (try? core.historySearchableCount()) ?? 0 }
 
     func forgetVisit(_ url: String) { try? core.forgetVisit(url: url) }

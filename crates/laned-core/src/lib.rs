@@ -105,21 +105,6 @@ struct Inner {
     /// What each pane last settled on, so one navigation reported three times
     /// is one visit. Not persisted — a burst cannot straddle a launch.
     visits: history::VisitMemo,
-    /// Visits since the last prune. The caps are enforced on a cadence rather
-    /// than on every settle; see [`history::HISTORY_PRUNE_EVERY`].
-    visits_since_prune: u32,
-    /// The rows a history query scores, kept between writes.
-    ///
-    /// Measured: a keystroke over a full ledger costs ~1.1 ms of SQLite and
-    /// ~1.0 ms of scoring. The scoring is the work; the read is the same 2 000
-    /// rows fetched again for every character of the same query, and the
-    /// palette is open for a second at a time during which nothing navigates.
-    /// So it is read once and dropped by the next write — the same bargain
-    /// `NewPanePicker` strikes when it reads `recents` once on open, moved down
-    /// here because the corpus deliberately never reaches Swift.
-    ///
-    /// Bounded by [`history::HISTORY_SCAN_ROWS`], not by the size of the table.
-    history_cache: Option<Vec<history::Candidate>>,
     /// `Some(project_root)` while the user is in a gather view. View-only.
     gather: Option<String>,
     /// The width a new lane is born with.
@@ -153,8 +138,6 @@ impl Core {
                 ledger,
                 index: search::Index::default(),
                 visits: history::VisitMemo::default(),
-                visits_since_prune: 0,
-                history_cache: None,
                 gather: None,
                 default_lane_width: LANE_DEFAULT_PT,
                 revision: 0,
@@ -173,8 +156,6 @@ impl Core {
                 ledger,
                 index: search::Index::default(),
                 visits: history::VisitMemo::default(),
-                visits_since_prune: 0,
-                history_cache: None,
                 gather: None,
                 default_lane_width: LANE_DEFAULT_PT,
                 revision: 0,
@@ -738,7 +719,7 @@ impl Core {
         pane_id: String,
         url: String,
         title: Option<String>,
-        requested_url: Option<String>,
+        redirect_chain: Vec<String>,
     ) -> Result<()> {
         let Some(url) = history::normalize_url(&url) else { return Ok(()) };
         let now = now_ms();
@@ -748,21 +729,18 @@ impl Core {
             // the one that finally has a <title>.
             if let Some(t) = title.as_deref() {
                 inner.ledger.name_visit(&url, t)?;
-                inner.history_cache = None;
             }
             return Ok(());
         }
         inner.ledger.record_visit(&url, title.as_deref(), now)?;
-        inner.history_cache = None;
-        if let Some(alias) = requested_url.as_deref().and_then(history::normalize_url) {
-            inner.ledger.note_visit_alias(&alias, &url)?;
-        }
-        inner.visits_since_prune += 1;
-        if inner.visits_since_prune >= history::HISTORY_PRUNE_EVERY {
-            inner.visits_since_prune = 0;
-            inner
-                .ledger
-                .prune_history(history::HISTORY_MAX_ROWS, now - history::HISTORY_MAX_AGE_MS)?;
+        for hop in &redirect_chain {
+            let Some(hop) = history::normalize_url(hop) else { continue };
+            // `demote_to_alias` rather than `note_visit_alias`, because a hop
+            // may already be an entry in its own right: a client-side redirect
+            // finishes loading before it redirects, so the interstitial has
+            // been through `didFinish` and has a row. Server hops never do, and
+            // for those this is the same thing `note_visit_alias` was.
+            inner.ledger.demote_to_alias(&hop, &url)?;
         }
         Ok(())
     }
@@ -773,21 +751,26 @@ impl Core {
     /// visit rather than another one: it never inserts and never counts.
     pub fn name_visit(&self, url: String, title: String) -> Result<()> {
         let Some(url) = history::normalize_url(&url) else { return Ok(()) };
-        let mut inner = self.inner.lock();
-        inner.ledger.name_visit(&url, &title)?;
-        inner.history_cache = None;
-        Ok(())
+        let inner = self.inner.lock();
+        inner.ledger.name_visit(&url, &title)
     }
 
     /// History, best match first — or most recent first for an empty query,
     /// which is what the palette shows before anything is typed.
+    ///
+    /// The corpus is narrowed in SQLite and ranked in Rust, and nothing is held
+    /// between calls. Round 1 cached the scanned rows because every keystroke
+    /// re-read the same 2 000 of them; now the index reads only the rows that
+    /// contain what was typed, so the read shrinks as the query grows and a
+    /// cache would mostly be a way to serve a page that has just been visited
+    /// from before it was.
     pub fn history(&self, query: String, limit: u32) -> Result<Vec<HistoryEntry>> {
-        let mut inner = self.inner.lock();
-        if inner.history_cache.is_none() {
-            inner.history_cache = Some(inner.ledger.history_candidates(history::HISTORY_SCAN_ROWS)?);
+        let inner = self.inner.lock();
+        let needle = history::needle(&query);
+        if needle.is_empty() {
+            return inner.ledger.history_newest(limit);
         }
-        let candidates = inner.history_cache.as_deref().unwrap_or_default();
-        Ok(history::rank(candidates, &query, limit as usize))
+        inner.ledger.history_search(&needle, limit)
     }
 
     /// How many pages are on record, for the palette's footer.
@@ -798,45 +781,30 @@ impl Core {
 
     /// How many pages a query can actually reach.
     ///
-    /// Not the same number as [`Core::history_count`], and the gap is the
-    /// point: the table holds [`history::HISTORY_MAX_ROWS`] and one query scores
-    /// the newest [`history::HISTORY_SCAN_ROWS`] of them. A footer that prints
-    /// the table's size while describing a search that cannot see all of it —
-    /// "0 of 5013 pages" over a corpus where row 2 499 is unfindable — is a
-    /// label that lies about the thing it labels. Whatever the caps become, a
-    /// picker asking this question gets the truthful answer.
+    /// Every one of them, now — which is the whole of this round's first item,
+    /// and why this method still exists rather than being deleted along with
+    /// the caps. It used to be `min(count, HISTORY_SCAN_ROWS)`: the table held
+    /// 5 000 rows and a query scored the newest 2 000, so the palette's footer
+    /// read "0 of 5013 pages" over a corpus in which row 2 499 was unfindable.
+    /// A label that is wrong about the thing it labels is worse than no label,
+    /// so the picker asks this instead of assuming, and if a reach limit ever
+    /// comes back it will be this number that says so.
     pub fn history_searchable_count(&self) -> Result<u32> {
         let inner = self.inner.lock();
-        Ok(inner.ledger.history_count()?.min(history::HISTORY_SCAN_ROWS))
+        inner.ledger.history_count()
     }
 
     /// Drop one page, and every redirect that pointed at it. The palette's ⌘⌫.
     pub fn forget_visit(&self, url: String) -> Result<()> {
         let url = history::normalize_url(&url).unwrap_or(url);
-        let mut inner = self.inner.lock();
-        inner.ledger.forget_visit(&url)?;
-        inner.history_cache = None;
-        Ok(())
+        let inner = self.inner.lock();
+        inner.ledger.forget_visit(&url)
     }
 
     /// Forget everything. There is no undo, which is the point of it.
     pub fn clear_history(&self) -> Result<()> {
-        let mut inner = self.inner.lock();
-        inner.ledger.clear_history()?;
-        inner.history_cache = None;
-        Ok(())
-    }
-
-    /// Enforce the caps now rather than on the next cadence. The shell has no
-    /// reason to call this; tests and `maxpane` housekeeping do.
-    pub fn prune_history(&self) -> Result<u32> {
-        let now = now_ms();
-        let mut inner = self.inner.lock();
-        let gone = inner
-            .ledger
-            .prune_history(history::HISTORY_MAX_ROWS, now - history::HISTORY_MAX_AGE_MS)?;
-        inner.history_cache = None;
-        Ok(gone as u32)
+        let inner = self.inner.lock();
+        inner.ledger.clear_history()
     }
 
     /// Remember how far a pane's contents are scaled. No snapshot is

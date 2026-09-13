@@ -455,7 +455,7 @@ struct OmniStoreTests {
 
         store.recordVisit(
             paneId: pane, url: "https://www.example.com/en", title: "Example Domain",
-            requestedUrl: "https://example.com")
+            redirectChain: ["https://example.com"])
 
         #expect(store.historyCount == 1)
         #expect(store.history("domain").first?.url == "https://www.example.com/en")
@@ -502,8 +502,8 @@ struct OmniStoreTests {
         try store.newWebLane(url: "https://example.com", near: nil)
         let pane = store.state.lanes[0].panes[0].id
         store.recordVisit(paneId: pane, url: "https://a.example", title: "A")
-        // Below the scan cap, so the two agree — which is the only claim this
-        // can make without hard-coding a constant that another round is moving.
+        // The two agree now and always: the scan cap is gone, so every page on
+        // record is a page a query can reach.
         #expect(store.searchableHistoryCount == store.historyCount)
         #expect(store.searchableHistoryCount == 1)
     }

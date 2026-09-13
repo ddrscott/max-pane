@@ -7,7 +7,6 @@
 //! literally — including the restart, which is done the way `durability.rs`
 //! does it: drop the `Core` with no shutdown path and reopen the file.
 
-use laned_core::history::{HISTORY_MAX_AGE_MS, HISTORY_MAX_ROWS};
 use laned_core::ledger::Ledger;
 use laned_core::model::*;
 use laned_core::Core;
@@ -41,7 +40,7 @@ fn a_page_is_findable_by_title_and_by_url_after_a_restart() {
             pane,
             "https://doc.rust-lang.org/std/index.html".into(),
             Some("std - Rust".into()),
-            None,
+            Vec::new(),
         )
         .unwrap();
         // No flush, no close, no goodbye.
@@ -68,7 +67,7 @@ fn the_address_you_asked_for_finds_the_page_you_landed_on() {
         pane,
         "https://www.example.com/en".into(),
         Some("Example Domain".into()),
-        Some("https://example.com/".into()),
+        vec!["https://example.com/".into()],
     )
     .unwrap();
 
@@ -87,11 +86,92 @@ fn a_redirect_source_is_never_a_row_of_its_own() {
         pane,
         "https://www.example.com/en".into(),
         Some("Example Domain".into()),
-        Some("https://example.com/".into()),
+        vec!["https://example.com/".into()],
     )
     .unwrap();
     let all = core.history(String::new(), 50).unwrap();
     assert_eq!(urls(&all), vec!["https://www.example.com/en"]);
+}
+
+#[test]
+fn every_hop_of_a_chain_is_searchable_and_none_of_them_is_a_row() {
+    // A two-hop server chain used to lose its middle: `didFinish` read one
+    // address out of `backForwardList.currentItem?.initialURL`, and a chain is
+    // a list. All three addresses reopen the page they led to.
+    let core = Core::open_in_memory().unwrap();
+    let pane = web_pane(&core, "https://example.com");
+    core.record_visit(
+        pane,
+        "https://docs.example/en/latest".into(),
+        Some("Docs".into()),
+        vec!["https://short.example/x".into(), "https://docs.example".into()],
+    )
+    .unwrap();
+    assert_eq!(core.history_count().unwrap(), 1, "a hop became a page");
+    for typed in ["short.example/x", "docs.example", "docs.example/en/latest"] {
+        assert_eq!(
+            urls(&core.history(typed.into(), 10).unwrap()),
+            vec!["https://docs.example/en/latest"],
+            "{typed} did not find the page it led to"
+        );
+    }
+}
+
+#[test]
+fn a_page_that_turns_out_to_be_a_bounce_stops_being_a_page() {
+    // The measured failure: `location.replace` and `<meta refresh>` each
+    // finish loading — so each is recorded as a page, untitled, reopening to a
+    // bounce — and only then redirect. The shell learns what it was a moment
+    // later, and this is where that correction lands.
+    let core = Core::open_in_memory().unwrap();
+    let pane = web_pane(&core, "https://example.com");
+    core.record_visit(pane.clone(), "https://bounce.example/js".into(), None, Vec::new()).unwrap();
+    assert_eq!(core.history_count().unwrap(), 1);
+
+    core.record_visit(
+        pane,
+        "https://real.example/page".into(),
+        Some("The Real Page".into()),
+        vec!["https://bounce.example/js".into()],
+    )
+    .unwrap();
+    assert_eq!(core.history_count().unwrap(), 1, "the interstitial stayed a row of its own");
+    assert_eq!(
+        urls(&core.history("bounce.example".into(), 10).unwrap()),
+        vec!["https://real.example/page"],
+        "the address that bounced stopped being findable"
+    );
+}
+
+#[test]
+fn demoting_a_bounce_brings_its_own_aliases_with_it() {
+    // Land on a shortener, follow its 303 to a consent page, and have that
+    // redirect itself. The address the user typed is the one hop anyone ever
+    // searches for, and it is the first to be lost if each settle starts over.
+    let core = Core::open_in_memory().unwrap();
+    let pane = web_pane(&core, "https://example.com");
+    core.record_visit(
+        pane.clone(),
+        "https://consent.example/ask".into(),
+        None,
+        vec!["https://youtu.be/dQw4w9WgXcQ".into()],
+    )
+    .unwrap();
+    core.record_visit(
+        pane,
+        "https://youtube.com/watch?v=dQw4w9WgXcQ".into(),
+        Some("A Song".into()),
+        vec!["https://youtu.be/dQw4w9WgXcQ".into(), "https://consent.example/ask".into()],
+    )
+    .unwrap();
+    assert_eq!(core.history_count().unwrap(), 1, "three rows, which is what round 1 produced");
+    for typed in ["youtu.be/dQw4w9WgXcQ", "consent.example", "watch?v=dQw4w9WgXcQ"] {
+        assert_eq!(
+            urls(&core.history(typed.into(), 10).unwrap()),
+            vec!["https://youtube.com/watch?v=dQw4w9WgXcQ"],
+            "{typed} found the wrong thing, or nothing"
+        );
+    }
 }
 
 #[test]
@@ -107,7 +187,7 @@ fn a_redirect_that_goes_nowhere_writes_no_alias() {
             "https://example.com/".into(),
             Some("Example".into()),
             // Differs only by the trailing slash the normalizer folds away.
-            Some("https://example.com".into()),
+            vec!["https://example.com".into()],
         )
         .unwrap();
     }
@@ -120,11 +200,11 @@ fn a_redirect_that_goes_nowhere_writes_no_alias() {
 fn the_same_page_twice_is_one_row_with_a_count_of_two() {
     let core = Core::open_in_memory().unwrap();
     let pane = web_pane(&core, "https://example.com");
-    core.record_visit(pane.clone(), "https://example.com/a".into(), Some("A".into()), None).unwrap();
+    core.record_visit(pane.clone(), "https://example.com/a".into(), Some("A".into()), Vec::new()).unwrap();
     // A different page in between, so the coalescing window is not what is
     // being measured here.
-    core.record_visit(pane.clone(), "https://example.com/b".into(), Some("B".into()), None).unwrap();
-    core.record_visit(pane, "https://example.com/a".into(), Some("A".into()), None).unwrap();
+    core.record_visit(pane.clone(), "https://example.com/b".into(), Some("B".into()), Vec::new()).unwrap();
+    core.record_visit(pane, "https://example.com/a".into(), Some("A".into()), Vec::new()).unwrap();
 
     let all = core.history(String::new(), 50).unwrap();
     assert_eq!(all.len(), 2, "a revisit made a second row");
@@ -140,7 +220,7 @@ fn one_navigation_reported_three_times_is_one_visit() {
     let core = Core::open_in_memory().unwrap();
     let pane = web_pane(&core, "https://example.com");
     for _ in 0..3 {
-        core.record_visit(pane.clone(), "https://example.com/a".into(), Some("A".into()), None).unwrap();
+        core.record_visit(pane.clone(), "https://example.com/a".into(), Some("A".into()), Vec::new()).unwrap();
     }
     let all = core.history(String::new(), 50).unwrap();
     assert_eq!(all.len(), 1);
@@ -152,8 +232,8 @@ fn the_same_page_in_two_panes_is_two_visits() {
     let core = Core::open_in_memory().unwrap();
     let a = web_pane(&core, "https://example.com");
     let b = web_pane(&core, "https://example.com");
-    core.record_visit(a, "https://example.com/a".into(), None, None).unwrap();
-    core.record_visit(b, "https://example.com/a".into(), None, None).unwrap();
+    core.record_visit(a, "https://example.com/a".into(), None, Vec::new()).unwrap();
+    core.record_visit(b, "https://example.com/a".into(), None, Vec::new()).unwrap();
     assert_eq!(core.history(String::new(), 10).unwrap()[0].visit_count, 2);
 }
 
@@ -162,7 +242,7 @@ fn a_late_title_names_the_page_without_counting_a_visit() {
     let core = Core::open_in_memory().unwrap();
     let pane = web_pane(&core, "https://example.com");
     // `WKWebView.title` is usually still empty when the navigation finishes.
-    core.record_visit(pane, "https://example.com/a".into(), None, None).unwrap();
+    core.record_visit(pane, "https://example.com/a".into(), None, Vec::new()).unwrap();
     core.name_visit("https://example.com/a".into(), "Arrived Late".into()).unwrap();
 
     let all = core.history(String::new(), 10).unwrap();
@@ -176,8 +256,8 @@ fn a_title_that_never_arrives_does_not_blank_the_one_that_did() {
     let core = Core::open_in_memory().unwrap();
     let a = web_pane(&core, "https://example.com");
     let b = web_pane(&core, "https://example.com");
-    core.record_visit(a, "https://example.com/a".into(), Some("Named".into()), None).unwrap();
-    core.record_visit(b, "https://example.com/a".into(), None, None).unwrap();
+    core.record_visit(a, "https://example.com/a".into(), Some("Named".into()), Vec::new()).unwrap();
+    core.record_visit(b, "https://example.com/a".into(), None, Vec::new()).unwrap();
     assert_eq!(core.history(String::new(), 10).unwrap()[0].title.as_deref(), Some("Named"));
 }
 
@@ -193,7 +273,7 @@ fn a_blank_pane_is_not_a_page() {
     let core = Core::open_in_memory().unwrap();
     let pane = web_pane(&core, "about:blank");
     for url in ["about:blank", "data:text/html,<p>hi", "blob:https://x/1"] {
-        core.record_visit(pane.clone(), url.into(), None, None).unwrap();
+        core.record_visit(pane.clone(), url.into(), None, Vec::new()).unwrap();
     }
     assert_eq!(core.history_count().unwrap(), 0);
 }
@@ -211,7 +291,7 @@ fn a_single_page_app_pushing_fifty_states_is_fifty_pages_and_stays_fifty() {
                 pane.clone(),
                 format!("https://app.example/#/thread/{i}"),
                 Some(format!("Thread {i}")),
-                None,
+                Vec::new(),
             )
             .unwrap();
         }
@@ -226,7 +306,7 @@ fn an_empty_query_is_newest_first() {
     let core = Core::open_in_memory().unwrap();
     let pane = web_pane(&core, "https://example.com");
     for i in 0..5 {
-        core.record_visit(pane.clone(), format!("https://example.com/{i}"), None, None).unwrap();
+        core.record_visit(pane.clone(), format!("https://example.com/{i}"), None, Vec::new()).unwrap();
     }
     assert_eq!(
         urls(&core.history(String::new(), 10).unwrap()),
@@ -246,7 +326,7 @@ fn ordering_does_not_depend_on_the_clock() {
         ledger.record_visit(&format!("https://example.com/{i}"), None, 1_700_000_000_000).unwrap();
     }
     let got: Vec<String> =
-        ledger.history_candidates(50).unwrap().into_iter().map(|c| c.url).collect();
+        ledger.history_newest(50).unwrap().into_iter().map(|c| c.url).collect();
     assert_eq!(
         got,
         (0..8).rev().map(|i| format!("https://example.com/{i}")).collect::<Vec<_>>(),
@@ -258,59 +338,151 @@ fn ordering_does_not_depend_on_the_clock() {
 fn a_better_match_wins_and_recency_only_breaks_ties() {
     let core = Core::open_in_memory().unwrap();
     let pane = web_pane(&core, "https://example.com");
-    core.record_visit(pane.clone(), "https://docs.example/rust".into(), None, None).unwrap();
+    core.record_visit(pane.clone(), "https://docs.example/rust".into(), None, Vec::new()).unwrap();
     // Visited later, and it does contain r…u…s…t as a subsequence.
-    core.record_visit(pane, "https://n.example/rough-untidy-storage-thing".into(), None, None)
+    core.record_visit(pane, "https://n.example/rough-untidy-storage-thing".into(), None, Vec::new())
         .unwrap();
     assert_eq!(core.history("rust".into(), 10).unwrap()[0].url, "https://docs.example/rust");
 }
 
-// ---- pruning ----------------------------------------------------------------
+// ---- no caps ----------------------------------------------------------------
 
 #[test]
-fn nothing_older_than_the_age_cap_survives() {
+fn nothing_is_evicted_by_age_or_by_count() {
+    // Round 1 kept 5 000 rows and 90 days. The owner's answer was "i don't
+    // think we need any limits on history", so the only thing that removes a
+    // row now is the user removing it.
     let dir = tempfile::tempdir().unwrap();
     let ledger = Ledger::open(Some(Path::new(&db(&dir)))).unwrap();
     let now = 1_700_000_000_000i64;
-    ledger.record_visit("https://old.example", Some("Old"), now - HISTORY_MAX_AGE_MS - 1).unwrap();
-    ledger.record_visit("https://new.example", Some("New"), now).unwrap();
-
-    assert_eq!(ledger.prune_history(HISTORY_MAX_ROWS, now - HISTORY_MAX_AGE_MS).unwrap(), 1);
-    let left: Vec<String> =
-        ledger.history_candidates(50).unwrap().into_iter().map(|c| c.url).collect();
-    assert_eq!(left, vec!["https://new.example"]);
-}
-
-#[test]
-fn the_row_cap_keeps_the_newest() {
-    let dir = tempfile::tempdir().unwrap();
-    let ledger = Ledger::open(Some(Path::new(&db(&dir)))).unwrap();
-    for i in 0..20 {
-        ledger.record_visit(&format!("https://example.com/{i}"), None, 1_700_000_000_000).unwrap();
+    let ancient = now - 5 * 365 * 24 * 60 * 60 * 1_000;
+    ledger.record_visit("https://ancient.example", Some("Five years ago"), ancient).unwrap();
+    for i in 0..6_000 {
+        ledger.record_visit(&format!("https://example.com/{i}"), None, now).unwrap();
     }
-    assert_eq!(ledger.prune_history(5, 0).unwrap(), 15);
-    let left: Vec<String> =
-        ledger.history_candidates(50).unwrap().into_iter().map(|c| c.url).collect();
-    assert_eq!(
-        left,
-        (15..20).rev().map(|i| format!("https://example.com/{i}")).collect::<Vec<_>>()
-    );
+    assert_eq!(ledger.history_count().unwrap(), 6_001);
+    let found = ledger.history_search("ancient.example", 50).unwrap();
+    assert_eq!(found.len(), 1, "a five-year-old page under 6 000 newer ones was evicted");
 }
 
 #[test]
-fn pruning_takes_the_aliases_with_it() {
-    // Otherwise the alias table is the thing that grows forever, and a search
-    // matches a redirect source whose page is long gone.
+fn a_row_far_below_the_old_scan_depth_is_findable() {
+    // The single biggest gap the critic found: a planted needle at depth 2 499
+    // sat in the table and could not be found, while the footer counted it.
+    let core = Core::open_in_memory().unwrap();
+    let pane = web_pane(&core, "https://example.com");
+    core.record_visit(
+        pane.clone(),
+        "https://needle.example/buried".into(),
+        Some("Planted".into()),
+        Vec::new(),
+    )
+    .unwrap();
+    for i in 0..5_000 {
+        core.record_visit(pane.clone(), format!("https://example.com/{i}"), None, Vec::new())
+            .unwrap();
+    }
+    assert_eq!(core.history_count().unwrap(), 5_001);
+    assert_eq!(core.history_searchable_count().unwrap(), 5_001, "the footer lied about its reach");
+    let hits = core.history("needle.example".into(), 50).unwrap();
+    assert_eq!(urls(&hits), vec!["https://needle.example/buried"], "depth 5 000 was unreachable");
+    // And by title, which lives in the same index.
+    assert_eq!(core.history("planted".into(), 50).unwrap().len(), 1);
+}
+
+#[test]
+fn the_index_and_the_ranker_agree_about_what_matches() {
+    // The index narrows and `rank` scores, so a row the index drops is a row
+    // the user cannot find however well it would have scored. Every tier has to
+    // survive the narrowing — including the scattered one, which the trigram
+    // index cannot see at all and which falls back to the whole table.
+    let core = Core::open_in_memory().unwrap();
+    let pane = web_pane(&core, "https://example.com");
+    for (url, title) in [
+        ("https://shop.example.com/hoppers", None),
+        ("https://developer.mozilla.org/x", Some("Checker notes 4805")),
+        ("https://example.com/max-pane", Some("Max Pane")),
+        ("https://console.aws.amazon.com/cloudwatch/home#logsV2:log-group", Some("CloudWatch")),
+    ] {
+        core.record_visit(pane.clone(), url.into(), title.map(str::to_string), Vec::new()).unwrap();
+    }
+    // Prefix, word-start and mid-word all reach the ranker.
+    assert_eq!(urls(&core.history("hop".into(), 10).unwrap()), vec!["https://shop.example.com/hoppers"]);
+    assert_eq!(urls(&core.history("logsv2".into(), 10).unwrap()).len(), 1, "a match after a # was lost");
+    assert_eq!(urls(&core.history("ppers".into(), 10).unwrap()).len(), 1, "a mid-word match was lost");
+    // And the subsequence tier, which only applies when nothing matched
+    // literally — exactly when the index has nothing to say.
+    assert_eq!(urls(&core.history("mxp".into(), 10).unwrap()), vec!["https://example.com/max-pane"]);
+    // One and two characters are below the trigram floor and take the scan.
+    assert!(!core.history("h".into(), 10).unwrap().is_empty());
+    assert!(!core.history("cl".into(), 10).unwrap().is_empty());
+}
+
+#[test]
+fn the_index_survives_a_restart_and_a_rename() {
+    // It is a second copy of the text, so every write that changes what a row
+    // says has to change what it matches. A title that lands late is the one
+    // that used to be missed.
     let dir = tempfile::tempdir().unwrap();
     let path = db(&dir);
     {
-        let ledger = Ledger::open(Some(Path::new(&path))).unwrap();
-        ledger.record_visit("https://www.example.com/en", Some("Example"), 1_000).unwrap();
-        ledger.note_visit_alias("https://example.com", "https://www.example.com/en").unwrap();
-        assert_eq!(alias_count(Path::new(&path)), 1);
-        assert_eq!(ledger.prune_history(0, 0).unwrap(), 1);
+        let core = Core::open(path.clone()).unwrap();
+        let pane = web_pane(&core, "https://example.com");
+        core.record_visit(pane, "https://late.example/x".into(), None, Vec::new()).unwrap();
+        core.name_visit("https://late.example/x".into(), "Arrived Late".into()).unwrap();
     }
-    assert_eq!(alias_count(Path::new(&path)), 0, "an alias outlived the page it pointed at");
+    let core = Core::open(path).unwrap();
+    assert_eq!(core.history("arrived late".into(), 10).unwrap().len(), 1, "a late title was lost");
+}
+
+#[test]
+fn a_ledger_written_before_the_index_is_backfilled() {
+    // Existing ledgers arrive with a `visit` table and no `visit_search`. The
+    // migration has to index what is already there or every page anyone has
+    // ever visited becomes unfindable at the moment of the upgrade.
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    {
+        let core = Core::open(path.clone()).unwrap();
+        let pane = web_pane(&core, "https://example.com");
+        core.record_visit(
+            pane,
+            "https://backfill.example/page".into(),
+            Some("Backfilled".into()),
+            vec!["https://short.example".into()],
+        )
+        .unwrap();
+    }
+    {
+        // Pretend 0009 never ran.
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute("DROP TABLE visit_search", []).unwrap();
+        conn.execute("DELETE FROM schema_migration WHERE name = '0009_history_index'", [])
+            .unwrap();
+    }
+    let core = Core::open(path).unwrap();
+    assert_eq!(core.history("backfill".into(), 10).unwrap().len(), 1, "the URL was not indexed");
+    assert_eq!(core.history("backfilled".into(), 10).unwrap().len(), 1, "the title was not indexed");
+    assert_eq!(core.history("short.example".into(), 10).unwrap().len(), 1, "aliases were not indexed");
+}
+
+#[test]
+fn forgetting_a_page_takes_it_out_of_the_index_too() {
+    // Otherwise the index is a second table that grows forever and matches rows
+    // that are gone — which, joined back to `visit`, quietly returns nothing
+    // and looks like the search being broken.
+    let core = Core::open_in_memory().unwrap();
+    let pane = web_pane(&core, "https://example.com");
+    core.record_visit(pane.clone(), "https://gone.example/x".into(), Some("Gone".into()), Vec::new())
+        .unwrap();
+    core.forget_visit("https://gone.example/x".into()).unwrap();
+    assert!(core.history("gone.example".into(), 10).unwrap().is_empty());
+
+    core.record_visit(pane, "https://back.example/x".into(), Some("Back".into()), Vec::new())
+        .unwrap();
+    core.clear_history().unwrap();
+    assert!(core.history("back.example".into(), 10).unwrap().is_empty());
+    assert_eq!(core.history_count().unwrap(), 0);
 }
 
 #[test]
@@ -323,10 +495,10 @@ fn forgetting_one_page_takes_its_aliases_and_leaves_the_rest() {
         pane.clone(),
         "https://www.example.com/en".into(),
         Some("Example".into()),
-        Some("https://example.com".into()),
+        vec!["https://example.com".into()],
     )
     .unwrap();
-    core.record_visit(pane, "https://keep.example".into(), Some("Keep".into()), None).unwrap();
+    core.record_visit(pane, "https://keep.example".into(), Some("Keep".into()), Vec::new()).unwrap();
 
     core.forget_visit("https://www.example.com/en".into()).unwrap();
     assert_eq!(urls(&core.history(String::new(), 10).unwrap()), vec!["https://keep.example"]);
@@ -341,7 +513,7 @@ fn forgetting_one_page_takes_its_aliases_and_leaves_the_rest() {
 fn clearing_leaves_nothing() {
     let core = Core::open_in_memory().unwrap();
     let pane = web_pane(&core, "https://example.com");
-    core.record_visit(pane, "https://example.com/a".into(), Some("A".into()), None).unwrap();
+    core.record_visit(pane, "https://example.com/a".into(), Some("A".into()), Vec::new()).unwrap();
     core.clear_history().unwrap();
     assert_eq!(core.history_count().unwrap(), 0);
     assert!(core.history(String::new(), 10).unwrap().is_empty());
@@ -371,7 +543,7 @@ fn the_migration_lands_on_a_populated_ledger() {
     // And history works on it.
     assert_eq!(core.history_count().unwrap(), 0, "an upgraded ledger invented history");
     let pane = state.lanes[0].panes[0].id.clone();
-    core.record_visit(pane, "https://example.com/new".into(), Some("New".into()), None).unwrap();
+    core.record_visit(pane, "https://example.com/new".into(), Some("New".into()), Vec::new()).unwrap();
     assert_eq!(urls(&core.history("new".into(), 10).unwrap()), vec!["https://example.com/new"]);
 }
 
@@ -386,7 +558,7 @@ fn the_migration_runs_once() {
     for _ in 0..3 {
         let core = Core::open(path.clone()).unwrap();
         let pane = core.state().unwrap().lanes[0].panes[0].id.clone();
-        core.record_visit(pane, "https://example.com/x".into(), None, None).unwrap();
+        core.record_visit(pane, "https://example.com/x".into(), None, Vec::new()).unwrap();
     }
     let core = Core::open(path).unwrap();
     assert_eq!(core.history(String::new(), 10).unwrap()[0].visit_count, 3);
@@ -450,13 +622,56 @@ fn alias_count(path: &Path) -> i64 {
 
 // ---- cost -------------------------------------------------------------------
 
+/// How many pages the cost test builds.
+///
+/// Not a round number and not a guess: it is the count of distinct URLs in the
+/// owner's real Vivaldi profile on 2026-09-12, read out of
+/// `~/Library/Application Support/Vivaldi/Default/History`. A search that is
+/// fast on 5 000 rows and untested on 100 000 has not been tested, and 5 000
+/// was exactly the number round 1 measured itself against.
+const HIS_CORPUS: u32 = 112_840;
+
 /// A keystroke in the history palette is a SQLite read plus a scan, on the main
 /// thread, with no debounce — the same bet ⌘P makes. This is the number that
 /// bet rests on, measured rather than assumed.
 ///
-/// Gated on `MAXPANE_BENCH`: filling the ledger to its row cap is ~0.33 s, the
-/// second-largest single cost in the suite, and the number only means anything
-/// in release. `./scripts/test.sh bench` runs it.
+/// # The measurement, release build, M-series, 112 840 pages
+///
+/// ```text
+///           d:  56.27 ms, 60 hits    one character — below the trigram floor, so every row
+///          de:  61.96 ms, 60 hits    two — the same, and the last keystroke that costs this
+///         dep:   6.11 ms, 60 hits    three — the index takes over, and stays over
+///        depl:   6.43 ms, 60 hits
+///      deploy:   6.98 ms, 60 hits
+/// log-group/2:   1.26 ms, 60 hits    a distinctive query barely touches the table
+///         com:  25.15 ms, 60 hits    a needle three rows in five contain
+///        zzqq:  65.38 ms,  0 hits    nothing literal: every row, for the subsequence tier
+/// ```
+///
+/// The line that matters is the third: from the third character on, a query
+/// costs single-digit milliseconds against 112 840 rows, where the round-1
+/// linear scan extrapolated to roughly 100 ms a keystroke — and round 1 only
+/// ever looked at the newest 2 000 rows to get its 2 ms.
+///
+/// Two shapes still pay for the whole table, both by construction and both
+/// documented rather than hidden:
+///
+/// * **One or two characters.** FTS5's trigram tokenizer indexes
+///   three-character windows, so there is no index below three and every row is
+///   scored. It is the first two keystrokes only, and it is the price of the
+///   answer being complete rather than the newest fourteen days of it.
+/// * **A needle nothing contains.** `Ranking` comes back empty, and the scan
+///   that follows is what lets `mxp` still find `max-pane`. It fires exactly
+///   when the answer is "nothing matched", which is the one case where nobody
+///   is reading a list.
+///
+/// The reason those are 60 ms rather than 150 is in `Haystack`: the index keeps
+/// the text lowercase and scheme-stripped, so a row is scored where it lies in
+/// the statement with nothing allocated per candidate.
+///
+/// Gated on `MAXPANE_BENCH`: building the corpus is ~19 s, far the largest cost
+/// in the suite, and the number only means anything in release.
+/// `./scripts/test.sh bench` runs it.
 #[test]
 fn cost_of_a_keystroke() {
     if std::env::var_os("MAXPANE_BENCH").is_none() {
@@ -468,33 +683,56 @@ fn cost_of_a_keystroke() {
     let dir = tempfile::tempdir().unwrap();
     let path = db(&dir);
     let ledger = Ledger::open(Some(Path::new(&path))).unwrap();
-    // A full ledger, with a redirect source on a fifth of it.
-    for i in 0..HISTORY_MAX_ROWS {
-        let url = format!("https://host{}.example/section/{i}/page-about-something", i % 400);
-        ledger.record_visit(&url, Some(&format!("Page {i} — something about rust and sqlite")), 1)
-            .unwrap();
+    // Synthetic, not his: the corpus is the right *size* and shape, and nobody
+    // has to take a copy of a man's browsing to run a test. Titles and paths
+    // are drawn from small word lists rather than sharing one sentence — a
+    // corpus where every row says "rust" makes every query a worst case and
+    // measures the fallback instead of the index. A redirect source on a fifth
+    // of it, because aliases are in the same index.
+    const HOSTS: [&str; 12] = [
+        "github.com", "console.aws.amazon.com", "docs.rs", "news.ycombinator.com",
+        "grafana.internal", "mail.google.com", "en.wikipedia.org", "localhost:3000",
+        "developer.mozilla.org", "sqlite.org", "youtube.com", "linear.app",
+    ];
+    const WORDS: [&str; 16] = [
+        "deploy", "metrics", "issues", "pull", "log-group", "dashboard", "inbox",
+        "article", "session", "release", "schema", "migration", "profile", "queue",
+        "worker", "report",
+    ];
+    for i in 0..HIS_CORPUS as usize {
+        let host = HOSTS[i * 7 % HOSTS.len()];
+        let a = WORDS[i * 3 % WORDS.len()];
+        let b = WORDS[i * 11 % WORDS.len()];
+        let url = format!("https://{host}/{a}/{i}/{b}");
+        let title = format!("{a} {b} — {host} #{i}");
+        ledger.record_visit(&url, Some(&title), 1).unwrap();
         if i % 5 == 0 {
-            ledger.note_visit_alias(&format!("https://short{i}.example"), &url).unwrap();
+            ledger.note_visit_alias(&format!("https://s{i}.example"), &url).unwrap();
         }
     }
+    drop(ledger);
     let core = Core::open(path).unwrap();
-    assert_eq!(core.history_count().unwrap(), HISTORY_MAX_ROWS);
+    assert_eq!(core.history_count().unwrap(), HIS_CORPUS);
+    assert_eq!(core.history_searchable_count().unwrap(), HIS_CORPUS, "the footer would be lying");
 
-    let mut samples = Vec::new();
-    // The worst case is a query that matches nearly everything, because every
-    // survivor is scored and sorted rather than rejected on the first char.
-    for query in ["r", "ru", "rus", "rust", "rust sql", "page 4", "zzqq"] {
+    let mut typed = Vec::new();
+    for query in ["d", "de", "dep", "depl", "deploy", "log-group/2", "com", "zzqq"] {
         let start = std::time::Instant::now();
         let hits = core.history(query.to_string(), 60).unwrap();
         let ms = start.elapsed().as_secs_f64() * 1000.0;
-        samples.push(ms);
         println!("{query:>9}: {ms:6.2} ms, {} hits", hits.len());
+        // `zzqq` matches nothing at all and takes the whole-table fallback on
+        // purpose; it is measured and printed, not held to the typing budget.
+        if !hits.is_empty() {
+            typed.push(ms);
+        }
     }
-    let worst = samples.iter().cloned().fold(0.0f64, f64::max);
-    // Generous, because this runs in debug in the normal suite. The point is to
-    // catch a change that makes it linear in something it should not be — a
-    // per-row query, or a scan that stopped being capped.
-    assert!(worst < 250.0, "a keystroke cost {worst:.1} ms over {HISTORY_MAX_ROWS} pages");
+    let worst = typed.iter().cloned().fold(0.0f64, f64::max);
+    // Generous against the ~10 ms measured in release, because the point is not
+    // to pin a number to a machine: it is to catch the index falling out of the
+    // plan — a query planner that stops using it, a per-row round trip, a scan
+    // that came back. Any of those would be a hundred times this, not twice.
+    assert!(worst < 300.0, "a keystroke cost {worst:.1} ms over {HIS_CORPUS} pages");
 }
 
 #[test]
@@ -503,11 +741,11 @@ fn a_page_visited_while_the_palette_is_open_is_in_the_next_query() {
     // is a stale one: browse somewhere, search for it, and it is not there.
     let core = Core::open_in_memory().unwrap();
     let pane = web_pane(&core, "https://example.com");
-    core.record_visit(pane.clone(), "https://first.example".into(), Some("First".into()), None)
+    core.record_visit(pane.clone(), "https://first.example".into(), Some("First".into()), Vec::new())
         .unwrap();
     assert_eq!(core.history("first".into(), 10).unwrap().len(), 1);
 
-    core.record_visit(pane.clone(), "https://second.example".into(), Some("Second".into()), None)
+    core.record_visit(pane.clone(), "https://second.example".into(), Some("Second".into()), Vec::new())
         .unwrap();
     assert_eq!(core.history("second".into(), 10).unwrap().len(), 1, "the cache went stale");
 

@@ -743,6 +743,13 @@ public protocol CoreProtocol: AnyObject, Sendable {
     /**
      * History, best match first — or most recent first for an empty query,
      * which is what the palette shows before anything is typed.
+     *
+     * The corpus is narrowed in SQLite and ranked in Rust, and nothing is held
+     * between calls. Round 1 cached the scanned rows because every keystroke
+     * re-read the same 2 000 of them; now the index reads only the rows that
+     * contain what was typed, so the read shrinks as the query grows and a
+     * cache would mostly be a way to serve a page that has just been visited
+     * from before it was.
      */
     func history(query: String, limit: UInt32) throws  -> [HistoryEntry]
     
@@ -754,13 +761,14 @@ public protocol CoreProtocol: AnyObject, Sendable {
     /**
      * How many pages a query can actually reach.
      *
-     * Not the same number as [`Core::history_count`], and the gap is the
-     * point: the table holds [`history::HISTORY_MAX_ROWS`] and one query scores
-     * the newest [`history::HISTORY_SCAN_ROWS`] of them. A footer that prints
-     * the table's size while describing a search that cannot see all of it —
-     * "0 of 5013 pages" over a corpus where row 2 499 is unfindable — is a
-     * label that lies about the thing it labels. Whatever the caps become, a
-     * picker asking this question gets the truthful answer.
+     * Every one of them, now — which is the whole of this round's first item,
+     * and why this method still exists rather than being deleted along with
+     * the caps. It used to be `min(count, HISTORY_SCAN_ROWS)`: the table held
+     * 5 000 rows and a query scored the newest 2 000, so the palette's footer
+     * read "0 of 5013 pages" over a corpus in which row 2 499 was unfindable.
+     * A label that is wrong about the thing it labels is worse than no label,
+     * so the picker asks this instead of assuming, and if a reach limit ever
+     * comes back it will be this number that says so.
      */
     func historySearchableCount() throws  -> UInt32
     
@@ -880,12 +888,6 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func projectRootOf(cwd: String)  -> String?
     
     /**
-     * Enforce the caps now rather than on the next cadence. The shell has no
-     * reason to call this; tests and `maxpane` housekeeping do.
-     */
-    func pruneHistory() throws  -> UInt32
-    
-    /**
      * Hand `laned-core` a pty pane's recent scrollback so ⌘P can find it.
      * Pushed from the shell on a debounce; capped at 200 lines per pane.
      */
@@ -922,7 +924,7 @@ public protocol CoreProtocol: AnyObject, Sendable {
      * No `StripState`: a visit is not layout, and republishing the strip on
      * every page load would redraw 150 lanes because one of them scrolled.
      */
-    func recordVisit(paneId: String, url: String, title: String?, requestedUrl: String?) throws 
+    func recordVisit(paneId: String, url: String, title: String?, redirectChain: [String]) throws 
     
     /**
      * The current revision, without marshalling a snapshot.
@@ -1388,6 +1390,13 @@ open func gather(projectRoot: String)throws  -> StripState  {
     /**
      * History, best match first — or most recent first for an empty query,
      * which is what the palette shows before anything is typed.
+     *
+     * The corpus is narrowed in SQLite and ranked in Rust, and nothing is held
+     * between calls. Round 1 cached the scanned rows because every keystroke
+     * re-read the same 2 000 of them; now the index reads only the rows that
+     * contain what was typed, so the read shrinks as the query grows and a
+     * cache would mostly be a way to serve a page that has just been visited
+     * from before it was.
      */
 open func history(query: String, limit: UInt32)throws  -> [HistoryEntry]  {
     return try  FfiConverterSequenceTypeHistoryEntry.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
@@ -1415,13 +1424,14 @@ open func historyCount()throws  -> UInt32  {
     /**
      * How many pages a query can actually reach.
      *
-     * Not the same number as [`Core::history_count`], and the gap is the
-     * point: the table holds [`history::HISTORY_MAX_ROWS`] and one query scores
-     * the newest [`history::HISTORY_SCAN_ROWS`] of them. A footer that prints
-     * the table's size while describing a search that cannot see all of it —
-     * "0 of 5013 pages" over a corpus where row 2 499 is unfindable — is a
-     * label that lies about the thing it labels. Whatever the caps become, a
-     * picker asking this question gets the truthful answer.
+     * Every one of them, now — which is the whole of this round's first item,
+     * and why this method still exists rather than being deleted along with
+     * the caps. It used to be `min(count, HISTORY_SCAN_ROWS)`: the table held
+     * 5 000 rows and a query scored the newest 2 000, so the palette's footer
+     * read "0 of 5013 pages" over a corpus in which row 2 499 was unfindable.
+     * A label that is wrong about the thing it labels is worse than no label,
+     * so the picker asks this instead of assuming, and if a reach limit ever
+     * comes back it will be this number that says so.
      */
 open func historySearchableCount()throws  -> UInt32  {
     return try  FfiConverterUInt32.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
@@ -1674,19 +1684,6 @@ open func projectRootOf(cwd: String) -> String?  {
 }
     
     /**
-     * Enforce the caps now rather than on the next cadence. The shell has no
-     * reason to call this; tests and `maxpane` housekeeping do.
-     */
-open func pruneHistory()throws  -> UInt32  {
-    return try  FfiConverterUInt32.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
-        uniffiCallStatus in
-    uniffi_laned_core_fn_method_core_prune_history(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-})
-}
-    
-    /**
      * Hand `laned-core` a pty pane's recent scrollback so ⌘P can find it.
      * Pushed from the shell on a debounce; capped at 200 lines per pane.
      */
@@ -1739,14 +1736,14 @@ open func recents(limit: UInt32)throws  -> [Recent]  {
      * No `StripState`: a visit is not layout, and republishing the strip on
      * every page load would redraw 150 lanes because one of them scrolled.
      */
-open func recordVisit(paneId: String, url: String, title: String?, requestedUrl: String?)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+open func recordVisit(paneId: String, url: String, title: String?, redirectChain: [String])throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
         uniffiCallStatus in
     uniffi_laned_core_fn_method_core_record_visit(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(paneId),
         FfiConverterString.lower(url),
         FfiConverterOptionString.lower(title),
-        FfiConverterOptionString.lower(requestedUrl),uniffiCallStatus
+        FfiConverterSequenceString.lower(redirectChain),uniffiCallStatus
     )
 }
 }
@@ -4931,13 +4928,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_gather() != 60520) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_laned_core_checksum_method_core_history() != 65217) {
+    if (uniffi_laned_core_checksum_method_core_history() != 63089) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_history_count() != 17535) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_laned_core_checksum_method_core_history_searchable_count() != 9026) {
+    if (uniffi_laned_core_checksum_method_core_history_searchable_count() != 31221) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_import_strip() != 44112) {
@@ -4985,16 +4982,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_project_root_of() != 21459) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_laned_core_checksum_method_core_prune_history() != 55299) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_laned_core_checksum_method_core_push_scrollback() != 4856) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_recents() != 56922) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_laned_core_checksum_method_core_record_visit() != 47060) {
+    if (uniffi_laned_core_checksum_method_core_record_visit() != 22985) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_revision() != 56367) {

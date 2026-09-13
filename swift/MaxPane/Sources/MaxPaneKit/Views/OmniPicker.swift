@@ -787,11 +787,16 @@ final class OmniPickerRow: NSTableCellView {
             Theme.mono(10, weight: .bold), Theme.dimText.withAlphaComponent(0.8))
         count.alignment = .right
 
+        // A page gets a date and a clock time; a session keeps "6s ago".
+        // Both are answers to "when", and which one is useful depends on
+        // whether the thing is still moving — see `HistoryClock`.
+        let when = Date(timeIntervalSince1970: Double(candidate.chosenAt) / 1000)
         let age = PaletteStyle.label(
-            candidate.chosenAt > 0
-                ? SessionTelemetry.age(
-                    since: Date(timeIntervalSince1970: Double(candidate.chosenAt) / 1000))
-                : "",
+            candidate.chosenAt <= 0
+                ? ""
+                : candidate.kind == .page
+                    ? HistoryClock.stamp(when)
+                    : SessionTelemetry.age(since: when),
             Theme.mono(11), Theme.dimText)
         age.alignment = .right
 
@@ -829,7 +834,10 @@ final class OmniPickerRow: NSTableCellView {
             count.firstBaselineAnchor.constraint(equalTo: headline.firstBaselineAnchor),
 
             age.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -18),
-            age.widthAnchor.constraint(equalToConstant: 64),
+            // 12 characters of JetBrains Mono at 11 pt: `12 Sep 14:32`, the
+            // widest stamp `HistoryClock` produces. 64 fitted "22d ago" and
+            // truncated the date that replaced it.
+            age.widthAnchor.constraint(equalToConstant: 84),
             age.firstBaselineAnchor.constraint(equalTo: headline.firstBaselineAnchor),
 
             detail.leadingAnchor.constraint(equalTo: headline.leadingAnchor),

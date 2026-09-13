@@ -18,6 +18,21 @@
 //! keystroke instead of per layout change. So the query goes down and at most
 //! `limit` rows come back.
 //!
+//! # There is no cap, and that is what the index is for
+//!
+//! Round 1 kept 5 000 rows and searched the newest 2 000 of them. The owner's
+//! answer to that was "i don't think we need any limits on history", and the
+//! arithmetic agrees: one row per normalised URL at roughly 250 bytes makes his
+//! measured 112 840 URLs about 28 MB, and a decade at his rate about 155 MB.
+//! Vivaldi spends 642 MB on the same browsing.
+//!
+//! What the cap was buying was a linear scan nobody had to think about. Scoring
+//! 2 000 rows costs 2 ms; scoring 112 840 costs about a hundred times that,
+//! per keystroke, on the main thread. So removing the cap is not free — it is
+//! paid for by the trigram index in migration 0009, which narrows the table
+//! before anything is scored. The measured cost at his real corpus size is in
+//! `cost_of_a_keystroke` in `tests/history.rs`, which builds one.
+//!
 //! It reuses [`crate::search::fuzzy_score`] rather than growing a scorer of its
 //! own, because ⌘P and this palette would otherwise disagree about which of two
 //! URLs is the better match for the same typing, and there is no way for the
@@ -25,7 +40,7 @@
 //! over what comes back — on ≤50 rows, purely to find the offsets to paint
 //! orange. Ranking in one place, highlighting where the pixels are.
 
-use crate::model::{HistoryEntry, SearchField};
+use crate::model::SearchField;
 use crate::search::fuzzy_score;
 use std::collections::HashMap;
 
@@ -40,34 +55,12 @@ const RECORDABLE_SCHEMES: [&str; 3] = ["http", "https", "file"];
 /// still the same visit. See [`VisitMemo`].
 pub const VISIT_COALESCE_MS: i64 = 2_000;
 
-/// How many entries the ledger keeps.
+/// The floor the trigram index works above.
 ///
-/// History is layout memory, not an archive. The ledger is on the hot path of
-/// every layout mutation, and an unbounded table in it grows forever for rows
-/// nobody will ever type three letters of. 5 000 is roughly a year of the way
-/// this app is used and still scans in well under a frame.
-pub const HISTORY_MAX_ROWS: u32 = 5_000;
-
-/// How old an entry may be. 90 days.
-///
-/// The row cap alone is not enough: a light month followed by a heavy one would
-/// otherwise leave two-year-old rows sitting above this year's, because the cap
-/// only fires when the table is full.
-pub const HISTORY_MAX_AGE_MS: i64 = 90 * 24 * 60 * 60 * 1_000;
-
-/// How many of the newest entries one query scores.
-///
-/// Below [`HISTORY_MAX_ROWS`] on purpose: a page you have not seen in two
-/// thousand visits is not what a palette is for, and the cap is what keeps the
-/// per-keystroke cost flat no matter how long the ledger has been running.
-pub const HISTORY_SCAN_ROWS: u32 = 2_000;
-
-/// One visit in every this many triggers a prune.
-///
-/// Not every visit: pruning is two `DELETE`s with a subquery, and paying that
-/// on every settle would put a table scan in the middle of a navigation to save
-/// bytes nobody is short of.
-pub const HISTORY_PRUNE_EVERY: u32 = 64;
+/// FTS5's trigram tokenizer indexes three-character windows, so it has nothing
+/// to say about a one- or two-character needle. Below this the table is scanned
+/// instead; see [`crate::ledger::Ledger::history_search`].
+pub const TRIGRAM_MIN_CHARS: usize = 3;
 
 /// The canonical form of a URL, or `None` if it is not history.
 ///
@@ -166,15 +159,43 @@ impl VisitMemo {
     }
 }
 
-/// One candidate row, as the ledger hands it over before scoring.
-pub struct Candidate {
-    pub url: String,
-    pub title: Option<String>,
-    pub first_visit_at: i64,
-    pub last_visit_at: i64,
-    pub visit_count: u32,
-    /// The addresses that redirected here. Searchable, never listed.
-    pub aliases: Vec<String>,
+/// The searchable text of one row, as migration 0009 stores it: the URL, the
+/// title and every alias, newline-separated and already lowercase.
+///
+/// A view, not an owner. This is the whole reason the index keeps a copy of the
+/// text rather than only a posting list: a query that matches a common
+/// substring — `com`, `git`, `log` — matches most of the corpus, and at 112 840
+/// rows the cost of *fetching* those rows dominated everything else. Measured
+/// before this shape: 97 ms of SQLite and 55 ms of scoring for `rust` against a
+/// corpus where every title contained it. Borrowing the row out of the
+/// statement and scoring it in place is what took that to single digits —
+/// nothing is allocated per candidate, not even the lowercase copy, because
+/// the index was written lowercase.
+pub struct Haystack<'a>(&'a str);
+
+impl<'a> Haystack<'a> {
+    pub fn new(raw: &'a str) -> Self {
+        Haystack(raw)
+    }
+
+    /// URL first, title second, aliases after. Split rather than stored as
+    /// three columns because FTS5 would then have three indexes to consult and
+    /// this code three reads to do, for text that is always read together.
+    fn parts(&self) -> impl Iterator<Item = &'a str> {
+        self.0.split('\n')
+    }
+}
+
+/// What one row scored, and why.
+#[derive(Debug, Clone, Copy)]
+pub struct Hit {
+    /// `visit.rowid`, which is what the index is keyed by. The row itself is
+    /// fetched only for the handful that survive.
+    pub rowid: i64,
+    pub seq: i64,
+    pub score: i32,
+    pub field: SearchField,
+    pub tier: MatchTier,
 }
 
 /// Titles outrank URLs by the same margin they do in [`crate::search`]: what
@@ -241,33 +262,62 @@ fn is_boundary(c: char) -> bool {
     matches!(c, ' ' | '/' | '-' | '_' | '.' | ':' | '~' | '@' | '?' | '&' | '=' | '#')
 }
 
-/// The best tier `needle` reaches in `hay`. Both must already be lowercase.
+/// The best literal match `needle` has in `hay`, as a tier and a score inside
+/// it. Both must already be lowercase. `None` means the characters are not in
+/// there in that order, which leaves only [`MatchTier::Scattered`].
 ///
 /// Every occurrence is considered, not just the first: `oo` in `google` is
 /// mid-word at offset 1 and nothing else, but `com` in `example.com/compare` is
 /// a word start on its second occurrence and mid-word on its first, and taking
 /// the first would rank it as the worse of the two matches it actually has.
-pub fn tier(needle: &str, hay: &str) -> Option<MatchTier> {
-    if needle.is_empty() {
-        return Some(MatchTier::Prefix);
-    }
-    let mut best: Option<MatchTier> = None;
+///
+/// # Why the score is not [`fuzzy_score`] here
+///
+/// It used to be, and it cost more than everything else in a keystroke put
+/// together: a second full pass over the field, per field, per row, to order
+/// rows *inside* a tier that the same scan had already decided. Measured over
+/// 112 840 rows it was about half of the 100 ms.
+///
+/// And it was answering the wrong question. `fuzzy_score` rates a subsequence,
+/// which is a real question about `mxp` and `max-pane` and a meaningless one
+/// about two rows that both literally contain `deploy`. What separates those is
+/// how much of the field the match accounts for — how early it starts and how
+/// little is left over — and the scan that found the tier already knows both.
+/// Subsequence scoring survives where it means something: the scattered tier.
+fn literal(needle: &str, hay: &str) -> Option<(MatchTier, i32)> {
+    let mut best: Option<(MatchTier, i32)> = None;
     for (at, _) in hay.match_indices(needle) {
-        let here = if at == 0 {
+        let tier = if at == 0 {
             MatchTier::Prefix
         } else if hay[..at].chars().next_back().is_some_and(is_boundary) {
             MatchTier::WordPrefix
         } else {
             MatchTier::Substring
         };
-        if best.map_or(true, |b| here < b) {
-            best = Some(here);
+        // Early beats late, and a match that is most of a short field beats the
+        // same match lost in a long one. Bounded well under the 10 000 between
+        // tiers, so this orders rows and never promotes one.
+        let covers = (needle.len() * 256 / hay.len().max(1)) as i32;
+        let score = 512 - (at as i32).min(255) + covers;
+        if best.map_or(true, |(b, s)| tier < b || (tier == b && score > s)) {
+            best = Some((tier, score));
         }
-        if best == Some(MatchTier::Prefix) {
+        if tier == MatchTier::Prefix {
             break;
         }
     }
-    best.or_else(|| fuzzy_score(needle, hay).map(|_| MatchTier::Scattered))
+    best
+}
+
+/// The best tier `needle` reaches in `hay`, subsequence included. The shape the
+/// tier rules are stated in, and what the tests pin.
+pub fn tier(needle: &str, hay: &str) -> Option<MatchTier> {
+    if needle.is_empty() {
+        return Some(MatchTier::Prefix);
+    }
+    literal(needle, hay)
+        .map(|(t, _)| t)
+        .or_else(|| fuzzy_score(needle, hay).map(|_| MatchTier::Scattered))
 }
 
 /// A URL with the parts nobody types stripped off, for matching only.
@@ -281,111 +331,165 @@ pub fn search_handle(url: &str) -> &str {
     rest.strip_prefix("www.").unwrap_or(rest)
 }
 
-/// Score and rank. `query` empty means "most recent first", which is what the
-/// palette shows before anything is typed.
+/// What a typed query actually matches against.
 ///
-/// `candidates` must already be in newest-first order: that order is the
-/// answer for an empty query, and the tie-break for everything else.
+/// One function so the index and the ranker cannot disagree about it. The
+/// ledger narrows the table with this string and [`rank`] scores with the same
+/// one; if they ever diverged, the index would hide rows the ranker would have
+/// matched and the failure would look exactly like the row cap did — a page
+/// that is in the table and cannot be found.
+pub fn needle(query: &str) -> String {
+    search_handle(&query.trim().to_lowercase()).to_string()
+}
+
+/// Score and rank, one indexed row at a time.
+///
+/// # Why this streams instead of taking a list
+///
+/// Round 1 handed `rank` a `Vec<Candidate>` because the list was 2 000 rows by
+/// construction. With the cap gone a query like `com` matches most of 112 840
+/// rows, and materialising them cost more than scoring them did. So the rows
+/// are offered one at a time straight out of the SQLite statement and only the
+/// winners are ever built into anything.
 ///
 /// Recency is a tie-break and not a term in the score, deliberately. A frecency
 /// blend — the thing every browser's omnibox does — makes "why is this first"
 /// unanswerable, and `Recent`'s doc comment already made this call once for the
 /// new-pane picker. Two rows that match your typing equally well are separated
-/// by which you saw last; a row that matches it better wins outright.
-pub fn rank(candidates: &[Candidate], query: &str, limit: usize) -> Vec<HistoryEntry> {
-    let raw = query.trim().to_lowercase();
-    // The query is stripped the same way the URLs are, so that pasting an
-    // address back in finds the page it came from rather than nothing.
-    let needle = search_handle(&raw);
+/// by which you saw last; a row that matches it better wins outright. `seq`
+/// rather than `last_visit_at` is the tie-break for the reason migration 0004
+/// gives: a wall clock has ties and a counter does not.
+pub struct Ranking<'a> {
+    needle: &'a str,
+    /// A guess is only worth showing when there is nothing better.
+    ///
+    /// `git` is a subsequence of *SQLite — Wikipedia* (the g of `org`, the i of
+    /// `wiki`, the t of `sqlite`) and always will be; over a hundred thousand
+    /// rows there are thousands like it, and they are what made the old list
+    /// read as noise even once the real hit was on top. So the two kinds of
+    /// match never share a list: if anything matched literally, the
+    /// coincidences go. If nothing did, they are all there is — which is what
+    /// keeps `mxp` finding `max-pane`.
+    literal: Vec<Hit>,
+    scattered: Vec<Hit>,
+}
 
-    // Paired with its place in the recency order, which is the tie-break and
-    // nothing the shell needs — so it is a local, not a field on the record
-    // that crosses the FFI.
-    let mut out: Vec<(HistoryEntry, usize, MatchTier)> = Vec::new();
-    for (recency, c) in candidates.iter().enumerate() {
-        let (score, field, matched) = if needle.is_empty() {
-            (0, SearchField::Url, MatchTier::Prefix)
-        } else {
-            let mut best: Option<(i32, SearchField, MatchTier)> = None;
-            let mut offer = |tier: MatchTier, s: i32, f: SearchField| {
-                let total = tier.base() + s;
-                if best.map_or(true, |(b, _, _)| total > b) {
-                    best = Some((total, f, tier));
-                }
+impl<'a> Ranking<'a> {
+    /// `needle` must have been through [`needle`].
+    pub fn new(needle: &'a str) -> Self {
+        Ranking { needle, literal: Vec::new(), scattered: Vec::new() }
+    }
+
+    /// True when not one row has matched, in any tier — the only case in which
+    /// the caller has to go looking somewhere the index could not.
+    pub fn is_empty(&self) -> bool {
+        self.literal.is_empty() && self.scattered.is_empty()
+    }
+
+    /// Offer one row. Cheap to call and cheap to reject: the common answer is
+    /// "no tier", which costs one substring search per field.
+    pub fn offer(&mut self, rowid: i64, seq: i64, hay: Haystack<'_>) {
+        let mut best: Option<(i32, SearchField, MatchTier)> = None;
+        for (i, part) in hay.parts().enumerate() {
+            // The title is the one field that is not an address, so it is the
+            // one field `search_handle` must not touch.
+            let (part, field, bias) = match i {
+                // Titles outrank URLs by the same margin they do in
+                // [`crate::search`]: what the user remembers about a page is
+                // what it was called.
+                1 => (part, SearchField::Title, TITLE_BIAS),
+                // An alias is folded into `Url` rather than given a
+                // `SearchField` case of its own — the enum crosses the FFI into
+                // exhaustive Swift switches that other palettes own, and a
+                // redirect source is a URL in every sense the reader cares
+                // about. Minus a hair, so that when the address you typed and
+                // the address you landed on both match, the row is explained by
+                // the one that is actually on screen.
+                0 => (search_handle(part), SearchField::Url, 0),
+                _ => (search_handle(part), SearchField::Url, -ALIAS_PENALTY),
             };
-            if let Some(t) = &c.title {
-                let lower = t.to_lowercase();
-                if let Some(tier) = tier(needle, &lower) {
-                    let s = fuzzy_score(needle, &lower).unwrap_or(0);
-                    offer(tier, s + TITLE_BIAS, SearchField::Title);
+            let Some((tier, score)) = literal(self.needle, part) else { continue };
+            let total = tier.base() + score + bias;
+            if best.map_or(true, |(b, _, _)| total > b) {
+                best = Some((total, field, tier));
+            }
+        }
+        if best.is_none() {
+            // Nothing literal anywhere in the row. The subsequence tier is the
+            // only one left, and it is the only place `fuzzy_score` is still
+            // asked anything — see `literal`.
+            for (i, part) in hay.parts().enumerate() {
+                let (part, field, bias) = match i {
+                    1 => (part, SearchField::Title, TITLE_BIAS),
+                    0 => (search_handle(part), SearchField::Url, 0),
+                    _ => (search_handle(part), SearchField::Url, -ALIAS_PENALTY),
+                };
+                let Some(score) = fuzzy_score(self.needle, part) else { continue };
+                let total = MatchTier::Scattered.base() + score + bias;
+                if best.map_or(true, |(b, _, _)| total > b) {
+                    best = Some((total, field, MatchTier::Scattered));
                 }
             }
-            let url = c.url.to_lowercase();
-            let handle = search_handle(&url);
-            if let Some(tier) = tier(needle, handle) {
-                offer(tier, fuzzy_score(needle, handle).unwrap_or(0), SearchField::Url);
-            }
-            for alias in &c.aliases {
-                let lower = alias.to_lowercase();
-                let handle = search_handle(&lower);
-                if let Some(t) = tier(needle, handle) {
-                    // Folded into `Url` rather than given a `SearchField` case
-                    // of its own: the enum crosses the FFI into exhaustive
-                    // Swift switches that other palettes own, and a redirect
-                    // source is a URL in every sense the reader cares about.
-                    let s = fuzzy_score(needle, handle).unwrap_or(0);
-                    offer(t, s - ALIAS_PENALTY, SearchField::Url);
-                }
-            }
-            match best {
-                Some(b) => b,
-                None => continue,
-            }
-        };
-        out.push((
-            HistoryEntry {
-                url: c.url.clone(),
-                title: c.title.clone(),
-                first_visit_at: c.first_visit_at,
-                last_visit_at: c.last_visit_at,
-                visit_count: c.visit_count,
-                matched_field: field,
-                score,
-            },
-            recency,
-            matched,
-        ));
+        }
+        let Some((score, field, tier)) = best else { return };
+        let hit = Hit { rowid, seq, score, field, tier };
+        if tier < MatchTier::Scattered {
+            self.literal.push(hit);
+        } else {
+            self.scattered.push(hit);
+        }
     }
-    // A guess is only worth showing when there is nothing better.
-    //
-    // `git` is a subsequence of *SQLite — Wikipedia* (the g of `org`, the i of
-    // `wiki`, the t of `sqlite`) and always will be; over two thousand rows
-    // there are dozens like it, and they are what made the old list read as
-    // noise even once the real hit was on top. So the two kinds of match never
-    // share a list: if anything matched literally, the coincidences go. If
-    // nothing did, they are all there is — which is what keeps `mxp` finding
-    // `max-pane`.
-    if out.iter().any(|(_, _, t)| *t < MatchTier::Scattered) {
-        out.retain(|(_, _, t)| *t < MatchTier::Scattered);
+
+    /// The best `limit` rows, best first.
+    pub fn finish(self, limit: usize) -> Vec<Hit> {
+        let mut hits = if self.literal.is_empty() { self.scattered } else { self.literal };
+        hits.sort_unstable_by(|a, b| b.score.cmp(&a.score).then_with(|| b.seq.cmp(&a.seq)));
+        hits.truncate(limit);
+        hits
     }
-    out.sort_by(|a, b| b.0.score.cmp(&a.0.score).then_with(|| a.1.cmp(&b.1)));
-    out.truncate(limit);
-    out.into_iter().map(|(entry, _, _)| entry).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn candidate(url: &str, title: Option<&str>) -> Candidate {
-        Candidate {
-            url: url.to_string(),
-            title: title.map(str::to_string),
-            first_visit_at: 0,
-            last_visit_at: 0,
-            visit_count: 1,
-            aliases: Vec::new(),
+    /// A row as the index stores it: newest first is *last* offered, because
+    /// the tie-break is `seq` and the caller lists rows in the order they were
+    /// visited. Written as the ledger writes it — lowercase, newline-joined.
+    fn row(url: &str, title: Option<&str>, aliases: &[&str]) -> String {
+        let mut hay = format!("{}\n{}", url.to_lowercase(), title.unwrap_or("").to_lowercase());
+        for a in aliases {
+            hay.push('\n');
+            hay.push_str(&a.to_lowercase());
         }
+        hay
+    }
+
+    /// Score `query` over `rows` — listed oldest first, so the last is newest —
+    /// and give back the URLs that won, best first.
+    fn ranked(rows: &[(&str, Option<&str>, &[&str])], query: &str, limit: usize) -> Vec<String> {
+        let hays: Vec<String> = rows.iter().map(|(u, t, a)| row(u, *t, a)).collect();
+        let needle = needle(query);
+        let mut ranking = Ranking::new(&needle);
+        for (i, hay) in hays.iter().enumerate() {
+            ranking.offer(i as i64, i as i64, Haystack::new(hay));
+        }
+        ranking
+            .finish(limit)
+            .into_iter()
+            .map(|h| rows[h.rowid as usize].0.to_string())
+            .collect()
+    }
+
+    /// The same, when the test is about *why* a row won rather than which did.
+    fn top(rows: &[(&str, Option<&str>, &[&str])], query: &str) -> Hit {
+        let hays: Vec<String> = rows.iter().map(|(u, t, a)| row(u, *t, a)).collect();
+        let needle = needle(query);
+        let mut ranking = Ranking::new(&needle);
+        for (i, hay) in hays.iter().enumerate() {
+            ranking.offer(i as i64, i as i64, Haystack::new(hay));
+        }
+        ranking.finish(10).into_iter().next().expect("nothing matched")
     }
 
     #[test]
@@ -463,52 +567,53 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_query_is_recency_order() {
-        let c = vec![candidate("https://c.example", None), candidate("https://a.example", None)];
-        let hits = rank(&c, "  ", 10);
-        assert_eq!(hits.len(), 2);
-        assert_eq!(hits[0].url, "https://c.example", "newest first, not alphabetical");
-    }
-
-    #[test]
     fn a_title_match_outranks_a_url_match_of_the_same_kind() {
         // `TITLE_BIAS` decides between two matches that are equally literal —
         // both of these are a word start — and no longer reaches across tiers.
         // It used to: a flat bonus on a subsequence score meant a title
         // coincidence beat a real URL hit, which is the failure
         // `a_literal_hit_outranks_a_title_coincidence` pins.
-        let c = vec![
-            candidate("https://x.example/docs/rust", None),
-            candidate("https://b.example/q", Some("The Rust Programming Language")),
+        let rows: &[(&str, Option<&str>, &[&str])] = &[
+            ("https://x.example/docs/rust", None, &[]),
+            ("https://b.example/q", Some("The Rust Programming Language"), &[]),
         ];
-        let hits = rank(&c, "rust", 10);
-        assert_eq!(hits[0].url, "https://b.example/q");
-        assert_eq!(hits[0].matched_field, SearchField::Title);
+        assert_eq!(ranked(rows, "rust", 10)[0], "https://b.example/q");
+        assert_eq!(top(rows, "rust").field, SearchField::Title);
     }
 
     #[test]
     fn a_better_match_beats_a_newer_one() {
-        // Recency is the tie-break, not a thumb on the scale.
-        let c = vec![
-            candidate("https://n.example/zebra-quilt", None),
-            candidate("https://docs.example/rust", None),
+        // Recency is the tie-break, not a thumb on the scale: the zebra row is
+        // offered last and so is the newer of the two.
+        let rows: &[(&str, Option<&str>, &[&str])] = &[
+            ("https://docs.example/rust", None, &[]),
+            ("https://n.example/zebra-quilt", None, &[]),
         ];
-        let hits = rank(&c, "rust", 10);
-        assert_eq!(hits[0].url, "https://docs.example/rust");
+        assert_eq!(ranked(rows, "rust", 10)[0], "https://docs.example/rust");
+    }
+
+    #[test]
+    fn recency_breaks_a_tie() {
+        // Two identical matches, and the one visited later leads.
+        let rows: &[(&str, Option<&str>, &[&str])] = &[
+            ("https://old.example/rust", None, &[]),
+            ("https://new.example/rust", None, &[]),
+        ];
+        assert_eq!(ranked(rows, "/rust", 10)[0], "https://new.example/rust");
     }
 
     #[test]
     fn the_address_you_typed_finds_the_page_you_landed_on() {
-        let mut c = candidate("https://www.example.com/en", Some("Example"));
-        c.aliases = vec!["https://example.com".to_string()];
-        let hits = rank(&[c], "example.com", 10);
+        let rows: &[(&str, Option<&str>, &[&str])] =
+            &[("https://www.example.com/en", Some("Example"), &["https://example.com"])];
+        let hits = ranked(rows, "example.com", 10);
         assert_eq!(hits.len(), 1, "the redirect source found nothing");
-        assert_eq!(hits[0].url, "https://www.example.com/en", "the entry is where you ended up");
+        assert_eq!(hits[0], "https://www.example.com/en", "the entry is where you ended up");
     }
 
     #[test]
     fn nothing_matching_returns_nothing() {
-        assert!(rank(&[candidate("https://example.com", None)], "zzqq", 10).is_empty());
+        assert!(ranked(&[("https://example.com", None, &[])], "zzqq", 10).is_empty());
     }
 
     // ---- tiers: a literal hit always beats a scattered one -------------------
@@ -518,40 +623,40 @@ mod tests {
         // The measured failure: `hop` led with titles whose h, o and p are
         // three unrelated letters, and the page whose URL says `hop` was not
         // on screen at all.
-        let hits = rank(
+        let hits = ranked(
             &[
-                candidate("https://developer.mozilla.org/x", Some("Checker notes 4805")),
-                candidate("https://launchd.info/y", Some("Launchd notes 4520")),
-                candidate("https://shop.example.com/hoppers", None),
+                ("https://developer.mozilla.org/x", Some("Checker notes 4805"), &[]),
+                ("https://launchd.info/y", Some("Launchd notes 4520"), &[]),
+                ("https://shop.example.com/hoppers", None, &[]),
             ],
             "hop",
             10,
         );
-        assert_eq!(hits[0].url, "https://shop.example.com/hoppers");
+        assert_eq!(hits[0], "https://shop.example.com/hoppers");
     }
 
     #[test]
     fn a_scheme_is_not_a_prefix_of_the_whole_table() {
         // `http://git` used to return SQLite — Wikipedia, because every URL is
         // a subsequence match for a scheme plus three letters.
-        let hits = rank(
+        let hits = ranked(
             &[
-                candidate("https://en.wikipedia.org/wiki/SQLite", Some("SQLite - Wikipedia")),
-                candidate("https://github.com/anthropics", Some("GitHub")),
+                ("https://en.wikipedia.org/wiki/SQLite", Some("SQLite - Wikipedia"), &[]),
+                ("https://github.com/anthropics", Some("GitHub"), &[]),
             ],
             "http://git",
             10,
         );
         assert_eq!(hits.len(), 1, "the scheme matched rows it has nothing to do with");
-        assert_eq!(hits[0].url, "https://github.com/anthropics");
+        assert_eq!(hits[0], "https://github.com/anthropics");
     }
 
     #[test]
     fn a_word_start_beats_the_middle_of_a_word() {
-        let hits = rank(
+        let hits = ranked(
             &[
-                candidate("https://example.com/deployment-notes", None),
-                candidate("https://example.com/deploy", None),
+                ("https://example.com/deployment-notes", None, &[]),
+                ("https://example.com/deploy", None, &[]),
             ],
             "deploy",
             10,
@@ -582,7 +687,6 @@ mod tests {
     fn www_is_not_something_anyone_types() {
         assert_eq!(search_handle("https://www.example.com/en"), "example.com/en");
         assert_eq!(search_handle("example.com"), "example.com");
-        let hits = rank(&[candidate("https://www.example.com/en", None)], "example.com", 10);
-        assert_eq!(hits.len(), 1);
+        assert_eq!(ranked(&[("https://www.example.com/en", None, &[])], "example.com", 10).len(), 1);
     }
 }

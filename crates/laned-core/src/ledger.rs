@@ -22,7 +22,22 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0008_site_permission",
         include_str!("../migrations/0008_site_permission.sql"),
     ),
+    (
+        "0009_history_index",
+        include_str!("../migrations/0009_history_index.sql"),
+    ),
 ];
+
+/// A needle as an FTS5 query: one quoted phrase, nothing else.
+///
+/// The typed string reaches the index verbatim, and FTS5's query language would
+/// otherwise read `AND`, `*`, `:`, `(` and `-` in it as operators — a URL is
+/// made of those characters, so an unquoted address is a syntax error rather
+/// than a search. A phrase over the trigram tokenizer means "contains this
+/// substring", which is exactly the tier `history::tier` is about to assign.
+fn fts_phrase(needle: &str) -> String {
+    format!("\"{}\"", needle.replace('"', "\"\""))
+}
 
 pub struct Ledger {
     conn: Connection,
@@ -494,6 +509,53 @@ impl Ledger {
 
     // ---- history -----------------------------------------------------------
 
+    /// The text a query is matched against, as one string per entry.
+    ///
+    /// URL, then title, then every alias, newline-separated — and lowercase,
+    /// which is the point: the ranker needs a lowercase string and folding one
+    /// per row per keystroke was, measured at 112 840 rows, a larger cost than
+    /// the matching. Folded once at write time it is free forever.
+    ///
+    /// It exists twice — here and in the `INSERT … SELECT` of migration 0009 —
+    /// because the migration has to backfill ledgers this code will never see
+    /// written. `a_ledger_written_before_the_index_is_backfilled` is what keeps
+    /// the two agreeing.
+    /// Addresses are stored with the scheme already off, which is
+    /// `search_handle`'s job in Rust done once at write time. It is not a
+    /// saving of eight bytes a row: `htt`, `tps` and `://` were otherwise
+    /// substrings of every URL in the table, so the third character of a
+    /// perfectly ordinary search matched the entire corpus and the index
+    /// narrowed nothing. `normalize_url` guarantees the `scheme://`, so the
+    /// `instr` cannot come back 0 for a row that is in this table.
+    const HAYSTACK_SQL: &'static str =
+        "lower(substr(v.url, instr(v.url, '://') + 3)) || char(10) ||
+         lower(COALESCE(v.title, '')) || char(10) ||
+         lower(COALESCE((SELECT group_concat(substr(a.alias_url, instr(a.alias_url, '://') + 3),
+                                             char(10))
+                           FROM visit_alias a WHERE a.url = v.url), ''))";
+
+    /// Put one entry's searchable text back in step with its row.
+    ///
+    /// Called after every write that can change what an entry matches — a
+    /// visit, a title arriving late, a redirect source being learned. Cheap
+    /// enough to do unconditionally: it is two statements against one rowid,
+    /// on a path that already did an upsert.
+    fn reindex_visit(&self, url: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM visit_search WHERE rowid = (SELECT rowid FROM visit WHERE url = ?1)",
+            [url],
+        )?;
+        self.conn.execute(
+            &format!(
+                "INSERT INTO visit_search (rowid, haystack, seq)
+                 SELECT v.rowid, {}, v.seq FROM visit v WHERE v.url = ?1",
+                Self::HAYSTACK_SQL
+            ),
+            [url],
+        )?;
+        Ok(())
+    }
+
     /// Record a settle, or bump the entry already there.
     ///
     /// `url` must already be normalized ([`crate::history::normalize_url`]);
@@ -513,7 +575,7 @@ impl Ledger {
                  title = COALESCE(NULLIF(?2, ''), title)",
             params![url, title, now_ms],
         )?;
-        Ok(())
+        self.reindex_visit(url)
     }
 
     /// Name an entry that already exists, without counting a visit.
@@ -527,8 +589,12 @@ impl Ledger {
         if title.is_empty() {
             return Ok(());
         }
-        self.conn
+        let changed = self
+            .conn
             .execute("UPDATE visit SET title = ?2 WHERE url = ?1", params![url, title])?;
+        if changed > 0 {
+            self.reindex_visit(url)?;
+        }
         Ok(())
     }
 
@@ -541,77 +607,170 @@ impl Ledger {
         if alias == url {
             return Ok(());
         }
-        self.conn.execute(
+        let changed = self.conn.execute(
             "INSERT INTO visit_alias (alias_url, url)
              SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM visit WHERE url = ?2)
              ON CONFLICT(alias_url) DO UPDATE SET url = excluded.url",
             params![alias, url],
         )?;
+        if changed > 0 {
+            self.reindex_visit(url)?;
+        }
         Ok(())
     }
 
-    /// The newest `scan` entries with their redirect sources attached, newest
-    /// first — the input [`crate::history::rank`] scores.
+    /// Turn a page that turned out to be a bounce into an alias of where it
+    /// bounced to.
     ///
-    /// One query rather than one per row: at a 2 000-row scan the per-row
-    /// version is 2 000 round trips per keystroke, which is the same mistake
-    /// `lanes()` avoids for panes.
-    pub fn history_candidates(&self, scan: u32) -> Result<Vec<crate::history::Candidate>> {
+    /// A client-side redirect is indistinguishable from a page until the moment
+    /// it redirects: `location.replace` and `<meta refresh>` both finish loading
+    /// first, so by the time the shell knows, the interstitial is already an
+    /// entry — with no title, because a bounce page rarely has one. Measured on
+    /// the owner's corpus: `youtu.be/…` produced three rows and none of them
+    /// was the address he typed.
+    ///
+    /// Its own aliases move with it, so a three-hop chain collapses to one
+    /// entry and every address along the way stays searchable.
+    ///
+    /// Unconditional, rather than sparing an entry with several visits: a URL
+    /// that bounces bounces every time, and "I have been here twice" is not
+    /// evidence that it was ever a page. The cost of being wrong is one row
+    /// that is findable by its own address instead of listed under it.
+    pub fn demote_to_alias(&self, bounce: &str, destination: &str) -> Result<()> {
+        if bounce == destination {
+            return Ok(());
+        }
+        // Before the delete: the cascade would take these with it.
+        self.conn.execute(
+            "UPDATE visit_alias SET url = ?2 WHERE url = ?1",
+            params![bounce, destination],
+        )?;
+        self.forget_visit(bounce)?;
+        self.note_visit_alias(bounce, destination)
+    }
+
+    /// The newest `limit` pages, most recent first — the answer to an empty
+    /// query, and the whole answer, because every row matches equally.
+    pub fn history_newest(&self, limit: u32) -> Result<Vec<crate::model::HistoryEntry>> {
         let mut stmt = self.conn.prepare(
-            "SELECT v.url, v.title, v.first_visit_at, v.last_visit_at, v.visit_count,
-                    (SELECT group_concat(a.alias_url, char(10))
-                       FROM visit_alias a WHERE a.url = v.url)
-             FROM visit v ORDER BY v.seq DESC LIMIT ?1",
+            "SELECT url, title, first_visit_at, last_visit_at, visit_count
+               FROM visit ORDER BY seq DESC LIMIT ?1",
         )?;
         let rows = stmt
-            .query_map([scan], |r| {
-                Ok(crate::history::Candidate {
+            .query_map([limit], |r| {
+                Ok(crate::model::HistoryEntry {
                     url: r.get(0)?,
                     title: r.get(1)?,
                     first_visit_at: r.get(2)?,
                     last_visit_at: r.get(3)?,
                     visit_count: r.get::<_, i64>(4)? as u32,
-                    aliases: r
-                        .get::<_, Option<String>>(5)?
-                        .map(|s| s.split('\n').map(str::to_string).collect())
-                        .unwrap_or_default(),
+                    matched_field: crate::model::SearchField::Url,
+                    score: 0,
                 })
             })?
             .collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
 
+    /// The best `limit` pages for `needle`, best first.
+    ///
+    /// # Why the whole corpus is in play and it is still fast
+    ///
+    /// Round 1 scored the newest 2 000 rows and called the rest unreachable —
+    /// a row at depth 2 499 sat in the table and could not be found while the
+    /// footer counted it. There is no depth here. What replaces it is the
+    /// trigram index of migration 0009, used two ways:
+    ///
+    /// * **Three characters or more** — `MATCH` narrows the table to the rows
+    ///   that literally contain them, and every one of those is scored.
+    /// * **One or two characters, or a needle nothing contains** — below the
+    ///   trigram tokenizer's floor there is no narrowing to do, so every row is
+    ///   scored. Which is affordable only because the index stores the text: a
+    ///   row is scored where it lies in the statement, lowercase already, with
+    ///   nothing allocated per candidate. See [`crate::history::Haystack`].
+    ///
+    /// The second case is also what keeps `mxp` finding `max-pane`. A trigram
+    /// index cannot see a subsequence, and the subsequence tier only ever
+    /// applies when nothing matched literally — which is exactly when `MATCH`
+    /// comes back empty and this falls through to the scan.
+    ///
+    /// The index narrows; it never ranks. It can only drop rows that contain
+    /// none of the typed characters anywhere, so what
+    /// [`crate::history::Ranking`] sees is what an uncapped scan would have
+    /// handed it.
+    pub fn history_search(
+        &self,
+        needle: &str,
+        limit: u32,
+    ) -> Result<Vec<crate::model::HistoryEntry>> {
+        let mut ranking = crate::history::Ranking::new(needle);
+        if needle.chars().count() >= crate::history::TRIGRAM_MIN_CHARS {
+            let mut stmt = self.conn.prepare(
+                "SELECT rowid, haystack, seq FROM visit_search WHERE visit_search MATCH ?1",
+            )?;
+            let mut rows = stmt.query(params![fts_phrase(needle)])?;
+            while let Some(r) = rows.next()? {
+                let hay: &str = r.get_ref(1)?.as_str().unwrap_or_default();
+                ranking.offer(r.get(0)?, r.get(2)?, crate::history::Haystack::new(hay));
+            }
+        }
+        if ranking.is_empty() {
+            let mut stmt = self.conn.prepare("SELECT rowid, haystack, seq FROM visit_search")?;
+            let mut rows = stmt.query([])?;
+            while let Some(r) = rows.next()? {
+                let hay: &str = r.get_ref(1)?.as_str().unwrap_or_default();
+                ranking.offer(r.get(0)?, r.get(2)?, crate::history::Haystack::new(hay));
+            }
+        }
+        let hits = ranking.finish(limit as usize);
+        // Only now is a row read. Fewer than `limit` point lookups on the
+        // primary key, against a scan that would have read every column of
+        // every match to find them.
+        let mut stmt = self.conn.prepare(
+            "SELECT url, title, first_visit_at, last_visit_at, visit_count
+               FROM visit WHERE rowid = ?1",
+        )?;
+        let mut out = Vec::with_capacity(hits.len());
+        for hit in hits {
+            let row = stmt
+                .query_row([hit.rowid], |r| {
+                    Ok(crate::model::HistoryEntry {
+                        url: r.get(0)?,
+                        title: r.get(1)?,
+                        first_visit_at: r.get(2)?,
+                        last_visit_at: r.get(3)?,
+                        visit_count: r.get::<_, i64>(4)? as u32,
+                        matched_field: hit.field,
+                        score: hit.score,
+                    })
+                })
+                .optional()?;
+            // `None` would mean the index outlived its row, which every write
+            // path here is written to prevent. Skipping rather than failing:
+            // a search is not the place to discover it, and the palette showing
+            // one row fewer beats the palette showing an error.
+            if let Some(row) = row {
+                out.push(row);
+            }
+        }
+        Ok(out)
+    }
+
     /// Drop one entry and every alias pointing at it.
     pub fn forget_visit(&self, url: &str) -> Result<()> {
+        // Before the row goes: the index is keyed by its rowid.
+        self.conn.execute(
+            "DELETE FROM visit_search WHERE rowid = (SELECT rowid FROM visit WHERE url = ?1)",
+            [url],
+        )?;
         self.conn.execute("DELETE FROM visit WHERE url = ?1", [url])?;
         Ok(())
     }
 
     pub fn clear_history(&self) -> Result<()> {
+        self.conn.execute("DELETE FROM visit_search", [])?;
         self.conn.execute("DELETE FROM visit", [])?;
         Ok(())
-    }
-
-    /// Enforce the caps. Returns how many entries went.
-    ///
-    /// Age first, then count: doing it the other way round makes the row cap
-    /// decide which of the doomed rows to delete, which is wasted work on the
-    /// only call that runs while the user is navigating.
-    ///
-    /// Aliases go with their entry through the foreign key's `ON DELETE
-    /// CASCADE`, which is enforced because `open` sets `foreign_keys = ON` —
-    /// worth knowing, because the same schema in a connection without that
-    /// pragma leaks an alias table that grows forever.
-    pub fn prune_history(&self, max_rows: u32, oldest_allowed_ms: i64) -> Result<usize> {
-        let by_age = self
-            .conn
-            .execute("DELETE FROM visit WHERE last_visit_at < ?1", params![oldest_allowed_ms])?;
-        let by_count = self.conn.execute(
-            "DELETE FROM visit WHERE url NOT IN
-                 (SELECT url FROM visit ORDER BY seq DESC LIMIT ?1)",
-            params![max_rows],
-        )?;
-        Ok(by_age + by_count)
     }
 
     /// How many entries are on record. For the palette's footer, and for tests.

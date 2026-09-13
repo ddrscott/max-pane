@@ -419,11 +419,6 @@ RustBuffer uniffi_laned_core_fn_method_core_plan_eviction(uint64_t ptr, RustBuff
 RustBuffer uniffi_laned_core_fn_method_core_project_root_of(uint64_t ptr, RustBuffer cwd, RustCallStatus *_Nonnull out_status
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PRUNE_HISTORY
-#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PRUNE_HISTORY
-uint32_t uniffi_laned_core_fn_method_core_prune_history(uint64_t ptr, RustCallStatus *_Nonnull out_status
-);
-#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PUSH_SCROLLBACK
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PUSH_SCROLLBACK
 void uniffi_laned_core_fn_method_core_push_scrollback(uint64_t ptr, RustBuffer pane_id, RustBuffer lines, RustCallStatus *_Nonnull out_status
@@ -436,7 +431,7 @@ RustBuffer uniffi_laned_core_fn_method_core_recents(uint64_t ptr, uint32_t limit
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECORD_VISIT
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECORD_VISIT
-void uniffi_laned_core_fn_method_core_record_visit(uint64_t ptr, RustBuffer pane_id, RustBuffer url, RustBuffer title, RustBuffer requested_url, RustCallStatus *_Nonnull out_status
+void uniffi_laned_core_fn_method_core_record_visit(uint64_t ptr, RustBuffer pane_id, RustBuffer url, RustBuffer title, RustBuffer redirect_chain, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_REVISION
@@ -997,12 +992,6 @@ uint16_t uniffi_laned_core_checksum_method_core_plan_eviction(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PROJECT_ROOT_OF
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PROJECT_ROOT_OF
 uint16_t uniffi_laned_core_checksum_method_core_project_root_of(void
-    
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PRUNE_HISTORY
-#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PRUNE_HISTORY
-uint16_t uniffi_laned_core_checksum_method_core_prune_history(void
     
 );
 #endif

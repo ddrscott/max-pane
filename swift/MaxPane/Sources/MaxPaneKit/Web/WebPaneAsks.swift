@@ -339,6 +339,14 @@ extension WebPaneController {
     func webView(_ webView: WKWebView,
                        decidePolicyFor navigationAction: WKNavigationAction,
                        decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+        // Main frame only: a navigation inside an iframe is not the pane going
+        // anywhere, and counting one would make every ad frame a redirect hop.
+        if navigationAction.targetFrame?.isMainFrame == true {
+            trail.willNavigate(
+                to: navigationAction.request.url?.absoluteString,
+                type: navigationAction.navigationType,
+                now: CFAbsoluteTimeGetCurrent())
+        }
         // Before the download check. A ⌘-click on `<a download>` is still a
         // download — the modifier says *where the page goes*, and that link
         // does not go to a page.

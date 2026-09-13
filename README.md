@@ -89,16 +89,16 @@ failure without them is a `dlopen` error that names neither.
 ### What the default run leaves out, and why
 
 **Two tests, not two hundred.** Measured: the default run is ~1.5 s, of which
-the 320 Swift tests are 0.2 s and SwiftPM's own no-op overhead is another 0.4 s.
+the Swift tests are 0.8 s and SwiftPM's own no-op overhead is another 0.4 s.
 Nothing in the Swift suite is worth gating — the slowest single test in it is
 76 ms. The cost lived on the Rust side, in two timing measurements:
 
 | | before | why it costs |
 |---|---|---|
 | `rust_side_snapshot_cost` | 0.95 s | builds 300 lanes / 400 panes, then 200 samples |
-| `cost_of_a_keystroke` | 0.33 s | fills the ledger to its 5,000-row cap, then 7 queries |
+| `cost_of_a_keystroke` | 21 s | builds 112,840 pages — the owner's real corpus size — then 8 queries |
 
-Together that was 1.28 s of a 2.7 s suite — and both print numbers that only
+Together they are far the largest thing in the suite — and both print numbers that only
 mean anything in a release build, which the default run is not. They are gated
 on **`MAXPANE_BENCH`** and `./scripts/test.sh bench` runs them in release, where
 the numbers are worth reading.
@@ -207,6 +207,44 @@ being read.
 A page with no `<title>` gets its host and path on the lane header rather than
 keeping the last page's title — `localhost:3000/api/users`, which is what tells
 six columns of raw JSON apart.
+
+### History
+
+**Nothing is ever evicted.** No row cap, no age cap — a page you opened two
+years ago is one ⌘O away, and ⌘⌫ is the only thing that removes a row. A `visit`
+row is one per address at roughly 250 bytes, so a hundred thousand pages is
+about 28 MB and a decade lands near 155 MB; Vivaldi spends 642 MB on the same
+browsing.
+
+That is affordable because the search is indexed rather than scanned. Every
+page's address, title and redirect sources go into a trigram index (migration
+0009), which narrows the table before anything is ranked. Measured over 112 840
+pages, release build: **a keystroke costs about 7 ms from the third character
+on**, and 1 ms once the query is distinctive. The first two characters cost
+about 60 ms, because a trigram index has nothing to say below three characters
+and every row is read — that is the price of the answer being the whole table
+rather than the newest fortnight of it, and it is two keystrokes.
+
+The index narrows; it never ranks. `history.rs` still decides the order, so what
+comes back is what an uncapped scan would have produced — including `mxp`
+finding `max-pane`, which a substring index cannot see and which falls through
+to a full pass exactly when nothing matched literally.
+
+**A redirect leaves one row, and every address on the way to it stays
+searchable.** Type `youtu.be/…`, land on `youtube.com/watch?v=…` through a 303
+and a consent page, and there is one entry — the page you actually saw — with
+the other two as aliases: searchable, never listed. That now includes
+client-side redirects. `location.replace` and `<meta refresh>` finish loading
+before they redirect, so each one *is* a page for a moment and used to stay one:
+an untitled row that reopens to a bounce. A navigation nobody asked for, inside
+two seconds of the last one finishing, is the page redirecting — and the
+interstitial stops being an entry.
+
+**Rows say when.** `14:32` today, `Tue 09:15` this week, `22 Feb 07:05` this
+year, `22 Feb 2024` before that. The old `22d ago` could not answer "what did I
+have open Tuesday afternoon", which is most of what history is for. Sessions
+keep their relative age, because a terminal's last output is a question about
+now.
 
 ### The session browser, and which pane has the keyboard
 

@@ -64,6 +64,11 @@ final class WebPaneController: NSObject, PaneController {
     /// nothing behind it.
     var openPanels: [NSOpenPanel] = []
 
+    /// Every address this pane passed through on the way to the one it is
+    /// showing. Internal: the navigation-policy delegate lives in
+    /// `WebPaneAsks.swift`, which is where a navigation is first seen.
+    var trail = RedirectTrail()
+
     /// Internal: the delegate methods in `WebPaneAsks.swift` need it.
     var webView: WKWebView?
     private var placeholder: PlaceholderView?
@@ -1132,6 +1137,11 @@ final class WebPaneController: NSObject, PaneController {
 
     private func load(_ url: String) {
         guard let webView, let parsed = URL(string: url) else { return }
+        // Before the request: a load this pane asked for is never a redirect,
+        // and `.other` alone cannot tell the two apart — an address typed into
+        // the chrome bar arrives with the same navigation type a
+        // `location.replace` does.
+        trail.paneWillLoad()
         if parsed.isFileURL {
             // WebKit refuses a plain request for file://; it needs to be told
             // which directory the page may read from. Granting the file's own
@@ -1206,11 +1216,13 @@ extension WebPaneController: WKNavigationDelegate {
         if let url = webView.url?.absoluteString {
             pane.url = url
             store.setPaneUrl(paneId, url)
-            // `initialURL` is the address before redirects, so a later search
-            // for what was typed still finds where it landed.
+            // Every hop, not `backForwardList.currentItem?.initialURL`: that
+            // holds one address and a chain is a list, and a client-side
+            // redirect has already overwritten it by the time we are asked.
+            // See `RedirectTrail`.
             store.recordVisit(
                 paneId: paneId, url: url, title: webView.title,
-                requestedUrl: webView.backForwardList.currentItem?.initialURL.absoluteString)
+                redirectChain: trail.didFinish(at: url, now: CFAbsoluteTimeGetCurrent()))
         }
         if let title = webView.title, !title.isEmpty {
             adoptTitle(title)
@@ -1231,7 +1243,16 @@ extension WebPaneController: WKNavigationDelegate {
         DispatchQueue.main.async { [weak self] in self?.hideFirstPaintCover() }
     }
 
+    /// The server answered a 3xx. The address we were pointed at a moment ago
+    /// is a real hop the user could search for later, and until now a two-hop
+    /// chain lost its middle.
+    func webView(_ webView: WKWebView,
+                 didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation!) {
+        trail.serverRedirect(to: webView.url?.absoluteString)
+    }
+
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        trail.didFail()
         // A failed load leaves the pane where it was rather than blanking it;
         // the URL in the ledger is still the right thing to retry. The cover
         // goes, though: WebKit's own error page is the only thing that can say
@@ -1248,6 +1269,7 @@ extension WebPaneController: WKNavigationDelegate {
     /// on screen and half-built, and the hairline would have parked wherever
     /// the bytes stopped.
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        trail.didFail()
         hideFirstPaintCover()
         report(error)
     }

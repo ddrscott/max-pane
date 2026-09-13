@@ -5,6 +5,29 @@ the bar won. This is the list, ranked as the critic ranked it. Do not start
 until the ⌘O work (piece 9 of the browser gauntlet) has merged — it owns
 `Views/HistoryPalette.swift` and may have touched `history.rs`.
 
+## What landed, and what this file is now for
+
+Items **1**, **1a**, **2** and **3** are done, and item **4** has its first
+half. What is left below — 4's calendar views, and 5 to 8 — is the round-3 list,
+kept here rather than copied into a new file so the evidence stays with the
+work.
+
+| | | |
+|---|---|---|
+| 1 | no cap, whole-corpus search | done — trigram index, migration 0009; 7 ms a keystroke at 112 840 pages |
+| 1a | the footer must describe the search's reach | done — `history_searchable_count` is `history_count`, because the reach is everything |
+| 2 | substring beats subsequence | already done by piece 9 of the browser gauntlet; the tiers were there before this round started |
+| 3 | client-side redirects | done — `RedirectTrail` on the Swift side, `demote_to_alias` in the core |
+| 4 | time is only ever relative | half — rows carry a date and a clock time (`HistoryClock`). No day grouping, no per-day counts, no Views column, no List/Day/Week/Month |
+| 5 | you can browse exactly 60 rows | **left** |
+| 6 | truncation eats the identity, delete is unconfirmed | **left** |
+| 7 | there is no way to clear history | **left** — `Core::clear_history` still has no key and no menu item |
+| 8 | the smaller, still real, list | **left** |
+
+Five to eight all want the same thing that 4's other half wants: a History
+*view* with room in it, rather than more pressure on a palette row 26 points
+tall. That is the shape round 3 should start from.
+
 ## The measurement that decides everything here
 
 From `~/Library/Application Support/Vivaldi/Default/History` — his actual
