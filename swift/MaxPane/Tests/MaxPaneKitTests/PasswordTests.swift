@@ -379,11 +379,12 @@ struct PasswordKeymapTests {
         #expect(fill != save)
         // Every command's chords across the whole map, with no duplicates: a
         // shortcut that quietly shadows another is how ⌘O came to open nothing.
-        var seen = Set<KeyChord>()
+        var seen: [KeyChord: Command] = [:]
         for command in Command.allCases {
             for chord in map.chords(for: command) {
-                #expect(!seen.contains(chord), "\(chord) is bound twice")
-                seen.insert(chord)
+                if let held = seen[chord], held == command.sharesChordWith { continue }
+                #expect(seen[chord] == nil, "\(chord) is bound twice")
+                seen[chord] = command
             }
         }
     }

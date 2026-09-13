@@ -437,6 +437,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .web
         case .pairWithNext:
             return pairCandidates() != nil
+        case .splitRight:
+            // The mirror of `bookmarkPage`, which holds the same chord: a
+            // terminal splits, a page is kept, and only one of the two is ever
+            // enabled. A lane is needed to put the new one beside.
+            return store.focusedLane != nil
+                && store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .pty
         case .closePane, .closeLane, .splitDown, .toggleKeepLive,
              .moveLaneLeft, .moveLaneRight, .widenLane, .narrowLane, .toggleSpan,
              .dockLaneLeft, .dockLaneRight:
@@ -491,6 +497,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .showHelp:
                 showHelp()
+
+            case .splitRight:
+                // iTerm's ⌘D, in this app's geometry: panes stack down inside a
+                // lane, so "to the right" is a new lane rather than a second
+                // column inside this one. Same cwd as the pane you are in.
+                try newTerminal(near: focusedLane)
 
             case .splitDown:
                 guard let lane = focusedLane, let focused = store.state.focusedPaneId,

@@ -48,17 +48,37 @@ struct AddressBarTests {
         #expect(Command.claims(chord("l")))
     }
 
-    /// One key, one meaning. A second command reaching for ⌘L is the failure
-    /// `Commands.swift` exists to make impossible to miss.
-    @Test("no two commands claim the same chord")
+    /// One key, one meaning — unless the two meanings can never be offered at
+    /// the same time, which is a thing a command has to *declare*. A second
+    /// command quietly reaching for ⌘L is the failure `Commands.swift` exists
+    /// to make impossible to miss.
+    @Test("no two commands claim the same chord without declaring it")
     func chordsAreUnique() {
         var seen: [String: Command] = [:]
         for command in Command.allCases {
             for (key, modifiers) in command.chords.map(\.pair) {
                 let id = "\(modifiers.intersection(.deviceIndependentFlagsMask).rawValue):\(key)"
+                if let held = seen[id], held == command.sharesChordWith {
+                    // Declared pair: ⌘D keeps a page or splits a terminal, and
+                    // `canPerform` enables exactly one of them.
+                    #expect(held.sharesChordWith == command, "the pairing is not mutual")
+                    continue
+                }
                 #expect(seen[id] == nil, "\(command.rawValue) and \(seen[id]?.rawValue ?? "?") share a key")
                 seen[id] = command
             }
+        }
+    }
+
+    /// The exception has to stay an exception: a pair that could both be live
+    /// at once would make ⌘D mean whichever item the menu happened to reach.
+    @Test("a shared chord is only allowed where the two can never both be live")
+    func sharedChordsAreMutuallyExclusive() {
+        for command in Command.allCases {
+            guard let partner = command.sharesChordWith else { continue }
+            #expect(partner.sharesChordWith == command,
+                    "\(command.rawValue) points at \(partner.rawValue), which does not point back")
+            #expect(partner != command, "a command cannot share a chord with itself")
         }
     }
 

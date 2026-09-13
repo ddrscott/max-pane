@@ -16,6 +16,7 @@ public enum Command: String, CaseIterable, Sendable {
     case zoomOut
     case zoomReset
     case newTerminalLane
+    case splitRight
     case splitDown
     case closePane
     case closeLane
@@ -64,6 +65,7 @@ public enum Command: String, CaseIterable, Sendable {
         case .zoomOut: return "Smaller Text"
         case .zoomReset: return "Actual Size"
         case .newTerminalLane: return "New Terminal Lane"
+        case .splitRight: return "Split Right"
         case .splitDown: return "Split Down"
         case .closePane: return "Close Pane"
         case .closeLane: return "Close Lane"
@@ -145,6 +147,13 @@ public enum Command: String, CaseIterable, Sendable {
         // `performKeyEquivalent`, and `claims(_:)` below only rescues the
         // chords this file declares.
         case .editAddress:     return ("l", [.command])
+        // ⌘D is two conventions colliding on one key: a browser keeps the
+        // page, a terminal splits. Both keep it, and which one runs is which
+        // pane you are in — `canPerform` enables exactly one of them, and the
+        // menu routes the chord to the enabled item. That is also the bug this
+        // fixed: with only `bookmarkPage` on ⌘D, the item was disabled in a
+        // terminal, the menu declined the key, and Ghostty typed a `d`.
+        case .splitRight:      return ("d", [.command])
         case .splitDown:       return ("d", [.command, .shift])
         case .closePane:       return ("w", [.command])
         case .closeLane:       return ("w", [.command, .shift])
@@ -263,6 +272,22 @@ public enum Command: String, CaseIterable, Sendable {
         }
     }
 
+    /// The one command this is allowed to hold a chord alongside.
+    ///
+    /// Two commands may share a key only when they can never both be offered,
+    /// because then there is no ambiguity to resolve: ⌘D keeps the page in a
+    /// web pane and splits to the right in a terminal, `canPerform` enables
+    /// exactly one of the two, and the menu routes the chord to whichever item
+    /// is live. Every *other* collision stays an error the keymap reports —
+    /// this is a declared exception, not a hole.
+    public var sharesChordWith: Command? {
+        switch self {
+        case .bookmarkPage: return .splitRight
+        case .splitRight: return .bookmarkPage
+        default: return nil
+        }
+    }
+
     /// The keys that actually run this command, after the config file has had
     /// its say. The first is the one a menu item can carry; the rest are
     /// matched in the window's key monitor. Empty means deliberately unbound.
@@ -310,7 +335,8 @@ public enum Command: String, CaseIterable, Sendable {
     /// Which menu this belongs under.
     public var menu: MenuSection {
         switch self {
-        case .openAnything, .openPages, .openSessions, .newTerminalLane, .splitDown: return .file
+        case .openAnything, .openPages, .openSessions, .newTerminalLane,
+             .splitRight, .splitDown: return .file
         case .closePane, .closeLane: return .file
         case .focusLeft, .focusRight, .focusUp, .focusDown, .search, .gather, .ungather: return .navigate
         case .moveLaneLeft, .moveLaneRight, .toggleSidebar, .toggleKeepLive,

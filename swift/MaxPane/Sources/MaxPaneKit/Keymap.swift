@@ -306,6 +306,13 @@ public struct Keymap: Sendable {
         func lay(_ command: Command, _ chords: [KeyChord], configuredHere: Bool) {
             var kept: [KeyChord] = []
             for chord in chords {
+                // A declared pair is not a collision: the two can never be
+                // enabled at the same time, so the chord means one thing
+                // wherever you press it. The first to claim it stays the owner.
+                if let held = owner[chord], held == command.sharesChordWith {
+                    kept.append(chord)
+                    continue
+                }
                 if let held = owner[chord] {
                     let why = configuredHere
                         ? "\(held.rawValue) is also set to it, and comes first"
