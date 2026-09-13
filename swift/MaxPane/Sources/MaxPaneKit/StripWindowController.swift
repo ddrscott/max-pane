@@ -410,9 +410,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             case .dockLaneRight: try toggleDock(.right)
 
             case .toggleDockMode:
-                if let lane = focusedLane, let dock = lane.dock {
-                    try store.setDockMode(lane.id, dock.mode == .inset ? .overlay : .inset)
-                }
+                if let lane = focusedLane { try store.toggleDockMode(lane.id) }
 
             case .focusDockLeft:  try focusDock(.left)
             case .focusDockRight: try focusDock(.right)
@@ -482,25 +480,11 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     /// that would be a guess about a session that has ended.
     private var paneBeforeDock: String?
 
-    /// ⌃⌘[ / ⌃⌘]. Docks the focused lane to that edge, or gives the edge back
-    /// if it is already the one this lane holds.
-    ///
-    /// Inset is the default mode, because inset hides nothing: the strip's
-    /// viewport narrows and every lane stays reachable. Overlay is the
-    /// deliberate choice — it occludes a lane, which is precisely what the
-    /// edge-peek work exists to prevent — and it is one key away.
-    ///
-    /// Docking a lane that is already docked to the *other* edge moves it, and
-    /// carries its dock width across: the width is a property of the dock the
-    /// user dragged, not of the side it happens to be on.
+    /// ⌃⌘[ / ⌃⌘] on the focused lane. The rule itself lives in `StripStore`,
+    /// because the ⋯ menu asks the same question about a different lane.
     private func toggleDock(_ side: DockSide) throws {
         guard let lane = store.focusedLane else { return }
-        if lane.dock?.side == side {
-            try store.undockLane(lane.id)
-        } else {
-            try store.dockLane(
-                lane.id, side: side, mode: lane.dock?.mode ?? .inset, widthPt: lane.dock?.widthPt)
-        }
+        try store.toggleDock(lane.id, side: side)
     }
 
     /// ⌥⌘[ / ⌥⌘]. Focus that dock, or leave it if focus is already inside.

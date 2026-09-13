@@ -366,3 +366,55 @@ Listed here rather than discovered, because they are the weak points:
    prove WebKit keeps playing, and if the view half parents the dock somewhere
    that gets hidden, every test in `docking.rs` still passes and the music still
    stops.
+
+---
+
+## What the layout half did with the four positions
+
+Written back by the builder of the view half, so the next person reads one page
+rather than two.
+
+1. **"Make the clip view genuinely narrower."** Followed, and it was worth the
+   argument: it is the reason every existing caller of
+   `contentView.bounds.width` needed no edit at all. It also nearly failed
+   silently. The first version moved the *constants of two Auto Layout
+   constraints* — and a constant changed from inside a layout pass schedules no
+   further pass, while the "only write it if it changed" guard then makes the
+   omission permanent. The constraints read 578 while `scrollView.frame` stayed
+   `(18, 0, 1564, 976)` through a hundred snapshots: inset mode was drawing a
+   dock over a strip that still had the whole window, which looks *exactly* like
+   working inset mode until you measure it. The scroll view is frame-positioned
+   now, like the lanes, the panes and the document view around it.
+
+2. **"Overlay must count as an edge."** Agreed with, implemented somewhere else.
+   `LanePeek` and `StripEdges.hidden` were not taught about docks. Instead there
+   is one definition of the strip's *visible window* —
+   `StripViewController.viewport` — and both modes shrink it: inset by narrowing
+   the clip view, overlay by an `NSScrollView.contentInsets` pair. Every
+   consumer takes an offset and a width and knows nothing about docking, so
+   there is no special case to forget. The content insets are not decoration:
+   without them the last `overlayWidth` points of the strip can never be
+   scrolled out from under the dock, which is the "content you cannot reach"
+   failure `LanePeek` refuses to create.
+
+3. **"Always materialised, never `deferLoad`."** Followed, twice over —
+   `distanceFromViewport` answers 0 for a docked lane (which is the general fix,
+   and also what makes `loadIfDeferred` fire for it) and `makeController` names
+   `lane.dock == nil` explicitly at the one call site where getting it wrong is
+   silent. Verified by restarting with a dock at ordinal 1 and the strip
+   restored at lane 6: the page was loaded and the audio clock was advancing
+   eight seconds after launch.
+
+4. **"Clamp against the viewport, never write the clamp back."** Followed, and
+   now run: `DockGeometry.resolve` is the whole rule, unit-tested in
+   `DockLayoutTests`, and an 800 pt window with two inset docks was driven by
+   hand. Both degrade to overlay at 302 pt each, leaving 160 pt of strip —
+   `DockGeometry.stripFloorPt`, which is a judgement of the same kind as
+   `DOCK_MIN_PT` and is called one in the code. Degradation is symmetric because
+   both inset docks share one budget, so which of them floats can never depend
+   on the order they were considered in.
+
+   One consequence the contract did not name: **the header's marker follows the
+   mode the window can afford, not the one the ledger holds.** A filled `◀`
+   beside a dock that is visibly covering a lane is the header arguing with the
+   window.

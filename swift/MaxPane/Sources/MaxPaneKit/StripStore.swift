@@ -219,6 +219,37 @@ public final class StripStore {
         publish(try core.setDockWidth(laneId: laneId, widthPt: widthPt))
     }
 
+    /// Dock a lane to `side`, or give the edge back if it is already the one
+    /// this lane holds.
+    ///
+    /// Here rather than in either caller because there are two — ⌃⌘[ acts on
+    /// the focused lane, the ⋯ menu acts on the lane under the pointer — and a
+    /// toggle implemented twice is a toggle that eventually disagrees with
+    /// itself about what "already docked to the other side" means.
+    ///
+    /// Inset is the default mode, because inset hides nothing. Overlay occludes
+    /// a lane, which is precisely what the edge-peek work exists to prevent, so
+    /// it stays a deliberate second keystroke.
+    ///
+    /// Moving a dock from one edge to the other carries its width across: the
+    /// width belongs to the dock the user dragged, not to the side it was on.
+    func toggleDock(_ laneId: String, side: DockSide) throws {
+        guard let lane = lane(laneId) else { return }
+        if lane.dock?.side == side {
+            try undockLane(laneId)
+        } else {
+            try dockLane(laneId, side: side, mode: lane.dock?.mode ?? .inset, widthPt: lane.dock?.widthPt)
+        }
+    }
+
+    /// ⌃⌘\. A no-op on a lane that is not docked — `setDockMode` throws there,
+    /// on purpose, and the two callers both offer this as a toggle they have
+    /// already greyed out.
+    func toggleDockMode(_ laneId: String) throws {
+        guard let dock = lane(laneId)?.dock else { return }
+        try setDockMode(laneId, dock.mode == .inset ? .overlay : .inset)
+    }
+
     func setManualTag(_ laneId: String, _ projectRoot: String?) throws {
         publish(try core.setManualTag(laneId: laneId, projectRoot: projectRoot))
     }

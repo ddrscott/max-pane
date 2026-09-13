@@ -65,6 +65,13 @@ final class LaneView: NSView {
     var onTogglePin: (() -> Void)?
     var onSetProjectTag: (() -> Void)?
     var onToggleSpan: (() -> Void)?
+    /// ⌃⌘[ / ⌃⌘] / ⌃⌘\, for the lane under the pointer rather than the focused
+    /// one. Toggles, like the keys: the item that docked this lane is the item
+    /// that gives the edge back, which is why the menu marks them rather than
+    /// renaming them.
+    var onDockLeft: (() -> Void)?
+    var onDockRight: (() -> Void)?
+    var onToggleDockMode: (() -> Void)?
     /// ADR-0007's dangerous one: reshapes the PTY for every client of the
     /// session. Whoever connects this owes the user a confirmation first.
     var onClaimSession: (() -> Void)?
@@ -76,6 +83,61 @@ final class LaneView: NSView {
     /// A spanned lane may be twice as wide (PRD §13 Phase 3), so this is per
     /// lane rather than a constant.
     var widthBounds: ClosedRange<UInt32> = 420...900
+
+    /// Which edge the width handle sits on.
+    ///
+    /// A lane in the strip is dragged by its right edge, because the strip
+    /// grows rightwards and the lane's left edge is its neighbour's business. A
+    /// dock at the right of the window has its right edge against the wall, so
+    /// the only edge there is to grab is the other one — and it is the inner
+    /// edge either way, which is the thing the gesture actually means.
+    enum ResizeEdge { case trailing, leading }
+
+    var resizeEdge: ResizeEdge = .trailing {
+        didSet {
+            guard resizeEdge != oldValue else { return }
+            trailingHandle.isActive = resizeEdge == .trailing
+            leadingHandle.isActive = resizeEdge == .leading
+        }
+    }
+
+    private var trailingHandle: NSLayoutConstraint!
+    private var leadingHandle: NSLayoutConstraint!
+
+    /// Set when this lane is an **overlay** dock, to the edge of the window it
+    /// is held at. `nil` for everything else, inset docks included.
+    ///
+    /// An overlay has to look like it is in front, or it reads as a lane that
+    /// refuses to scroll — and the user's next move is to try to scroll it. The
+    /// evidence is three things that agree: a hard, square, full-height rule
+    /// down the inner edge (here), a shadow falling from that rule onto the
+    /// strip (`DockShadowView`, which is the strip's to draw because it lands
+    /// outside this view), and the strip itself visibly moving underneath. The
+    /// third is the strongest and it is free; the first two are what make the
+    /// still frame readable.
+    ///
+    /// An inset dock gets none of it, deliberately. It is *beside* the strip,
+    /// not over it, and a shadow there would claim a depth that is not true.
+    var floatingEdge: DockSide? {
+        didSet {
+            guard floatingEdge != oldValue else { return }
+            dockEdge.isHidden = floatingEdge == nil
+            needsLayout = true
+        }
+    }
+
+    /// The mode this dock is actually drawn in, which is not always the mode
+    /// the ledger holds — see `DockGeometry`'s narrow-window degradation. The
+    /// header's marker follows this rather than the snapshot, so it never says
+    /// "takes its own room" beside a dock that is visibly covering a lane.
+    var drawnDockMode: DockMode? {
+        didSet {
+            guard drawnDockMode != oldValue else { return }
+            header.drawnDockMode = drawnDockMode
+        }
+    }
+
+    private let dockEdge = DockEdgeView()
 
     init(lane: Lane, widthBounds: ClosedRange<UInt32>) {
         self.laneId = lane.id
@@ -120,6 +182,12 @@ final class LaneView: NSView {
         addSubview(header)
         addSubview(stack)
         addSubview(resizeHandle)
+        // Frame-positioned in `layout`, and hidden unless this lane is an
+        // overlay dock. Added last so it is drawn over the pane it borders —
+        // a `WKWebView` is layer-backed and will otherwise paint over a
+        // sibling that was added before it.
+        dockEdge.isHidden = true
+        addSubview(dockEdge)
 
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: topAnchor),
@@ -134,15 +202,21 @@ final class LaneView: NSView {
 
             resizeHandle.topAnchor.constraint(equalTo: topAnchor),
             resizeHandle.bottomAnchor.constraint(equalTo: bottomAnchor),
-            resizeHandle.trailingAnchor.constraint(equalTo: trailingAnchor),
             resizeHandle.widthAnchor.constraint(equalToConstant: 10),
         ])
+        trailingHandle = resizeHandle.trailingAnchor.constraint(equalTo: trailingAnchor)
+        leadingHandle = resizeHandle.leadingAnchor.constraint(equalTo: leadingAnchor)
+        trailingHandle.isActive = true
 
         resizeHandle.onDrag = { [weak self] delta, final in
             guard let self else { return }
+            // A drag on the leading edge moves the same way and means the
+            // opposite: pulling left widens a right-hand dock, because the edge
+            // that is not moving is the one against the wall.
+            let signed = self.resizeEdge == .leading ? -delta : delta
             let next = UInt32(max(Double(self.widthBounds.lowerBound),
                                   min(Double(self.widthBounds.upperBound),
-                                      Double(self.desiredWidth) + delta)))
+                                      Double(self.desiredWidth) + signed)))
             self.desiredWidth = CGFloat(next)
             self.onResize?(next, final)
         }
@@ -176,7 +250,10 @@ final class LaneView: NSView {
     func apply(_ lane: Lane) {
         laneId = lane.id
         currentSessionId = lane.panes.first(where: { $0.kind == .pty })?.relaySessionId
-        desiredWidth = CGFloat(lane.widthPt)
+        // A docked lane's handle drags the *dock's* width, which is a separate
+        // durable number: undocking has to give the lane back at the width it
+        // was dragged to in the strip, not at whatever the edge was last set to.
+        desiredWidth = CGFloat(lane.dock?.widthPt ?? lane.widthPt)
         // Keyed by pane id and not by position: a snapshot can arrive while a
         // pane is still fading out of the stack, and an array indexed by
         // position would hand the departing pane's height to the one that took
@@ -429,6 +506,14 @@ final class LaneView: NSView {
         // height mid-transition would otherwise reveal a full-width lane through
         // a mask that is the old height.
         if revealWidth != nil { applyReveal() }
+        if let edge = floatingEdge {
+            // The inner edge: the one facing the strip. For a dock on the left
+            // of the window that is its right-hand side, and the mirror at the
+            // other end.
+            let w = Theme.dockEdgeWidth
+            dockEdge.frame = NSRect(
+                x: edge == .left ? bounds.width - w : 0, y: 0, width: w, height: bounds.height)
+        }
         applyPaneHeights()
     }
 
@@ -632,6 +717,9 @@ protocol LaneHeaderActions: AnyObject {
     var onTogglePin: (() -> Void)? { get }
     var onSetProjectTag: (() -> Void)? { get }
     var onToggleSpan: (() -> Void)? { get }
+    var onDockLeft: (() -> Void)? { get }
+    var onDockRight: (() -> Void)? { get }
+    var onToggleDockMode: (() -> Void)? { get }
     var onClaimSession: (() -> Void)? { get }
     var onCloseLane: (() -> Void)? { get }
 }
@@ -656,7 +744,7 @@ extension LaneView: LaneHeaderActions {}
 final class LaneHeaderView: NSView {
     private let kindGlyph = NSTextField(labelWithString: "")
     private let chip = NSTextField(labelWithString: "")
-    private let pin = NSTextField(labelWithString: "")
+    private let markers = NSTextField(labelWithString: "")
     private let title = NSTextField(labelWithString: "")
     private let badge = NSTextField(labelWithString: "")
     private let path = NSTextField(labelWithString: "")
@@ -676,6 +764,16 @@ final class LaneHeaderView: NSView {
     /// `rebuild` compares the rendered model rather than the telemetry: the
     /// value is unchanged on most ticks but the age it prints is not.
     var telemetry: SessionTelemetry? { didSet { rebuild() } }
+
+    /// See `LaneView.drawnDockMode`. Held rather than folded into the model
+    /// because it comes from the window's arithmetic, not from the snapshot,
+    /// and `rebuild` compares models to decide whether to touch the tree.
+    var drawnDockMode: DockMode? {
+        didSet {
+            guard drawnDockMode != oldValue else { return }
+            applyMarkers()
+        }
+    }
 
     private var lane: Lane?
     private var model = LaneHeaderModel()
@@ -732,16 +830,18 @@ final class LaneHeaderView: NSView {
         path.textColor = Theme.dimText
         path.alignment = .right
         path.lineBreakMode = .byClipping
-        pin.font = Self.smallFont
-        pin.alignment = .center
-        // Neutral, not accent. Pinning is structural — it says this lane is
-        // never evicted — and an orange mark for it would spend the one colour
-        // that has to keep meaning "this agent is waiting on you".
-        pin.textColor = .labelColor
+        markers.font = Self.smallFont
+        markers.alignment = .center
+        // Neutral, not accent. Both markers are structural — this lane is never
+        // evicted, this lane is held at an edge — and neither changes from
+        // minute to minute. An orange mark for something that is true all day
+        // spends the one colour that has to keep meaning "this agent is waiting
+        // on you".
+        markers.textColor = .labelColor
 
         overflow.onPress = { [weak self] in self?.showOverflowMenu() }
 
-        for v in [kindGlyph, chip, pin, title, badge, path] {
+        for v in [kindGlyph, chip, markers, title, badge, path] {
             v.translatesAutoresizingMaskIntoConstraints = true
             addSubview(v)
         }
@@ -771,7 +871,7 @@ final class LaneHeaderView: NSView {
         // orange spends the alarm colour on the most routine state there is.
         kindGlyph.textColor = (model.kind == .pty && model.isLive) ? Theme.flowing : Theme.dimText
         applyChip()
-        pin.stringValue = model.pinned ? "▪" : ""
+        applyMarkers()
         title.stringValue = model.title
         badge.stringValue = model.badge
         // Throughput is the thing that is changing right now, so it gets the
@@ -779,6 +879,14 @@ final class LaneHeaderView: NSView {
         badge.textColor = model.badgeIsThroughput ? Theme.flowing : Theme.dimText
         toolTip = model.tooltip.isEmpty ? nil : model.tooltip
 
+        needsLayout = true
+        needsDisplay = true
+    }
+
+    private func applyMarkers() {
+        let text = model.markerText(drawnMode: drawnDockMode)
+        guard markers.stringValue != text else { return }
+        markers.stringValue = text
         needsLayout = true
         needsDisplay = true
     }
@@ -856,18 +964,18 @@ final class LaneHeaderView: NSView {
         overflow.frame = NSRect(x: overflowX, y: (bounds.height - 18) / 2, width: overflowWidth, height: 18)
 
         var rightEdge = overflowX - 6
-        // The pin sits beside the `⋯` that toggles it rather than beside the
-        // status square, which is also a small orange square: three squares in a
-        // row on the left read as one indicator with a bug in it.
-        if model.pinned {
-            // Measured rather than assumed to be one cell: `▪` is not in
-            // JetBrains Mono, so it comes from a fallback face at its own width
-            // and a one-cell box clips it away to nothing.
-            let pinWidth = width(of: pin.stringValue, font: Self.smallFont) + 2
-            pin.frame = NSRect(x: rightEdge - pinWidth, y: mid - 8, width: pinWidth, height: 16)
-            rightEdge -= pinWidth + 6
+        // The markers sit beside the `⋯` that toggles them rather than beside
+        // the status square, which is also a small orange square: three squares
+        // in a row on the left read as one indicator with a bug in it.
+        if !markers.stringValue.isEmpty {
+            // Measured rather than assumed to be one cell each: `▪` and `◀` are
+            // not in JetBrains Mono, so they come from a fallback face at their
+            // own widths and a fixed box clips them away to nothing.
+            let markerWidth = width(of: markers.stringValue, font: Self.smallFont) + 2
+            markers.frame = NSRect(x: rightEdge - markerWidth, y: mid - 8, width: markerWidth, height: 16)
+            rightEdge -= markerWidth + 6
         } else {
-            pin.frame = NSRect(x: rightEdge, y: mid - 8, width: 0, height: 16)
+            markers.frame = NSRect(x: rightEdge, y: mid - 8, width: 0, height: 16)
         }
         // The chip sits at a fixed x on every lane, so a strip of ten headers
         // has one column your eye runs along rather than ten places to look.
@@ -999,13 +1107,32 @@ final class LaneHeaderView: NSView {
 
         // Titles and keys come from `Command` so this menu cannot drift from the
         // menu bar, and so it teaches the shortcut rather than replacing it.
-        add(to: menu, model.pinned ? "Stop Keeping Loaded" : Command.toggleKeepLive.title,
+        add(to: menu, model.keepLive ? "Stop Keeping Loaded" : Command.toggleKeepLive.title,
             command: .toggleKeepLive, action: #selector(menuTogglePin), enabled: actions?.onTogglePin != nil)
         add(to: menu, "Set Project Tag…",
             command: nil, action: #selector(menuSetProjectTag), enabled: actions?.onSetProjectTag != nil)
         add(to: menu, Command.toggleSpan.title,
             command: .toggleSpan, action: #selector(menuToggleSpan), enabled: actions?.onToggleSpan != nil,
             state: (lane?.span ?? 1) > 1 ? .on : .off)
+
+        menu.addItem(.separator())
+        // Checkmarks rather than three verbs. Docking is a toggle on the keys,
+        // and a menu that said "Dock Left" then "Undock" would make the state
+        // something you infer from the label instead of something you read off
+        // the tick — on a lane that is already visibly at an edge.
+        add(to: menu, Command.dockLaneLeft.title,
+            command: .dockLaneLeft, action: #selector(menuDockLeft),
+            enabled: actions?.onDockLeft != nil, state: model.dock?.side == .left ? .on : .off)
+        add(to: menu, Command.dockLaneRight.title,
+            command: .dockLaneRight, action: #selector(menuDockRight),
+            enabled: actions?.onDockRight != nil, state: model.dock?.side == .right ? .on : .off)
+        // A mode is a property of a dock, so a lane that is not docked has
+        // none. Greying it out is how the menu says which of the two questions
+        // this key answers — the same rule `canPerform` applies to ⌃⌘\.
+        add(to: menu, Command.toggleDockMode.title,
+            command: .toggleDockMode, action: #selector(menuToggleDockMode),
+            enabled: model.dock != nil && actions?.onToggleDockMode != nil,
+            state: model.dock?.mode == .overlay ? .on : .off)
 
         menu.addItem(.separator())
         add(to: menu, "Copy Working Directory",
@@ -1049,6 +1176,9 @@ final class LaneHeaderView: NSView {
     @objc private func menuTogglePin() { actions?.onTogglePin?() }
     @objc private func menuSetProjectTag() { actions?.onSetProjectTag?() }
     @objc private func menuToggleSpan() { actions?.onToggleSpan?() }
+    @objc private func menuDockLeft() { actions?.onDockLeft?() }
+    @objc private func menuDockRight() { actions?.onDockRight?() }
+    @objc private func menuToggleDockMode() { actions?.onToggleDockMode?() }
     @objc private func menuClaimSession() { actions?.onClaimSession?() }
     @objc private func menuCloseLane() { actions?.onCloseLane?() }
 
@@ -1087,6 +1217,26 @@ final class LaneHeaderView: NSView {
         dragging = false
         onDrag?(strip.convert(event.locationInWindow, from: nil).x, true)
     }
+}
+
+/// The rule down an overlay dock's inner edge.
+///
+/// Square, full height, two points, and the same colour at both ends of the
+/// window — it is the one place in the app that says "there is something behind
+/// this". A rounded card with a coloured rail would say it too and would say it
+/// in the vocabulary of every templated dashboard; this is a cut, which is what
+/// the strip is made of everywhere else.
+@MainActor
+final class DockEdgeView: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        Theme.dockEdge.setFill()
+        bounds.fill()
+    }
+
+    /// The strip underneath keeps the clicks. This is decoration over the seam
+    /// between two things the user might want to click, and a 2 pt strip that
+    /// swallows a mouse-down is a 2 pt strip nobody can explain.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 /// The `⋯` at the end of the header.
