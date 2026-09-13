@@ -1,0 +1,127 @@
+{
+  "environment" : {
+    "backingForced" : false,
+    "connectedScreens" : [
+      "LG HDR WQHD @1.0×",
+      "Built-in Retina Display @2.0×"
+    ],
+    "font" : "JetBrains Mono 13.0pt",
+    "laneHeightPt" : 1000,
+    "laneWidthPt" : 656,
+    "osVersion" : "Version 26.6.2 (Build 25G83)",
+    "rendererScale" : 1,
+    "screen" : "LG HDR WQHD",
+    "screenBackingScaleFactor" : 1
+  },
+  "pixels" : {
+    "scales" : [
+      {
+        "backing_edge_energy" : 32.475371072087661,
+        "backing_grid" : "80x57",
+        "backing_surface_pixels" : "492x750",
+        "ca_linear_edge_energy" : 30.920356028394778,
+        "ca_linear_mae_vs_lanczos" : 2.8308130081300815,
+        "ca_nearest_edge_energy" : 34.894363090707579,
+        "ca_nearest_mae_vs_lanczos" : 6.5889900632339655,
+        "ca_trilinear_edge_energy" : 25.8825666335119,
+        "ca_trilinear_mae_vs_lanczos" : 5.7193794037940382,
+        "lanczos_edge_energy" : 35.505225758460028,
+        "scale" : 0.75,
+        "surface_pixels_under_transform" : "656x1000",
+        "tile_pixels" : "492x750"
+      },
+      {
+        "backing_edge_energy" : 33.084579838023323,
+        "backing_grid" : "76x59",
+        "backing_surface_pixels" : "393x600",
+        "ca_linear_edge_energy" : 33.014941521371959,
+        "ca_linear_mae_vs_lanczos" : 3.885215736040609,
+        "ca_nearest_edge_energy" : 35.82249683174733,
+        "ca_nearest_mae_vs_lanczos" : 7.5728976311336718,
+        "ca_trilinear_edge_energy" : 25.694329049562352,
+        "ca_trilinear_mae_vs_lanczos" : 6.6826635645798085,
+        "lanczos_edge_energy" : 35.377078185403519,
+        "scale" : 0.59999999999999998,
+        "surface_pixels_under_transform" : "656x1000",
+        "tile_pixels" : "394x600"
+      },
+      {
+        "backing_edge_energy" : 29.61437723407321,
+        "backing_grid" : "79x54",
+        "backing_surface_pixels" : "328x500",
+        "ca_linear_edge_energy" : 31.379698121211945,
+        "ca_linear_mae_vs_lanczos" : 3.7078780487804877,
+        "ca_nearest_edge_energy" : 38.496121988065894,
+        "ca_nearest_mae_vs_lanczos" : 13.108343495934959,
+        "ca_trilinear_edge_energy" : 31.386635853788274,
+        "ca_trilinear_mae_vs_lanczos" : 3.6966646341463414,
+        "lanczos_edge_energy" : 35.443741569841542,
+        "scale" : 0.5,
+        "surface_pixels_under_transform" : "656x1000",
+        "tile_pixels" : "328x500"
+      },
+      {
+        "backing_edge_energy" : 32.151990566381727,
+        "backing_grid" : "70x55",
+        "backing_surface_pixels" : "295x450",
+        "ca_linear_edge_energy" : 35.779946604870723,
+        "ca_linear_mae_vs_lanczos" : 8.7581569365976151,
+        "ca_nearest_edge_energy" : 39.053403288510239,
+        "ca_nearest_mae_vs_lanczos" : 12.438875078468298,
+        "ca_trilinear_edge_energy" : 26.505524962966209,
+        "ca_trilinear_mae_vs_lanczos" : 5.4766352793471436,
+        "lanczos_edge_energy" : 35.502040877976633,
+        "scale" : 0.45000000000000001,
+        "surface_pixels_under_transform" : "656x1000",
+        "tile_pixels" : "296x450"
+      },
+      {
+        "backing_edge_energy" : 30.445278003102985,
+        "backing_grid" : "83x56",
+        "backing_surface_pixels" : "262x400",
+        "ca_linear_edge_energy" : 37.574226394560561,
+        "ca_linear_mae_vs_lanczos" : 8.9554866412213734,
+        "ca_nearest_edge_energy" : 41.323863931381005,
+        "ca_nearest_mae_vs_lanczos" : 12.736692111959288,
+        "ca_trilinear_edge_energy" : 26.189670384522913,
+        "ca_trilinear_mae_vs_lanczos" : 5.7730248091603054,
+        "lanczos_edge_energy" : 35.633759442876503,
+        "scale" : 0.40000000000000002,
+        "surface_pixels_under_transform" : "656x1000",
+        "tile_pixels" : "263x400"
+      },
+      {
+        "backing_edge_energy" : 31.528912492921144,
+        "backing_grid" : "68x53",
+        "backing_surface_pixels" : "216x330",
+        "ca_linear_edge_energy" : 40.823252297800423,
+        "ca_linear_mae_vs_lanczos" : 10.496534792368125,
+        "ca_nearest_edge_energy" : 44.37491914917873,
+        "ca_nearest_mae_vs_lanczos" : 13.924803591470258,
+        "ca_trilinear_edge_energy" : 26.139443542465056,
+        "ca_trilinear_mae_vs_lanczos" : 5.8411475869809202,
+        "lanczos_edge_energy" : 35.358755786217102,
+        "scale" : 0.33000000000000002,
+        "surface_pixels_under_transform" : "656x1000",
+        "tile_pixels" : "217x330"
+      },
+      {
+        "backing_edge_energy" : 36.144743285753371,
+        "backing_grid" : "76x60",
+        "backing_surface_pixels" : "164x250",
+        "ca_linear_edge_energy" : 30.230276814866805,
+        "ca_linear_mae_vs_lanczos" : 13.63721138211382,
+        "ca_nearest_edge_energy" : 31.477517850364624,
+        "ca_nearest_mae_vs_lanczos" : 15.95080487804878,
+        "ca_trilinear_edge_energy" : 31.820115235429732,
+        "ca_trilinear_mae_vs_lanczos" : 3.9101138211382116,
+        "lanczos_edge_energy" : 34.766785290605078,
+        "scale" : 0.25,
+        "surface_pixels_under_transform" : "656x1000",
+        "tile_pixels" : "164x250"
+      }
+    ],
+    "surface_layer_class" : "IOSurfaceLayer",
+    "surface_pixels_full" : "656x1000"
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "cost" : {
+    "backing" : {
+      "footprint_delta_mb" : 297.98476409912109,
+      "grids" : [
+        "83x56"
+      ],
+      "idle_cpu_cores" : 0.03332329539655024,
+      "iosurface_mb" : 19.5,
+      "iosurface_sizes" : [
+        "524x800"
+      ],
+      "streaming_cpu_cores" : 7.8924129242460008,
+      "tiles" : 12
+    },
+    "full" : {
+      "footprint_delta_mb" : 685.12577819824219,
+      "grids" : [
+        "80x58"
+      ],
+      "idle_cpu_cores" : 0.047480765417883111,
+      "iosurface_mb" : 120.1875,
+      "iosurface_sizes" : [
+        "1312x2000"
+      ],
+      "streaming_cpu_cores" : 7.1962807584841322,
+      "tiles" : 12
+    },
+    "scale" : 0.40000000000000002,
+    "transform" : {
+      "footprint_delta_mb" : 628.73478698730469,
+      "grids" : [
+        "80x58"
+      ],
+      "idle_cpu_cores" : 0.043632899093773873,
+      "iosurface_mb" : 120.1875,
+      "iosurface_sizes" : [
+        "1312x2000"
+      ],
+      "streaming_cpu_cores" : 7.4830017567485037,
+      "tiles" : 12
+    }
+  },
+  "environment" : {
+    "backingForced" : true,
+    "connectedScreens" : [
+      "LG HDR WQHD @1.0×",
+      "Built-in Retina Display @2.0×"
+    ],
+    "font" : "JetBrains Mono 13.0pt",
+    "laneHeightPt" : 1000,
+    "laneWidthPt" : 656,
+    "osVersion" : "Version 26.6.2 (Build 25G83)",
+    "rendererScale" : 2,
+    "screen" : "LG HDR WQHD",
+    "screenBackingScaleFactor" : 1
+  }
+}

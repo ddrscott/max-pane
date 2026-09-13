@@ -578,6 +578,16 @@ public final class StripStore {
     /// absurd.
     func setScrollX(_ x: Double) { try? core.setScrollX(scrollX: x) }
 
+    // MARK: - layout
+
+    /// Which layout the window was last showing. Read from the ledger, so it is
+    /// whatever was up before a quit or a `kill -9`.
+    var layout: StripLayout { (try? core.layout()) ?? .lanes }
+
+    /// Commit a layout. Called before the strip moves a single view — the first
+    /// convention — and it is the only thing switching layouts writes.
+    func setLayout(_ layout: StripLayout) throws { try core.setLayout(layout: layout) }
+
     // MARK: - gather (§7.4)
 
     func gather(projectRoot: String) throws { publish(try core.gather(projectRoot: projectRoot)) }

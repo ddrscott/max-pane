@@ -72,6 +72,7 @@ pub const DOCK_MAX_PT: u32 = LANE_MAX_PT;
 
 const KEY_SCROLL_X: &str = "strip_scroll_x";
 const KEY_FOCUSED_PANE: &str = "focused_pane_id";
+const KEY_LAYOUT: &str = "strip_layout";
 
 pub fn now_ms() -> i64 {
     std::time::SystemTime::now()
@@ -1380,6 +1381,28 @@ impl Core {
     pub fn set_scroll_x(&self, scroll_x: f64) -> Result<()> {
         let inner = self.inner.lock();
         inner.ledger.set_app_state(KEY_SCROLL_X, &scroll_x.to_string())
+    }
+
+    // ---- layout ------------------------------------------------------------
+
+    /// Which layout the window was last showing: the strip, or the gallery.
+    /// A ledger that has never been told reads as the strip.
+    pub fn layout(&self) -> Result<crate::model::StripLayout> {
+        let inner = self.inner.lock();
+        Ok(inner
+            .ledger
+            .app_state(KEY_LAYOUT)?
+            .map(|stored| crate::model::StripLayout::parse(&stored))
+            .unwrap_or(crate::model::StripLayout::Lanes))
+    }
+
+    /// Switch layouts. Committed before the shell moves anything, like every
+    /// other layout change — and it is the *only* write the switch makes: no
+    /// ordinal, width or focus changes, and no revision bump, because the
+    /// shape of the strip is exactly what it was.
+    pub fn set_layout(&self, layout: crate::model::StripLayout) -> Result<()> {
+        let inner = self.inner.lock();
+        inner.ledger.set_app_state(KEY_LAYOUT, layout.as_str())
     }
 
     // ---- gather ------------------------------------------------------------

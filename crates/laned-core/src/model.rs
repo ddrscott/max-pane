@@ -225,6 +225,41 @@ pub struct Lane {
 
 /// Everything the shell needs to render one frame of the strip.
 ///
+/// Which of the two layouts the window is showing.
+///
+/// Sticky, not a temporary view: whichever one was up comes back after a quit
+/// and after a `kill -9`, which is why it is a key in `app_state` rather than
+/// something the shell remembers. Neither layout owns anything else — the
+/// gallery is a view over the same ordinals the strip lays out, so switching
+/// between them writes this and nothing more.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum StripLayout {
+    /// The strip: lanes side by side, scrolling.
+    Lanes,
+    /// Every lane on one screen at once, each drawn as a live thumbnail.
+    Gallery,
+}
+
+impl StripLayout {
+    /// How it is spelled in `app_state`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StripLayout::Lanes => "lanes",
+            StripLayout::Gallery => "gallery",
+        }
+    }
+
+    /// Anything that is not a layout this build knows reads as the strip. A
+    /// ledger written by a newer build that grew a third layout should open on
+    /// something that works, not refuse to open.
+    pub fn parse(stored: &str) -> Self {
+        match stored {
+            "gallery" => StripLayout::Gallery,
+            _ => StripLayout::Lanes,
+        }
+    }
+}
+
 /// Emitted after every mutation. The shell diffs it against the snapshot it is
 /// currently showing and touches only what changed.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]

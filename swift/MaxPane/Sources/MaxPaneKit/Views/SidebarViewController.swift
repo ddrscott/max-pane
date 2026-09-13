@@ -60,6 +60,10 @@ final class SidebarViewController: NSViewController {
     /// The pane comes with the lane because the row names a session and a lane
     /// holds a stack of them; the receiver falls back to the lane when it is nil.
     var onSelect: ((_ laneId: String, _ paneId: String?) -> Void)?
+    /// A session row was double-clicked. In the gallery that means "take me to
+    /// this lane on the strip"; on the strip it is what a second click always
+    /// was, which the window controller decides.
+    var onOpen: ((_ laneId: String, _ paneId: String?) -> Void)?
     /// The `+ New` action.
     var onNewSession: (() -> Void)?
     /// Click a session that has no lane → attach it.
@@ -282,6 +286,7 @@ final class SidebarViewController: NSViewController {
         table.delegate = self
         table.target = self
         table.action = #selector(rowClicked)
+        table.doubleAction = #selector(rowDoubleClicked)
         table.menu = NSMenu()
         table.menu?.delegate = self
         table.usesAutomaticRowHeights = false
@@ -637,6 +642,19 @@ final class SidebarViewController: NSViewController {
     @objc private func attachClicked() {
         guard let entry = entry(at: table.clickedRow), let sessionId = entry.sessionId else { return }
         onAttach?(sessionId)
+    }
+
+    /// The second click of a double click. With a `doubleAction` set, the table
+    /// sends it here *instead of* sending `action` a second time — so every row
+    /// that is not a lane on the strip is handed straight back to `rowClicked`,
+    /// and a double click on a folder still opens and closes it exactly as two
+    /// clicks always did.
+    @objc private func rowDoubleClicked() {
+        guard let entry = entry(at: table.clickedRow), let laneId = entry.laneId else {
+            rowClicked()
+            return
+        }
+        onOpen?(laneId, entry.paneId)
     }
 
     @objc private func revealClicked() {

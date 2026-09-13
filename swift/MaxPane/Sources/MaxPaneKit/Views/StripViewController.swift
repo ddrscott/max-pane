@@ -119,6 +119,16 @@ public final class StripViewController: NSViewController {
     private let leadingRail = StripEdgeRail(side: .leading)
     private let trailingRail = StripEdgeRail(side: .trailing)
 
+    // MARK: - gallery
+
+    /// Every lane on one screen at once, as live thumbnails. The second layout;
+    /// see `GalleryLayout` for the geometry and ADR-0011 for the decisions.
+    public private(set) var isGallery = false
+    private let gallery = GalleryView()
+    /// A double click the click monitor took from a tile, so the mouse-up that
+    /// ends it reaches nothing either.
+    private var swallowNextMouseUp = false
+
     // MARK: - docks
 
     /// The lane view held at each edge — **a sibling of the scroll view, never
@@ -196,6 +206,12 @@ public final class StripViewController: NSViewController {
         scrollView.automaticallyAdjustsContentInsets = false
 
         view.addSubview(scrollView)
+        // Directly above the strip it replaces and below everything that sits
+        // over the strip — the rails and dock shadows hide in the gallery, and
+        // the empty state has to stay readable over it.
+        gallery.isHidden = true
+        gallery.translatesAutoresizingMaskIntoConstraints = true
+        view.addSubview(gallery)
         // The rails take their width from the strip rather than floating over
         // it. An overlay would sit exactly where the sliver of the next lane
         // is — the one piece of the screen this whole piece exists to keep.
@@ -265,6 +281,9 @@ public final class StripViewController: NSViewController {
                 to: NSPoint(x: self.clipOrigin(forVisible: self.store.state.scrollX), y: 0))
             self.scrollView.reflectScrolledClipView(self.scrollView.contentView)
             self.updateMaterialization()
+            // Whichever layout was showing when the app last stopped — cleanly
+            // or not — is the one it comes back in.
+            if self.store.layout == .gallery { self.applyLayout(.gallery) }
             // Launch is over: from here on, a new pane loads immediately.
             // Anything still deferred stays deferred until it is scrolled to.
             self.isColdLaunch = false
@@ -300,6 +319,9 @@ public final class StripViewController: NSViewController {
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
             guard let self, let window = self.view.window,
                   event.window === window,
+                  // Nothing scrolls in the gallery; a sideways gesture over a
+                  // tile belongs to whatever is in it.
+                  !self.isGallery,
                   abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
             else { return event }
 
@@ -331,11 +353,28 @@ public final class StripViewController: NSViewController {
     /// its way down and moves focus without consuming it — the click still
     /// places a cursor, starts a selection, or presses a button as it should.
     private func startClickCapture() {
-        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+        clickMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .leftMouseUp]
+        ) { [weak self] event in
             guard let self, let window = self.view.window, event.window === window else { return event }
+            if event.type == .leftMouseUp {
+                guard self.swallowNextMouseUp else { return event }
+                self.swallowNextMouseUp = false
+                return nil
+            }
             let inStrip = self.view.convert(event.locationInWindow, from: nil)
             guard self.view.bounds.contains(inStrip) else { return event }
             if let paneId = self.pane(at: event.locationInWindow) {
+                // A double click on a tile is taken from whatever is inside it:
+                // a word selection in a thumbnail is not something anyone
+                // wants, and the gesture already means "open this on the
+                // strip". The first click went through and focused the pane.
+                if self.isGallery, event.clickCount >= 2,
+                   let laneId = self.store.lane(containing: paneId)?.id {
+                    self.swallowNextMouseUp = true
+                    self.openInLanes(laneId: laneId, paneId: paneId)
+                    return nil
+                }
                 self.focus(paneId)
             }
             return event
@@ -458,12 +497,14 @@ public final class StripViewController: NSViewController {
         // column can only start opening once that has run.
         runPendingArrivals()
         // And only once it has started can the strip hand it a scroll to carry.
-        revealArrival(diff.inserted, in: strip)
+        // Not in the gallery, where every lane is already on screen and the
+        // strip being scrolled is hidden behind it.
+        if !isGallery { revealArrival(diff.inserted, in: strip) }
 
         // Lanes that changed place. Measured in points between the two
         // snapshots rather than in indices, because that is the distance the
         // user's eye has to follow.
-        beginMoves(diff.moved, from: previousStrip, to: strip)
+        if !isGallery { beginMoves(diff.moved, from: previousStrip, to: strip) }
 
         for lane in state.lanes {
             laneViews[lane.id]?.apply(lane)
@@ -633,6 +674,11 @@ public final class StripViewController: NSViewController {
     }
 
     private func updateMaterialization() {
+        // The gallery materialises everything, because everything is on screen.
+        if isGallery {
+            syncGallery(store.state)
+            return
+        }
         let state = store.state
         // Docks first, and before the rails: they decide the strip's visible
         // window, and both the rails' counts and the materialisation window are
@@ -703,6 +749,9 @@ public final class StripViewController: NSViewController {
             laneView = LaneView(lane: lane, widthBounds: config.widthRange)
         }
         laneView.laneId = lane.id
+        // A recycled view may have last been a tile. `layoutGallery` sets this
+        // for the lanes that are tiles now; everything else is on the strip.
+        laneView.thumbnailScale = nil
         // Focus, from the ledger, before the view is ever on screen.
         //
         // `apply` is the only other place that sets these, and a lane is
@@ -716,7 +765,9 @@ public final class StripViewController: NSViewController {
         } ?? false
         laneView.focusedPaneId = store.state.focusedPaneId
         laneView.onResize = { [weak self] width, isFinal in
-            guard let self else { return }
+            // The gallery writes nothing but the layout and focus. The handle
+            // is hidden on a tile; this is the belt to that brace.
+            guard let self, !self.isGallery else { return }
             // The same gesture on a different number. A docked lane's inner
             // edge drags the *dock's* width, which is durable and separate, so
             // undocking gives the lane back at the width it had in the strip.
@@ -762,14 +813,17 @@ public final class StripViewController: NSViewController {
         }
         applyHandleBounds(laneView, lane: lane)
         laneView.onHeaderDrag = { [weak self] x, isFinal in
-            self?.handleLaneDrag(laneId: lane.id, toX: x, isFinal: isFinal)
+            // No reordering from the gallery: it is a view over the ordinals.
+            guard let self, !self.isGallery else { return }
+            self.handleLaneDrag(laneId: lane.id, toX: x, isFinal: isFinal)
         }
         // The header drags the lane; a grip drags one pane out of it. Two
         // gestures rather than one because a lane carries a width, a title and
         // a tag that a pane does not, and "move this column" and "move this
         // pane into that column" are different sentences.
         laneView.onPaneGrab = { [weak self] paneId, point, isFinal in
-            self?.handlePaneDrag(paneId: paneId, at: point, isFinal: isFinal)
+            guard let self, !self.isGallery else { return }
+            self.handlePaneDrag(paneId: paneId, at: point, isFinal: isFinal)
         }
         // A press on a grip that never became a drag. The click monitor would
         // reach the same conclusion — the grip is inside the pane's rectangle —
@@ -940,6 +994,14 @@ public final class StripViewController: NSViewController {
             scrollView.contentInsets = insets
         }
 
+        // The scroll view above is still framed in the gallery, because its
+        // clip view's height is the height every lane has — the one a tile has
+        // to keep. The docks themselves are tiles there, and not at the wall.
+        guard !isGallery else {
+            dockShadows.values.forEach { $0.isHidden = true }
+            return
+        }
+
         for side in [DockSide.left, .right] {
             guard let laneView = dockViews[side] else {
                 dockShadows[side]?.isHidden = true
@@ -978,6 +1040,161 @@ public final class StripViewController: NSViewController {
             // subviews from a layout pass that runs on every animation frame
             // would be sixty tree mutations a second to say the same thing.
         }
+    }
+
+    // MARK: - the gallery layout
+
+    /// Switch layouts: commit, then move.
+    ///
+    /// The ledger write comes first and a failed one moves nothing — a layout on
+    /// screen that the ledger does not know about is one that a `kill -9` would
+    /// quietly take back.
+    @discardableResult
+    public func setLayout(_ layout: StripLayout) -> Bool {
+        do {
+            try store.setLayout(layout)
+        } catch {
+            Log.debug("layout not saved, so not switched: \(error)")
+            return false
+        }
+        applyLayout(layout)
+        return true
+    }
+
+    /// Double click on a tile or on a session row: the strip, at that lane.
+    ///
+    /// On the strip already, this is exactly the select a click runs — which is
+    /// what the second click of a double click in the sidebar always did.
+    public func openInLanes(laneId: String, paneId: String?) {
+        if isGallery {
+            guard setLayout(.lanes) else { return }
+        }
+        select(laneId: laneId, paneId: paneId)
+    }
+
+    /// Put the views where `layout` wants them. Writes nothing.
+    private func applyLayout(_ layout: StripLayout) {
+        let entering = layout == .gallery
+        guard entering != isGallery else { return }
+        isGallery = entering
+        scrollView.isHidden = entering
+        gallery.isHidden = !entering
+
+        if entering {
+            leadingRail.isHidden = true
+            trailingRail.isHidden = true
+            syncGallery(store.state)
+            return
+        }
+
+        // Every lane view back where the strip keeps it: a dock at its wall,
+        // everything else in the document view. Within one window, so no
+        // surface is rebuilt and no page reloads.
+        // Terminals back on their constraints first, so the strip's own layout
+        // pass sizes them exactly as it did before the gallery opened.
+        for (_, controller) in paneControllers {
+            (controller as? TerminalPaneController)?.setThumbnail(scale: nil, backingScale: 1)
+        }
+        let docked = Set(dockViews.values.map(\.laneId))
+        for (laneId, laneView) in laneViews {
+            laneView.thumbnailScale = nil
+            if docked.contains(laneId) {
+                view.addSubview(laneView, positioned: .above, relativeTo: nil)
+            } else {
+                content.addSubview(laneView)
+            }
+        }
+        gallery.removeTiles(except: [])
+        relayout()
+        updateMaterialization()
+        updateEdgeRails()
+        // The lane you were working in, where you can see it. Minimal rather
+        // than centred: the strip is where it was when you left it.
+        if let laneId = store.focusedLane?.id { ensureVisible(laneId) }
+    }
+
+    /// Give every lane on the strip a view and a tile, and nothing else one.
+    ///
+    /// `state.lanes` rather than `stripLanes`: in the gallery a docked lane is
+    /// an ordinary tile at its ordinal (ADR-0011), and a gather filter has
+    /// already narrowed the list to its tag.
+    private func syncGallery(_ state: StripState) {
+        let wanted = Set(state.lanes.map(\.id))
+        for (id, laneView) in laneViews where !wanted.contains(id) && !isDeparting(id) {
+            retire(laneView, laneId: id)
+        }
+        for lane in state.lanes where laneViews[lane.id] == nil {
+            let laneView = makeLaneView(for: lane)
+            laneViews[lane.id] = laneView
+            reconcilePanes(of: lane, in: laneView, animated: false)
+        }
+        layoutGallery()
+
+        // Deferred pages near the lane you are in load now; the rest wait until
+        // one of them is clicked. Twelve web lanes entering the gallery is not
+        // twelve page loads.
+        for lane in state.lanes where distanceFromViewport(laneId: lane.id) <= config.rehydrateDistance {
+            for pane in lane.panes {
+                (paneControllers[pane.id] as? WebPaneController)?.loadIfDeferred()
+            }
+        }
+        applyEvictionPlan(for: state)
+    }
+
+    /// Place every tile. Recomputed from nothing on every call — a lane coming
+    /// or going, a width changing, the window resizing — because the scale has
+    /// exactly one right answer for any given strip and window.
+    private func layoutGallery() {
+        if gallery.frame != view.bounds { gallery.frame = view.bounds }
+        let lanes = store.state.lanes
+        let stripHeight = scrollView.contentView.bounds.height > 0
+            ? scrollView.contentView.bounds.height : view.bounds.height
+        let sizes = lanes.map { realSize(of: $0, stripHeight: stripHeight) }
+        let placement = GalleryLayout.place(
+            widths: sizes.map(\.width), laneHeight: stripHeight, in: view.bounds.size)
+        let backing = view.window?.backingScaleFactor ?? 2
+
+        for (index, lane) in lanes.enumerated() {
+            guard let laneView = laneViews[lane.id], placement.scale > 0 else { continue }
+            // Before the lane moves: a terminal has to take hold of its strip
+            // size while it still has it, not after the tile has rounded it.
+            for pane in lane.panes {
+                (paneControllers[pane.id] as? TerminalPaneController)?
+                    .setThumbnail(scale: placement.scale, backingScale: backing)
+            }
+            let size = sizes[index]
+            let slot = placement.rects[index]
+            let frame = CGRect(
+                x: slot.minX, y: slot.minY,
+                width: size.width * placement.scale, height: size.height * placement.scale)
+            gallery.place(laneView, laneId: lane.id, frame: frame, laneSize: size)
+            laneView.thumbnailScale = placement.scale
+        }
+        gallery.removeTiles(except: Set(lanes.map(\.id)))
+    }
+
+    /// The size a lane has when it is not a tile — which is the size its tile
+    /// has to keep, or the terminal inside re-derives its grid.
+    ///
+    /// A docked lane keeps its dock's width and the window's height, which is
+    /// what it measured at the wall.
+    private func realSize(of lane: Lane, stripHeight: CGFloat) -> CGSize {
+        if let dock = lane.dock {
+            let placed = dock.side == .left ? dockLayout.left : dockLayout.right
+            return CGSize(width: placed?.width ?? CGFloat(dock.widthPt), height: view.bounds.height)
+        }
+        return CGSize(width: CGFloat(lane.widthPt), height: stripHeight)
+    }
+
+    /// Where "the viewport" is when every lane is on screen: the strip index of
+    /// the lane holding the keyboard, or — with focus in a dock, or nowhere —
+    /// the strip lane focused most recently.
+    private var galleryAnchor: Int {
+        let lanes = store.stripLanes
+        if let focused = store.focusedLane?.id, let index = lanes.firstIndex(where: { $0.id == focused }) {
+            return index
+        }
+        return lanes.indices.max { lanes[$0].lastFocusAt < lanes[$1].lastFocusAt } ?? 0
     }
 
     // MARK: - a session that ended
@@ -1073,6 +1290,10 @@ public final class StripViewController: NSViewController {
         // and a layout pass that ran first would be measured against the old
         // one for exactly one frame — which is the frame the eye catches.
         layoutDocks()
+        if isGallery {
+            layoutGallery()
+            return
+        }
         content.layOut(
             lanes: lanes ?? laneLayout,
             // A docked lane's view answers to `layoutDocks`, not to the row. It
@@ -1096,7 +1317,9 @@ public final class StripViewController: NSViewController {
     /// (where the eye is already heading, because that is where ⌘T puts things)
     /// gets the motion; everything else is instant and correct.
     private func shouldAnimate(laneAt index: Int, in lanes: [Lane]) -> Bool {
-        guard !isColdLaunch, !Motion.isReduced, view.window != nil else { return false }
+        // The strip's motion is the strip's: a column opening or closing means
+        // nothing in a grid of tiles, which simply re-lay themselves out.
+        guard !isGallery, !isColdLaunch, !Motion.isReduced, view.window != nil else { return false }
         let visible = visibleLaneRange(in: lanes)
         return index >= visible.lowerBound - 1 && index <= visible.upperBound
     }
@@ -1819,6 +2042,7 @@ public final class StripViewController: NSViewController {
         guard store.lane(laneId)?.dock == nil else { return 0 }
         let lanes = store.stripLanes
         guard let index = lanes.firstIndex(where: { $0.id == laneId }) else { return .max }
+        if isGallery { return UInt32(abs(index - galleryAnchor)) }
         let visible = visibleLaneRange(in: lanes)
         if index < visible.lowerBound { return UInt32(visible.lowerBound - index) }
         if index >= visible.upperBound { return UInt32(index - visible.upperBound + 1) }
@@ -1971,6 +2195,12 @@ public final class StripViewController: NSViewController {
     /// `content.frame.width`: see that type for why a view's width is the wrong
     /// ruler at exactly the moment this matters most.
     public func reveal(laneId: String, flash: Bool) {
+        // In the gallery there is nothing to scroll: the tile is on screen, and
+        // the flash is the whole of "look here".
+        if isGallery {
+            if flash { laneViews[laneId]?.flash() }
+            return
+        }
         // A docked lane is already on screen and cannot be scrolled to. ⌘P and
         // the sidebar still land on it, so the flash is the whole of the answer
         // — and without this they would silently do nothing at all.
@@ -2146,6 +2376,8 @@ public final class StripViewController: NSViewController {
         // scrolling the strip to "reach" it would move every lane the user was
         // reading for no reason they could see.
         guard store.lane(laneId)?.dock == nil else { return }
+        // Every tile is already whole on screen.
+        guard !isGallery else { return }
         let window = viewport
         guard let target = StripReveal.minimal(
             from: window.offset, to: laneId,
@@ -2168,7 +2400,20 @@ public final class StripViewController: NSViewController {
         // by construction — send indices into `state.lanes` instead and the
         // core plans against a strip shifted by one per docked lane, and evicts
         // the pane the user is looking at.
-        let visible = visibleLaneRange(in: store.stripLanes)
+        //
+        // In the gallery every lane is on screen, so the scrolled window stops
+        // meaning anything — and treating *all* of them as visible would be
+        // worse than useless: distance 0 everywhere means every evicted page
+        // rehydrates at once on entry, and no page is ever a candidate to evict,
+        // so nothing could stop WebKit walking straight past the hard mark.
+        // Distance is measured from the lane you are working in instead. The
+        // pages near it come back; the rest keep their snapshots until clicked;
+        // and under pressure the victims are chosen by the same deterministic
+        // order the strip uses — furthest first, then least recently focused —
+        // with the focused lane never a candidate. ADR-0011.
+        let visible = isGallery
+            ? galleryAnchor..<(galleryAnchor + 1)
+            : visibleLaneRange(in: store.stripLanes)
         let viewport = Viewport(
             firstVisible: UInt32(visible.lowerBound),
             lastVisible: UInt32(max(visible.lowerBound, visible.upperBound - 1)))
@@ -2189,7 +2434,9 @@ public final class StripViewController: NSViewController {
             case .keep:
                 controller.reparentIfNeeded()
             case .unparent:
-                controller.unparent()
+                // Unparenting is for a page scrolled out of sight. A tile is in
+                // sight by definition, and an unparented one is a blank tile.
+                if isGallery { controller.reparentIfNeeded() } else { controller.unparent() }
             case .evict:
                 controller.evict()
             case .rehydrate:

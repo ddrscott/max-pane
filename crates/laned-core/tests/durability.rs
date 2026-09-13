@@ -258,6 +258,58 @@ fn scroll_and_focus_survive_a_restart() {
     assert_eq!(st.scroll_x, 1337.5);
 }
 
+/// The gallery is a sticky layout, not a temporary view: whichever of the two
+/// was showing comes back after a `kill -9`, in both directions.
+#[test]
+fn the_layout_survives_an_unclean_exit() {
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let core = Core::open(db(&dir)).unwrap();
+        assert_eq!(core.layout().unwrap(), StripLayout::Lanes, "a fresh ledger opens on the strip");
+        core.create_lane(Placement::End, PaneKind::Web, None, Some("https://a".into()), None).unwrap();
+        core.set_layout(StripLayout::Gallery).unwrap();
+        // Dropped with no shutdown path at all.
+    }
+    {
+        let core = Core::open(db(&dir)).unwrap();
+        assert_eq!(core.layout().unwrap(), StripLayout::Gallery, "the gallery did not come back");
+        core.set_layout(StripLayout::Lanes).unwrap();
+    }
+    let core = Core::open(db(&dir)).unwrap();
+    assert_eq!(core.layout().unwrap(), StripLayout::Lanes, "leaving the gallery did not stick");
+}
+
+/// The gallery is a view over ordinals. Switching to it and back must leave
+/// the strip — order, widths, spans, focus, scroll, and the revision the shell
+/// diffs against — exactly as it was.
+#[test]
+fn switching_layouts_writes_nothing_but_the_layout() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = Core::open(db(&dir)).unwrap();
+    for url in ["https://a", "https://b", "https://c"] {
+        core.create_lane(Placement::End, PaneKind::Web, None, Some(url.into()), None).unwrap();
+    }
+    let st = core.state().unwrap();
+    core.focus_pane(st.lanes[1].panes[0].id.clone()).unwrap();
+    core.set_scroll_x(640.0).unwrap();
+    let before = core.state().unwrap();
+
+    core.set_layout(StripLayout::Gallery).unwrap();
+    assert_eq!(core.state().unwrap(), before, "entering the gallery changed the strip");
+    core.set_layout(StripLayout::Lanes).unwrap();
+    assert_eq!(core.state().unwrap(), before, "leaving the gallery changed the strip");
+}
+
+/// A layout this build does not know — say, one a newer build added — opens
+/// on the strip rather than failing to open.
+#[test]
+fn an_unknown_layout_reads_as_the_strip() {
+    assert_eq!(StripLayout::parse("gallery"), StripLayout::Gallery);
+    assert_eq!(StripLayout::parse("lanes"), StripLayout::Lanes);
+    assert_eq!(StripLayout::parse("mosaic"), StripLayout::Lanes);
+    assert_eq!(StripLayout::parse(""), StripLayout::Lanes);
+}
+
 /// `set_pane_scroll` is the write a web pane makes as the user scrolls, and it
 /// had no cover: its only caller was `eviction_round_trips_through_the_ledger`,
 /// where `mark_evicted` writes the same number one line later and would have

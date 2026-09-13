@@ -181,6 +181,7 @@ Press **⌘/** for every shortcut. The three that matter:
 | **⌘O** (also **⌘T**) | start anything — a command, a URL, a page you have been to or kept, a session that is already running |
 | **⌘[** / **⌘]** | move focus between lanes |
 | **⌃⌘[** / **⌃⌘]** | dock this lane to that edge of the window, or undock it |
+| **⌥⌘G** | Lanes ⇄ Gallery: every lane on one screen, live |
 | **⌘P** | find a lane by title, URL or something it printed |
 
 ⌘O is the only door into the strip, because "something goes to the right of
@@ -759,6 +760,71 @@ moved.
 A terminal whose process exits takes its lane with it, after a beat.
 
 An empty strip says the same thing, so a fresh launch is not a blank rectangle.
+
+### The gallery
+
+**⌥⌘G puts every lane on one screen**, each one a live thumbnail of itself, and
+pressed again puts the strip back. Supervising twelve agents on a strip that
+shows four means scrolling to find the one that stopped to ask for a `y` —
+which is the job the strip exists to make unnecessary. The gallery is the other
+answer to the same question: you do not scroll to it, you look.
+
+It is a **layout, not a view you visit**. Whichever of the two was showing comes
+back after a quit and after a `kill -9`, and the switch is written to the ledger
+before anything on screen moves. It is also the only thing the switch writes: the
+gallery is a view over the strip's order, so no lane moves, widens or loses its
+place by being looked at this way.
+
+The tiles are as big as they can be with every lane on screen, nothing scrolled
+and nothing cropped, and they are recomputed whenever a lane comes, goes or the
+window changes size. There are no size controls because there is exactly one
+right answer. Lanes run in strip order, left to right, wrapping into rows.
+
+**A tile is the lane, drawn smaller — never a smaller terminal.** A split lane
+keeps its panes in their order and their proportions, a spanned lane is a tile
+twice as wide, and the `73×53` a session reports does not change when the gallery
+opens. That last one is the whole design: a terminal given fewer pixels works out
+a new grid, and a new grid is a resize on your phone too
+([ADR-0007](docs/decisions/0007-terminal-panes-never-resize-the-pty.md)). So the
+real lane is laid out at its real size and only the picture of it is shrunk.
+[Spike M5](docs/spikes/05-gallery-scale.md) measured the alternative changing the
+grid at thirteen of fourteen sizes, and this one changing it at none.
+
+The text is not meant to be comfortable. It is meant to be **as sharp as the
+pixels allow**, so on a Retina panel you can squint and read it, and on any panel
+you can tell from its shape that a session wants Enter or Esc. Which of Core
+Animation's filters shrinks a terminal is decided by how many device pixels each
+point of the lane gets, because that is what the measurements followed.
+
+**Click a tile to type into it.** The keyboard goes to the pane under the
+pointer, the orange outline goes around it, and every key without ⌘ — Esc and
+Return above all — goes to that pane. Answering a prompt from its thumbnail is
+the point, which is why Esc does not leave the gallery, and does not leave gather
+view while you are in it either (the View menu still does).
+
+**Double-click a tile to go to it on the strip**, scrolled to and focused, the way
+⌘P lands. The double click is taken from the tile, because a word selection
+inside a thumbnail is not something anyone wants. The session browser follows
+the same two gestures while the gallery is up — click to focus, double-click to
+go — and keeps its usual behaviour on the strip.
+
+Tiles do not edit the strip: no width handle, no pane grips, no seams to drag, no
+header to drag into a new position. The ⋯ menu still works.
+
+A few things behave the way the rest of the strip made them:
+
+- **Docked lanes are ordinary tiles**, at their place in the order, and go back to
+  their edge when the gallery closes.
+- **⌘G in the gallery narrows it** to that project, as it narrows the strip.
+- **Pages stay live where memory allows.** Every lane is on screen, so the
+  memory policy measures distance from the lane you are working in rather than
+  from a scroll position: pages near it are loaded, a page that was evicted shows
+  its snapshot until you click it, and under pressure the pages furthest from you
+  go first. Opening the gallery on twelve web lanes is not twelve page loads.
+- **Every terminal on screen renders.** An idle one costs nothing; many agents
+  printing at once cost more here than on the strip, which only draws the lanes
+  in view. [ADR-0011](docs/decisions/0011-gallery-layout.md) has the numbers and
+  what would change it.
 
 ### ⌘-clicking a path
 

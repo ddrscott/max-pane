@@ -131,6 +131,11 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         sidebar.onSelect = { [weak self] laneId, paneId in
             self?.strip.select(laneId: laneId, paneId: paneId)
         }
+        // In the gallery a double click leaves for the strip at that lane. On
+        // the strip it is the same select a second click always ran.
+        sidebar.onOpen = { [weak self] laneId, paneId in
+            self?.strip.openInLanes(laneId: laneId, paneId: paneId)
+        }
         sidebar.onNewSession = { [weak self] in self?.perform(.openAnything) }
         sidebar.onAttach = { [weak self] sessionId in
             try? self?.store.attachSessionAtEnd(relaySessionId: sessionId)
@@ -210,6 +215,11 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 // `canPerform` is what stops a key firing when its command has
                 // nothing to do.
                 if !typed.modifiers.contains(.command) {
+                    // In the gallery the focused tile gets every key without a
+                    // ⌘ — Esc and Return above all, because answering a prompt
+                    // from its thumbnail is the point of the gallery. Leaving
+                    // gather view is still in the menu.
+                    guard !self.strip.isGallery else { continue }
                     guard !self.isEditingText, self.canPerform(command) else { continue }
                 }
                 self.perform(command)
@@ -588,6 +598,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .ungather:
                 try store.ungather()
+
+            case .toggleGallery:
+                strip.setLayout(strip.isGallery ? .lanes : .gallery)
 
             case .toggleKeepLive:
                 if let lane = focusedLane { try store.setKeepLive(lane.id, !lane.keepLive) }

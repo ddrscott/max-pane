@@ -926,6 +926,12 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func lane(laneId: String) throws  -> Lane
     
     /**
+     * Which layout the window was last showing: the strip, or the gallery.
+     * A ledger that has never been told reads as the strip.
+     */
+    func layout() throws  -> StripLayout
+    
+    /**
      * Every Chromium profile on this Mac that has saved passwords.
      *
      * Chromium only, and the list is shorter than `history_sources` on
@@ -1250,6 +1256,14 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func setLaneTitle(laneId: String, title: String?) throws  -> StripState
     
     func setLaneWidth(laneId: String, widthPt: UInt32) throws  -> StripState
+    
+    /**
+     * Switch layouts. Committed before the shell moves anything, like every
+     * other layout change — and it is the *only* write the switch makes: no
+     * ordinal, width or focus changes, and no revision bump, because the
+     * shape of the strip is exactly what it was.
+     */
+    func setLayout(layout: StripLayout) throws 
     
     /**
      * The user's own tag. Sticky: the cwd tagger will not overwrite it.
@@ -1959,6 +1973,19 @@ open func lane(laneId: String)throws  -> Lane  {
 }
     
     /**
+     * Which layout the window was last showing: the strip, or the gallery.
+     * A ledger that has never been told reads as the strip.
+     */
+open func layout()throws  -> StripLayout  {
+    return try  FfiConverterTypeStripLayout_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_layout(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * Every Chromium profile on this Mac that has saved passwords.
      *
      * Chromium only, and the list is shorter than `history_sources` on
@@ -2571,6 +2598,21 @@ open func setLaneWidth(laneId: String, widthPt: UInt32)throws  -> StripState  {
         FfiConverterUInt32.lower(widthPt),uniffiCallStatus
     )
 })
+}
+    
+    /**
+     * Switch layouts. Committed before the shell moves anything, like every
+     * other layout change — and it is the *only* write the switch makes: no
+     * ordinal, width or focus changes, and no revision bump, because the
+     * shape of the strip is exactly what it was.
+     */
+open func setLayout(layout: StripLayout)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_set_layout(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeStripLayout_lower(layout),uniffiCallStatus
+    )
+}
 }
     
     /**
@@ -4951,8 +4993,6 @@ public func FfiConverterTypeSourceLogin_lower(_ value: SourceLogin) -> RustBuffe
 
 
 /**
- * Everything the shell needs to render one frame of the strip.
- *
  * Emitted after every mutation. The shell diffs it against the snapshot it is
  * currently showing and touches only what changed.
  */
@@ -6221,6 +6261,89 @@ public func FfiConverterTypeSiteFeature_lower(_ value: SiteFeature) -> RustBuffe
 }
 
 
+
+/**
+ * Everything the shell needs to render one frame of the strip.
+ *
+ * Which of the two layouts the window is showing.
+ *
+ * Sticky, not a temporary view: whichever one was up comes back after a quit
+ * and after a `kill -9`, which is why it is a key in `app_state` rather than
+ * something the shell remembers. Neither layout owns anything else — the
+ * gallery is a view over the same ordinals the strip lays out, so switching
+ * between them writes this and nothing more.
+ */
+
+public enum StripLayout: Equatable, Hashable {
+    
+    /**
+     * The strip: lanes side by side, scrolling.
+     */
+    case lanes
+    /**
+     * Every lane on one screen at once, each drawn as a live thumbnail.
+     */
+    case gallery
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension StripLayout: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeStripLayout: FfiConverterRustBuffer {
+    typealias SwiftType = StripLayout
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> StripLayout {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .lanes
+        
+        case 2: return .gallery
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: StripLayout, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .lanes:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .gallery:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStripLayout_lift(_ buf: RustBuffer) throws -> StripLayout {
+    return try FfiConverterTypeStripLayout.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStripLayout_lower(_ value: StripLayout) -> RustBuffer {
+    return FfiConverterTypeStripLayout.lower(value)
+}
+
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -6890,6 +7013,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_lane() != 31148) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_layout() != 36613) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_login_sources() != 32313) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -6990,6 +7116,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_set_lane_width() != 2916) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_set_layout() != 54678) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_set_manual_tag() != 9906) {

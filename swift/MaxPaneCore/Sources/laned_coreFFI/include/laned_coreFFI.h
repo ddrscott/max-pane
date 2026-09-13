@@ -409,6 +409,11 @@ RustBuffer uniffi_laned_core_fn_method_core_import_strip(uint64_t ptr, RustBuffe
 RustBuffer uniffi_laned_core_fn_method_core_lane(uint64_t ptr, RustBuffer lane_id, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_LAYOUT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_LAYOUT
+RustBuffer uniffi_laned_core_fn_method_core_layout(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_LOGIN_SOURCES
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_LOGIN_SOURCES
 RustBuffer uniffi_laned_core_fn_method_core_login_sources(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -577,6 +582,11 @@ RustBuffer uniffi_laned_core_fn_method_core_set_lane_title(uint64_t ptr, RustBuf
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_LANE_WIDTH
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_LANE_WIDTH
 RustBuffer uniffi_laned_core_fn_method_core_set_lane_width(uint64_t ptr, RustBuffer lane_id, uint32_t width_pt, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_LAYOUT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_LAYOUT
+void uniffi_laned_core_fn_method_core_set_layout(uint64_t ptr, RustBuffer layout, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_MANUAL_TAG
@@ -1083,6 +1093,12 @@ uint16_t uniffi_laned_core_checksum_method_core_lane(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_LAYOUT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_LAYOUT
+uint16_t uniffi_laned_core_checksum_method_core_layout(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_LOGIN_SOURCES
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_LOGIN_SOURCES
 uint16_t uniffi_laned_core_checksum_method_core_login_sources(void
@@ -1284,6 +1300,12 @@ uint16_t uniffi_laned_core_checksum_method_core_set_lane_title(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_LANE_WIDTH
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_LANE_WIDTH
 uint16_t uniffi_laned_core_checksum_method_core_set_lane_width(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_LAYOUT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_LAYOUT
+uint16_t uniffi_laned_core_checksum_method_core_set_layout(void
     
 );
 #endif

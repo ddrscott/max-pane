@@ -165,7 +165,12 @@ final class TerminalPaneController: NSObject, PaneController {
         // pane renders nothing at all while bytes arrive perfectly happily —
         // which is exactly how this first came up: a header reading 254B/s
         // above an empty black column.
-        container.onLayout = { [weak self] in self?.terminal.fitToSize() }
+        container.onLayout = { [weak self] in
+            self?.fitTerminal()
+            // Ghostty swaps its own layer for an IOSurface layer once it has
+            // rendered, and a filter set on the old one goes with it.
+            self?.applyMinificationFilter()
+        }
         container.onAttach = { [weak self] in
             self?.applyPendingFocus()
             // A recycled lane view brings a fresh surface, at the config's font
@@ -218,12 +223,14 @@ final class TerminalPaneController: NSObject, PaneController {
 
         status.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(status)
-        NSLayoutConstraint.activate([
+        terminalEdges = [
             terminal.topAnchor.constraint(equalTo: container.topAnchor),
             terminal.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             terminal.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             terminal.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-
+        ]
+        NSLayoutConstraint.activate(terminalEdges)
+        NSLayoutConstraint.activate([
             status.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             status.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             status.topAnchor.constraint(equalTo: container.topAnchor),
@@ -477,6 +484,86 @@ final class TerminalPaneController: NSObject, PaneController {
     /// this only has to make sure the view has laid out.
     func laneWidthDidChange(to width: CGFloat) {
         terminal.fitToSize()
+    }
+
+    // MARK: - as a gallery tile
+
+    /// How Core Animation shrinks this terminal's surface. `.linear` everywhere
+    /// but the gallery, where `GalleryLayout.minificationFilter` decides.
+    ///
+    /// A filter and not a smaller surface, on purpose: Ghostty's cells are whole
+    /// pixels, so drawing into fewer of them re-derives the grid — spike M5
+    /// measured 80×58 becoming 79×54 at half size — and a grid that changes is
+    /// a resize on every other client of the session.
+    private var minificationFilter: CALayerContentsFilter = .linear
+
+    /// The terminal's pinned edges, set aside while it is a tile.
+    private var terminalEdges: [NSLayoutConstraint] = []
+
+    /// While this pane is a gallery tile: the size the terminal holds, and how
+    /// far the space around it may move before that counts as a real change.
+    private struct ThumbnailHold {
+        var size: CGSize
+        var tolerance: CGFloat
+    }
+    private var thumbnailHold: ThumbnailHold?
+
+    /// Enter a tile at `scale`, or leave one with nil.
+    ///
+    /// Two things, and the second is the one that matters. The filter is for
+    /// sharpness. The hold is for the grid: inside a transformed tile, Auto
+    /// Layout rounds this pane's frame to the *tile's* pixels, which can move it
+    /// by a point — and a point can be a column. So the terminal leaves its
+    /// constraints and keeps the size it had on the strip, adopting a new one
+    /// only when the space it is given moves by more than rounding explains.
+    func setThumbnail(scale: CGFloat?, backingScale: CGFloat) {
+        if let scale {
+            minificationFilter = GalleryLayout.minificationFilter(scale: scale, backingScale: backingScale)
+            let tolerance = GalleryLayout.roundingTolerance(scale: scale, backingScale: backingScale)
+            if thumbnailHold != nil {
+                thumbnailHold?.tolerance = tolerance
+            } else {
+                let size = terminal.bounds.size
+                thumbnailHold = ThumbnailHold(size: size, tolerance: tolerance)
+                NSLayoutConstraint.deactivate(terminalEdges)
+                terminal.translatesAutoresizingMaskIntoConstraints = true
+                terminal.frame = CGRect(origin: .zero, size: size)
+            }
+        } else {
+            minificationFilter = .linear
+            if thumbnailHold != nil {
+                thumbnailHold = nil
+                terminal.translatesAutoresizingMaskIntoConstraints = false
+                NSLayoutConstraint.activate(terminalEdges)
+            }
+        }
+        applyMinificationFilter()
+        container.needsLayout = true
+    }
+
+    /// Size the surface: from its constraints on the strip, from the hold in a tile.
+    private func fitTerminal() {
+        if var hold = thumbnailHold {
+            // A terminal never laid out has nothing to hold; it takes the tile's.
+            let measured = container.bounds.size
+            hold.size = hold.size == .zero
+                ? measured
+                : GalleryLayout.heldSize(hold.size, measured: measured, tolerance: hold.tolerance)
+            thumbnailHold = hold
+            let frame = CGRect(origin: .zero, size: hold.size)
+            if terminal.frame != frame { terminal.frame = frame }
+        }
+        terminal.fitToSize()
+    }
+
+    private func applyMinificationFilter() {
+        let filter = minificationFilter
+        func apply(_ layer: CALayer?) {
+            guard let layer else { return }
+            if layer.minificationFilter != filter { layer.minificationFilter = filter }
+            layer.sublayers?.forEach(apply)
+        }
+        apply(terminal.layer)
     }
 
     // MARK: - cwd and title

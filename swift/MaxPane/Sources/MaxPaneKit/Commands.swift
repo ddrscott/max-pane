@@ -30,6 +30,7 @@ public enum Command: String, CaseIterable, Sendable {
     case search
     case gather
     case ungather
+    case toggleGallery
     case toggleKeepLive
     case dockLaneLeft
     case dockLaneRight
@@ -79,6 +80,7 @@ public enum Command: String, CaseIterable, Sendable {
         case .search: return "Search…"
         case .gather: return "Gather Project"
         case .ungather: return "Leave Gather View"
+        case .toggleGallery: return "Toggle Gallery"
         case .toggleKeepLive: return "Keep Lane Loaded"
         case .dockLaneLeft: return "Dock Lane Left"
         case .dockLaneRight: return "Dock Lane Right"
@@ -169,6 +171,12 @@ public enum Command: String, CaseIterable, Sendable {
         case .gather:          return ("g", [.command])
         // Esc, which is not a menu key equivalent — handled in the responder chain.
         case .ungather:        return ("\u{1b}", [])
+        // Lanes ⇄ Gallery. Beside ⌘G because both change what the window is
+        // showing of the strip without changing the strip. **Not Esc**, which
+        // would have been the obvious "leave this view" key: in the gallery Esc
+        // belongs to the focused tile, because answering an agent's prompt from
+        // its thumbnail is what the gallery is for.
+        case .toggleGallery:   return ("g", [.command, .option])
         // ⇧⌘P kept its key and lost its word. It used to be "Pin Lane", which
         // meant "never evict this lane" — and the owner has since said plainly
         // that pinning is what he calls docking. The key is not the word, and
@@ -339,6 +347,7 @@ public enum Command: String, CaseIterable, Sendable {
              .splitRight, .splitDown: return .file
         case .closePane, .closeLane: return .file
         case .focusLeft, .focusRight, .focusUp, .focusDown, .search, .gather, .ungather: return .navigate
+        case .toggleGallery: return .view
         case .moveLaneLeft, .moveLaneRight, .toggleSidebar, .toggleKeepLive,
              .widenLane, .narrowLane, .peekDesktop: return .view
         case .dockLaneLeft, .dockLaneRight, .toggleDockMode: return .view
