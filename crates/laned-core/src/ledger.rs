@@ -18,6 +18,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("0005_pane_height", include_str!("../migrations/0005_pane_height.sql")),
     ("0006_pane_zoom", include_str!("../migrations/0006_pane_zoom.sql")),
     ("0007_lane_dock", include_str!("../migrations/0007_lane_dock.sql")),
+    (
+        "0008_site_permission",
+        include_str!("../migrations/0008_site_permission.sql"),
+    ),
 ];
 
 pub struct Ledger {
@@ -429,6 +433,65 @@ impl Ledger {
         Ok(())
     }
 
+    // ---- site permissions ---------------------------------------------------
+
+    /// What the user last said about this site, in this cookie jar, for this
+    /// feature. `None` means they have never been asked, which is the only
+    /// state that may raise a prompt.
+    pub fn site_permission(
+        &self,
+        data_store_id: &str,
+        origin: &str,
+        feature: SiteFeature,
+    ) -> Result<Option<bool>> {
+        let found: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT allowed FROM site_permission
+                 WHERE data_store_id = ?1 AND origin = ?2 AND feature = ?3",
+                params![data_store_id, origin, site_feature_str(feature)],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(found.map(|v| v != 0))
+    }
+
+    pub fn set_site_permission(
+        &self,
+        data_store_id: &str,
+        origin: &str,
+        feature: SiteFeature,
+        allowed: bool,
+        now_ms: i64,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO site_permission (data_store_id, origin, feature, allowed, decided_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(data_store_id, origin, feature) DO UPDATE SET
+                 allowed = excluded.allowed,
+                 decided_at = excluded.decided_at",
+            params![
+                data_store_id,
+                origin,
+                site_feature_str(feature),
+                allowed as i64,
+                now_ms
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Undo every remembered decision for a site, so it is asked again next
+    /// time. The only way back from a `Block` the user regrets — a permission
+    /// that cannot be revoked is worse than one that is never remembered.
+    pub fn forget_site_permissions(&self, data_store_id: &str, origin: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM site_permission WHERE data_store_id = ?1 AND origin = ?2",
+            params![data_store_id, origin],
+        )?;
+        Ok(())
+    }
+
     // ---- history -----------------------------------------------------------
 
     /// Record a settle, or bump the entry already there.
@@ -729,6 +792,13 @@ fn row_to_recent(r: &Row) -> rusqlite::Result<Recent> {
         last_used_at: r.get(3)?,
         use_count: r.get::<_, i64>(4)? as u32,
     })
+}
+
+pub fn site_feature_str(f: SiteFeature) -> &'static str {
+    match f {
+        SiteFeature::Camera => "camera",
+        SiteFeature::Microphone => "microphone",
+    }
 }
 
 pub fn recent_kind_str(k: RecentKind) -> &'static str {

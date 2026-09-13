@@ -1319,6 +1319,28 @@ public final class StripViewController: NSViewController {
         for controller in paneControllers.values { controller.flushState() }
     }
 
+    /// Scroll to the next lane whose page has stopped to ask something.
+    ///
+    /// This is the only thing that moves the viewport for a dialog, and it
+    /// moves it because a person clicked. `WebAskCenter` deliberately never
+    /// scrolls on its own — a background page that can pull the strip to itself
+    /// is the modal-sheet freeze wearing different clothes.
+    ///
+    /// It also *materialises* the lane on the way, which is the half that is
+    /// easy to miss: a pane far enough off the strip has no view, so its sheet
+    /// has nowhere to be drawn until `reveal` brings the lane back into the
+    /// materialisation window. The sheet survives that, because it is a subview
+    /// of the pane's own container and lane views are recycled around it.
+    @discardableResult
+    public func revealNextAsking() -> Bool {
+        guard let paneId = WebAskCenter.shared.next(),
+              let laneId = store.lane(containing: paneId)?.id
+        else { return false }
+        reveal(laneId: laneId, flash: true)
+        try? store.focusPane(paneId)
+        return true
+    }
+
     /// Take a lane's chrome out of the strip.
     ///
     /// Never touches pane controllers. A retired lane is usually one that has

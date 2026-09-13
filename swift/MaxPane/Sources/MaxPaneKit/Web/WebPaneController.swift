@@ -19,7 +19,7 @@ import WebKit
 @MainActor
 final class WebPaneController: NSObject, PaneController {
     let paneId: String
-    private let store: StripStore
+    let store: StripStore
     private let config: Config
     private let container = WebPaneContainer()
 
@@ -27,12 +27,40 @@ final class WebPaneController: NSObject, PaneController {
     /// in for it. Separate from `container` so the chrome keeps its 26 pt
     /// whatever state the pane is in — an evicted pane still has an address,
     /// and that address is how you recognise it on the strip.
-    private let contentHost = NSView()
+    /// Internal: `WebPaneAsks.swift` parents the ask sheet here.
+    let contentHost = NSView()
     private let chrome = WebChromeBar()
     private let findBar = WebFindBar()
     private var findBarHeight: NSLayoutConstraint!
+    let downloadBar = WebDownloadBar()
+    var downloadBarHeight: NSLayoutConstraint!
 
-    private var webView: WKWebView?
+    // MARK: - what the page has stopped to ask
+    //
+    // Internal rather than private: the five delegate methods that fill these
+    // live in `WebPaneAsks.swift`, and a Swift extension cannot add stored
+    // properties. Nothing outside this module touches them.
+
+    /// The question on screen, if there is one. A subview of `contentHost`, so
+    /// the strip recycling this lane's *view* cannot destroy it — a pane
+    /// controller outlives lane views by design (ADR-0004) and an outstanding
+    /// completion handler has to outlive them with it.
+    var askSheet: WebAskSheet?
+    /// Questions waiting their turn in this pane, oldest first.
+    var askQueue = AskQueue<PendingAsk>()
+    /// Files this pane has asked for, in the order they were started.
+    var downloads: [DownloadJob] = []
+    /// The last drawn download states and when — see `refreshDownloadBar` for
+    /// why a progress tick does not always cost a rebuild.
+    var lastDownloadStates: [DownloadJob.State] = []
+    var lastDownloadDraw: CFAbsoluteTime = 0
+    /// Open panels this pane has put on screen, so a pane torn down with a file
+    /// picker open closes it and answers `nil` rather than leaving a panel with
+    /// nothing behind it.
+    var openPanels: [NSOpenPanel] = []
+
+    /// Internal: the delegate methods in `WebPaneAsks.swift` need it.
+    var webView: WKWebView?
     private var placeholder: PlaceholderView?
     /// The panel covering a web view that has not painted yet, and the timer
     /// that lifts it if the page never arrives. See `showFirstPaintCover`.
@@ -116,7 +144,9 @@ final class WebPaneController: NSObject, PaneController {
     /// launch). Distinct from *evicted*: nothing was ever built, so there is no
     /// snapshot and nothing to restore beyond the URL.
     private(set) var isDeferred = false
-    private let dataStoreId: String
+    /// Internal: the permission store is keyed by the cookie jar, so the ask
+    /// handlers in `WebPaneAsks.swift` need it.
+    let dataStoreId: String
 
     /// Build the web view a deferred pane has been waiting to get.
     func loadIfDeferred() {
@@ -130,10 +160,15 @@ final class WebPaneController: NSObject, PaneController {
 
     // MARK: - chrome
 
-    /// The pane's shape: content, then the find bar's zero height, then 26 pt of
-    /// browser chrome pinned to the bottom.
+    /// The pane's shape: content, the find bar's zero height, the download
+    /// bar's zero height, then 26 pt of browser chrome pinned to the bottom.
+    ///
+    /// The download bar sits between the two because it is the more permanent
+    /// of the pair — find is a thing you open and close in one gesture, a
+    /// download outlives the page — and putting it directly above the chrome
+    /// keeps the address the last line before the page in every state.
     private func installChrome() {
-        for subview in [contentHost, findBar, chrome] {
+        for subview in [contentHost, findBar, downloadBar, chrome] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(subview)
         }
@@ -142,6 +177,7 @@ final class WebPaneController: NSObject, PaneController {
         // be un-hidden before it can be measured, which costs a frame of jump.
         findBarHeight = findBar.heightAnchor.constraint(equalToConstant: 0)
         findBar.alphaValue = 0
+        downloadBarHeight = downloadBar.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
             contentHost.topAnchor.constraint(equalTo: container.topAnchor),
             contentHost.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -150,13 +186,19 @@ final class WebPaneController: NSObject, PaneController {
 
             findBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             findBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            findBar.bottomAnchor.constraint(equalTo: chrome.topAnchor),
+            findBar.bottomAnchor.constraint(equalTo: downloadBar.topAnchor),
             findBarHeight,
+
+            downloadBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            downloadBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            downloadBar.bottomAnchor.constraint(equalTo: chrome.topAnchor),
+            downloadBarHeight,
 
             chrome.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             chrome.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             chrome.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
+        installDownloadBar()
 
         chrome.onBack = { [weak self] in self?.webView?.goBack() }
         chrome.onForward = { [weak self] in self?.webView?.goForward() }
@@ -489,6 +531,15 @@ final class WebPaneController: NSObject, PaneController {
         // `maxpane open` came up deaf. Measured: `fr=<NSTextView>` on every
         // attempt, ⌘A ⌘C in the new lane left the clipboard untouched.
         guard !chrome.isEditingAddress, !findBar.isEditing else { return }
+        // A sheet is the third thing in this pane that owns the keyboard, and
+        // the only one the *page* did not start. Without this the next
+        // reconcile hands first responder back to the document and Esc goes to
+        // the page instead of dismissing the question in front of it — the page
+        // taking back the keyboard from the dialog it raised.
+        if let askSheet {
+            askSheet.takeFocus()
+            return
+        }
         guard let webView, let window = container.window, window.isKeyWindow else { return }
         if let current = window.firstResponder as? NSView,
            current === webView || current.isDescendant(of: webView) { return }
@@ -501,6 +552,13 @@ final class WebPaneController: NSObject, PaneController {
         // Last chance: a quit tears every pane down, and a pane whose session
         // was never written comes back as a fresh page.
         captureSession()
+        // Before anything else is released. Every outstanding ask holds a
+        // WebKit completion handler, and a pane that goes away without calling
+        // them leaves a web view that will never run JavaScript again — the
+        // hang this piece's whole `OneShotReply` discipline exists for. A
+        // closing pane is exactly when it is easiest to forget.
+        drainAsks()
+        cancelDownloads()
         // A popup staged for a pane that is going away has nowhere left to go.
         PopupHandoff.shared.discard(paneId: paneId)
         scrollObservation?.invalidate()
@@ -549,6 +607,13 @@ final class WebPaneController: NSObject, PaneController {
         // take. Leaving it deferred is already the cheapest state it has.
         guard !isDeferred else { return }
         guard let webView else { return }
+        // A page that has stopped to ask a person something is not idle memory.
+        // Evicting it would answer its own question with "cancel" — and the
+        // eviction plan is recomputed on every scroll settle, so the pane would
+        // come back, reload, and ask again. The status bar is already saying
+        // this lane is waiting; reclaiming it from underneath that is the one
+        // case where the memory policy and the user disagree.
+        guard !isAsking else { return }
         captureScroll()
         let paneId = self.paneId
         let scrollY = pane.scrollY
@@ -756,6 +821,10 @@ final class WebPaneController: NSObject, PaneController {
     }
 
     private func destroyWebView() {
+        // The page being destroyed is still a page that asked. Its completion
+        // handlers are about to belong to nothing, and the sheet in front of it
+        // would be a question about a document that no longer exists.
+        drainAsks()
         scrollObservation?.invalidate()
         scrollObservation = nil
         titleObservation?.invalidate()

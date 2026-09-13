@@ -21,6 +21,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private var helpPanel: HelpPanel?
     private let statusBar = StatusBar()
     private var statusTimer: Timer?
+    /// Our subscription to `WebAskCenter`, so the orange count appears the
+    /// instant a page asks rather than on the next status tick.
+    private var askToken: UUID?
     /// Every session Relay knows about, attached or not. The sidebar, the
     /// picker and the status bar all read this one registry so they cannot
     /// disagree about how many sessions exist.
@@ -156,6 +159,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         }
         statusBar.onClickSessions = { [weak self] in self?.perform(.openSessions) }
         statusBar.onClickMemory = { [weak self] in self?.perform(.showMemory) }
+        statusBar.onClickAsking = { [weak self] in self?.strip.revealNextAsking() }
+        // Pushed rather than polled. The status timer would pick this up within
+        // a second or two, and a second or two is exactly how long a page that
+        // has stopped dead looks broken for — the whole reason this signal
+        // exists is that the lane asking may be nowhere on screen.
+        askToken = WebAskCenter.shared.observe { [weak self] in self?.refreshStatus() }
         // WebKit's footprint is sampled, not pushed, so the footer needs its own
         // slow tick to stay honest about it.
         statusTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
@@ -667,7 +676,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         statusBar.update(
             state: store.state,
             telemetry: sessions.sessions,
-            webBytes: WebProcessMemory.currentBytes())
+            webBytes: WebProcessMemory.currentBytes(),
+            asking: WebAskCenter.shared.count)
     }
 
     /// Tell the registry which sessions have lanes, so the picker can hide them
