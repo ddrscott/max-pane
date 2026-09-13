@@ -276,6 +276,137 @@ struct DataStoreShardingTests {
 }
 
 /// Config loading has to survive a hand-edited file.
+/// What one typed line at ⌘O means.
+///
+/// The whole decision is a pure function, so every case below is answered
+/// without a pane, a session or a `relay-pty-host` anywhere near it — which is
+/// the point: the bug this replaces could only be seen by watching a lane spew.
+@Suite("a line typed at ⌘O")
+struct TypedCommandTests {
+    private func parse(_ line: String) -> RelaySessionSpawner.TypedCommand? {
+        RelaySessionSpawner.TypedCommand.parse(line)
+    }
+
+    @Test("the regression: a pipeline is a pipeline, not a program with two arguments")
+    func aPipelineIsNotAProgram() {
+        // `line.split(separator: " ")` made this `yes` with the literal
+        // arguments `|` and `head` — a process that runs forever and floods the
+        // pane. Not an error message: a lane spewing `y`.
+        #expect(parse("yes | head") == .shellLine("yes | head"))
+        #expect(parse("yes | head") != .program("yes", args: ["|", "head"]))
+    }
+
+    @Test("a line a shell has to read is given to one", arguments: [
+        "yes | head",
+        "make && make test",
+        "sleep 1; echo done",
+        "cat < in > out",
+        "echo $HOME",
+        "git commit -m \"two words\"",
+        "rg 'alpha|beta'",
+        "ls *.rs",
+        "wc -l $(git ls-files)",
+        "vim ~/.zshrc",
+        "FOO=1 make",
+        "(cd /tmp && ls)",
+    ])
+    func shellLinesGoToTheShell(_ line: String) {
+        #expect(parse(line) == .shellLine(line), "split into argv instead: \(line)")
+    }
+
+    @Test("a plain program line is still argv, and is still split into words")
+    func programLinesStayArgv() {
+        #expect(parse("htop") == .program("htop", args: []))
+        #expect(parse("npm run build") == .program("npm", args: ["run", "build"]))
+        #expect(parse("claude --dangerously-skip-permissions")
+            == .program("claude", args: ["--dangerously-skip-permissions"]))
+        // A bare shell has to stay argv: `buildArgs` gives it `--login` and
+        // pty-host polls it for `cd`, which is what keeps a lane's directory
+        // tag live. Wrapping it would freeze the tag at the launch directory.
+        #expect(parse("zsh") == .program("zsh", args: []))
+    }
+
+    @Test("a `#` is left as argv, because a shell would eat the rest of the line")
+    func hashIsNotShellSyntax() {
+        // The rule only moves a line to the shell when the shell reading is the
+        // better one. `#` is the case where it is worse.
+        #expect(parse("open example.com/#top") == .program("open", args: ["example.com/#top"]))
+    }
+
+    @Test("runs of whitespace collapse and the ends are trimmed")
+    func whitespaceIsNotArgv() {
+        #expect(parse("  npm   run   build  ") == .program("npm", args: ["run", "build"]))
+    }
+
+    @Test("an empty line asks for nothing")
+    func emptyIsNothing() {
+        #expect(parse("") == nil)
+        #expect(parse("   \n\t ") == nil)
+    }
+
+    @Test("the typed line reaches -c as one argument and is not touched otherwise")
+    func theLineIsWhatHeTyped() {
+        let line = "yes | head"
+        let argv = RelaySessionSpawner.buildShellArgs(
+            id: "a1b2c3d4", cols: 80, rows: 40, cwd: "/Users/s/code", line: line)
+        #expect(Array(argv.prefix(4)) == ["a1b2c3d4", "80", "40", "/Users/s/code"])
+        #expect(argv[4] == RelaySessionSpawner.userShell())
+        #expect(argv[5] == "-li")
+        #expect(argv[6] == "-c")
+        // Nothing around it, nothing inside it: the line, then a newline, then
+        // the terminator every wrapped session gets.
+        #expect(argv[7] == "yes | head\nexit $?")
+        #expect(argv.count == 8)
+    }
+
+    @Test("the terminator goes on its own line, because `;` is not always legal after one")
+    func terminatorSurvivesABackgroundedLine() {
+        // Measured: `sleep 5 &; exit $?` is a syntax error in bash and sh, and
+        // `ls # note; exit $?` swallows the exit into the comment in bash, sh
+        // and zsh alike. A newline ends both the way Return at a prompt does.
+        let argv = RelaySessionSpawner.buildShellArgs(
+            id: "a1b2c3d4", cols: 80, rows: 40, cwd: "/tmp", line: "sleep 5 &")
+        #expect(argv.last == "sleep 5 &\nexit $?")
+        // The escaped-argv path keeps `;` — nothing we escape ourselves can end
+        // in a `&` or a comment, and its expected string is asserted above.
+        #expect(RelaySessionSpawner.shellWrapped("'htop'") == "'htop'; exit $?")
+    }
+
+    @Test("a program line goes down the same escaped path maxpane run uses")
+    func programLinesAreEscapedArgv() throws {
+        guard case .program(let program, let args)? = parse("claude --foo bar") else {
+            return #expect(Bool(false), "not parsed as a program")
+        }
+        let argv = RelaySessionSpawner.buildArgs(
+            id: "a1b2c3d4", cols: 80, rows: 40, cwd: "/tmp", command: program, args: args)
+        #expect(argv.last == #"'claude' '--foo' 'bar'; exit $?"#)
+    }
+
+    // MARK: - the two doors
+
+    @Test("the same words at either door do the same thing")
+    func wordsAgreeAcrossDoors() {
+        // `maxpane run npm run build` is argv already; ⌘O's `npm run build` has
+        // to become the same argv, and does.
+        #expect(parse("npm run build") == .program("npm", args: ["run", "build"]))
+        #expect(!RelaySessionSpawner.isShellLine("npm"))
+    }
+
+    @Test("the doors differ only where they are handed different things")
+    func doorsDifferDeliberately() {
+        // One argv *word* containing shell syntax is refused by `maxpane run`:
+        // a script's `maxpane run "$cmd"` must not have `$cmd` interpreted a
+        // second time.
+        #expect(RelaySessionSpawner.isShellLine("yes | head"))
+        // The same characters typed at ⌘O are one uninterpreted line from the
+        // owner's own keyboard, and a shell is the only correct reader of one.
+        #expect(parse("yes | head") == .shellLine("yes | head"))
+        // And the CLI's refusal names the spelling that works there.
+        let message = RelaySessionSpawner.SpawnError.notAProgram("yes | head").errorDescription ?? ""
+        #expect(message.contains("zsh -c"))
+    }
+}
+
 @Suite("config")
 struct ConfigTests {
     @Test("clamps a width to the configured range")

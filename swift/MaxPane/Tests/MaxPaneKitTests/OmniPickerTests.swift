@@ -136,6 +136,26 @@ struct OmniPickerTests {
 
     // MARK: - rows one and two
 
+    @Test("the LAUNCH row says when a line is going through a shell")
+    func launchRowNamesTheShell() {
+        // A pipeline is not started the way `htop` is, and the row is the only
+        // place to say so before Return rather than after.
+        let rows = OmniRanking.build(
+            query: "yes | head", scope: .commands, recents: [], pages: [],
+            bookmarks: [], sessions: [], destination: "→ new lane", shellName: "zsh")
+        let typed = rows.compactMap(\.candidate).first { $0.kind == .typed }
+        #expect(typed?.action == .run("yes | head", cwd: nil))
+        #expect(typed?.detail == "through zsh")
+    }
+
+    @Test("a plain command line says nothing extra, because nothing extra is true")
+    func launchRowIsQuietForAProgram() {
+        let rows = OmniRanking.build(
+            query: "npm run build", scope: .commands, recents: [], pages: [],
+            bookmarks: [], sessions: [], destination: "→ new lane", shellName: "zsh")
+        #expect(rows.compactMap(\.candidate).first { $0.kind == .typed }?.detail == "")
+    }
+
     @Test("typing always offers both readings, and they are always first")
     func bothReadingsLead() {
         // Guessing wrong about `localhost:3000` must never make the other one

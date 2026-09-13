@@ -735,8 +735,14 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 store.noteRecent(.url, url)
 
             case .run(let line, let remembered):
-                let parts = line.split(separator: " ").map(String.init)
-                guard let program = parts.first else { return }
+                // Not `line.split(separator: " ")`. ⌘O is handed one line of
+                // text, and a whitespace split is a shell imitation that gets
+                // pipelines, quoting and globbing wrong without saying so:
+                // `yes | head` ran `yes` with the literal arguments `|` and
+                // `head`, which is a lane spewing `y` forever rather than an
+                // error. `TypedCommand` decides, and says why the CLI's door
+                // decides differently.
+                guard let typed = RelaySessionSpawner.TypedCommand.parse(line) else { return }
                 // A remembered command carries the directory it last ran in,
                 // which is usually the only place it makes sense — `npm test`
                 // in the wrong repo is a failure, not a command. It loses to
@@ -747,8 +753,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                     ?? FileManager.default.homeDirectoryForCurrentUser.path
                 let size = newSessionSize()
                 let session = try RelaySessionSpawner(config: config)
-                    .spawn(cwd: cwd, command: program, args: Array(parts.dropFirst()),
-                           cols: size.cols, rows: size.rows)
+                    .spawn(cwd: cwd, typed: typed, cols: size.cols, rows: size.rows)
                 try store.newTerminalLane(relaySessionId: session, near: lane?.id)
                 store.noteRecent(.command, line, cwd: cwd)
 

@@ -202,17 +202,18 @@ enum OmniRanking {
         pages: [HistoryEntry],
         bookmarks: [BookmarkHit],
         sessions: [SessionTelemetry],
-        destination: String
+        destination: String,
+        shellName: String = (RelaySessionSpawner.userShell() as NSString).lastPathComponent
     ) -> [OmniRow] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         var rows: [OmniRow] = []
 
         if !trimmed.isEmpty {
             rows.append(.section(title: "LAUNCH", note: destination))
-            rows.append(contentsOf: scope.typedActions(trimmed).map {
+            rows.append(contentsOf: scope.typedActions(trimmed).map { action in
                 .item(OmniCandidate(
-                    action: $0, kind: .typed,
-                    headline: trimmed, detail: "",
+                    action: action, kind: .typed,
+                    headline: trimmed, detail: typedDetail(action, shellName: shellName),
                     quality: .typed, chosenAt: 0, count: 0, telemetry: nil, bookmarkId: nil))
             })
         }
@@ -303,6 +304,21 @@ enum OmniRanking {
             rows.append(.note(title: scope.title, detail: "nothing started yet"))
         }
         return rows
+    }
+
+    /// What the LAUNCH row says underneath the line you typed.
+    ///
+    /// Only the shell reading says anything. A line with a pipeline, a
+    /// redirect, a glob or a quoted argument in it is handed to your login
+    /// shell whole rather than started as a program with arguments — a real
+    /// difference in what Return will do, and the row is the only place to say
+    /// so *before* it happens rather than after. See `TypedCommand`.
+    private static func typedDetail(_ action: OmniAction, shellName: String) -> String {
+        guard case .run(let line, _) = action else { return "" }
+        if case .shellLine? = RelaySessionSpawner.TypedCommand.parse(line) {
+            return "through \(shellName)"
+        }
+        return ""
     }
 
     /// Pages and commands, scored. Sessions are added separately because they

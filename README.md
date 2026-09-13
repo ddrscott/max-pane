@@ -749,6 +749,30 @@ startup. So the id came back, a lane was written, and the lane was gone a beat
 later with the CLI having already said it worked. Waiting instead would mean
 outlasting whatever `.zshrc` happens to cost, on every good `maxpane run htop`.
 
+**⌘O reads the same line and runs it.** The two doors differ, deliberately,
+because they are handed different things:
+
+| typed | what it is | what happens |
+|---|---|---|
+| `maxpane run yes '\|' head` | argv: three words, and you quoted the pipe yourself | `yes` with the literal arguments `\|` and `head` — which is what you asked for |
+| `maxpane run "yes \| head"` | argv: one word, and no program has that name | refused, with the `zsh -c` spelling in the message |
+| ⌘O, `yes \| head` | one line nothing has interpreted yet | your login shell reads it, and the row says `through zsh` first |
+
+`maxpane run` gets argv — words some other shell has already separated, quoted
+and expanded — so reading them a second time would be the double-evaluation bug:
+a script's `maxpane run "$editor" "$file"` must open a file called `; rm -rf ~`,
+not run one. ⌘O gets one uninterpreted string typed at your own keyboard, and the
+only correct reader of a command line is a shell — it reaches `$SHELL -li -c` as
+a single argument, exactly as typed, with nothing but a newline and `exit $?`
+after it.
+
+What ⌘O used to do was a third thing, worse than either: `split(separator: " ")`,
+a shell imitation that got pipelines, quoting and globbing all wrong and said
+nothing. `yes | head` became `yes` with the arguments `|` and `head` — a lane
+spewing `y` forever rather than an error. A bare `zsh` is still argv, and still
+gets `--login`, because a wrapped shell is not the session leader and its lane's
+directory tag would freeze.
+
 `maxpane ls` prints one tab-separated line per lane, so it pipes:
 
 ```
