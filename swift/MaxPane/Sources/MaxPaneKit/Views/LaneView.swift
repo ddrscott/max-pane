@@ -139,6 +139,23 @@ final class LaneView: NSView {
 
     private let dockEdge = DockEdgeView()
 
+    /// Which pane in this lane has the keyboard, so a split lane can say so.
+    ///
+    /// Handed the ledger's focused pane whoever it belongs to; a lane that does
+    /// not recognise the id draws nothing, which is how "which lane" stays
+    /// answered in one place.
+    var focusedPaneId: String? {
+        didSet {
+            guard focusedPaneId != oldValue else { return }
+            needsLayout = true
+        }
+    }
+
+    /// The mark that says *which* pane — see `PaneFocusMarkView`. Drawn only in
+    /// a lane holding more than one pane; in a lane holding one, the lane's own
+    /// border has already answered the question.
+    private let focusMark = PaneFocusMarkView()
+
     init(lane: Lane, widthBounds: ClosedRange<UInt32>) {
         self.laneId = lane.id
         self.widthBounds = widthBounds
@@ -182,6 +199,11 @@ final class LaneView: NSView {
         addSubview(header)
         addSubview(stack)
         addSubview(resizeHandle)
+        // After the stack, for the reason `dockEdge` is added after everything:
+        // a pane's view is layer-backed and paints over any sibling added
+        // before it. Frame-positioned in `layOutFocusMark`.
+        focusMark.isHidden = true
+        addSubview(focusMark)
         // Frame-positioned in `layout`, and hidden unless this lane is an
         // overlay dock. Added last so it is drawn over the pane it borders —
         // a `WKWebView` is layer-backed and will otherwise paint over a
@@ -454,6 +476,10 @@ final class LaneView: NSView {
         paneWeights.removeAll()
         draggedWeights = nil
         for divider in dividers { divider.isHidden = true }
+        // And the mark, for the same reason: this chrome is going to the pool
+        // and will come back holding a different lane's panes.
+        focusedPaneId = nil
+        focusMark.isHidden = true
     }
 
     // MARK: - opening and closing
@@ -548,6 +574,7 @@ final class LaneView: NSView {
         let ids = visiblePaneIds
         guard !ids.isEmpty else {
             for divider in dividers { divider.isHidden = true }
+            focusMark.isHidden = true
             return
         }
 
@@ -582,6 +609,43 @@ final class LaneView: NSView {
         }
 
         layOutDividers(above: heights)
+        layOutFocusMark(ids: ids, heights: heights)
+    }
+
+    /// Put the focus tick at the top of the focused pane's slot.
+    ///
+    /// Two guards, and both are the point of the mark rather than defence. A
+    /// lane with one pane draws nothing: the lane's border already says it, and
+    /// a second accent mark inside it is the same fact drawn twice. A lane that
+    /// does not hold the focused pane draws nothing either — that is how every
+    /// lane can be handed the same id and only one of them answer.
+    private func layOutFocusMark(ids: [String], heights: [CGFloat]) {
+        guard ids.count > 1,
+              let paneId = focusedPaneId,
+              let index = ids.firstIndex(of: paneId)
+        else {
+            focusMark.isHidden = true
+            return
+        }
+        let size = PaneFocusMarkView.size
+        // Measured downward from the top of the pane area, exactly as the seams
+        // are, so the mark and the seam above it cannot drift apart.
+        let paneTop = bounds.height - Theme.laneHeaderHeight
+            - PaneSplit.top(ofPaneAt: index, heights: heights)
+        let frame = NSRect(
+            x: PaneFocusMarkView.inset,
+            y: paneTop - PaneFocusMarkView.inset - size.height,
+            width: size.width,
+            height: size.height)
+        focusMark.isHidden = false
+        guard focusMark.frame != frame else { return }
+        // No implicit animation, for the reason a seam takes none: this is set
+        // from inside `layout`, and an eased mark would trail every drag of the
+        // seam it sits under.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        focusMark.frame = frame
+        CATransaction.commit()
     }
 
     /// Put a seam in each gap between two visible panes.

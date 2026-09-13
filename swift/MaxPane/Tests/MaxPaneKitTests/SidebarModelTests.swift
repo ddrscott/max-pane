@@ -327,6 +327,56 @@ struct SidebarModelTests {
         #expect(SidebarModel.footerCount(telemetry: [:], lanes: []) == "0/0 SESSIONS")
     }
 
+    /// Two pty panes stacked in one lane, the way ⇧⌘D leaves them.
+    private func stacked(_ id: String, sessions: [String]) -> Lane {
+        Lane(
+            id: id, ordinal: 1, widthPt: 500, title: nil,
+            projectRoot: nil, projectSource: .cwd,
+            createdAt: 0, lastFocusAt: 0, keepLive: false, dock: nil, span: 1,
+            panes: sessions.enumerated().map { position, session in
+                Pane(
+                    id: "\(id)-p\(position)", laneId: id, position: UInt32(position), kind: .pty,
+                    relaySessionId: session, url: nil, scrollY: nil,
+                    dataStoreId: nil, snapshotPath: nil, state: .live, heightWeight: 1, zoom: 1)
+            })
+    }
+
+    @Test("a row names the pane its own session is in, not the lane's first")
+    func rowNamesItsOwnPane() {
+        // The bug this guards: clicking the second session of a split lane
+        // handed the keyboard to the first, because a row only knew its lane.
+        let home = NSHomeDirectory()
+        let t = [
+            "top": telemetry("top", title: "one", cwd: home + "/code/split"),
+            "bottom": telemetry("bottom", title: "two", cwd: home + "/code/split"),
+        ]
+        let rows = SidebarModel.rows(lanes: [stacked("L1", sessions: ["top", "bottom"])], telemetry: t)
+        let byId = Dictionary(uniqueKeysWithValues: entries(rows).map { ($0.sessionId!, $0) })
+        #expect(byId["top"]?.paneId == "L1-p0")
+        #expect(byId["bottom"]?.paneId == "L1-p1")
+        // Both still name the one lane they share.
+        #expect(byId["top"]?.laneId == "L1")
+        #expect(byId["bottom"]?.laneId == "L1")
+    }
+
+    @Test("a row for a session that is not on the strip names no pane at all")
+    func detachedRowNamesNoPane() {
+        // It is still a click-to-attach row, and a pane id invented for it would
+        // be a focus target that does not exist.
+        let home = NSHomeDirectory()
+        let t = ["a": telemetry("a", title: "one", cwd: home)]
+        let entry = entries(SidebarModel.rows(lanes: [], telemetry: t)).first
+        #expect(entry?.laneId == nil)
+        #expect(entry?.paneId == nil)
+    }
+
+    @Test("a lane row with no session behind it names the lane's first pane")
+    func webRowNamesItsPane() {
+        let rows = SidebarModel.rows(
+            lanes: [lane("W1", url: "https://example.com", kind: .web)], telemetry: [:])
+        #expect(entries(rows).first?.paneId == "p-W1")
+    }
+
     @Test("the age column reads the way the bar's does")
     func ages() {
         let now = Date(timeIntervalSince1970: 1_000_000)

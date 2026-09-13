@@ -445,6 +445,10 @@ public final class StripViewController: NSViewController {
             laneViews[lane.id]?.isFocused = state.focusedPaneId.map { id in
                 lane.panes.contains { $0.id == id }
             } ?? false
+            // Handed to every lane, not only the focused one: a lane marks the
+            // pane only when it is one of its own, so "which lane" is answered
+            // once, by the lane that recognises the id.
+            laneViews[lane.id]?.focusedPaneId = state.focusedPaneId
             // The fix for ⇧⌘D. `materialize` installs a lane's panes when the
             // lane view is *built*; nothing used to install one into a lane that
             // was already on screen, so a split created a real pane and a real
@@ -673,6 +677,18 @@ public final class StripViewController: NSViewController {
             laneView = LaneView(lane: lane, widthBounds: config.widthRange)
         }
         laneView.laneId = lane.id
+        // Focus, from the ledger, before the view is ever on screen.
+        //
+        // `apply` is the only other place that sets these, and a lane is
+        // materialised by scrolling — which is not a mutation and does not run
+        // `apply`. So a focused lane scrolled out and back came back unlit until
+        // something else happened to change the snapshot, and a *recycled* view
+        // came back carrying the previous lane's answer, which is an orange
+        // border around a lane that does not have the keyboard.
+        laneView.isFocused = store.state.focusedPaneId.map { id in
+            lane.panes.contains { $0.id == id }
+        } ?? false
+        laneView.focusedPaneId = store.state.focusedPaneId
         laneView.onResize = { [weak self] width, isFinal in
             guard let self else { return }
             // The same gesture on a different number. A docked lane's inner
@@ -1338,6 +1354,36 @@ public final class StripViewController: NSViewController {
         else { return false }
         reveal(laneId: laneId, flash: true)
         try? store.focusPane(paneId)
+        return true
+    }
+
+    /// Pick a lane from the session browser: give it the keyboard, then bring it
+    /// to the middle.
+    ///
+    /// `reveal` deliberately does not focus — the snap, the peek and
+    /// `ensureVisible` all move the viewport without stealing the keyboard — so
+    /// the two are composed here, exactly as ⌘P composes them in `showPalette`.
+    ///
+    /// **Focus first, then reveal**, and the order is load-bearing. `flash()`
+    /// reads `isFocused` when it fires to decide what colour to settle on, and
+    /// on the two paths where reveal flashes immediately — a lane already
+    /// centred, and a docked lane, which cannot be scrolled to at all — focusing
+    /// afterwards leaves the border animating *away* from Signal Orange for
+    /// 300 ms before snapping back to it. That is the reported bug wearing a
+    /// third of a second: it looks like the click focused the lane and then gave
+    /// up.
+    ///
+    /// The pane is the one the sidebar row names. A row is a session and a lane
+    /// is a stack of them, so falling back to `panes.first` would hand the
+    /// keyboard to a pane the user did not click on in any split lane.
+    @discardableResult
+    public func select(laneId: String, paneId: String?) -> Bool {
+        guard let lane = store.lane(laneId) else { return false }
+        let wanted = paneId.flatMap { id in lane.panes.contains { $0.id == id } ? id : nil }
+            ?? lane.panes.first?.id
+        guard let wanted else { return false }
+        try? store.focusPane(wanted)
+        reveal(laneId: laneId, flash: true)
         return true
     }
 

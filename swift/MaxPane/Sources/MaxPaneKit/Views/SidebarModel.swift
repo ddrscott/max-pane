@@ -51,6 +51,14 @@ enum SidebarModel {
         var title: String
         /// The lane on the strip, when there is one. `nil` means "click to attach".
         var laneId: String?
+        /// The pane inside that lane this row is actually about.
+        ///
+        /// A lane holds a stack since ⇧⌘D, and a row names one session — so
+        /// "the lane" is not a precise enough answer for a click that hands over
+        /// the keyboard. Resolved here rather than in the view because it is the
+        /// same kind of decision as every other column: a fact about the rows,
+        /// worth a test.
+        var paneId: String?
         var sessionId: String?
         /// pty-host's verdict, and the only source for the chip.
         var state: AgentState
@@ -160,18 +168,22 @@ enum SidebarModel {
         controls: Controls = Controls(),
         now: Date = Date()
     ) -> [Row] {
-        var laneForSession: [String: Lane] = [:]
+        // The *pane* as well as the lane: a click on a row has to be able to
+        // hand the keyboard to the pane whose session the row names, and in a
+        // split lane that is not the same thing as the lane's first pane.
+        var laneForSession: [String: (lane: Lane, pane: Pane)] = [:]
         for lane in lanes {
             for pane in lane.panes {
                 if let sid = pane.relaySessionId, laneForSession[sid] == nil {
-                    laneForSession[sid] = lane
+                    laneForSession[sid] = (lane, pane)
                 }
             }
         }
 
         var grouped: [String: [Entry]] = [:]
         for (id, t) in telemetry {
-            let lane = laneForSession[id]
+            let attached = laneForSession[id]
+            let lane = attached?.lane
             let split = splitGlyph(displayTitle(t))
             // Only where pty-host has no opinion at all does the agent's own
             // title mark get to fill the glyph column — and never the chip.
@@ -181,6 +193,7 @@ enum SidebarModel {
                 kind: .session,
                 title: split.title,
                 laneId: lane?.id,
+                paneId: attached?.pane.id,
                 sessionId: id,
                 state: t.state,
                 glyph: glyph,
@@ -214,6 +227,9 @@ enum SidebarModel {
                 kind: kind,
                 title: laneTitle(lane),
                 laneId: lane.id,
+                // This row is the lane, not a session — so it names the pane the
+                // lane's own header names, which is its first.
+                paneId: pane.id,
                 sessionId: sessionIds.first,
                 state: state,
                 glyph: kind == .session ? state.glyph : "",

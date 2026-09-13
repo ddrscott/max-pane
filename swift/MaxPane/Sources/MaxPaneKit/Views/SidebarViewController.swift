@@ -41,8 +41,11 @@ final class SidebarViewController: NSViewController {
     /// silly price for a number that never changes.
     private var createdAt: [String: Double] = [:]
 
-    /// Click a lane row → search-to-scroll to it.
-    var onSelect: ((String) -> Void)?
+    /// Click a lane row → search-to-scroll to it, and hand it the keyboard.
+    ///
+    /// The pane comes with the lane because the row names a session and a lane
+    /// holds a stack of them; the receiver falls back to the lane when it is nil.
+    var onSelect: ((_ laneId: String, _ paneId: String?) -> Void)?
     /// The `+ New` action.
     var onNewSession: (() -> Void)?
     /// Click a session that has no lane → attach it.
@@ -409,7 +412,7 @@ final class SidebarViewController: NSViewController {
         }
         guard let entry = entry(at: row) else { return }
         if let laneId = entry.laneId {
-            onSelect?(laneId)
+            onSelect?(laneId, entry.paneId)
         } else if let sessionId = entry.sessionId {
             // The row you most need is the one not on the strip yet, so a click
             // on it does the obvious thing rather than selecting nothing.
@@ -537,8 +540,8 @@ final class SidebarViewController: NSViewController {
     }
 
     @objc private func revealClicked() {
-        guard let lane = clickedLane() else { return }
-        onSelect?(lane.id)
+        guard let entry = entry(at: table.clickedRow), let laneId = entry.laneId else { return }
+        onSelect?(laneId, entry.paneId)
     }
 
     @objc private func copySessionId() {

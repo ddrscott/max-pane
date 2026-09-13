@@ -105,7 +105,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
         statusBar.onToggleSidebar = { [weak self] in self?.perform(.toggleSidebar) }
         sidebar.registry = sessions
-        sidebar.onSelect = { [weak self] laneId in self?.strip.reveal(laneId: laneId, flash: true) }
+        sidebar.onSelect = { [weak self] laneId, paneId in
+            self?.strip.select(laneId: laneId, paneId: paneId)
+        }
         sidebar.onNewSession = { [weak self] in self?.perform(.openAnything) }
         sidebar.onAttach = { [weak self] sessionId in
             try? self?.store.attachSessionAtEnd(relaySessionId: sessionId)

@@ -184,6 +184,25 @@ picker with those scopes already chosen. **⌘⌫** forgets the selected row.
 ⌘P stays separate on purpose: it finds what is *already on the strip* and
 scrolls to it, where every ⌘O row spends something to create a pane.
 
+### The session browser, and which pane has the keyboard
+
+Clicking a session in the left-hand browser scrolls to its lane **and gives it
+the keyboard** — the same two things ⌘P does, and in the same order. It used to
+only scroll, and flash the lane's border in the focus colour on the way, so the
+click looked like it had focused the lane and then silently given up; the first
+keystroke went to whatever lane you had left behind. A row for a session that is
+not on the strip still attaches it instead.
+
+A row names a *session*, and a lane holds a stack of them, so the click focuses
+the pane whose session you clicked rather than whichever pane is on top.
+
+Which is also why a split lane now marks its focused pane: a short Signal Orange
+tick at the top-left of that pane, inside the lane's own focus border. One pane
+and there is no mark — the border has already said it. Three, and "which of
+these gets the next keystroke" is a question with a real answer and, until now,
+nothing on screen to give it; a terminal at least blinks a cursor, and a page
+looks identical either way.
+
 ### Docking a lane to an edge
 
 **⌃⌘[** and **⌃⌘]** hold a lane at the left or right edge of the window instead

@@ -109,6 +109,17 @@ enum PaneSplit {
         return exact(heights, summingTo: available)
     }
 
+    /// How far below the top of a lane's pane area the pane at `index` begins:
+    /// every pane above it, plus the seam between each of them.
+    ///
+    /// Pulled out of the divider loop because it now has a second caller — the
+    /// focus mark — and two places summing the same heights with the same seam
+    /// count is how one of them ends up a seam adrift from the other.
+    static func top(ofPaneAt index: Int, heights: [CGFloat]) -> CGFloat {
+        let above = heights.prefix(max(0, min(index, heights.count)))
+        return above.reduce(0, +) + CGFloat(above.count) * seam
+    }
+
     /// The heights to lay a stack out at while the pane at `arriving` is still
     /// opening — its slot at `progress` of the height it will end up with, and
     /// everybody else sharing what is left in the proportions they already
@@ -377,4 +388,54 @@ final class PaneDividerView: NSView {
         NSRect(x: 0, y: seam.minY, width: bounds.width, height: rule).fill()
         NSRect(x: 0, y: seam.maxY - rule, width: bounds.width, height: rule).fill()
     }
+}
+
+/// Which pane in a split lane has the keyboard.
+///
+/// Focus is a 2pt Signal Orange border around the whole *lane*, and in a lane
+/// holding one pane that is the complete answer. Since ⇧⌘D started rendering its
+/// split it is not: three terminals inside one outlined column, and nothing on
+/// screen saying which of them the next keystroke reaches. On a strip of agent
+/// CLIs that is not an aesthetic complaint — a stray `y` answers a prompt nobody
+/// read. A terminal at least blinks a cursor; a web pane looks identical either
+/// way, which is the form the owner reported it in.
+///
+/// So: a tick of the lane's own accent at the top of the focused pane's slot,
+/// against the inner left edge. It spends no new meaning — the accent's two
+/// reserved ones are focus and BLOCKED, and this *is* focus — and it is square,
+/// like everything else in this vocabulary.
+///
+/// Two things it deliberately is not. Not a second full-perimeter outline:
+/// nested accent boxes a point or two apart read as a rendering fault rather
+/// than as two facts. And not a lit seam, though the seam already knows how to
+/// light — a seam lights under the pointer and for a pane's entrance, both of
+/// which outlive nothing, so borrowing it for a state the lane is *in* would
+/// make hovering a seam look like focus moving.
+@MainActor
+final class PaneFocusMarkView: NSView {
+    /// 2pt wide, like the focused border it belongs to. 14pt is about one row of
+    /// JetBrains Mono at 13pt: enough to read as a tick against the edge, short
+    /// enough not to read as a rail down it.
+    static let size = NSSize(width: 2, height: 14)
+
+    /// Clear of the border rather than flush against it. At the edge the two
+    /// accents merge into one thickened corner, which says "this lane" twice
+    /// instead of "this lane, this pane".
+    static let inset: CGFloat = 4
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = Theme.accent.cgColor
+        // Square. Explicitly, for the same reason the lane says so.
+        layer?.cornerRadius = 0
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not a nib") }
+
+    /// Transparent to the mouse. It overlaps the grab area of the seam above it
+    /// by a point or two, and a decoration that eats part of a drag handle is a
+    /// seam that is mysteriously harder to grab on one side.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

@@ -101,6 +101,27 @@ struct PaneSplitTests {
         #expect(abs(heights.reduce(0, +) - 120) < 0.0001)
     }
 
+    // MARK: - where a pane starts
+
+    @Test("a pane starts below every pane above it and every seam between them")
+    func paneTops() {
+        // The focus mark and the seams are positioned from this, and a mark that
+        // is one seam out from the pane it marks is a mark on the wrong pane.
+        let heights: [CGFloat] = [300, 200, 100]
+        #expect(PaneSplit.top(ofPaneAt: 0, heights: heights) == 0)
+        #expect(PaneSplit.top(ofPaneAt: 1, heights: heights) == 300 + PaneSplit.seam)
+        #expect(PaneSplit.top(ofPaneAt: 2, heights: heights) == 500 + 2 * PaneSplit.seam)
+    }
+
+    @Test("an index past the end of the stack asks for nothing off the end of it")
+    func paneTopIsClamped() {
+        // Heights and pane ids are gathered in separate passes; one arriving
+        // shorter than the other must not be an out-of-bounds crash in `layout`.
+        #expect(PaneSplit.top(ofPaneAt: 9, heights: [300, 200]) == 500 + 2 * PaneSplit.seam)
+        #expect(PaneSplit.top(ofPaneAt: -1, heights: [300, 200]) == 0)
+        #expect(PaneSplit.top(ofPaneAt: 0, heights: []) == 0)
+    }
+
     // MARK: - dragging a seam
 
     @Test("dragging down grows the pane above by what the pointer travelled")
