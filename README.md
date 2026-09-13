@@ -326,6 +326,25 @@ maxpane open google.com   # a web lane
 maxpane ls                # what is on the strip
 ```
 
+`run` takes a command and its arguments as **separate words**, the way `relay`
+itself is invoked — not a shell line. There is no shell between you and the
+program, so `maxpane run "yes | head"` is a request for a program named
+`yes | head`, and it is refused rather than started:
+
+```sh
+maxpane run "yes | head"        # refused: not a program
+maxpane run zsh -c 'yes | head' # a pipeline — ask for a shell and give it one
+maxpane run rg 'alpha|beta'     # fine: the pipe is an argument, not syntax
+```
+
+It has to be refused up front, because afterwards nobody can tell. `relay-pty-host`
+is listening about 20 ms in, which is where readiness used to be declared — but the
+shell inside it does not report "command not found" until it has finished sourcing
+your login files, measured here at 355 ms to 1.1 s against 270–370 ms of zsh
+startup. So the id came back, a lane was written, and the lane was gone a beat
+later with the CLI having already said it worked. Waiting instead would mean
+outlasting whatever `.zshrc` happens to cost, on every good `maxpane run htop`.
+
 `maxpane ls` prints one tab-separated line per lane, so it pipes:
 
 ```

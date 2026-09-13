@@ -12,6 +12,7 @@ import Foundation
 public struct RelaySessionSpawner {
     enum SpawnError: LocalizedError {
         case binaryNotFound
+        case notAProgram(String)
         case exitedBeforeReady(String)
         case timedOut(String)
 
@@ -19,6 +20,12 @@ public struct RelaySessionSpawner {
             switch self {
             case .binaryNotFound:
                 return "Could not find relay-pty-host. Set relayPtyHostPath in ~/.config/maxpane/config.json."
+            case .notAProgram(let command):
+                return """
+                    \(command.trimmingCharacters(in: .whitespacesAndNewlines)): not a program. \
+                    A command and its arguments are separate words here, not a shell line — \
+                    for a pipeline, ask for a shell: maxpane run zsh -c '<your command>'
+                    """
             case .exitedBeforeReady(let id):
                 return "Session \(id) exited before its socket was ready."
             case .timedOut(let id):
@@ -42,6 +49,11 @@ public struct RelaySessionSpawner {
     @discardableResult
     func spawn(cwd: String, command: String? = nil, args: [String] = [],
                cols: Int = 80, rows: Int = 40) throws -> String {
+        // Before anything is started, because after it is started nobody can
+        // tell. See `isShellLine`.
+        if let command, Self.isShellLine(command) {
+            throw SpawnError.notAProgram(command)
+        }
         guard let binary = Self.locatePtyHost(override: config.relayPtyHostPath) else {
             throw SpawnError.binaryNotFound
         }
@@ -123,6 +135,39 @@ public struct RelaySessionSpawner {
         // command ends.
         inner += "; exit $?"
         return head + [userShell(), "-li", "-c", inner]
+    }
+
+    /// Whether `command` is a shell line someone expected to be interpreted,
+    /// rather than the name of a program.
+    ///
+    /// `maxpane run "yes | head"` arrives as a single argv word, so the wrapper
+    /// asks zsh to run a program called `yes | head`, which exits 127. Nothing
+    /// downstream notices: pty-host is listening ~20 ms in and `waitForSocket`
+    /// returns there, but the shell does not report "command not found" until it
+    /// has finished sourcing its login files — measured at 355 ms to 1.1 s here,
+    /// against 270-370 ms of zsh startup. So the session is reported ready, an
+    /// id goes back to the CLI, a lane is written, and the whole thing is gone a
+    /// beat later.
+    ///
+    /// A settle after the socket comes up was the obvious fix and is the wrong
+    /// one: it would have to outlast the user's `.zshrc` — and the *positive*
+    /// signal is worse still, `foregroundProcess` not landing for a full second.
+    /// Any fixed window makes this correct or silent depending on how fat
+    /// someone's dotfiles are, and costs every good `maxpane run htop` the same
+    /// wait. Refusing up front is instant and certain.
+    ///
+    /// Only the command word is judged, and only when it could not be a program
+    /// name: arguments are escaped and passed through correctly, so `rg 'a|b'`
+    /// is argv working as intended and must keep working. An executable that
+    /// really does live at a path with a space in it is let through for the same
+    /// reason — it is a program, whatever its name looks like. Shell functions
+    /// and builtins contain none of these characters, so they are never reached
+    /// by this at all; aliases already do not survive `shellEscape`.
+    static func isShellLine(_ command: String) -> Bool {
+        let syntax = CharacterSet(charactersIn: "|&;<>()$`\n\t")
+            .union(.whitespaces)
+        guard command.rangeOfCharacter(from: syntax) != nil else { return false }
+        return !FileManager.default.isExecutableFile(atPath: command)
     }
 
     static func isShellCommand(_ command: String) -> Bool {

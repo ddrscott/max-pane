@@ -304,7 +304,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             }
             return .handled
         } catch {
-            return .refused("\(error)")
+            return .refused(Self.describe(error))
         }
     }
 
@@ -338,7 +338,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             }
             return OpenServer.Reply(ok: true, session: session)
         } catch {
-            return .refused("\(error)")
+            return .refused(Self.describe(error))
         }
     }
 
@@ -931,10 +931,22 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private func showError(_ error: Error) {
         let alert = NSAlert()
         alert.messageText = "That didn't work"
-        alert.informativeText = "\(error)"
+        alert.informativeText = Self.describe(error)
         alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+
+    /// What to show a human, in an alert or down the CLI's stderr.
+    ///
+    /// Not `"\(error)"`: interpolating an enum reflects it, so every
+    /// `errorDescription` written for these — the whole reason they conform to
+    /// `LocalizedError` — was being thrown away and `maxpane run` was answering
+    /// `binaryNotFound` where a sentence was waiting. Not `localizedDescription`
+    /// either, which turns an error that has no message into "The operation
+    /// couldn't be completed", burying the case name that at least named it.
+    static func describe(_ error: Error) -> String {
+        (error as? LocalizedError)?.errorDescription ?? "\(error)"
     }
 }
 

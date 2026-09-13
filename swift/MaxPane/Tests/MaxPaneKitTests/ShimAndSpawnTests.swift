@@ -145,6 +145,72 @@ struct RelaySpawnTests {
         #expect(!RelaySessionSpawner.isShellCommand("claude"))
     }
 
+    @Test("a quoted shell line is refused rather than run as a program name", arguments: [
+        "yes | head",
+        "npm run build",
+        "make && make test",
+        "sleep 1; echo done",
+        "echo $HOME",
+        "cat < in > out",
+    ])
+    func refusesAShellLine(_ command: String) {
+        // Each of these arrives from `maxpane run "…"` as one argv word, and the
+        // wrapper would ask zsh for a program of that name — exit 127, roughly a
+        // second after the CLI has already been told the session is ready.
+        #expect(RelaySessionSpawner.isShellLine(command), "let through: \(command)")
+    }
+
+    @Test("a program name is not mistaken for a shell line", arguments: [
+        "htop", "claude", "/bin/zsh", "/usr/local/bin/relay-pty-host",
+        // Shell functions and builtins reach the wrapper as bare words and still
+        // run inside it, so nothing here may refuse them.
+        "myfunc", "cd", "echo",
+    ])
+    func allowsProgramNames(_ command: String) {
+        #expect(!RelaySessionSpawner.isShellLine(command), "refused: \(command)")
+    }
+
+    @Test("an executable that really does have a space in its path is let through")
+    func spaceInARealProgramPath() throws {
+        // The check is "shell syntax AND no such program", not "shell syntax".
+        // /Applications holds plenty of these and refusing them would be a
+        // worse bug than the one this fixes.
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("max pane spawn test \(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let tool = dir.appendingPathComponent("my tool")
+        try "#!/bin/sh\nexit 0\n".write(to: tool, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tool.path)
+
+        #expect(!RelaySessionSpawner.isShellLine(tool.path))
+    }
+
+    @Test("the refusal says what to type instead")
+    func refusalIsActionable() {
+        let message = RelaySessionSpawner.SpawnError.notAProgram("yes | head").errorDescription ?? ""
+        #expect(message.contains("yes | head"))
+        // The escape hatch is real: `run zsh -c '…'` takes the isShellCommand
+        // branch, and a pipeline through it exits 0 with output.
+        #expect(message.contains("zsh -c"))
+    }
+
+    @Test("spawn refuses a shell line before it starts anything at all")
+    func spawnRefusesBeforeStarting() {
+        // The guard sits ahead of `locatePtyHost`, so this throws whether or not
+        // there is a relay-pty-host on the machine — and, more to the point, no
+        // session id exists to hand back and no lane is written for one.
+        let before = (try? FileManager.default.contentsOfDirectory(
+            atPath: RelaySessionDirectory.sessionsDir.path))?.count ?? 0
+        #expect(throws: RelaySessionSpawner.SpawnError.self) {
+            try RelaySessionSpawner(config: Config())
+                .spawn(cwd: "/tmp", command: "yes | head")
+        }
+        let after = (try? FileManager.default.contentsOfDirectory(
+            atPath: RelaySessionDirectory.sessionsDir.path))?.count ?? 0
+        #expect(after == before, "a refused run left a session behind")
+    }
+
     @Test("session ids are 8 lowercase hex characters")
     func sessionIdShape() {
         for _ in 0..<50 {
