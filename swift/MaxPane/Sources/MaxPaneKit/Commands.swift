@@ -44,6 +44,7 @@ public enum Command: String, CaseIterable, Sendable {
     case exportStrip
     case importStrip
     case importBrowserHistory
+    case showHistory
     case toggleSpan
     case showHelp
 
@@ -87,6 +88,7 @@ public enum Command: String, CaseIterable, Sendable {
         case .exportStrip: return "Export Strip…"
         case .importStrip: return "Import Strip…"
         case .importBrowserHistory: return "Import Browser History…"
+        case .showHistory: return "History"
         case .toggleSpan: return "Span Lane (2× Width)"
         case .showHelp: return "Keyboard Shortcuts"
         }
@@ -198,6 +200,12 @@ public enum Command: String, CaseIterable, Sendable {
         // importing two years of browsing are unrelated acts that happen to
         // share an English word.
         case .importBrowserHistory: return ("y", [.command, .option])
+        // ⌘Y opens the door, ⇧⌘Y opens the record. Same letter, because they
+        // are the same corpus asked two different questions — "take me back to
+        // that page" and "what was I doing on Tuesday" — and a reader who has
+        // one of them in their fingers should find the other by holding one
+        // more key rather than by reading the help sheet.
+        case .showHistory:     return ("y", [.command, .shift])
         case .toggleSpan:      return ("\\", [.command])
         // The one everybody reaches for when they do not know the others.
         case .showHelp:        return ("/", [.command])
@@ -280,6 +288,10 @@ public enum Command: String, CaseIterable, Sendable {
         case .claimSession: return .file
         case .showMemory, .showHelp: return .view
         case .reload, .hardReload, .editAddress: return .navigate
+        // Under Navigate with ⌘Y's picker, not under View with the dashboards:
+        // what it is for is going back to a page, and the two keys that do that
+        // should be found in the same place.
+        case .showHistory: return .navigate
         case .zoomIn, .zoomOut, .zoomReset: return .view
         case .pairWithNext: return .navigate
         case .exportStrip, .importStrip, .importBrowserHistory: return .file

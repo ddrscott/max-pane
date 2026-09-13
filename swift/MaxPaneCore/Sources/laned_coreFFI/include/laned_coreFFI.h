@@ -274,6 +274,11 @@ RustBuffer uniffi_laned_core_fn_method_core_add_pane(uint64_t ptr, RustBuffer la
 void uniffi_laned_core_fn_method_core_clear_history(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_CLEAR_HISTORY_SINCE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_CLEAR_HISTORY_SINCE
+uint32_t uniffi_laned_core_fn_method_core_clear_history_since(uint64_t ptr, int64_t cutoff_ms, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_CLOSE_LANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_CLOSE_LANE
 RustBuffer uniffi_laned_core_fn_method_core_close_lane(uint64_t ptr, RustBuffer lane_id, RustCallStatus *_Nonnull out_status
@@ -337,6 +342,16 @@ RustBuffer uniffi_laned_core_fn_method_core_history(uint64_t ptr, RustBuffer que
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_HISTORY_COUNT
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_HISTORY_COUNT
 uint32_t uniffi_laned_core_fn_method_core_history_count(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_HISTORY_DAY_COUNT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_HISTORY_DAY_COUNT
+uint32_t uniffi_laned_core_fn_method_core_history_day_count(uint64_t ptr, int64_t start_ms, int64_t end_ms, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_HISTORY_PAGE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_HISTORY_PAGE
+RustBuffer uniffi_laned_core_fn_method_core_history_page(uint64_t ptr, RustBuffer query, uint32_t offset, uint32_t limit, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_HISTORY_SEARCHABLE_COUNT
@@ -836,6 +851,12 @@ uint16_t uniffi_laned_core_checksum_method_core_clear_history(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_CLEAR_HISTORY_SINCE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_CLEAR_HISTORY_SINCE
+uint16_t uniffi_laned_core_checksum_method_core_clear_history_since(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_CLOSE_LANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_CLOSE_LANE
 uint16_t uniffi_laned_core_checksum_method_core_close_lane(void
@@ -911,6 +932,18 @@ uint16_t uniffi_laned_core_checksum_method_core_history(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_HISTORY_COUNT
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_HISTORY_COUNT
 uint16_t uniffi_laned_core_checksum_method_core_history_count(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_HISTORY_DAY_COUNT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_HISTORY_DAY_COUNT
+uint16_t uniffi_laned_core_checksum_method_core_history_day_count(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_HISTORY_PAGE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_HISTORY_PAGE
+uint16_t uniffi_laned_core_checksum_method_core_history_page(void
     
 );
 #endif

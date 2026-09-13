@@ -771,7 +771,52 @@ impl Core {
         if needle.is_empty() {
             return inner.ledger.history_newest(limit);
         }
-        inner.ledger.history_search(&needle, limit)
+        inner.ledger.history_search(&needle, 0, limit)
+    }
+
+    /// The same corpus, for a window with room in it: paged, and ordered by the
+    /// calendar rather than by `seq` when nothing is typed.
+    ///
+    /// # Why the history view does not simply call `history` with an offset
+    ///
+    /// Two differences, and both of them are the window's, not the palette's.
+    ///
+    /// *Paging.* The palette shows what fits over a text field and is finished;
+    /// it has never asked for row 61 and an `offset` argument it always passes
+    /// `0` to is a parameter that exists in order to be wrong one day.
+    ///
+    /// *Order.* An empty query here is answered by
+    /// [`crate::ledger::Ledger::history_by_date`], which orders by
+    /// `last_visit_at` so that the window's day headers are true — see that
+    /// method for why `seq` is still right for the palette. A query is ranked by
+    /// the same [`crate::history::Ranking`] the palette uses and comes back in
+    /// score order, so ⌘Y and this window never disagree about which of two
+    /// pages matches better. That is also why the window shows no day headers
+    /// while something is typed: relevance order scatters the days, and a header
+    /// over rows that are not all from that day is the kind of label this round
+    /// exists to stop printing.
+    pub fn history_page(
+        &self,
+        query: String,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<HistoryEntry>> {
+        let inner = self.inner.lock();
+        let needle = history::needle(&query);
+        if needle.is_empty() {
+            return inner.ledger.history_by_date(offset, limit);
+        }
+        inner.ledger.history_search(&needle, offset, limit)
+    }
+
+    /// How many pages were last visited in `[start_ms, end_ms)` — the number on
+    /// a day header, and the number the clear dialog quotes before it acts.
+    ///
+    /// The caller owns the calendar: it passes the boundaries its own timezone
+    /// produced rather than a day index this crate would have to interpret.
+    pub fn history_day_count(&self, start_ms: i64, end_ms: i64) -> Result<u32> {
+        let inner = self.inner.lock();
+        inner.ledger.history_count_between(start_ms, end_ms)
     }
 
     /// How many pages are on record, for the palette's footer.
@@ -806,6 +851,20 @@ impl Core {
     pub fn clear_history(&self) -> Result<()> {
         let inner = self.inner.lock();
         inner.ledger.clear_history()
+    }
+
+    /// Forget every page last visited at or after `cutoff_ms`, and report how
+    /// many went. `0` is everything.
+    ///
+    /// The cutoff is an instant rather than a named range ("last hour") because
+    /// naming the ranges is the window's job and this should not have an opinion
+    /// about which of them exist. What it does have an opinion about is the
+    /// unit: pages, not visits — see
+    /// [`crate::ledger::Ledger::clear_history_since`] for why a page first seen
+    /// a year ago can be inside "the last hour".
+    pub fn clear_history_since(&self, cutoff_ms: i64) -> Result<u32> {
+        let inner = self.inner.lock();
+        inner.ledger.clear_history_since(cutoff_ms)
     }
 
     /// Every browser on this machine we could import history from — found by

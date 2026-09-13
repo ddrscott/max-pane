@@ -657,10 +657,40 @@ final class OmniPicker: PaletteController {
         guard row >= 0, row < rows.count, let candidate = rows[row].candidate else { return }
         switch candidate.action {
         case .open(let url):
-            // Both stores, because a page launched from a terminal is in both
-            // and forgetting one of them leaves the row on screen.
-            store.forgetVisit(url)
-            store.forgetRecent(.url, url)
+            // It asks first, and it prints the whole address in the asking.
+            //
+            // This is where round 2's critic measured the failure: two
+            // CloudWatch rows truncated to the same `…log-group/aws$252Flam…`,
+            // ⌘⌫, and one of them was gone with no confirmation, no undo, and no
+            // way to tell which. A row 26 points tall cannot show the tail that
+            // is the identity — so the dialog does, using the same wording the
+            // history window uses for the same act.
+            //
+            // Deferred off the key monitor: see `HistoryWindow.forgetSelected`.
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let prompt = HistoryBrowseModel.forgetPrompt(
+                    url: url,
+                    title: candidate.headline,
+                    visits: UInt32(max(0, candidate.count)),
+                    lastVisit: candidate.chosenAt > 0
+                        ? Date(timeIntervalSince1970: Double(candidate.chosenAt) / 1000) : nil)
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = prompt.message
+                alert.informativeText = prompt.detail
+                // Cancel first, so Return cancels. A ⌘⌫ typed by reflex should
+                // not be confirmable by a ↩ typed by reflex a beat later.
+                alert.addButton(withTitle: "Cancel")
+                alert.addButton(withTitle: "Forget")
+                guard alert.runModal() == .alertSecondButtonReturn else { return }
+                // Both stores, because a page launched from a terminal is in
+                // both and forgetting one of them leaves the row on screen.
+                self.store.forgetVisit(url)
+                self.store.forgetRecent(.url, url)
+                self.afterForgetting()
+            }
+            return
         case .run(let line, _):
             store.forgetRecent(.command, line)
         case .attach:
@@ -668,6 +698,10 @@ final class OmniPicker: PaletteController {
             // purpose: nothing in a launcher should be able to kill work.
             return
         }
+        afterForgetting()
+    }
+
+    private func afterForgetting() {
         recents = store.recents(limit: 60)
         pageCount = store.historyCount
         searchable = store.searchableHistoryCount

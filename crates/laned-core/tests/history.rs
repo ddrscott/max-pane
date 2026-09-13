@@ -361,7 +361,7 @@ fn nothing_is_evicted_by_age_or_by_count() {
         ledger.record_visit(&format!("https://example.com/{i}"), None, now).unwrap();
     }
     assert_eq!(ledger.history_count().unwrap(), 6_001);
-    let found = ledger.history_search("ancient.example", 50).unwrap();
+    let found = ledger.history_search("ancient.example", 0, 50).unwrap();
     assert_eq!(found.len(), 1, "a five-year-old page under 6 000 newer ones was evicted");
 }
 
@@ -757,4 +757,131 @@ fn a_page_visited_while_the_palette_is_open_is_in_the_next_query() {
 
     core.clear_history().unwrap();
     assert!(core.history("first".into(), 10).unwrap().is_empty(), "a cleared page lingered");
+}
+
+// ---- round 3: a view with room in it ----------------------------------------
+
+#[test]
+fn paging_continues_the_list_rather_than_restarting_it() {
+    // Round 2 left the reader able to browse exactly 60 rows: ↓ 75 times and
+    // the list stopped while the footer counted thousands. Paging is only a fix
+    // if page two is the *rest* of page one — a second query that re-ranks or
+    // re-orders would show row 60 twice and row 61 never.
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = Ledger::open(Some(Path::new(&db(&dir)))).unwrap();
+    let core = Core::open(db(&dir)).unwrap();
+    drop(ledger);
+    let ledger = Ledger::open(Some(Path::new(&db(&dir)))).unwrap();
+    for i in 0..150 {
+        ledger.record_visit(&format!("https://example.com/{i:03}"), None, 1_700_000_000_000 + i)
+            .unwrap();
+    }
+    drop(ledger);
+
+    let whole = urls(&core.history_page(String::new(), 0, 150).unwrap());
+    assert_eq!(whole.len(), 150, "the cap is gone; the window should see all of it");
+    let first = urls(&core.history_page(String::new(), 0, 60).unwrap());
+    let second = urls(&core.history_page(String::new(), 60, 60).unwrap());
+    let third = urls(&core.history_page(String::new(), 120, 60).unwrap());
+    assert_eq!(third.len(), 30, "the last page should be short, not empty");
+    assert_eq!([first, second, third].concat(), whole, "paging showed a different list");
+}
+
+#[test]
+fn a_search_pages_through_one_ranking() {
+    // The same rule for a query: page two is the next-best answers, not the
+    // best answers of a fresh query. If `offset` were applied before the
+    // ranking, row 11 would be a row the ranker had already rejected.
+    let core = Core::open_in_memory().unwrap();
+    let pane = web_pane(&core, "https://example.com");
+    for i in 0..40 {
+        core.record_visit(pane.clone(), format!("https://grafana.example/d/{i:02}"), None, Vec::new())
+            .unwrap();
+    }
+    let whole = urls(&core.history_page("grafana".into(), 0, 40).unwrap());
+    let head = urls(&core.history_page("grafana".into(), 0, 10).unwrap());
+    let tail = urls(&core.history_page("grafana".into(), 10, 10).unwrap());
+    assert_eq!(head, whole[..10], "the first page is not the top of the ranking");
+    assert_eq!(tail, whole[10..20], "the second page re-ranked instead of continuing");
+}
+
+#[test]
+fn the_browse_list_is_ordered_by_when_it_happened() {
+    // A day header is only true if every row under it is from that day, which
+    // holds only when the list is ordered by the field the day is read from.
+    // The clock moving backwards is the one case where `seq` and the calendar
+    // disagree — and it is the case `seq` exists for, so both orderings stay.
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = Ledger::open(Some(Path::new(&db(&dir)))).unwrap();
+    let now = 1_700_000_000_000i64;
+    let day = 24 * 60 * 60 * 1_000;
+    ledger.record_visit("https://example.com/today", None, now).unwrap();
+    // Recorded after it, but it happened a day earlier — an NTP correction, or
+    // a page imported from a profile that was open at the time.
+    ledger.record_visit("https://example.com/yesterday", None, now - day).unwrap();
+    ledger.record_visit("https://example.com/also-today", None, now + 1).unwrap();
+
+    assert_eq!(
+        ledger.history_by_date(0, 10).unwrap().iter().map(|e| e.url.clone()).collect::<Vec<_>>(),
+        vec![
+            "https://example.com/also-today".to_string(),
+            "https://example.com/today".to_string(),
+            "https://example.com/yesterday".to_string(),
+        ],
+        "yesterday was listed between two of today's pages"
+    );
+    // The palette is untouched: it still answers in the order things were
+    // recorded, which is what a tied clock needs.
+    assert_eq!(
+        ledger.history_newest(10).unwrap()[0].url,
+        "https://example.com/also-today"
+    );
+}
+
+#[test]
+fn a_day_is_counted_between_the_boundaries_the_caller_passes() {
+    // The count on a day header. The boundaries come from the reader's
+    // calendar, so this crate never has to know what a day is.
+    let core = Core::open_in_memory().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = Ledger::open(Some(Path::new(&db(&dir)))).unwrap();
+    let start = 1_700_000_000_000i64;
+    let day = 24 * 60 * 60 * 1_000;
+    for i in 0..5 {
+        ledger.record_visit(&format!("https://example.com/a{i}"), None, start + i).unwrap();
+    }
+    for i in 0..3 {
+        ledger.record_visit(&format!("https://example.com/b{i}"), None, start + day + i).unwrap();
+    }
+    assert_eq!(ledger.history_count_between(start, start + day).unwrap(), 5);
+    assert_eq!(ledger.history_count_between(start + day, start + 2 * day).unwrap(), 3);
+    // Half-open, so two adjacent days never count the same page twice.
+    assert_eq!(ledger.history_count_between(start, start + 2 * day).unwrap(), 8);
+    assert_eq!(core.history_day_count(start, start + day).unwrap(), 0);
+}
+
+#[test]
+fn clearing_a_range_takes_the_search_index_with_it() {
+    // `forget_visit` learned this the hard way: a row deleted without its index
+    // entry leaves a search that finds a page which is no longer there. A range
+    // delete has the same edge and more rows to get it wrong on.
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = Ledger::open(Some(Path::new(&db(&dir)))).unwrap();
+    let now = 1_700_000_000_000i64;
+    let hour = 60 * 60 * 1_000;
+    ledger.record_visit("https://keepme.example/old", Some("Old"), now - 5 * hour).unwrap();
+    ledger.record_visit("https://forgetme.example/recent", Some("Recent"), now - 10).unwrap();
+
+    assert_eq!(ledger.clear_history_since(now - hour).unwrap(), 1);
+    assert_eq!(ledger.history_count().unwrap(), 1, "the wrong side of the cutoff went");
+    assert!(
+        ledger.history_search("forgetme", 0, 10).unwrap().is_empty(),
+        "a cleared page was still findable, which is worse than not clearing it"
+    );
+    assert_eq!(ledger.history_search("keepme", 0, 10).unwrap().len(), 1, "the index lost a survivor");
+
+    // A cutoff of 0 is everything, and it is still one statement rather than a
+    // different code path.
+    assert_eq!(ledger.clear_history_since(0).unwrap(), 1);
+    assert_eq!(ledger.history_count().unwrap(), 0);
 }

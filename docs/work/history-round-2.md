@@ -7,10 +7,8 @@ until the ⌘O work (piece 9 of the browser gauntlet) has merged — it owns
 
 ## What landed, and what this file is now for
 
-Items **1**, **1a**, **2** and **3** are done, and item **4** has its first
-half. What is left below — 4's calendar views, and 5 to 8 — is the round-3 list,
-kept here rather than copied into a new file so the evidence stays with the
-work.
+Rounds 2 and 3 are both done. What is left is item **8** — four small things
+that are still real and are none of them about room.
 
 | | | |
 |---|---|---|
@@ -18,15 +16,55 @@ work.
 | 1a | the footer must describe the search's reach | done — `history_searchable_count` is `history_count`, because the reach is everything |
 | 2 | substring beats subsequence | already done by piece 9 of the browser gauntlet; the tiers were there before this round started |
 | 3 | client-side redirects | done — `RedirectTrail` on the Swift side, `demote_to_alias` in the core |
-| 4 | time is only ever relative | half — rows carry a date and a clock time (`HistoryClock`). No day grouping, no per-day counts, no Views column, no List/Day/Week/Month |
-| 5 | you can browse exactly 60 rows | **left** |
-| 6 | truncation eats the identity, delete is unconfirmed | **left** |
-| 7 | there is no way to clear history | **left** — `Core::clear_history` still has no key and no menu item |
+| 4 | time is only ever relative | done — rows carry a date and a clock time (`HistoryClock`), and the window groups by day with a per-day count. No Views column and no List/Week/Month: see below |
+| 5 | you can browse exactly 60 rows | done — pages of 120, asked for as you reach them; no total anywhere that the list cannot reach |
+| 6 | truncation eats the identity, delete is unconfirmed | done — the address wraps to four lines, ⌘C copies it, and ⌘⌫ asks first with the whole address in the question, here *and* in the palette where it was measured |
+| 7 | there is no way to clear history | done — ⇧⌘Y → Clear: last hour / today / last 7 days / everything, each counted before the dialog opens |
 | 8 | the smaller, still real, list | **left** |
 
-Five to eight all want the same thing that 4's other half wants: a History
-*view* with room in it, rather than more pressure on a palette row 26 points
-tall. That is the shape round 3 should start from.
+### Round 3: the window (⇧⌘Y)
+
+Five to eight all wanted the same thing 4's other half wanted — room — so they
+were answered together, in a window rather than by more pressure on a palette
+row 26 points tall. `HistoryWindow` is the window; `HistoryBrowseModel` is the
+arithmetic and the wording, with no AppKit in it, because what had to be right
+was which day a row belongs to, how many pages a header may claim, and what the
+app says out loud before it deletes something.
+
+Three decisions worth keeping the reasoning for:
+
+**The browse list is ordered by `last_visit_at`; the palette still orders by
+`seq`.** Not two opinions about recency. A day header is only *true* if every
+row beneath it falls in that day, which holds only when the list is sorted by
+the field the day is read from. The two orderings agree for every visit this app
+records and every row an import writes, and part company exactly when the clock
+moves backwards — which is the case `seq` exists for. So both stay, and
+`Ledger::history_by_date` is the second one.
+
+**A day header's count comes from the ledger, not from the rows above it.** With
+paging, counting the loaded rows would tell a reader who has 12 of a day's 41
+pages that the day had 12 — round 1's `0 OF 5013 PAGES` in a new place, and this
+project has now paid for that mistake twice. `history_day_count(start, end)`
+takes the two instants; `Calendar` on the Swift side owns what a day *is*,
+because a day moves with the timezone and jumps an hour twice a year and the
+core has no timezone database.
+
+**A search is not grouped by day.** It is ranked by the same `history::Ranking`
+the palette uses — so ⌘Y and the window never disagree about which of two pages
+matches better — and relevance order scatters the days. Each row still carries
+its own stamp; it is simply not filed.
+
+Two things from item 4 were deliberately not built: a Views column (the count is
+on the row already, as `×n`) and List/Day/Week/Month (four ways to look at one
+list, when the complaint was that there was no way to look at it at all). If
+either turns out to be missed, it is a smaller change on top of this than it
+would have been on top of the palette.
+
+`clear_history_since` deletes by page, not by visit, and the dialog says so. One
+row is one URL however many times it was opened, so a page first found last year
+and reopened ten minutes ago is inside "the last hour". There is no honest way
+to split a row that was never two rows — which is the bill for 0004's decision
+to aggregate on write, arriving here and nowhere else.
 
 ## The measurement that decides everything here
 

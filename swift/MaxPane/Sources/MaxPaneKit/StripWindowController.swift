@@ -22,6 +22,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     /// Held only so a second ⌥⌘Y raises the wizard already on screen instead of
     /// stacking another one over it; the wizard keeps itself alive otherwise.
     private var importWizard: ImportHistoryWizard?
+    /// Held for the same reason as the wizard, and with more cause: this one is
+    /// expected to stay open beside the strip while the reader works.
+    private var historyWindow: HistoryWindow?
     private let statusBar = StatusBar()
     private var statusTimer: Timer?
     /// Our subscription to `WebAskCenter`, so the orange count appears the
@@ -581,6 +584,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             case .importBrowserHistory:
                 importBrowserHistory()
 
+            case .showHistory:
+                showHistory()
+
             case .toggleSpan:
                 // §1's invariant is that a lane is a portrait column; §13 Phase 3
                 // allows one deliberate exception at 2×, for content that
@@ -865,6 +871,25 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         let wizard = ImportHistoryWizard(store: store)
         importWizard = wizard
         wizard.present(over: window)
+    }
+
+    /// ⇧⌘Y — the record, in a window with room in it.
+    ///
+    /// A second press raises the one already open rather than stacking another,
+    /// which matters more here than for the wizard: this window is meant to be
+    /// left open, so the key that opens it is a key someone will press while it
+    /// is on screen.
+    private func showHistory() {
+        if let existing = historyWindow, existing.window?.isVisible == true {
+            existing.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        let history = HistoryWindow(store: store) { [weak self] url in
+            guard let self else { return }
+            self.launch(.open(url), near: self.store.focusedLane)
+        }
+        historyWindow = history
+        history.present(over: window)
     }
 
     private static func dateStamp() -> String {

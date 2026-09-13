@@ -51,6 +51,39 @@ enum HistoryClock {
         return "\(clock.day) \(clock.month) \(clock.year)"
     }
 
+    /// The name of a day, for a header with rows under it.
+    ///
+    /// [`stamp`] answers "when was this page" for one row in a column of rows.
+    /// This answers "which day is this pile", which is a different question and
+    /// takes a different shape: no clock time, because every row underneath
+    /// carries its own, and a word where there is one — nobody calls today
+    /// "13 Sep".
+    ///
+    /// ```text
+    /// Today
+    /// Yesterday
+    /// Tue 9 Sep      this week — the weekday is how anyone refers to it
+    /// 9 Sep          earlier this year
+    /// 9 Sep 2024     older
+    /// ```
+    static func day(_ when: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+        let p = parts(when, calendar)
+        if calendar.isDate(when, inSameDayAs: now) { return "Today" }
+        // Counted in days rather than in 24-hour blocks, for the reason `stamp`
+        // counts them that way: a page from 26 hours ago is yesterday whatever
+        // o'clock it was.
+        let days = calendar.dateComponents(
+            [.day],
+            from: calendar.startOfDay(for: when),
+            to: calendar.startOfDay(for: now)).day ?? 0
+        if days == 1 { return "Yesterday" }
+        if days >= 2, days < 7 { return "\(p.weekday) \(p.day) \(p.month)" }
+        if calendar.component(.year, from: when) == calendar.component(.year, from: now) {
+            return "\(p.day) \(p.month)"
+        }
+        return "\(p.day) \(p.month) \(p.year)"
+    }
+
     /// 24-hour and English month abbreviations, deliberately: the column is
     /// JetBrains Mono and a 12-hour clock costs two characters and an am/pm
     /// that reads as noise beside a URL. Fixed rather than localised because

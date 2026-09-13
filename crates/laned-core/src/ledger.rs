@@ -716,6 +716,7 @@ impl Ledger {
     pub fn history_search(
         &self,
         needle: &str,
+        offset: u32,
         limit: u32,
     ) -> Result<Vec<crate::model::HistoryEntry>> {
         let mut ranking = crate::history::Ranking::new(needle);
@@ -737,7 +738,15 @@ impl Ledger {
                 ranking.offer(r.get(0)?, r.get(2)?, crate::history::Haystack::new(hay));
             }
         }
-        let hits = ranking.finish(limit as usize);
+        // Ranked, then paged — never paged first. The ranking is over the whole
+        // narrowed corpus, so row 61 is the 61st best answer and not the best
+        // answer of a second batch; asking for `offset + limit` and dropping
+        // the head is what makes "show more" continue the same list instead of
+        // starting a new one. The cost of a deep page is the drop, which is
+        // `offset` comparisons against a heap that was going to be built
+        // anyway.
+        let hits = ranking.finish(offset as usize + limit as usize);
+        let hits = hits.into_iter().skip(offset as usize);
         // Only now is a row read. Fewer than `limit` point lookups on the
         // primary key, against a scan that would have read every column of
         // every match to find them.
@@ -745,7 +754,7 @@ impl Ledger {
             "SELECT url, title, first_visit_at, last_visit_at, visit_count
                FROM visit WHERE rowid = ?1",
         )?;
-        let mut out = Vec::with_capacity(hits.len());
+        let mut out = Vec::with_capacity(limit as usize);
         for hit in hits {
             let row = stmt
                 .query_row([hit.rowid], |r| {
@@ -793,6 +802,103 @@ impl Ledger {
         Ok(self
             .conn
             .query_row("SELECT COUNT(*) FROM visit", [], |r| r.get::<_, i64>(0))? as u32)
+    }
+
+    /// The browse list: every page, newest first *by when it happened*, paged.
+    ///
+    /// # Why this is not `history_newest` with an offset
+    ///
+    /// `history_newest` orders by `seq`, and 0004 gives the reason: a wall clock
+    /// has ties, and two settles inside one millisecond must not come back in
+    /// whatever order SQLite feels like.
+    ///
+    /// A day-grouped view asks a different question. Its headers are computed
+    /// from `last_visit_at`, and a header is only *true* if every row beneath it
+    /// falls inside that day — which holds only when the list is ordered by the
+    /// same field the day is read from. The two orderings agree for every visit
+    /// this app records (`seq` and the clock advance together) and for every row
+    /// an import writes (it re-derives `seq` from `last_visit_at` so another
+    /// browser's pages interleave rather than stack on top). They part company
+    /// exactly when the clock moves backwards — which is the case `seq` exists
+    /// for. So the palette keeps `seq`, the calendar keeps the calendar, and
+    /// `seq DESC` is the tie-break here so that paging a list with a hundred
+    /// rows on one millisecond does not show the same row twice.
+    ///
+    /// `visit_age` from 0004 is the index this reads backwards, which is what it
+    /// was left in place for.
+    pub fn history_by_date(&self, offset: u32, limit: u32) -> Result<Vec<crate::model::HistoryEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT url, title, first_visit_at, last_visit_at, visit_count
+               FROM visit ORDER BY last_visit_at DESC, seq DESC LIMIT ?2 OFFSET ?1",
+        )?;
+        let rows = stmt
+            .query_map([offset, limit], |r| {
+                Ok(crate::model::HistoryEntry {
+                    url: r.get(0)?,
+                    title: r.get(1)?,
+                    first_visit_at: r.get(2)?,
+                    last_visit_at: r.get(3)?,
+                    visit_count: r.get::<_, i64>(4)? as u32,
+                    matched_field: crate::model::SearchField::Url,
+                    score: 0,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// How many pages were last visited in `[start_ms, end_ms)`.
+    ///
+    /// The number a day header carries, and the number the clear dialog says out
+    /// loud before anything is deleted.
+    ///
+    /// Asked one day at a time rather than computed once as a `GROUP BY`,
+    /// because the day boundaries are the *reader's*: they move with his
+    /// timezone and jump an hour twice a year, and this crate has no timezone
+    /// database and should not grow one to answer a question `Calendar` on the
+    /// other side of the FFI already answers correctly. `visit_age` makes each
+    /// call a range scan over the rows being counted rather than over the table.
+    pub fn history_count_between(&self, start_ms: i64, end_ms: i64) -> Result<u32> {
+        Ok(self.conn.query_row(
+            "SELECT COUNT(*) FROM visit WHERE last_visit_at >= ?1 AND last_visit_at < ?2",
+            params![start_ms, end_ms],
+            |r| r.get::<_, i64>(0),
+        )? as u32)
+    }
+
+    /// Forget every page last visited at or after `cutoff_ms`, and say how many
+    /// that was. A cutoff of `0` is everything.
+    ///
+    /// # One row per URL is felt here and nowhere else
+    ///
+    /// 0004 keeps one row per URL rather than one per navigation, which is what
+    /// makes the palette one line per page instead of eleven lines for the PR
+    /// you opened eleven times. The bill for that arrives here: a page first
+    /// seen a year ago and reopened five minutes ago is *one* row whose
+    /// `last_visit_at` is inside the last hour, so "forget the last hour" takes
+    /// the year with it. Chrome, which keeps every visit, would delete only the
+    /// one. There is no honest way to split a row that was never two rows — so
+    /// the count this returns is a count of pages, the dialog above it says
+    /// pages, and neither pretends to be counting visits.
+    ///
+    /// One transaction, because the index is deleted before the rows are. In
+    /// the other order a failure leaves index entries pointing at rows that are
+    /// gone; in this order, without a transaction, it leaves rows that exist and
+    /// cannot be found by searching — the same silent hole the row cap was.
+    pub fn clear_history_since(&self, cutoff_ms: i64) -> Result<u32> {
+        // `unchecked_transaction` rather than `transaction`, which wants `&mut
+        // self`: every reader of the ledger holds it behind one lock already, so
+        // the borrow checker's version of that guarantee would mean making this
+        // the only `&mut` method on the history path.
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "DELETE FROM visit_search
+              WHERE rowid IN (SELECT rowid FROM visit WHERE last_visit_at >= ?1)",
+            [cutoff_ms],
+        )?;
+        let gone = tx.execute("DELETE FROM visit WHERE last_visit_at >= ?1", [cutoff_ms])?;
+        tx.commit()?;
+        Ok(gone as u32)
     }
 
     // ---- importing another browser's history -------------------------------

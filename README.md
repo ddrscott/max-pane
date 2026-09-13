@@ -224,7 +224,8 @@ six columns of raw JSON apart.
 ### History
 
 **Nothing is ever evicted.** No row cap, no age cap — a page you opened two
-years ago is one ⌘O away, and ⌘⌫ is the only thing that removes a row. One row
+years ago is one ⌘O away, and the only things that remove a row are ⌘⌫ on one of
+them and **Clear** in the history window. One row
 per address, and **measured** at 109 000 real pages: **180 MB**, of which the
 table is about a quarter and the trigram index below is the rest. Vivaldi spends
 642 MB on the same browsing.
@@ -264,6 +265,48 @@ year, `22 Feb 2024` before that. The old `22d ago` could not answer "what did I
 have open Tuesday afternoon", which is most of what history is for. Sessions
 keep their relative age, because a terminal's last output is a question about
 now.
+
+### The history window
+
+**⇧⌘Y.** ⌘Y is the door — three characters, ↩, the page opens. ⇧⌘Y is the
+record, in a window with room in it, because four of round 2's complaints were
+the same complaint and none of them fits in a palette row 26 points tall:
+
+**The list does not stop.** It used to end at row 60 while the footer counted
+thousands. It now pages as you reach the bottom, and the footer says which of the
+two numbers it is quoting — `240 OF 112,840 PAGES LOADED`, never a total dressed
+up as a reach.
+
+**The address is the whole address.** It wraps rather than truncating, up to four
+lines. The two CloudWatch rows that made this a bug — same title, same age, both
+cut at `…log-group/aws$252Flam…`, differing only in a trailing
+`stream-a`/`stream-b` — are now told apart by reading them. ⌘C copies the one
+under the selection; hovering shows it whole.
+
+**Days are days.** `// TODAY`, `// YESTERDAY`, `// TUE 9 SEP`, each carrying the
+number of pages that day holds **in the record** rather than the number that
+happen to be loaded. A search is not grouped: it comes back in score order, from
+the same ranking ⌘Y uses, and grouping a ranked list by day would put a header
+over rows that are not all from that day.
+
+**Deleting is something you agreed to.** ⌘⌫ asks first and prints the full
+address in the asking — in this window and in the palette, where the unconfirmed
+delete was actually measured. Cancel is the default button, so a ⌘⌫ typed by
+reflex is not confirmed by a ↩ typed by reflex.
+
+**There is a way to clear it.** Last hour, today, last 7 days, everything — each
+one counted before the dialog opens, so the sentence you agree to is about the
+pages that will actually go. It says *pages*, not visits: one row is one URL
+however many times you opened it, so a page first found last year and reopened
+ten minutes ago is inside "the last hour" and goes with it. Chrome, which keeps
+every visit separately, would delete only the one.
+
+The browse list is ordered by `last_visit_at`; the palette is still ordered by
+`seq`. That is not two opinions about recency — a day header is only true if
+every row beneath it is from that day, which holds only when the list is sorted
+by the field the day is read from. The two agree for everything this app records
+and everything an import writes, and part company exactly when the clock moves
+backwards, which is the case `seq` exists for.
 
 ### Importing history from another browser
 

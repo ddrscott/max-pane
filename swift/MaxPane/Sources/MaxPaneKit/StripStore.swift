@@ -352,9 +352,37 @@ public final class StripStore {
     /// label that lies about its own list, and that is what it used to be.
     var searchableHistoryCount: UInt32 { (try? core.historySearchableCount()) ?? 0 }
 
+    /// One page of the history window's list: paged, and — for an empty query —
+    /// ordered by the calendar rather than by the order things were recorded, so
+    /// that the day headers above the rows are true. See `Core::history_page`.
+    func historyPage(_ query: String, offset: UInt32, limit: UInt32) -> [HistoryEntry] {
+        (try? core.historyPage(query: query, offset: offset, limit: limit)) ?? []
+    }
+
+    /// How many pages were last opened in `[start, end)`. The number on a day
+    /// header, and the number the clear dialog quotes before it acts.
+    ///
+    /// The boundaries are this side's, because a day is `Calendar`'s idea and
+    /// moves with the timezone and with daylight saving; the ledger is given two
+    /// instants and counts between them.
+    func historyDayCount(from start: Date, to end: Date) -> UInt32 {
+        (try? core.historyDayCount(
+            startMs: Int64(start.timeIntervalSince1970 * 1000),
+            endMs: Int64(end.timeIntervalSince1970 * 1000))) ?? 0
+    }
+
     func forgetVisit(_ url: String) { try? core.forgetVisit(url: url) }
 
     func clearHistory() { try? core.clearHistory() }
+
+    /// Forget every page last opened at or after `cutoff`, and report how many
+    /// went — the number the window prints afterwards, so "Clear" is never a
+    /// button that appears to do nothing on an empty range.
+    @discardableResult
+    func clearHistory(since cutoff: Date) -> UInt32 {
+        (try? core.clearHistorySince(
+            cutoffMs: Int64(cutoff.timeIntervalSince1970 * 1000))) ?? 0
+    }
 
     // MARK: - importing another browser's history
 

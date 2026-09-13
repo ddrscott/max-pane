@@ -648,6 +648,19 @@ public protocol CoreProtocol: AnyObject, Sendable {
      */
     func clearHistory() throws 
     
+    /**
+     * Forget every page last visited at or after `cutoff_ms`, and report how
+     * many went. `0` is everything.
+     *
+     * The cutoff is an instant rather than a named range ("last hour") because
+     * naming the ranges is the window's job and this should not have an opinion
+     * about which of them exist. What it does have an opinion about is the
+     * unit: pages, not visits — see
+     * [`crate::ledger::Ledger::clear_history_since`] for why a page first seen
+     * a year ago can be inside "the last hour".
+     */
+    func clearHistorySince(cutoffMs: Int64) throws  -> UInt32
+    
     func closeLane(laneId: String) throws  -> StripState
     
     /**
@@ -757,6 +770,40 @@ public protocol CoreProtocol: AnyObject, Sendable {
      * How many pages are on record, for the palette's footer.
      */
     func historyCount() throws  -> UInt32
+    
+    /**
+     * How many pages were last visited in `[start_ms, end_ms)` — the number on
+     * a day header, and the number the clear dialog quotes before it acts.
+     *
+     * The caller owns the calendar: it passes the boundaries its own timezone
+     * produced rather than a day index this crate would have to interpret.
+     */
+    func historyDayCount(startMs: Int64, endMs: Int64) throws  -> UInt32
+    
+    /**
+     * The same corpus, for a window with room in it: paged, and ordered by the
+     * calendar rather than by `seq` when nothing is typed.
+     *
+     * # Why the history view does not simply call `history` with an offset
+     *
+     * Two differences, and both of them are the window's, not the palette's.
+     *
+     * *Paging.* The palette shows what fits over a text field and is finished;
+     * it has never asked for row 61 and an `offset` argument it always passes
+     * `0` to is a parameter that exists in order to be wrong one day.
+     *
+     * *Order.* An empty query here is answered by
+     * [`crate::ledger::Ledger::history_by_date`], which orders by
+     * `last_visit_at` so that the window's day headers are true — see that
+     * method for why `seq` is still right for the palette. A query is ranked by
+     * the same [`crate::history::Ranking`] the palette uses and comes back in
+     * score order, so ⌘Y and this window never disagree about which of two
+     * pages matches better. That is also why the window shows no day headers
+     * while something is typed: relevance order scatters the days, and a header
+     * over rows that are not all from that day is the kind of label this round
+     * exists to stop printing.
+     */
+    func historyPage(query: String, offset: UInt32, limit: UInt32) throws  -> [HistoryEntry]
     
     /**
      * How many pages a query can actually reach.
@@ -1234,6 +1281,27 @@ open func clearHistory()throws   {try rustCallWithError(FfiConverterTypeCoreErro
 }
 }
     
+    /**
+     * Forget every page last visited at or after `cutoff_ms`, and report how
+     * many went. `0` is everything.
+     *
+     * The cutoff is an instant rather than a named range ("last hour") because
+     * naming the ranges is the window's job and this should not have an opinion
+     * about which of them exist. What it does have an opinion about is the
+     * unit: pages, not visits — see
+     * [`crate::ledger::Ledger::clear_history_since`] for why a page first seen
+     * a year ago can be inside "the last hour".
+     */
+open func clearHistorySince(cutoffMs: Int64)throws  -> UInt32  {
+    return try  FfiConverterUInt32.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_clear_history_since(
+            self.uniffiCloneHandle(),
+        FfiConverterInt64.lower(cutoffMs),uniffiCallStatus
+    )
+})
+}
+    
 open func closeLane(laneId: String)throws  -> StripState  {
     return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
         uniffiCallStatus in
@@ -1449,6 +1517,59 @@ open func historyCount()throws  -> UInt32  {
         uniffiCallStatus in
     uniffi_laned_core_fn_method_core_history_count(
             self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * How many pages were last visited in `[start_ms, end_ms)` — the number on
+     * a day header, and the number the clear dialog quotes before it acts.
+     *
+     * The caller owns the calendar: it passes the boundaries its own timezone
+     * produced rather than a day index this crate would have to interpret.
+     */
+open func historyDayCount(startMs: Int64, endMs: Int64)throws  -> UInt32  {
+    return try  FfiConverterUInt32.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_history_day_count(
+            self.uniffiCloneHandle(),
+        FfiConverterInt64.lower(startMs),
+        FfiConverterInt64.lower(endMs),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The same corpus, for a window with room in it: paged, and ordered by the
+     * calendar rather than by `seq` when nothing is typed.
+     *
+     * # Why the history view does not simply call `history` with an offset
+     *
+     * Two differences, and both of them are the window's, not the palette's.
+     *
+     * *Paging.* The palette shows what fits over a text field and is finished;
+     * it has never asked for row 61 and an `offset` argument it always passes
+     * `0` to is a parameter that exists in order to be wrong one day.
+     *
+     * *Order.* An empty query here is answered by
+     * [`crate::ledger::Ledger::history_by_date`], which orders by
+     * `last_visit_at` so that the window's day headers are true — see that
+     * method for why `seq` is still right for the palette. A query is ranked by
+     * the same [`crate::history::Ranking`] the palette uses and comes back in
+     * score order, so ⌘Y and this window never disagree about which of two
+     * pages matches better. That is also why the window shows no day headers
+     * while something is typed: relevance order scatters the days, and a header
+     * over rows that are not all from that day is the kind of label this round
+     * exists to stop printing.
+     */
+open func historyPage(query: String, offset: UInt32, limit: UInt32)throws  -> [HistoryEntry]  {
+    return try  FfiConverterSequenceTypeHistoryEntry.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_history_page(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(query),
+        FfiConverterUInt32.lower(offset),
+        FfiConverterUInt32.lower(limit),uniffiCallStatus
     )
 })
 }
@@ -5539,6 +5660,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_clear_history() != 27909) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_clear_history_since() != 34011) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_close_lane() != 42855) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -5576,6 +5700,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_history_count() != 17535) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_history_day_count() != 16267) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_history_page() != 47110) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_history_searchable_count() != 31221) {
