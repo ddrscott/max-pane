@@ -19,7 +19,13 @@ public struct RelaySessionSpawner {
         var errorDescription: String? {
             switch self {
             case .binaryNotFound:
-                return "Could not find relay-pty-host. Set relayPtyHostPath in ~/.config/maxpane/config.json."
+                // Name the file that is actually read. This said
+                // `~/.config/maxpane/config.json` long after the profiles work
+                // moved it, so following the advice did nothing at all.
+                return """
+                    Could not find relay-pty-host. \
+                    Set relayPtyHostPath in \(Config.path.path).
+                    """
             case .notAProgram(let command):
                 return """
                     \(command.trimmingCharacters(in: .whitespacesAndNewlines)): not a program. \
@@ -327,14 +333,98 @@ public struct RelaySessionSpawner {
             .flatMap { $0 } ?? .distantPast
     }
 
-    private static func which(_ name: String) -> String? {
+    static func which(_ name: String) -> String? {
+        let inherited = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+        if let hit = search(name, in: inherited) { return hit }
+
+        // A GUI app launched from the Dock, Finder or `open` inherits launchd's
+        // PATH — `/usr/bin:/bin:/usr/sbin:/sbin` and nothing else. nvm, cargo,
+        // Homebrew and every npm global are invisible from there, so `relay`
+        // was not found on a machine that plainly has it and ⇧⌘D answered
+        // "Could not find relay-pty-host" with the binary sitting in
+        // ~/code/relay-tty/bin. Launching from a terminal hid this for months,
+        // because a shell hands down the real PATH.
+        //
+        // So on a miss, ask the login shell what PATH is. Only on a miss: the
+        // answer costs a shell startup, and the common case already found it.
+        guard let login = loginShellPath else { return nil }
+        return search(name, in: login)
+    }
+
+    private static func search(_ name: String, in path: String) -> String? {
         let fm = FileManager.default
-        let path = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
-        for dir in path.split(separator: ":") {
+        for dir in path.split(separator: ":") where !dir.isEmpty {
             let candidate = "\(dir)/\(name)"
             if fm.isExecutableFile(atPath: candidate) { return candidate }
         }
         return nil
+    }
+
+    /// `PATH` as the user's login shell builds it, or nil if it cannot be had.
+    ///
+    /// Computed once per process, lazily, so an app that never spawns never
+    /// pays for it.
+    static let loginShellPath: String? = readLoginShellPath()
+
+    /// The marker exists because an interactive shell prints whatever the
+    /// user's rc file prints — version notices, nvm chatter, a fortune. Taking
+    /// "the output" would take that too, and taking the last line would break
+    /// on the one rc file that ends with an echo. A sentinel is the only read
+    /// that is right regardless of what else is on stdout.
+    static let pathMarker = "__MAXPANE_PATH__"
+
+    /// The shell is a parameter so this can be proved against `/bin/sh` rather
+    /// than against whatever the person running the tests has in `$SHELL`.
+    static func readLoginShellPath(
+        shell: String = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh",
+        timeout: TimeInterval = 5
+    ) -> String? {
+        guard FileManager.default.isExecutableFile(atPath: shell) else { return nil }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: shell)
+        // `-l` so the profile runs, and `-i` because PATH is very often set in
+        // .zshrc/.bashrc, which a non-interactive shell never reads. Both, or
+        // this finds a PATH that is still missing whatever the user added.
+        process.arguments = ["-lic", "printf '%s%s\\n' \"\(pathMarker)\" \"$PATH\""]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+
+        do { try process.run() } catch { return nil }
+
+        // Read on this thread and arm a watchdog: an rc file that waits for
+        // input would otherwise hang the app at the moment someone pressed
+        // ⇧⌘D, which is worse than the error this is here to prevent.
+        let watchdog = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: watchdog)
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        watchdog.cancel()
+
+        return parseMarkedPath(String(decoding: data, as: UTF8.self))
+    }
+
+    /// Pull the marked PATH out of whatever the shell printed.
+    ///
+    /// The marker is found *anywhere*, not at the start of a line. iTerm2's
+    /// shell integration writes OSC sequences to stdout and does not end them
+    /// with a newline, so a real answer looks like
+    ///
+    ///     \u{1b}]1337;ShellIntegrationVersion=5;shell=zsh__MAXPANE_PATH__/Users/…
+    ///
+    /// and a parser anchored to the line start reads that as no answer at all.
+    /// Which is what happened: the fallback was correct and returned nil.
+    static func parseMarkedPath(_ output: String) -> String? {
+        guard let mark = output.range(of: pathMarker) else { return nil }
+        // To the end of that line, then stop at any control byte — a terminal
+        // integration may close its sequence after the value as happily as
+        // before it, and no PATH entry contains an escape or a bell.
+        let value = output[mark.upperBound...]
+            .prefix { $0 != "\n" }
+            .prefix { !$0.unicodeScalars.contains { scalar in scalar.value < 0x20 } }
+        return value.isEmpty ? nil : String(value)
     }
 
     // MARK: - readiness

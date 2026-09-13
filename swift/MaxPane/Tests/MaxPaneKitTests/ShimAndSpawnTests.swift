@@ -487,3 +487,74 @@ struct ConfigTests {
         #expect(decoded.relayPtyHostPath == "/opt/relay-pty-host")
     }
 }
+
+/// Finding `relay-pty-host` when nobody handed the app a PATH.
+///
+/// A GUI app launched from the Dock gets launchd's `/usr/bin:/bin:/usr/sbin:
+/// /sbin`, so every tool installed by nvm, cargo, Homebrew or npm is invisible.
+/// The symptom was ⇧⌘D reporting "Could not find relay-pty-host" on a machine
+/// with two of them, and it hid for months because launching from a terminal
+/// inherits the real PATH.
+@Suite("the PATH a Dock launch does not get")
+struct LoginShellPathTests {
+    @Test("the marked line is read whatever else the rc file printed")
+    func parsesMarker() {
+        let noisy = """
+            nvm: version 22 in use
+            \(RelaySessionSpawner.pathMarker)/usr/local/bin:/opt/homebrew/bin
+            have a nice day
+            """
+        #expect(RelaySessionSpawner.parseMarkedPath(noisy)
+            == "/usr/local/bin:/opt/homebrew/bin")
+    }
+
+    /// The bug that made the first version of this fallback return nil on the
+    /// owner's machine. iTerm2's shell integration writes OSC sequences to
+    /// stdout with no newline after them, so the marker is never at a line
+    /// start and an anchored parser reads a correct answer as no answer.
+    @Test("a marker behind iTerm2's escape sequences is still read")
+    func parsesMarkerAfterTerminalIntegration() {
+        let iterm = "\u{1b}]1337;RemoteHost=spierce@mbp\u{7}\u{1b}]1337;"
+            + "ShellIntegrationVersion=5;shell=zsh\u{7}"
+            + "\(RelaySessionSpawner.pathMarker)/opt/homebrew/bin:/usr/bin\n"
+        #expect(RelaySessionSpawner.parseMarkedPath(iterm) == "/opt/homebrew/bin:/usr/bin")
+    }
+
+    @Test("a sequence closed after the value does not land in the PATH")
+    func stopsAtATrailingControlByte() {
+        let trailing = "\(RelaySessionSpawner.pathMarker)/usr/bin:/bin\u{1b}]1337;done\u{7}\n"
+        #expect(RelaySessionSpawner.parseMarkedPath(trailing) == "/usr/bin:/bin")
+    }
+
+    /// The reason for the marker: the last line is not the answer, and neither
+    /// is the first.
+    @Test("output with no marker is no answer, not a wrong one")
+    func refusesUnmarkedOutput() {
+        #expect(RelaySessionSpawner.parseMarkedPath("/usr/bin:/bin") == nil)
+        #expect(RelaySessionSpawner.parseMarkedPath("") == nil)
+        #expect(RelaySessionSpawner.parseMarkedPath("\(RelaySessionSpawner.pathMarker)") == nil)
+    }
+
+    @Test("a real login shell answers with a real PATH")
+    func readsFromARealShell() throws {
+        // `/bin/sh`, not `$SHELL`: this has to be the same on every machine that
+        // runs the suite, and it costs milliseconds rather than whatever the
+        // tester's rc file costs.
+        let path = try #require(RelaySessionSpawner.readLoginShellPath(shell: "/bin/sh"))
+        #expect(path.contains("/bin"), "a PATH with no /bin in it is not a PATH")
+    }
+
+    @Test("a shell that cannot be run is nil, not a crash")
+    func missingShellIsNil() {
+        #expect(RelaySessionSpawner.readLoginShellPath(shell: "/nope/not/a/shell") == nil)
+    }
+
+    /// The actual regression: the walk finds both of this repo's own binaries
+    /// once `which` can see the PATH, and finds neither when it cannot.
+    @Test("which falls back past an inherited PATH that has nothing in it")
+    func fallsBackPastAnEmptyInheritedPath() throws {
+        // `sh` exists on every machine and is never in launchd's PATH twice, so
+        // it stands in for `relay` without depending on Relay being installed.
+        #expect(RelaySessionSpawner.which("sh") != nil)
+    }
+}
