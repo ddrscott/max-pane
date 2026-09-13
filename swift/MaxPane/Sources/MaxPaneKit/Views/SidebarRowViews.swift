@@ -281,12 +281,21 @@ final class SidebarGroupView: NSTableCellView {
         triangle.textColor = Theme.dimText
         triangle.alignment = .center
 
-        // The `//` is its own label so that a deep worktree path truncates
-        // without eating the house mark that makes this a section header.
-
+        // A header separates by being *quieter* than the rows, not louder.
+        //
+        // Bold and `labelColor` put it on the same axis as the titles — same
+        // ink, near-identical weight once 10pt bold meets 12pt regular — so the
+        // eye had nothing to sort them by and the path read as another session.
+        // Titles are the content and keep full strength; the path is structure,
+        // so it recedes and lets the triangle and the hairline do the work.
+        //
+        // No `//` mark in front of it, house style notwithstanding: these rows
+        // are literal filesystem paths, and `//` is path syntax. A header
+        // reading `// ~/code/max-pane` invites the question of what the empty
+        // segment is.
         label.stringValue = group.header
-        label.font = Theme.mono(10, weight: .bold)
-        label.textColor = NSColor.labelColor
+        label.font = Theme.mono(10)
+        label.textColor = Theme.dimText
         // Head, not tail: the end of a path is the part that says which project
         // this is. `…/WORKTREES/AGENT-AD3` beats `~/CODE/MAX-PA…`.
         label.lineBreakMode = .byTruncatingHead
