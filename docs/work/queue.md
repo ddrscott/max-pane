@@ -8,7 +8,7 @@
 - [x] A docked lane's page is laid out at the wrong width and runs off screen — [detail](dock-lane-width.md) — not a dock bug: every web pane was laid out at the chrome bar's fitting width and centred
 - [x] Windowed, the traffic lights sit on top of + NEW — and on the first lane header when the sidebar is collapsed — [detail](titlebar-overlap.md) — the corner is reserved from whichever of the sidebar or the strip owns it, and given back in fullscreen
 - [x] Browser chrome round 2: a failed navigation says nothing, ⌘-click loses your place — [detail](chrome-round-2.md) — items 1–5 done: failures speak, public http loads, ⌘-click opens a sibling lane, an untitled page stops wearing the last page's title
-- [ ] Browser chrome round 3: address-bar autocomplete, an honest find match count, a context menu macOS has no hook for — [detail](chrome-round-2.md) — the three items left in round 2's "Smaller", each its own piece of work; the zoom readout is still disputed
+- [-] Browser chrome round 3: address-bar autocomplete, an honest find match count, a context menu macOS has no hook for — [detail](chrome-round-2.md) — the three items left in round 2's "Smaller", each its own piece of work; the zoom readout is still disputed
 - [ ] History round 2: search the whole corpus, substring ranking, client-side redirects, real dates — [detail](history-round-2.md)
 - [ ] Every shortcut configurable, with the current ones as defaults — [detail](configurable-hotkeys.md)
 - [ ] `maxpane run "a | pipeline"` returns a session id, logs a lane, and produces none
