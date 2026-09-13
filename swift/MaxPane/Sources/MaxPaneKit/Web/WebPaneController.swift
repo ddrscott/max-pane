@@ -1238,6 +1238,15 @@ final class WebPaneContainer: NSView {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // Before the subviews, because one of them is the `WKWebView` and
+        // "subviews get first refusal" was written for the two text fields.
+        // A focused web view claims *every* ⌘-chord here and forwards it to the
+        // page, and this walk beats the main menu — so ⌘O reached Gmail instead
+        // of opening the picker, and a page that calls `preventDefault` keeps it
+        // for good. Returning false sends it on to the menu, which is where an
+        // app key belongs; the fields keep ⌘A and ⌘C because neither is in
+        // `Commands.swift`, and ⌘F stays a pane key for the same reason.
+        if Command.claims(event) { return false }
         if super.performKeyEquivalent(with: event) { return true }
         return onKeyEquivalent?(event) ?? false
     }

@@ -83,3 +83,66 @@ open empty — check whether scope resets per invocation.
   his ledger will attach to his **live Relay sessions** as a second client —
   which is how the investigation above was done, briefly and deliberately, but
   it is not something to leave running.
+
+---
+
+## What it was
+
+**The picker never opened.** Suspect one, and the detail above was right to say
+that "opened with no rows" and "never opened" look identical from the outside.
+
+`NSWindow` walks the view tree with `performKeyEquivalent` *before* the main
+menu. `WebPaneContainer` calls `super` first so that subviews get first refusal —
+written for the find field's ⌘A and the address field's ⌘C — but the `WKWebView`
+is also a subview, and a focused web view answers YES to **every** ⌘-chord so it
+can hand the key to the page. So ⌘O died in the web view and the menu item never
+ran.
+
+Measured, with a real `WKWebView` as first responder in a window
+(`WebPaneKeyRoutingTests`):
+
+| first responder | ⌘O reaches the menu |
+|---|---|
+| nothing (the strip) | yes |
+| the address field | yes |
+| the `WKWebView` | **no** |
+
+Which is exactly why the two earlier reproductions passed: both were run from a
+freshly launched instance with the strip focused, the one column of that table
+where the bug cannot happen.
+
+⌘O was not alone. Under the same condition ⌘T, ⌘Y, ⌘R, ⌘W, ⌘B, ⌘P, ⌘[, ⌘], ⌘=
+and ⌥⌘O were all swallowed before the menu.
+
+**This had already been found once.** `TerminalPaneController` clears Ghostty's
+keybinds with a comment naming this same mechanism — "claims them in
+`performKeyEquivalent`, which runs before the menu … here they silently ate Max
+Pane's own, so Close Lane worked from the File menu and did nothing from the
+keyboard". The terminal pane's hole was closed and the web pane's was not.
+
+### The fix
+
+`Command.claims(_:)` answers whether the app has declared a ⌘-chord for itself,
+and `WebPaneContainer.performKeyEquivalent` returns false for those before it
+descends into the page. No browser lets a page bind its chrome keys.
+
+Only ⌘-chords, so Esc (`.ungather`) still belongs to the page — leaving a
+fullscreen video, closing a modal. ⌘A, ⌘C, ⌘V and ⌘Z are declared nowhere, so
+the fields keep them and the "first refusal" the comment was written for is
+intact; ⌘F stays a pane key for the same reason.
+
+### Not the cause, and ruled out with evidence
+
+- **Sticky scope.** `showOmniPicker` builds a fresh `OmniPicker` with an explicit
+  scope every time. Scope only moves on ⇥ within one picker's life.
+- **A ranking that returns nothing.** `emptyQueryRows` always appends a `.note`
+  row when it has nothing else, so `build` cannot return an empty array for an
+  empty query — `rowsRender` already asserts this across every scope.
+- **The table drawing blank rows.** The failure `layOutRows` exists to prevent.
+  Presenting a palette over a parent window materialises its cell views; the
+  manual layout pass is doing its job.
+- **A stale binary.** The installed app is commit `92547ca`, and `OmniPicker.swift`
+  and `SearchPalette.swift` are byte-identical between it and HEAD.
+- **A ledger damaged by the `--profile` migration** landing under the running
+  app. It never ran for that instance: `profiles/` is empty and the ledger is
+  still live at the old path.

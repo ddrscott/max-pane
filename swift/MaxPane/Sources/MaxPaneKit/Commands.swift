@@ -197,6 +197,59 @@ public enum Command: String, CaseIterable {
         }
     }
 
+    /// Whether the app has claimed this key for itself.
+    ///
+    /// Asked by a web pane before it lets the page it is showing see a ⌘-chord.
+    /// A focused `WKWebView` answers YES to `performKeyEquivalent` for every
+    /// ⌘-chord and hands it to the page — and that walk runs *before* the main
+    /// menu, so a page that keeps ⌘O is a page from which ⌘O never opens the
+    /// picker. Measured with the web view as first responder: ⌘O, ⌘T and ⌘Y
+    /// were all swallowed there. No browser lets a page bind its chrome keys,
+    /// and this is where that is decided.
+    ///
+    /// ⌘-chords only. `.ungather` is Esc, which a page has its own uses for —
+    /// leaving a video, closing a modal — and which no menu item carries.
+    public static func claims(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.contains(.command),
+              let typed = event.charactersIgnoringModifiers?.lowercased()
+        else { return false }
+        let mask = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        return claimed.contains(Chord(key: typed, mask: mask.rawValue))
+    }
+
+    private struct Chord: Hashable {
+        let key: String
+        let mask: NSEvent.ModifierFlags.RawValue
+    }
+
+    /// `charactersIgnoringModifiers` ignores every modifier *except* shift, so
+    /// ⇧⌘[ arrives spelling itself `{`. The table declares the unshifted key the
+    /// way a menu item wants it, so both spellings go in the set — otherwise
+    /// ⇧⌘[ and ⇧⌘] are the two bindings this silently fails to protect, and a
+    /// silent gap in a keyboard map is the thing `Commands.swift` exists to
+    /// prevent. Letters need no entry: `W` lowercases back to `w`.
+    private static let shifted: [String: String] = [
+        "[": "{", "]": "}", "=": "+", "-": "_", "\\": "|", "/": "?",
+        ",": "<", ".": ">", ";": ":", "'": "\"", "`": "~",
+    ]
+
+    /// Built once. This is asked on every keystroke that reaches a web pane.
+    private static let claimed: Set<Chord> = {
+        var out: Set<Chord> = []
+        for command in Command.allCases {
+            for (key, modifiers) in [command.shortcut] + command.alternateShortcuts
+            where modifiers.contains(.command) {
+                let mask = modifiers.intersection(.deviceIndependentFlagsMask).rawValue
+                let lower = key.lowercased()
+                out.insert(Chord(key: lower, mask: mask))
+                if modifiers.contains(.shift), let alt = shifted[lower] {
+                    out.insert(Chord(key: alt, mask: mask))
+                }
+            }
+        }
+        return out
+    }()
+
     /// Which menu this belongs under.
     public var menu: MenuSection {
         switch self {
