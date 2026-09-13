@@ -34,6 +34,18 @@ final class SidebarViewController: NSViewController {
     private var chips: [SidebarModel.Scope: SidebarButton] = [:]
     private let countLabel = NSTextField(labelWithString: "")
     private var filterBarHeight: NSLayoutConstraint!
+    private var headerTop: NSLayoutConstraint!
+
+    /// How far the window's close/minimise/zoom buttons reach down into the
+    /// sidebar, which windowed is far enough to cover `+ NEW` and the sort
+    /// controls beside it. `StripWindowController` owns the number because only
+    /// the window knows it; see `TitlebarAvoidance`.
+    var titlebarInset: CGFloat = 0 {
+        didSet {
+            guard titlebarInset != oldValue, headerTop != nil else { return }
+            headerTop.constant = titlebarInset
+        }
+    }
 
     /// Session `createdAt`, which only the session file knows and telemetry does
     /// not carry. Read once per session id — the bar's default sort is by
@@ -114,9 +126,10 @@ final class SidebarViewController: NSViewController {
             view.addSubview(v)
         }
         filterBarHeight = filterBar.heightAnchor.constraint(equalToConstant: 0)
+        headerTop = header.topAnchor.constraint(equalTo: view.topAnchor, constant: titlebarInset)
 
         NSLayoutConstraint.activate([
-            header.topAnchor.constraint(equalTo: view.topAnchor),
+            headerTop,
             header.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             header.heightAnchor.constraint(equalToConstant: 34),

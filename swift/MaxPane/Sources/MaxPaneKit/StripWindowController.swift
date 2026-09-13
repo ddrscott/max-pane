@@ -24,6 +24,15 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     /// Our subscription to `WebAskCenter`, so the orange count appears the
     /// instant a page asks rather than on the next status tick.
     private var askToken: UUID?
+    /// The strip's distance from the top of its half of the split. Non-zero
+    /// only when the sidebar is collapsed and the window is not fullscreen —
+    /// the one arrangement where the traffic lights land on a lane header.
+    private var stripTop: NSLayoutConstraint!
+    /// Held, and removed nowhere — same as `alternateMonitor`. There is one
+    /// window and it lives as long as the process, so there is nothing for a
+    /// `deinit` to clean up before exit; Swift 6 will not compile one that tries
+    /// anyway, because a nonisolated `deinit` cannot touch main-actor state.
+    private var splitResizeObserver: Any?
     /// Every session Relay knows about, attached or not. The sidebar, the
     /// picker and the status bar all read this one registry so they cannot
     /// disagree about how many sessions exist.
@@ -72,13 +81,20 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         // eat the lane headers' room.
         let stripSide = NSViewController()
         stripSide.view = NSView()
+        // The strip's own ground, because with the sidebar collapsed this view
+        // shows through above the strip as the band the traffic lights sit in.
+        // Left unpainted that band is the window's grey, which reads as a title
+        // bar — the thing this window does not have.
+        stripSide.view.wantsLayer = true
+        stripSide.view.layer?.backgroundColor = Theme.stripBackground.cgColor
         strip.view.translatesAutoresizingMaskIntoConstraints = false
         statusBar.translatesAutoresizingMaskIntoConstraints = false
         stripSide.addChild(strip)
         stripSide.view.addSubview(strip.view)
         stripSide.view.addSubview(statusBar)
+        stripTop = strip.view.topAnchor.constraint(equalTo: stripSide.view.topAnchor)
         NSLayoutConstraint.activate([
-            strip.view.topAnchor.constraint(equalTo: stripSide.view.topAnchor),
+            stripTop,
             strip.view.leadingAnchor.constraint(equalTo: stripSide.view.leadingAnchor),
             strip.view.trailingAnchor.constraint(equalTo: stripSide.view.trailingAnchor),
             strip.view.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
@@ -112,8 +128,42 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         sidebar.onAttach = { [weak self] sessionId in
             try? self?.store.attachSessionAtEnd(relaySessionId: sessionId)
         }
+        // The window's own delegate, for the two fullscreen transitions. Nothing
+        // else wants it, and `NSWindowController` would take it anyway.
+        window.delegate = self
+        // Not just the ⌘B command: the divider can be dragged all the way left,
+        // which collapses the sidebar without any command running. Observing the
+        // split view catches both, and the drag in progress as well.
+        splitResizeObserver = NotificationCenter.default.addObserver(
+            forName: NSSplitView.didResizeSubviewsNotification,
+            object: split.splitView, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateTitlebarAvoidance() }
+            }
         startSideChannels()
         installAlternateShortcuts()
+        updateTitlebarAvoidance()
+    }
+
+    /// Move whatever is under the close/minimise/zoom buttons out from under
+    /// them — the sidebar's `+ NEW` row, or the first lane's header when the
+    /// sidebar is collapsed and the strip is the leftmost thing.
+    ///
+    /// Both containers are asked every time rather than one being chosen here:
+    /// the answer is a function of where each one starts, so a sidebar that has
+    /// been dragged narrower than the buttons gets the inset on its own without
+    /// this having to know that could happen.
+    private func updateTitlebarAvoidance() {
+        guard let window, stripTop != nil else { return }
+        let band = TitlebarAvoidance.band(of: window)
+        let buttonsEnd = TitlebarAvoidance.buttonsEnd(of: window)
+        let sidebarItem = split.splitViewItems[0]
+        let stripStartsAt = sidebarItem.isCollapsed ? 0 : sidebar.view.frame.width
+
+        sidebar.titlebarInset = TitlebarAvoidance.inset(
+            band: band, buttonsEndAt: buttonsEnd, contentStartsAt: 0)
+        let stripInset = TitlebarAvoidance.inset(
+            band: band, buttonsEndAt: buttonsEnd, contentStartsAt: stripStartsAt)
+        if stripTop.constant != stripInset { stripTop.constant = stripInset }
     }
 
     /// Keys a command has besides its menu one.
@@ -307,6 +357,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     override public func showWindow(_ sender: Any?) {
         super.showWindow(sender)
         window?.makeKeyAndOrderFront(sender)
+        // The title bar's buttons have real frames only once the window has one.
+        updateTitlebarAvoidance()
         // Enter fullscreen after the window exists, so the strip lays out once
         // at its final size rather than twice.
         //
@@ -459,6 +511,11 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 let item = split.splitViewItems[0]
                 item.animator().isCollapsed.toggle()
                 statusBar.setSidebarOpen(!item.isCollapsed)
+                // The strip is about to become, or stop being, the leftmost
+                // thing. The split view's own notification says so too, but only
+                // once the animation has run — and the traffic lights do not
+                // animate with it.
+                updateTitlebarAvoidance()
 
             case .search:
                 showPalette()
@@ -852,5 +909,22 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+}
+
+/// Fullscreen is where the traffic lights go away, so it is where the band
+/// reserved for them has to go away too — otherwise the fix for a windowed bug
+/// becomes a permanent dead stripe across the top of the interface.
+///
+/// `didEnter`/`didExit` rather than `will`: the style mask that
+/// `TitlebarAvoidance.band` reads is only true after the transition, so asking
+/// on the way in gets the answer for where the window has just left.
+extension StripWindowController: NSWindowDelegate {
+    public func windowDidEnterFullScreen(_ notification: Notification) {
+        updateTitlebarAvoidance()
+    }
+
+    public func windowDidExitFullScreen(_ notification: Notification) {
+        updateTitlebarAvoidance()
     }
 }
