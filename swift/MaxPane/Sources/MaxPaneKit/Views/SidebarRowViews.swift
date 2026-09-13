@@ -69,6 +69,10 @@ final class SidebarRowView: NSTableRowView {
 final class SidebarEntryView: NSTableCellView {
     private let status = NSView()
     private let marker = NSTextField(labelWithString: "")
+    /// The marker slot's other occupant: a web row gets a globe here instead of
+    /// a character. Two views rather than one, because an `NSTextField` cannot
+    /// hold a template image that tints with the row.
+    private let markerIcon = NSImageView()
     private let glyph = NSTextField(labelWithString: "")
     private let title = NSTextField(labelWithString: "")
     private let badge = NSTextField(labelWithString: "")
@@ -97,13 +101,23 @@ final class SidebarEntryView: NSTableCellView {
         }
 
         // The orange `$` says "this one is on the strip"; a dim `+` says
-        // "click and it will be".
-        marker.stringValue = isWeb ? "◍" : (attached ? "$" : "+")
+        // "click and it will be". A web lane is neither of those things — it is
+        // a different kind of pane, not a different state — so it gets a globe.
+        // `◍` was standing in for one and reads as a bullet at 11pt.
+        marker.stringValue = isWeb ? "" : (attached ? "$" : "+")
         marker.font = Theme.mono(11, weight: attached ? .bold : .regular)
         // The orange prompt means "live, and on the strip". A lane whose session
         // has died is neither, so it goes grey with the rest of the row.
         marker.textColor = (attached && entry.isRunning && !isWeb) ? Theme.flowing : SidebarInk.gone
         marker.alignment = .center
+
+        // Same ink as the character it replaces, so adding the globe changes
+        // the shape of a web row and nothing else about its weight.
+        markerIcon.isHidden = !isWeb
+        if isWeb {
+            markerIcon.image = IconImage.make(.globe, points: 12, colour: SidebarInk.gone)
+            markerIcon.imageScaling = .scaleProportionallyDown
+        }
 
         glyph.stringValue = isWeb ? "" : entry.glyph
         glyph.font = Theme.mono(11, weight: entry.needsAttention ? .bold : .regular)
@@ -156,7 +170,7 @@ final class SidebarEntryView: NSTableCellView {
             v.lineBreakMode = .byTruncatingTail
             v.cell?.truncatesLastVisibleLine = true
         }
-        for v: NSView in [status, marker, glyph, title, badge, age, chip] {
+        for v: NSView in [status, marker, markerIcon, glyph, title, badge, age, chip] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -170,6 +184,11 @@ final class SidebarEntryView: NSTableCellView {
             marker.leadingAnchor.constraint(equalTo: status.trailingAnchor, constant: 5),
             marker.widthAnchor.constraint(equalToConstant: 10),
             marker.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+
+            markerIcon.centerXAnchor.constraint(equalTo: marker.centerXAnchor),
+            markerIcon.centerYAnchor.constraint(equalTo: marker.centerYAnchor),
+            markerIcon.widthAnchor.constraint(equalToConstant: 12),
+            markerIcon.heightAnchor.constraint(equalToConstant: 12),
 
             glyph.leadingAnchor.constraint(equalTo: marker.trailingAnchor, constant: 1),
             glyph.widthAnchor.constraint(equalToConstant: 12),

@@ -722,3 +722,61 @@ struct SidebarReorderTests {
         #expect(SidebarModel.siblingPlace(rows: rows, id: "nobody") == nil)
     }
 }
+
+/// The globe on a web row, and the machinery under it.
+///
+/// `NSImage` reads SVG natively, so Lucide's sources can be embedded as strings
+/// and drawn at any size. What is worth a test is that they actually decode —
+/// a malformed literal would come back nil and the row would simply lose its
+/// icon, which is the kind of absence nobody notices.
+@Suite("Lucide icons")
+@MainActor
+struct LucideIconTests {
+    @Test("every embedded icon decodes and draws")
+    func everyIconDecodes() throws {
+        for icon in LucideIcon.allCases {
+            let image = try #require(
+                IconImage.make(icon, points: 12, colour: .black),
+                "\(icon.rawValue) did not decode")
+            #expect(image.size == NSSize(width: 12, height: 12))
+        }
+    }
+
+    /// A raw string ends at its own delimiter, so an icon carrying `"##` would
+    /// close the literal early and the file would not compile — which is how
+    /// the first version of the generator failed, emitting `stroke="#000000"`
+    /// into a `#"…"#`. The delimiter is wider now and the colour is named, and
+    /// this is the guard for whichever of the two a later edit undoes.
+    @Test("no embedded icon carries the sequence that would close its literal")
+    func noIconBreaksItsOwnLiteral() {
+        for icon in LucideIcon.allCases {
+            #expect(!icon.svg.contains("\"##"), "\(icon.rawValue) would not compile as written")
+            #expect(icon.svg.hasPrefix("<svg"), "\(icon.rawValue) is not an SVG")
+        }
+    }
+
+    @Test("the drawn icon is the caller's colour, not the SVG's")
+    func takesTheCallersInk() throws {
+        IconImage.resetCacheForTesting()
+        let orange = try #require(IconImage.make(.globe, points: 16, colour: Theme.accent))
+        let rep = try #require(orange.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+        var sawAccent = false
+        for x in 0..<rep.pixelsWide where !sawAccent {
+            for y in 0..<rep.pixelsHigh {
+                guard let c = rep.colorAt(x: x, y: y), c.alphaComponent > 0.9 else { continue }
+                if c.redComponent > 0.7 && c.blueComponent < 0.3 { sawAccent = true; break }
+            }
+        }
+        #expect(sawAccent, "the globe drew in the SVG's black instead of the accent")
+    }
+
+    @Test("a second request for the same icon is the same image")
+    func cachesByEverythingThatChangesThePixels() {
+        IconImage.resetCacheForTesting()
+        let a = IconImage.make(.globe, points: 12, colour: .black)
+        let b = IconImage.make(.globe, points: 12, colour: .black)
+        let bigger = IconImage.make(.globe, points: 16, colour: .black)
+        #expect(a === b, "the cache missed on identical arguments")
+        #expect(a !== bigger, "two sizes came back as one image")
+    }
+}
