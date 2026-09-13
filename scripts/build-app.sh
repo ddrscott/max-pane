@@ -62,9 +62,9 @@ cp swift/MaxPane/Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # this.
 if [ "$APP" != "build/MaxPane.app" ]; then
   SUFFIX="$(basename "$APP" .app | tr -c 'a-zA-Z0-9' '-' | sed 's/-*$//')"
-  /usr/bin/plutil -replace CFBundleIdentifier -string "com.trifectadb.maxpane.$SUFFIX" \
+  /usr/bin/plutil -replace CFBundleIdentifier -string "app.ljs.maxpane.$SUFFIX" \
     "$APP/Contents/Info.plist"
-  echo "==> bundle id com.trifectadb.maxpane.$SUFFIX (throwaway; keeps UserDefaults separate)"
+  echo "==> bundle id app.ljs.maxpane.$SUFFIX (throwaway; keeps UserDefaults separate)"
 fi
 
 # laned-core is linked statically, so nothing to copy — but the dylib would land
