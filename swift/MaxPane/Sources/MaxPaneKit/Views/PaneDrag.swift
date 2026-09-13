@@ -290,8 +290,9 @@ enum PaneDrag {
 @MainActor
 final class PaneGripView: NSView {
     static let size = NSSize(width: 14, height: 14)
-    /// Clear of the lane's border, and clear of the focus tick at x = 4, which
-    /// is 2 pt wide and means something else.
+    /// Clear of the lane's border, and clear of the focused pane's outline —
+    /// 2 pt wide and one point in from the edge, so it owns x = 1…3 and the top
+    /// 2 pt of the pane; the grip starts at x = 10 and 3 pt down, past both.
     static let insetX: CGFloat = 10
     static let insetY: CGFloat = 3
 

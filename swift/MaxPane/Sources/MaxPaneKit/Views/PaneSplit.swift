@@ -113,11 +113,29 @@ enum PaneSplit {
     /// every pane above it, plus the seam between each of them.
     ///
     /// Pulled out of the divider loop because it now has a second caller — the
-    /// focus mark — and two places summing the same heights with the same seam
-    /// count is how one of them ends up a seam adrift from the other.
+    /// focus outline — and two places summing the same heights with the same
+    /// seam count is how one of them ends up a seam adrift from the other.
     static func top(ofPaneAt index: Int, heights: [CGFloat]) -> CGFloat {
         let above = heights.prefix(max(0, min(index, heights.count)))
         return above.reduce(0, +) + CGFloat(above.count) * seam
+    }
+
+    /// The focused pane's outline, in the lane's own coordinates, or nil when
+    /// the lane has no pane at `index`.
+    ///
+    /// Exactly the slot `top(ofPaneAt:)` puts the pane in, with two corrections
+    /// that are both about the lane's 1 pt border. A layer's border is drawn
+    /// over its sublayers, so an outline flush with the lane's edge would lose
+    /// its outer point to grey on three sides; it sits one point in instead.
+    /// And the bottom pane's slot runs to the lane's bottom edge, so it stops
+    /// one point short of it for the same reason.
+    @MainActor
+    static func focusOutline(ofPaneAt index: Int, heights: [CGFloat], laneSize: NSSize) -> NSRect? {
+        guard heights.indices.contains(index) else { return nil }
+        let edge = Theme.borderWidth
+        let upper = laneSize.height - Theme.laneHeaderHeight - top(ofPaneAt: index, heights: heights)
+        let lower = max(edge, upper - heights[index])
+        return NSRect(x: edge, y: lower, width: laneSize.width - 2 * edge, height: max(0, upper - lower))
     }
 
     /// The heights to lay a stack out at while the pane at `arriving` is still
@@ -390,43 +408,37 @@ final class PaneDividerView: NSView {
     }
 }
 
-/// Which pane in a split lane has the keyboard.
+/// Focus, drawn around the pane that has it.
 ///
-/// Focus is a 2pt Signal Orange border around the whole *lane*, and in a lane
-/// holding one pane that is the complete answer. Since ⇧⌘D started rendering its
-/// split it is not: three terminals inside one outlined column, and nothing on
-/// screen saying which of them the next keystroke reaches. On a strip of agent
-/// CLIs that is not an aesthetic complaint — a stray `y` answers a prompt nobody
-/// read. A terminal at least blinks a cursor; a web pane looks identical either
-/// way, which is the form the owner reported it in.
+/// It used to be a 2pt Signal Orange border around the whole *lane*, with a
+/// short tick inside marking the pane — and the owner's screenshot is why it is
+/// not any more: a two-pane lane outlined in orange, keystrokes going to the
+/// bottom pane, and a 14 pt tick the only thing on screen that disagreed. On a
+/// strip of agent CLIs that is not an aesthetic complaint; a stray `y` answers a
+/// prompt nobody read.
 ///
-/// So: a tick of the lane's own accent at the top of the focused pane's slot,
-/// against the inner left edge. It spends no new meaning — the accent's two
-/// reserved ones are focus and BLOCKED, and this *is* focus — and it is square,
-/// like everything else in this vocabulary.
+/// So the lane's border stays a neutral hairline, and this is the one place
+/// focus is drawn in the accent: a square, full-perimeter outline around exactly
+/// the pane the next keystroke reaches. That includes a lane of one pane, where
+/// it stops below the header, because the header is never where a keystroke
+/// goes. Full-perimeter rather than one lit edge, because a single coloured edge
+/// reads as a label on the box rather than a state it is in.
 ///
-/// Two things it deliberately is not. Not a second full-perimeter outline:
-/// nested accent boxes a point or two apart read as a rendering fault rather
-/// than as two facts. And not a lit seam, though the seam already knows how to
-/// light — a seam lights under the pointer and for a pane's entrance, both of
-/// which outlive nothing, so borrowing it for a state the lane is *in* would
-/// make hovering a seam look like focus moving.
+/// Not a lit seam, though a seam already knows how to light: a seam lights under
+/// the pointer and for a pane's entrance, both of which outlive nothing, so
+/// borrowing it for a state the pane is *in* would make hovering a seam look
+/// like focus moving.
 @MainActor
-final class PaneFocusMarkView: NSView {
-    /// 2pt wide, like the focused border it belongs to. 14pt is about one row of
-    /// JetBrains Mono at 13pt: enough to read as a tick against the edge, short
-    /// enough not to read as a rail down it.
-    static let size = NSSize(width: 2, height: 14)
-
-    /// Clear of the border rather than flush against it. At the edge the two
-    /// accents merge into one thickened corner, which says "this lane" twice
-    /// instead of "this lane, this pane".
-    static let inset: CGFloat = 4
+final class PaneFocusOutlineView: NSView {
+    /// The weight the lane's border carried when it meant focus, so "this has
+    /// the keyboard" did not change weight when it changed place.
+    static let width: CGFloat = 2
 
     init() {
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = Theme.accent.cgColor
+        layer?.borderColor = Theme.accent.cgColor
+        layer?.borderWidth = Self.width
         // Square. Explicitly, for the same reason the lane says so.
         layer?.cornerRadius = 0
     }
@@ -434,8 +446,9 @@ final class PaneFocusMarkView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not a nib") }
 
-    /// Transparent to the mouse. It overlaps the grab area of the seam above it
-    /// by a point or two, and a decoration that eats part of a drag handle is a
-    /// seam that is mysteriously harder to grab on one side.
+    /// Transparent to the mouse. It lies over the edge of the pane it outlines
+    /// and over the grab area of the seam beside it, and a decoration that ate
+    /// either would be a click that focuses nothing or a seam that is
+    /// mysteriously harder to grab on one side.
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

@@ -471,9 +471,9 @@ public final class StripViewController: NSViewController {
             laneViews[lane.id]?.isFocused = state.focusedPaneId.map { id in
                 lane.panes.contains { $0.id == id }
             } ?? false
-            // Handed to every lane, not only the focused one: a lane marks the
-            // pane only when it is one of its own, so "which lane" is answered
-            // once, by the lane that recognises the id.
+            // Handed to every lane, not only the focused one: a lane outlines
+            // the pane only when it is one of its own, so "which lane" is
+            // answered once, by the lane that recognises the id.
             laneViews[lane.id]?.focusedPaneId = state.focusedPaneId
             // The fix for ⇧⌘D. `materialize` installs a lane's panes when the
             // lane view is *built*; nothing used to install one into a lane that
@@ -710,7 +710,7 @@ public final class StripViewController: NSViewController {
         // `apply`. So a focused lane scrolled out and back came back unlit until
         // something else happened to change the snapshot, and a *recycled* view
         // came back carrying the previous lane's answer, which is an orange
-        // border around a lane that does not have the keyboard.
+        // outline around a pane that does not have the keyboard.
         laneView.isFocused = store.state.focusedPaneId.map { id in
             lane.panes.contains { $0.id == id }
         } ?? false

@@ -158,7 +158,7 @@ final class LaneView: NSView {
 
     private let dockEdge = DockEdgeView()
 
-    /// Which pane in this lane has the keyboard, so a split lane can say so.
+    /// Which pane in this lane has the keyboard, so the lane can outline it.
     ///
     /// Handed the ledger's focused pane whoever it belongs to; a lane that does
     /// not recognise the id draws nothing, which is how "which lane" stays
@@ -170,10 +170,9 @@ final class LaneView: NSView {
         }
     }
 
-    /// The mark that says *which* pane — see `PaneFocusMarkView`. Drawn only in
-    /// a lane holding more than one pane; in a lane holding one, the lane's own
-    /// border has already answered the question.
-    private let focusMark = PaneFocusMarkView()
+    /// The outline around the pane with the keyboard — see
+    /// `PaneFocusOutlineView`. The one place focus is drawn in orange.
+    private let focusOutline = PaneFocusOutlineView()
 
     init(lane: Lane, widthBounds: ClosedRange<UInt32>) {
         self.laneId = lane.id
@@ -220,9 +219,9 @@ final class LaneView: NSView {
         addSubview(resizeHandle)
         // After the stack, for the reason `dockEdge` is added after everything:
         // a pane's view is layer-backed and paints over any sibling added
-        // before it. Frame-positioned in `layOutFocusMark`.
-        focusMark.isHidden = true
-        addSubview(focusMark)
+        // before it. Frame-positioned in `layOutFocusOutline`.
+        focusOutline.isHidden = true
+        addSubview(focusOutline)
         // Frame-positioned in `layout`, and hidden unless this lane is an
         // overlay dock. Added last so it is drawn over the pane it borders —
         // a `WKWebView` is layer-backed and will otherwise paint over a
@@ -529,10 +528,10 @@ final class LaneView: NSView {
         // id this view no longer holds is a drag that moves somebody else.
         for grip in grips { grip.isHidden = true }
         gripPaneIds = []
-        // And the mark, for the same reason: this chrome is going to the pool
-        // and will come back holding a different lane's panes.
+        // And the outline, for the same reason: this chrome is going to the
+        // pool and will come back holding a different lane's panes.
         focusedPaneId = nil
-        focusMark.isHidden = true
+        focusOutline.isHidden = true
     }
 
     // MARK: - opening and closing
@@ -629,7 +628,7 @@ final class LaneView: NSView {
             for divider in dividers { divider.isHidden = true }
             for grip in grips { grip.isHidden = true }
             gripPaneIds = []
-            focusMark.isHidden = true
+            focusOutline.isHidden = true
             return
         }
 
@@ -664,7 +663,7 @@ final class LaneView: NSView {
         }
 
         layOutDividers(above: heights)
-        layOutFocusMark(ids: ids, heights: heights)
+        layOutFocusOutline(ids: ids, heights: heights)
         layOutGrips(ids: ids, heights: heights)
     }
 
@@ -718,39 +717,31 @@ final class LaneView: NSView {
         }
     }
 
-    /// Put the focus tick at the top of the focused pane's slot.
+    /// Put the focus outline around the focused pane's slot.
     ///
-    /// Two guards, and both are the point of the mark rather than defence. A
-    /// lane with one pane draws nothing: the lane's border already says it, and
-    /// a second accent mark inside it is the same fact drawn twice. A lane that
-    /// does not hold the focused pane draws nothing either — that is how every
-    /// lane can be handed the same id and only one of them answer.
-    private func layOutFocusMark(ids: [String], heights: [CGFloat]) {
-        guard ids.count > 1,
-              let paneId = focusedPaneId,
-              let index = ids.firstIndex(of: paneId)
+    /// Every lane is handed the same id and only the lane holding that pane
+    /// draws anything, which is how "which lane" stays answered in one place.
+    /// There is no one-pane exception any more: the lane's border no longer
+    /// means focus, so a lane of one pane that skipped the outline would show
+    /// no focus at all.
+    private func layOutFocusOutline(ids: [String], heights: [CGFloat]) {
+        guard let paneId = focusedPaneId,
+              let index = ids.firstIndex(of: paneId),
+              // Measured from the same heights the seams are placed from, so
+              // the outline and the seam beside it cannot drift apart.
+              let frame = PaneSplit.focusOutline(ofPaneAt: index, heights: heights, laneSize: bounds.size)
         else {
-            focusMark.isHidden = true
+            focusOutline.isHidden = true
             return
         }
-        let size = PaneFocusMarkView.size
-        // Measured downward from the top of the pane area, exactly as the seams
-        // are, so the mark and the seam above it cannot drift apart.
-        let paneTop = bounds.height - Theme.laneHeaderHeight
-            - PaneSplit.top(ofPaneAt: index, heights: heights)
-        let frame = NSRect(
-            x: PaneFocusMarkView.inset,
-            y: paneTop - PaneFocusMarkView.inset - size.height,
-            width: size.width,
-            height: size.height)
-        focusMark.isHidden = false
-        guard focusMark.frame != frame else { return }
+        focusOutline.isHidden = false
+        guard focusOutline.frame != frame else { return }
         // No implicit animation, for the reason a seam takes none: this is set
-        // from inside `layout`, and an eased mark would trail every drag of the
-        // seam it sits under.
+        // from inside `layout`, and an eased outline would trail every drag of
+        // the seam it sits against.
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        focusMark.frame = frame
+        focusOutline.frame = frame
         CATransaction.commit()
     }
 
@@ -848,28 +839,33 @@ final class LaneView: NSView {
 
     // MARK: - focus and flash
 
+    /// Whether this lane holds the focused pane. It lifts the header and leaves
+    /// the border alone: the orange belongs to the pane, drawn by
+    /// `focusOutline`, and a lane lit around a pane that was not the one being
+    /// typed into is the bug that moved it there.
     var isFocused: Bool = false {
         didSet {
             guard isFocused != oldValue else { return }
-            layer?.borderColor = (isFocused ? Theme.accent : Theme.laneBorder).cgColor
-            layer?.borderWidth = isFocused ? 2 : Theme.borderWidth
             header.isFocused = isFocused
         }
     }
 
     /// PRD §7.5 — "flash the lane border 300 ms" after search-to-scroll, so the
     /// eye lands on the lane the strip just scrolled to.
+    ///
+    /// It settles back to the neutral hairline even on the focused lane. A
+    /// flash says where to look; the outline on the pane says where keys go.
     func flash() {
         guard let layer else { return }
         let animation = CABasicAnimation(keyPath: "borderColor")
         animation.fromValue = Theme.accent.cgColor
-        animation.toValue = (isFocused ? Theme.accent : Theme.laneBorder).cgColor
+        animation.toValue = Theme.laneBorder.cgColor
         animation.duration = 0.3
         animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
 
         let width = CABasicAnimation(keyPath: "borderWidth")
         width.fromValue = 3
-        width.toValue = isFocused ? 2 : Theme.borderWidth
+        width.toValue = Theme.borderWidth
         width.duration = 0.3
 
         layer.add(animation, forKey: "flashColor")
@@ -1224,10 +1220,11 @@ final class LaneHeaderView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
-        // A neutral lift, deliberately not an accent wash. Focus is already the
-        // 2pt Signal Orange border around the column; tinting the header orange
-        // as well made a focused idle lane look like a blocked one, and blocked
-        // is the only thing in this app allowed to shout in orange.
+        // A neutral lift, deliberately not an accent wash. The orange belongs to
+        // the focused pane's outline; tinting the header orange as well made a
+        // focused idle lane look like a blocked one, and blocked is the only
+        // other thing in this app allowed to shout in orange. The lift is what
+        // says *which column* now that the lane's border no longer does.
         if isFocused {
             NSColor.labelColor.withAlphaComponent(0.09).setFill()
             bounds.fill()

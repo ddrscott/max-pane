@@ -662,12 +662,19 @@ not on the strip still attaches it instead.
 A row names a *session*, and a lane holds a stack of them, so the click focuses
 the pane whose session you clicked rather than whichever pane is on top.
 
-Which is also why a split lane now marks its focused pane: a short Signal Orange
-tick at the top-left of that pane, inside the lane's own focus border. One pane
-and there is no mark — the border has already said it. Three, and "which of
-these gets the next keystroke" is a question with a real answer and, until now,
-nothing on screen to give it; a terminal at least blinks a cursor, and a page
-looks identical either way.
+**The orange outline is around the pane with the keyboard, never the lane.** It
+used to go around the whole column, with a short tick marking the pane inside —
+which meant a two-pane lane outlined in orange with the keystrokes going to the
+pane at the bottom, and the tick the only thing on screen that disagreed. "Which
+of these gets the next keystroke" has a real answer in a split lane, a terminal
+only blinks a cursor, and a page looks identical either way.
+
+The rule has no exceptions, including a lane of one pane: the outline stops
+below the header, because the header is never where a keystroke goes. The
+focused lane's header is lifted a shade instead, which is what still says
+*which column* from across the strip. The lane's own border stays a neutral
+hairline, and flashes orange only for the ⌘P jump, which is a place to look
+rather than a place to type.
 
 ### Moving a pane
 
