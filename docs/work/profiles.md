@@ -23,14 +23,14 @@ He is about to use this full time, so the cost of getting it wrong goes up.
 
 ## Decisions the owner has made
 
-- **Full Relay isolation if possible**, falling back to per-profile session
-  tracking. See the research below — this is the hard part and it may require a
-  proposal rather than a change.
+- **Relay is out of scope.** A profile isolates the app's own state and nothing
+  else; test sessions go on appearing in `relay ls` and are cleaned up by hand,
+  exactly as now. See below for why, so nobody spends a day rediscovering it.
 - **Everything moves under `profiles/`**, including the default. He chose the
   migration over the compatibility shim, so the migration has to be safe: back
   up first, verify after, and be reversible. His live strip is in it.
 
-## What is already known about Relay isolation
+## Why Relay is out of scope (do not re-investigate)
 
 `relay-pty-host` derives its data directory from the environment, and there is
 **no override**:
@@ -43,26 +43,14 @@ let sockets_dir = data_dir.join("sockets");
 let sessions_dir = data_dir.join("sessions");
 ```
 
-So a profile's sessions can be isolated by spawning `relay-pty-host` with a
-different `HOME` — and `relay-tty` is a **read-only dependency** (PRD §0.3:
-write a proposal in `docs/proposals/` and stop), so adding a `RELAY_DATA_DIR`
-ourselves is not an option.
+The only lever is `HOME`, and pulling it breaks the thing being isolated: **the
+child shell inherits it**, so a test terminal would have the wrong home
+directory — no `~/.zshrc`, wrong paths, a shell that is not the shell being
+tested. That is worse than the interference it avoids. Adding a `RELAY_DATA_DIR`
+is not ours to do either; `relay-tty` is a read-only dependency (PRD §0.3).
 
-The catch, which is the whole design problem: **the child shell inherits that
-`HOME`**, so a test terminal would have the wrong home directory — no
-`~/.zshrc`, wrong paths, a shell that is not the shell being tested. That is
-worse than the interference it avoids.
-
-The promising route: `RelaySessionSpawner.buildArgs` already composes the child
-command line, so it can put the real home back for the child only — roughly
-`env HOME=<real home> $SHELL -li -c '<cmd>'` — while `pty-host` itself keeps the
-profile's `HOME` for its data directory. Verify that actually works rather than
-assuming; anything that reads `HOME` before that prefix takes effect sees the
-wrong one, and `pty-host` sets several variables for the child itself.
-
-If it does not work cleanly, fall back to **tracking**: the profile records the
-session ids it spawned so it can list and stop exactly its own, and write the
-`RELAY_DATA_DIR` proposal in `docs/proposals/` per §0.3.
+The owner's call: **leave it.** A profile isolates the app, and Relay sessions
+stay shared.
 
 ## Acceptance criteria
 
@@ -75,9 +63,6 @@ session ids it spawned so it can list and stop exactly its own, and write the
   is the one he is working in.
 - A named profile's cookie jars are provably separate: a login in one is absent
   in the other. The existing `DataStorePool` salting is the mechanism.
-- Relay sessions: either a named profile's sessions do not appear in his real
-  `relay ls` at all, or `maxpane --profile <name> reap` stops exactly the
-  sessions that profile spawned and nothing else. Say which was achieved.
 - **The migration is safe.** Back up the ledger with `sqlite3 .backup` (not a
   file copy — the WAL held 4 MB the one time it mattered), verify lane and pane
   counts match afterwards, and leave the backup in place. If anything does not
