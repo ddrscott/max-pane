@@ -55,6 +55,17 @@ enum HistoryClock {
     /// JetBrains Mono and a 12-hour clock costs two characters and an am/pm
     /// that reads as noise beside a URL. Fixed rather than localised because
     /// every other string on this row — `PAGES`, `⇥ scope` — is.
+    /// A full date, always — `22 Feb 2024`.
+    ///
+    /// [`stamp`] deliberately drops whatever the reader already knows, which is
+    /// right in a column of rows that are mostly from today and wrong for the
+    /// two ends of a range. "This import covers 09:27 to 14:32" is not a
+    /// sentence about two and a half years.
+    static func date(_ when: Date, calendar: Calendar = .current) -> String {
+        let p = parts(when, calendar)
+        return "\(p.day) \(p.month) \(p.year)"
+    }
+
     private static func parts(
         _ when: Date, _ calendar: Calendar
     ) -> (time: String, weekday: String, day: String, month: String, year: String) {

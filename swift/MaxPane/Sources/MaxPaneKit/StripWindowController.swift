@@ -19,6 +19,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private var alternateMonitor: Any?
     private var memoryDashboard: MemoryDashboard?
     private var helpPanel: HelpPanel?
+    /// Held only so a second ⌥⌘Y raises the wizard already on screen instead of
+    /// stacking another one over it; the wizard keeps itself alive otherwise.
+    private var importWizard: ImportHistoryWizard?
     private let statusBar = StatusBar()
     private var statusTimer: Timer?
     /// Our subscription to `WebAskCenter`, so the orange count appears the
@@ -575,6 +578,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             case .importStrip:
                 importStrip()
 
+            case .importBrowserHistory:
+                importBrowserHistory()
+
             case .toggleSpan:
                 // §1's invariant is that a lane is a portrait column; §13 Phase 3
                 // allows one deliberate exception at 2×, for content that
@@ -842,6 +848,23 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         } catch {
             showError(error)
         }
+    }
+
+    /// The history-import wizard: which browser, merge or replace, what it
+    /// would do, then do it.
+    ///
+    /// Its own window rather than an `NSOpenPanel` like `importStrip`, because
+    /// the file is not the question — the user does not know where Vivaldi keeps
+    /// its history and should not have to, and "merge or replace" is a decision
+    /// a file chooser has nowhere to put.
+    private func importBrowserHistory() {
+        if let existing = importWizard, existing.window?.isVisible == true {
+            existing.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        let wizard = ImportHistoryWizard(store: store)
+        importWizard = wizard
+        wizard.present(over: window)
     }
 
     private static func dateStamp() -> String {

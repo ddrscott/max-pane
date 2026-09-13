@@ -4,7 +4,7 @@
 use crate::error::{CoreError, Result};
 use crate::model::*;
 use rusqlite::{params, Connection, OptionalExtension, Row};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Applied in order on open. Never edit a file that has shipped.
 const MIGRATIONS: &[(&str, &str)] = &[
@@ -41,6 +41,16 @@ fn fts_phrase(needle: &str) -> String {
 
 pub struct Ledger {
     conn: Connection,
+    /// Where the file is, or `None` for an in-memory ledger.
+    ///
+    /// Kept because two things need to name the ledger rather than only write
+    /// to it: `Replace` takes a backup of it before dropping history, and an
+    /// import puts its snapshot of someone else's 642 MB browsing history in a
+    /// sibling directory rather than in `/tmp`. Both want the path the
+    /// connection was opened on, and asking SQLite for it afterwards
+    /// (`PRAGMA database_list`) would be the same string with a worse failure
+    /// mode.
+    path: Option<PathBuf>,
 }
 
 impl Ledger {
@@ -64,9 +74,14 @@ impl Ledger {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
-        let mut l = Ledger { conn };
+        let mut l = Ledger { conn, path: path.map(|p| p.to_path_buf()) };
         l.migrate()?;
         Ok(l)
+    }
+
+    /// The file this ledger is, or `None` in memory.
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
     }
 
     fn migrate(&mut self) -> Result<()> {
@@ -778,6 +793,211 @@ impl Ledger {
         Ok(self
             .conn
             .query_row("SELECT COUNT(*) FROM visit", [], |r| r.get::<_, i64>(0))? as u32)
+    }
+
+    // ---- importing another browser's history -------------------------------
+
+    /// Copy the whole ledger to `dest`, through SQLite rather than the file
+    /// system.
+    ///
+    /// `cp` is the wrong tool and the repo has already paid for learning it: a
+    /// WAL is not part of the `.db` file, and the live one held 4 MB the day
+    /// the profile migration was written. Same reason here, with a worse
+    /// consequence — this backup is the only way back from a `Replace`.
+    pub fn backup_to(&self, dest: &Path) -> Result<()> {
+        let mut out = Connection::open(dest)?;
+        let backup = rusqlite::backup::Backup::new(&self.conn, &mut out)?;
+        backup.run_to_completion(1024, std::time::Duration::from_millis(50), None)?;
+        Ok(())
+    }
+
+    /// How many of `pages` the ledger already has, by normalized URL.
+    ///
+    /// Staged into a temp table rather than asked one URL at a time: the
+    /// count, the upsert and the report all want the same 112 000 rows, and
+    /// three passes over one temp table is one `INSERT … SELECT` each instead
+    /// of a third of a million round trips through rusqlite.
+    fn stage_import(&self, pages: &[crate::import::SourcePage]) -> Result<u32> {
+        self.conn.execute_batch(
+            "DROP TABLE IF EXISTS temp.import_page;
+             CREATE TEMP TABLE import_page (
+               url TEXT PRIMARY KEY, title TEXT,
+               first_visit_at INTEGER NOT NULL, last_visit_at INTEGER NOT NULL,
+               visit_count INTEGER NOT NULL
+             );",
+        )?;
+        {
+            let mut stmt = self.conn.prepare(
+                "INSERT INTO temp.import_page (url, title, first_visit_at, last_visit_at, visit_count)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(url) DO NOTHING",
+            )?;
+            for p in pages {
+                stmt.execute(params![
+                    p.url,
+                    p.title,
+                    p.first_visit_at,
+                    p.last_visit_at,
+                    p.visit_count as i64
+                ])?;
+            }
+        }
+        Ok(self.conn.query_row(
+            "SELECT COUNT(*) FROM temp.import_page i JOIN visit v ON v.url = i.url",
+            [],
+            |r| r.get::<_, i64>(0),
+        )? as u32)
+    }
+
+    /// Count the overlap without writing anything. The wizard's dry run.
+    pub fn preview_import(&self, pages: &[crate::import::SourcePage]) -> Result<u32> {
+        let known = self.stage_import(pages)?;
+        self.conn.execute_batch("DROP TABLE IF EXISTS temp.import_page;")?;
+        Ok(known)
+    }
+
+    /// Fold `pages` in, or stand them in place of what is there.
+    ///
+    /// Returns `(inserted, updated, discarded)`. One transaction: an import is
+    /// a hundred thousand rows, a total re-`seq` and a rebuilt index, and a
+    /// ledger holding two of those three is not a ledger.
+    pub fn apply_import(
+        &mut self,
+        pages: &[crate::import::SourcePage],
+        mode: crate::import::ImportMode,
+    ) -> Result<(u32, u32, u32)> {
+        let known = self.stage_import(pages)?;
+        let existing = self.history_count()?;
+        let tx = self.conn.transaction()?;
+
+        let discarded = match mode {
+            crate::import::ImportMode::Merge => 0,
+            crate::import::ImportMode::Replace => {
+                tx.execute("DELETE FROM visit_search", [])?;
+                // `visit_alias` goes with it by CASCADE, which is why the
+                // ledger opens with `foreign_keys = ON`.
+                tx.execute("DELETE FROM visit", [])?;
+                existing
+            }
+        };
+
+        // `seq` goes in as 0 and is assigned below, because the value it should
+        // have depends on rows that are not written yet. Nothing ever observes
+        // the 0: this is inside the transaction.
+        tx.execute(
+            "INSERT INTO visit (url, title, seq, first_visit_at, last_visit_at, visit_count)
+             SELECT i.url, i.title, 0, i.first_visit_at, i.last_visit_at, i.visit_count
+               FROM temp.import_page i
+             -- Not decorative. With a `FROM` in the SELECT, SQLite's parser
+             -- reads the next `ON` as a join constraint and the upsert is a
+             -- syntax error; `WHERE true` is the disambiguator its own
+             -- documentation prescribes.
+             WHERE true
+             ON CONFLICT(url) DO UPDATE SET
+                 first_visit_at = MIN(visit.first_visit_at, excluded.first_visit_at),
+                 last_visit_at  = MAX(visit.last_visit_at,  excluded.last_visit_at),
+                 visit_count    = MAX(visit.visit_count,    excluded.visit_count),
+                 -- The rule `record_visit` already follows, with the source's
+                 -- clock deciding which name is later: a title may be replaced
+                 -- by a title, never by nothing, and a page you last read in
+                 -- Max Pane today keeps the name it had today rather than the
+                 -- one Vivaldi saw in 2024.
+                 title = CASE
+                     WHEN visit.title IS NULL OR visit.title = '' THEN excluded.title
+                     WHEN excluded.title IS NOT NULL AND excluded.title != ''
+                          AND excluded.last_visit_at > visit.last_visit_at THEN excluded.title
+                     ELSE visit.title END",
+            [],
+        )?;
+
+        Self::reseq(&tx)?;
+        Self::rebuild_search(&tx)?;
+        tx.commit()?;
+        self.conn.execute_batch("DROP TABLE IF EXISTS temp.import_page;")?;
+        // Fold the import back into the database file.
+        //
+        // Every other write here is a lane moving and fits in the WAL's automatic
+        // 1 000-page checkpoint; this one is a hundred thousand rows and a rebuilt
+        // index, and measured against the owner's Vivaldi profile it left 320 MB
+        // of WAL beside a 41 MB ledger. That is not wrong — it is what WAL is —
+        // but it doubles the footprint until something else happens to trigger a
+        // checkpoint, and the next launch is what pays. TRUNCATE rather than
+        // PASSIVE so the file actually shrinks.
+        //
+        // Best-effort: a checkpoint that cannot run because a reader is mid-query
+        // is a tidiness problem, and the import it would be failing has already
+        // committed.
+        let _ = self
+            .conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()));
+
+        let (inserted, updated) = match mode {
+            crate::import::ImportMode::Merge => (pages.len() as u32 - known, known),
+            crate::import::ImportMode::Replace => (pages.len() as u32, 0),
+        };
+        Ok((inserted, updated, discarded))
+    }
+
+    /// Renumber every `seq` in the table by when the page was actually last
+    /// seen.
+    ///
+    /// # This is the decision the feature turns on
+    ///
+    /// `seq` is a counter, not a clock (migration 0004), and an import that
+    /// simply appended would take the top 112 840 values — so every page from
+    /// the owner's 2024 would outrank everything he did this morning, and the
+    /// MRU list ⌘O opens with would be a list from two years ago. The feature
+    /// would be worse than not having it.
+    ///
+    /// Two ways out: interleave the import by its real timestamps, or stop
+    /// making `seq` the only ordering key. The second is a migration, a new
+    /// index, and a rewrite of `history_newest`, `Ranking`'s tie-break and the
+    /// `seq UNINDEXED` column of the trigram index — to arrive at ordering by
+    /// a wall clock, which 0004 rejected for the reason it gave: two settles
+    /// inside one millisecond come back in whatever order SQLite feels like.
+    ///
+    /// So: interleave. And the way to interleave without a second ordering key
+    /// is to re-derive the first one. `ORDER BY last_visit_at, seq` reproduces
+    /// the existing rows' order *exactly* — for a row this app wrote, `seq` and
+    /// `last_visit_at` were stamped by the same statement and both increase, so
+    /// sorting by the clock and breaking ties on the old counter is the
+    /// identity — while slotting imported rows into their real places. `seq`
+    /// stays what 0004 made it: unique, total, and never ambiguous.
+    ///
+    /// The whole table, not just the new rows, because a merged row's
+    /// `last_visit_at` can move: a page the source saw more recently than we
+    /// did has genuinely changed position.
+    fn reseq(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+        tx.execute(
+            "UPDATE visit SET seq = o.n
+               FROM (SELECT rowid AS rid,
+                            ROW_NUMBER() OVER (ORDER BY last_visit_at ASC, seq ASC, rowid ASC) AS n
+                       FROM visit) o
+              WHERE visit.rowid = o.rid",
+            [],
+        )?;
+        Ok(())
+    }
+
+    /// Rebuild the trigram index from the table.
+    ///
+    /// Wholesale rather than per row, because [`Self::reseq`] just changed the
+    /// `seq` that rides along in every entry — a per-row reindex would be
+    /// 112 000 delete-and-insert pairs to do what one pass does, and would
+    /// leave the rows it had not reached yet carrying a `seq` that no longer
+    /// exists. Measured at 543 ms for 112 840 rows when migration 0009 did the
+    /// same thing.
+    fn rebuild_search(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+        tx.execute("DELETE FROM visit_search", [])?;
+        tx.execute(
+            &format!(
+                "INSERT INTO visit_search (rowid, haystack, seq)
+                 SELECT v.rowid, {}, v.seq FROM visit v",
+                Self::HAYSTACK_SQL
+            ),
+            [],
+        )?;
+        Ok(())
     }
 
     pub fn set_pane_evicted(

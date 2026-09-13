@@ -43,6 +43,7 @@ public enum Command: String, CaseIterable, Sendable {
     case pairWithNext
     case exportStrip
     case importStrip
+    case importBrowserHistory
     case toggleSpan
     case showHelp
 
@@ -85,6 +86,7 @@ public enum Command: String, CaseIterable, Sendable {
         case .pairWithNext: return "Pair With Lane to the Right"
         case .exportStrip: return "Export Strip…"
         case .importStrip: return "Import Strip…"
+        case .importBrowserHistory: return "Import Browser History…"
         case .toggleSpan: return "Span Lane (2× Width)"
         case .showHelp: return "Keyboard Shortcuts"
         }
@@ -191,6 +193,11 @@ public enum Command: String, CaseIterable, Sendable {
         case .pairWithNext:    return ("p", [.command, .option])
         case .exportStrip:     return ("s", [.command, .shift])
         case .importStrip:     return ("o", [.command, .shift])
+        // ⌘Y opens history; ⌥⌘Y is where it comes from. The mnemonic is the
+        // reason it is not next to Import Strip's ⇧⌘O — importing a strip and
+        // importing two years of browsing are unrelated acts that happen to
+        // share an English word.
+        case .importBrowserHistory: return ("y", [.command, .option])
         case .toggleSpan:      return ("\\", [.command])
         // The one everybody reaches for when they do not know the others.
         case .showHelp:        return ("/", [.command])
@@ -275,7 +282,7 @@ public enum Command: String, CaseIterable, Sendable {
         case .reload, .hardReload, .editAddress: return .navigate
         case .zoomIn, .zoomOut, .zoomReset: return .view
         case .pairWithNext: return .navigate
-        case .exportStrip, .importStrip: return .file
+        case .exportStrip, .importStrip, .importBrowserHistory: return .file
         case .toggleSpan: return .view
         }
     }

@@ -9,13 +9,15 @@ Scoped by the owner to **history only for now**, because it is the one store tha
 exists. Bookmarks and passwords are queued as features in their own right; their
 import follows once there is somewhere to put them.
 
-## Hard dependency
+## Hard dependency — **cleared**
 
-**This is blocked on history round 2.** Today the ledger keeps 5,000 rows and
-prunes every 64th visit. His Vivaldi profile holds **112,840 URLs and 462,785
-visits going back to 2024-02-22** — an import would be deleted almost entirely
-before the wizard finished. Raising the cap is round 2's first item; do that
-first or this is theatre.
+This was blocked on history round 2, which is merged. There is no row cap and no
+age cap: nothing is evicted, and the trigram index of migration 0009 is what
+pays for that. His Vivaldi profile holds **112,846 URLs and 462,794 visits going
+back to 2024-02-22** and they all fit.
+
+~~Today the ledger keeps 5,000 rows and prunes every 64th visit — an import would
+be deleted almost entirely before the wizard finished.~~
 
 ## Where the data is
 
@@ -23,6 +25,16 @@ Each is SQLite, each is **locked while the browser is running**, and copying one
 carelessly loses whatever sits in its WAL — the lesson from this repo's own
 ledger, where 4.1 MB was uncheckpointed at the moment it mattered. Copy with
 `sqlite3 .backup`, or copy `-wal` and `-shm` alongside, then open read-only.
+
+**Correction, found while building this:** `.backup` does not work on a running
+Chromium at all. Chromium opens `History` with `PRAGMA locking_mode = EXCLUSIVE`
+and holds the lock for the life of the process, so a second connection cannot
+read so much as the schema — `Error: database is locked` after a 15 s busy
+timeout, against a running Vivaldi, every time. The file copy is not the fallback
+of last resort here, it is the only one that works, and it is only correct with
+the `-journal`/`-wal`/`-shm` siblings taken with it and the copy opened
+read-**write** so SQLite can roll the hot journal back. This applies equally to
+Bookmarks and Login Data, which live in the same locked profile.
 
 | Browser | File | Tables | Epoch |
 |---|---|---|---|

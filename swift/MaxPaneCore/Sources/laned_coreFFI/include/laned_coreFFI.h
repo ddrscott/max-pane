@@ -344,6 +344,16 @@ uint32_t uniffi_laned_core_fn_method_core_history_count(uint64_t ptr, RustCallSt
 uint32_t uniffi_laned_core_fn_method_core_history_searchable_count(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_HISTORY_SOURCES
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_HISTORY_SOURCES
+RustBuffer uniffi_laned_core_fn_method_core_history_sources(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_IMPORT_HISTORY
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_IMPORT_HISTORY
+RustBuffer uniffi_laned_core_fn_method_core_import_history(uint64_t ptr, RustBuffer source, RustBuffer mode, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_IMPORT_STRIP
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_IMPORT_STRIP
 RustBuffer uniffi_laned_core_fn_method_core_import_strip(uint64_t ptr, RustBuffer json, RustCallStatus *_Nonnull out_status
@@ -412,6 +422,11 @@ RustBuffer uniffi_laned_core_fn_method_core_pane_interaction_state(uint64_t ptr,
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PLAN_EVICTION
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PLAN_EVICTION
 RustBuffer uniffi_laned_core_fn_method_core_plan_eviction(uint64_t ptr, RustBuffer viewport, RustBuffer memory, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PLAN_HISTORY_IMPORT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PLAN_HISTORY_IMPORT
+RustBuffer uniffi_laned_core_fn_method_core_plan_history_import(uint64_t ptr, RustBuffer source, RustBuffer mode, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PROJECT_ROOT_OF
@@ -905,6 +920,18 @@ uint16_t uniffi_laned_core_checksum_method_core_history_searchable_count(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_HISTORY_SOURCES
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_HISTORY_SOURCES
+uint16_t uniffi_laned_core_checksum_method_core_history_sources(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_IMPORT_HISTORY
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_IMPORT_HISTORY
+uint16_t uniffi_laned_core_checksum_method_core_import_history(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_IMPORT_STRIP
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_IMPORT_STRIP
 uint16_t uniffi_laned_core_checksum_method_core_import_strip(void
@@ -986,6 +1013,12 @@ uint16_t uniffi_laned_core_checksum_method_core_pane_interaction_state(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PLAN_EVICTION
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PLAN_EVICTION
 uint16_t uniffi_laned_core_checksum_method_core_plan_eviction(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PLAN_HISTORY_IMPORT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PLAN_HISTORY_IMPORT
+uint16_t uniffi_laned_core_checksum_method_core_plan_history_import(void
     
 );
 #endif

@@ -98,6 +98,19 @@ Nothing in the Swift suite is worth gating — the slowest single test in it is
 | `rust_side_snapshot_cost` | 0.95 s | builds 300 lanes / 400 panes, then 200 samples |
 | `cost_of_a_keystroke` | 21 s | builds 112,840 pages — the owner's real corpus size — then 8 queries |
 
+A third, `cost_of_importing_a_real_profile`, is behind `MAXPANE_BENCH` **and**
+`MAXPANE_IMPORT_SOURCE`, which has to name a browser history file. It is the one
+measurement with no synthetic stand-in: 112,846 rows of real URLs with real
+titles are what the trigram index has to narrow, and a generated corpus of the
+same size is a different question. It reads the source read-only, builds its
+ledger in a temp directory, and leaves nothing behind.
+
+```sh
+MAXPANE_BENCH=1 \
+MAXPANE_IMPORT_SOURCE="$HOME/Library/Application Support/Vivaldi/Default/History" \
+  cargo test --release -p laned-core --test import_cost -- --nocapture
+```
+
 Together they are far the largest thing in the suite — and both print numbers that only
 mean anything in a release build, which the default run is not. They are gated
 on **`MAXPANE_BENCH`** and `./scripts/test.sh bench` runs them in release, where
@@ -211,10 +224,16 @@ six columns of raw JSON apart.
 ### History
 
 **Nothing is ever evicted.** No row cap, no age cap — a page you opened two
-years ago is one ⌘O away, and ⌘⌫ is the only thing that removes a row. A `visit`
-row is one per address at roughly 250 bytes, so a hundred thousand pages is
-about 28 MB and a decade lands near 155 MB; Vivaldi spends 642 MB on the same
-browsing.
+years ago is one ⌘O away, and ⌘⌫ is the only thing that removes a row. One row
+per address, and **measured** at 109 000 real pages: **180 MB**, of which the
+table is about a quarter and the trigram index below is the rest. Vivaldi spends
+642 MB on the same browsing.
+
+That number replaces an estimate of 28 MB that stood here until a real corpus
+was imported and weighed. The estimate was arithmetic on the row and forgot what
+pays for it: a trigram index is roughly three entries per character of everything
+it indexes, and everything it indexes is the whole URL, the title and every
+alias.
 
 That is affordable because the search is indexed rather than scanned. Every
 page's address, title and redirect sources go into a trigram index (migration
@@ -245,6 +264,75 @@ year, `22 Feb 2024` before that. The old `22d ago` could not answer "what did I
 have open Tuesday afternoon", which is most of what history is for. Sessions
 keep their relative age, because a terminal's last output is a question about
 now.
+
+### Importing history from another browser
+
+**⌥⌘Y.** ⌘Y opens history; ⌥⌘Y is where it came from. The wizard offers the
+browsers that are on this Mac, found by looking for the files rather than from a
+list — Chromium's `History` (Vivaldi, Chrome, Brave, Edge, Chromium, Arc, Opera,
+one row per profile), Safari's `History.db`, Firefox's `places.sqlite`.
+
+**Merge** folds the browser's history into yours and deletes nothing. A page both
+have becomes one row with the earlier first visit, the later last visit and the
+larger visit count — every field a `min` or a `max`, which is exactly what makes
+importing the same profile twice a no-op. The alternative was a second store
+recording which rows had already been imported, to protect a number that is
+displayed and never ranked.
+
+**Replace** keeps only the browser's history, and copies the whole ledger to
+`ledger.db.pre-import-<ms>` beside itself first. The last screen names that file,
+because it is the only way back from a one-click choice.
+
+Nothing is written until you have read the dry run: how many pages the source
+has, how many are not importable, what dates they cover, how many you already
+have, and what the ledger's page count goes from and to. The button underneath
+then says which of the two it is about to do and to how many pages.
+
+**An import is interleaved, not appended.** `visit` is ordered by `seq`, a
+counter rather than a clock (migration 0004), so appending 109 000 pages would
+give every page from 2024 a higher `seq` than everything you did this morning
+and the list ⌘O opens with would be two years old. Instead every `seq` in the
+table is re-derived from `last_visit_at` at the end of the import. That
+reproduces the existing rows' order exactly — this app stamps `seq` and
+`last_visit_at` in one statement, so sorting by the clock and breaking ties on
+the old counter is the identity — while slotting imported rows into their real
+places. `seq` stays what 0004 made it: unique, total, never ambiguous.
+
+**The browser does not have to be closed, and closing it does not help.**
+Chromium opens `History` with `PRAGMA locking_mode = EXCLUSIVE` and holds the
+lock for the life of the process, so SQLite's backup API cannot read a page of
+it — `database is locked`, every time, against a running Vivaldi. Max Pane copies
+the file and its `-journal`/`-wal`/`-shm` siblings instead, reads the copy, and
+deletes it. The source is never written to. The copy lands beside the ledger
+rather than in `/tmp`, because it is a byte-for-byte copy of everywhere you have
+ever been.
+
+Safari's history is behind Full Disk Access, and without it SQLite reports the
+refusal as `unable to open database file` — which reads as a corrupt profile. The
+wizard checks first and offers the row with the sentence that says which checkbox
+to tick.
+
+Measured against a 613 MB Vivaldi profile — 112 846 URLs and 462 794 visits back
+to 2024-02-22 — release build:
+
+| | |
+|---|---|
+| dry run | **3.1 s** |
+| import | **15.4 s**, 108 854 pages (3 992 not importable: `chrome-extension:`, `mailto:`, rows Chromium itself hides, and second spellings of a page already counted) |
+| ledger afterwards | **180 MB**, WAL checkpointed back into the file |
+| importing it a second time | 0 rows added, nothing moved |
+| a keystroke afterwards | **16–18 ms** from the third character; 183 ms for `com`, which is a substring of most of the corpus |
+
+The keystroke numbers are worse than the 7 ms this README quotes for a *synthetic*
+corpus of the same size, and the reason is the corpus rather than the size: real
+browsing is full of `com`, `www` and `github`, so a short real needle narrows to
+tens of thousands of rows where a generated one narrows to hundreds. 183 ms is
+the worst case measured and it is a query nobody stops typing at; from the third
+distinctive character it is under 20 ms. The one- and two-character cost is the
+known trigram floor and has its own queue item.
+
+The wizard runs both long calls off the main thread — the only place in the app
+that does, because everything else takes microseconds.
 
 ### The session browser, and which pane has the keyboard
 

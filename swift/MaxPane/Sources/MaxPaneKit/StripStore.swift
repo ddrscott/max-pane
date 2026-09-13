@@ -356,6 +356,43 @@ public final class StripStore {
 
     func clearHistory() { try? core.clearHistory() }
 
+    // MARK: - importing another browser's history
+
+    /// Every browser history file on this Mac, found by looking. Cheap: it stats
+    /// files, it does not open databases.
+    func historySources() -> [HistorySource] { core.historySources() }
+
+    /// What an import would do. Nothing is written.
+    ///
+    /// # The only call in this app that leaves the main thread
+    ///
+    /// Everything else here is synchronous on the main actor because everything
+    /// else is microseconds — `update_pane_interaction_state` exists precisely
+    /// so the per-keystroke work never crosses the FFI. This is the exception:
+    /// the dry run copies the source profile (1.1 s for the owner's 642 MB
+    /// Vivaldi file) and reads 112 000 rows out of it, and an import then writes
+    /// them, re-`seq`s the table and rebuilds a trigram index. Held on the main
+    /// thread that is a multi-second beachball over a strip that is still
+    /// animating.
+    ///
+    /// Safe to hand across a queue because `Core` is `@unchecked Sendable` over
+    /// a `parking_lot::Mutex`: the Rust side already serialises every call, so a
+    /// visit recorded by a web pane mid-import waits rather than races.
+    func planHistoryImport(_ source: HistorySource, _ mode: ImportMode) async throws -> ImportPlan {
+        let core = self.core
+        return try await Task.detached { try core.planHistoryImport(source: source, mode: mode) }.value
+    }
+
+    /// Do it. `Replace` backs the ledger up first; the outcome names the file.
+    ///
+    /// No `publish`: history is not layout. The strip is untouched, and
+    /// republishing 150 lanes because a hundred thousand pages arrived is the
+    /// redraw `record_visit` is already careful not to cause.
+    func importHistory(_ source: HistorySource, _ mode: ImportMode) async throws -> ImportOutcome {
+        let core = self.core
+        return try await Task.detached { try core.importHistory(source: source, mode: mode) }.value
+    }
+
     // MARK: - focus and scroll
 
     /// Focus, without marshalling the strip. Focus does not change the shape of

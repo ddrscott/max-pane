@@ -773,6 +773,27 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func historySearchableCount() throws  -> UInt32
     
     /**
+     * Every browser on this machine we could import history from — found by
+     * looking for the files, so the wizard offers what is installed rather
+     * than a list of browsers the user does not have.
+     *
+     * A source we are not allowed to read is still returned, carrying the
+     * sentence that says why. Safari's history is behind Full Disk Access and
+     * the failure without it reads exactly like a corrupt database; a row that
+     * says so is the difference between a checkbox and a bug report.
+     */
+    func historySources()  -> [HistorySource]
+    
+    /**
+     * Import `source`, for real.
+     *
+     * `Replace` backs the ledger up first and names the file in the outcome —
+     * the whole strip, not only history, because the ledger is one file and a
+     * backup of part of it is not a way back.
+     */
+    func importHistory(source: HistorySource, mode: ImportMode) throws  -> ImportOutcome
+    
+    /**
      * Append an exported strip to the right-hand end of this one.
      *
      * Appends rather than replaces, because the destructive version of this is
@@ -879,6 +900,17 @@ public protocol CoreProtocol: AnyObject, Sendable {
      * [`Core::mark_evicted`] / [`Core::mark_live`] once it has acted.
      */
     func planEviction(viewport: Viewport, memory: MemoryReport) throws  -> [PaneDirective]
+    
+    /**
+     * What importing `source` would do, without doing any of it.
+     *
+     * The wizard's dry run, and the only screen between the user and a
+     * `Replace`. It costs one snapshot of the source — 1.1 s for the owner's
+     * 642 MB Vivaldi profile, because APFS copies by reference — so the import
+     * that follows takes a second one rather than this holding 642 MB of his
+     * browsing history open across however long he reads the report for.
+     */
+    func planHistoryImport(source: HistorySource, mode: ImportMode) throws  -> ImportPlan
     
     /**
      * Resolve a working directory to a git root without touching the ledger.
@@ -1443,6 +1475,43 @@ open func historySearchableCount()throws  -> UInt32  {
 }
     
     /**
+     * Every browser on this machine we could import history from — found by
+     * looking for the files, so the wizard offers what is installed rather
+     * than a list of browsers the user does not have.
+     *
+     * A source we are not allowed to read is still returned, carrying the
+     * sentence that says why. Safari's history is behind Full Disk Access and
+     * the failure without it reads exactly like a corrupt database; a row that
+     * says so is the difference between a checkbox and a bug report.
+     */
+open func historySources() -> [HistorySource]  {
+    return try!  FfiConverterSequenceTypeHistorySource.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_history_sources(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Import `source`, for real.
+     *
+     * `Replace` backs the ledger up first and names the file in the outcome —
+     * the whole strip, not only history, because the ledger is one file and a
+     * backup of part of it is not a way back.
+     */
+open func importHistory(source: HistorySource, mode: ImportMode)throws  -> ImportOutcome  {
+    return try  FfiConverterTypeImportOutcome_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_import_history(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeHistorySource_lower(source),
+        FfiConverterTypeImportMode_lower(mode),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * Append an exported strip to the right-hand end of this one.
      *
      * Appends rather than replaces, because the destructive version of this is
@@ -1664,6 +1733,26 @@ open func planEviction(viewport: Viewport, memory: MemoryReport)throws  -> [Pane
             self.uniffiCloneHandle(),
         FfiConverterTypeViewport_lower(viewport),
         FfiConverterTypeMemoryReport_lower(memory),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * What importing `source` would do, without doing any of it.
+     *
+     * The wizard's dry run, and the only screen between the user and a
+     * `Replace`. It costs one snapshot of the source — 1.1 s for the owner's
+     * 642 MB Vivaldi profile, because APFS copies by reference — so the import
+     * that follows takes a second one rather than this holding 642 MB of his
+     * browsing history open across however long he reads the report for.
+     */
+open func planHistoryImport(source: HistorySource, mode: ImportMode)throws  -> ImportPlan  {
+    return try  FfiConverterTypeImportPlan_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_plan_history_import(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeHistorySource_lower(source),
+        FfiConverterTypeImportMode_lower(mode),uniffiCallStatus
     )
 })
 }
@@ -2351,6 +2440,359 @@ public func FfiConverterTypeHistoryEntry_lift(_ buf: RustBuffer) throws -> Histo
 #endif
 public func FfiConverterTypeHistoryEntry_lower(_ value: HistoryEntry) -> RustBuffer {
     return FfiConverterTypeHistoryEntry.lower(value)
+}
+
+
+/**
+ * One history file we could import from, as offered to the wizard.
+ *
+ * Produced by looking at the disk, never from a fixed list: a browser the user
+ * does not have installed is not a row they should have to read past, and a
+ * browser we have never heard of is one they would never be offered. The
+ * wizard hands this record straight back to [`crate::Core::import_history`],
+ * so there is no id table to keep in step.
+ */
+public struct HistorySource: Equatable, Hashable {
+    /**
+     * "Vivaldi", "Safari", "Firefox" — the name on the user's Dock.
+     */
+    public var name: String
+    /**
+     * The browser's own name for the profile, when it has more than one.
+     */
+    public var profile: String?
+    public var kind: HistorySourceKind
+    /**
+     * Absolute path to the history database.
+     */
+    public var path: String
+    /**
+     * Bytes, for a wizard that is about to copy it.
+     */
+    public var sizeBytes: UInt64
+    /**
+     * Why we cannot read it, when we cannot. `Some` here is not an error: the
+     * row is still offered, greyed, with the sentence that says what to do.
+     */
+    public var blocked: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "Vivaldi", "Safari", "Firefox" — the name on the user's Dock.
+         */name: String, 
+        /**
+         * The browser's own name for the profile, when it has more than one.
+         */profile: String?, kind: HistorySourceKind, 
+        /**
+         * Absolute path to the history database.
+         */path: String, 
+        /**
+         * Bytes, for a wizard that is about to copy it.
+         */sizeBytes: UInt64, 
+        /**
+         * Why we cannot read it, when we cannot. `Some` here is not an error: the
+         * row is still offered, greyed, with the sentence that says what to do.
+         */blocked: String?) {
+        self.name = name
+        self.profile = profile
+        self.kind = kind
+        self.path = path
+        self.sizeBytes = sizeBytes
+        self.blocked = blocked
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension HistorySource: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeHistorySource: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HistorySource {
+        return
+            try HistorySource(
+                name: FfiConverterString.read(from: &buf), 
+                profile: FfiConverterOptionString.read(from: &buf), 
+                kind: FfiConverterTypeHistorySourceKind.read(from: &buf), 
+                path: FfiConverterString.read(from: &buf), 
+                sizeBytes: FfiConverterUInt64.read(from: &buf), 
+                blocked: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: HistorySource, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.profile, into: &buf)
+        FfiConverterTypeHistorySourceKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterUInt64.write(value.sizeBytes, into: &buf)
+        FfiConverterOptionString.write(value.blocked, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHistorySource_lift(_ buf: RustBuffer) throws -> HistorySource {
+    return try FfiConverterTypeHistorySource.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHistorySource_lower(_ value: HistorySource) -> RustBuffer {
+    return FfiConverterTypeHistorySource.lower(value)
+}
+
+
+/**
+ * An import that happened.
+ */
+public struct ImportOutcome: Equatable, Hashable {
+    public var plan: ImportPlan
+    /**
+     * Rows written for pages the ledger had never seen.
+     */
+    public var inserted: UInt32
+    /**
+     * Rows folded into an entry that already existed. Always 0 for `Replace`.
+     */
+    public var updated: UInt32
+    /**
+     * Rows `Replace` dropped.
+     */
+    public var discarded: UInt32
+    /**
+     * Where `Replace` put the old ledger. Named so a wrong choice at the
+     * wizard is one `cp` from being undone, which is the whole reason
+     * `Replace` is allowed to be one click.
+     */
+    public var backupPath: String?
+    public var elapsedMs: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(plan: ImportPlan, 
+        /**
+         * Rows written for pages the ledger had never seen.
+         */inserted: UInt32, 
+        /**
+         * Rows folded into an entry that already existed. Always 0 for `Replace`.
+         */updated: UInt32, 
+        /**
+         * Rows `Replace` dropped.
+         */discarded: UInt32, 
+        /**
+         * Where `Replace` put the old ledger. Named so a wrong choice at the
+         * wizard is one `cp` from being undone, which is the whole reason
+         * `Replace` is allowed to be one click.
+         */backupPath: String?, elapsedMs: Int64) {
+        self.plan = plan
+        self.inserted = inserted
+        self.updated = updated
+        self.discarded = discarded
+        self.backupPath = backupPath
+        self.elapsedMs = elapsedMs
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ImportOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImportOutcome: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImportOutcome {
+        return
+            try ImportOutcome(
+                plan: FfiConverterTypeImportPlan.read(from: &buf), 
+                inserted: FfiConverterUInt32.read(from: &buf), 
+                updated: FfiConverterUInt32.read(from: &buf), 
+                discarded: FfiConverterUInt32.read(from: &buf), 
+                backupPath: FfiConverterOptionString.read(from: &buf), 
+                elapsedMs: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImportOutcome, into buf: inout [UInt8]) {
+        FfiConverterTypeImportPlan.write(value.plan, into: &buf)
+        FfiConverterUInt32.write(value.inserted, into: &buf)
+        FfiConverterUInt32.write(value.updated, into: &buf)
+        FfiConverterUInt32.write(value.discarded, into: &buf)
+        FfiConverterOptionString.write(value.backupPath, into: &buf)
+        FfiConverterInt64.write(value.elapsedMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportOutcome_lift(_ buf: RustBuffer) throws -> ImportOutcome {
+    return try FfiConverterTypeImportOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportOutcome_lower(_ value: ImportOutcome) -> RustBuffer {
+    return FfiConverterTypeImportOutcome.lower(value)
+}
+
+
+/**
+ * What an import would do, or did. Returned by the dry run *and* carried in
+ * the outcome, so the wizard shows one shape of report twice and the numbers
+ * on the confirmation screen are the numbers that were acted on.
+ */
+public struct ImportPlan: Equatable, Hashable {
+    /**
+     * Pages in the source we can use: normalized, actually visited, distinct.
+     */
+    public var sourcePages: UInt32
+    /**
+     * Source rows that did not become a page here, with the reasons collapsed
+     * into one number: an unrecordable scheme, a URL typed and never loaded, a
+     * row the browser itself hides, or a second spelling of a page already
+     * counted. A list of them is not something anyone reads — 3 800 of the
+     * owner's 112 846 are OAuth bounces — and the number is what says whether
+     * the import looks like the browser it came from.
+     */
+    public var skipped: UInt32
+    /**
+     * Source pages the ledger already has. In `Merge` these are folded; in
+     * `Replace` they are simply the overlap, which is the number that tells
+     * the user how much of the old ledger the new one still covers.
+     */
+    public var alreadyKnown: UInt32
+    /**
+     * Source pages the ledger has never seen.
+     */
+    public var newPages: UInt32
+    /**
+     * Epoch ms of the oldest and newest visit in the source. `None` for an
+     * empty source.
+     */
+    public var earliestVisitAt: Int64?
+    public var latestVisitAt: Int64?
+    /**
+     * Pages in the ledger before the import.
+     */
+    public var existingPages: UInt32
+    /**
+     * Pages in the ledger afterwards.
+     */
+    public var resultingPages: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Pages in the source we can use: normalized, actually visited, distinct.
+         */sourcePages: UInt32, 
+        /**
+         * Source rows that did not become a page here, with the reasons collapsed
+         * into one number: an unrecordable scheme, a URL typed and never loaded, a
+         * row the browser itself hides, or a second spelling of a page already
+         * counted. A list of them is not something anyone reads — 3 800 of the
+         * owner's 112 846 are OAuth bounces — and the number is what says whether
+         * the import looks like the browser it came from.
+         */skipped: UInt32, 
+        /**
+         * Source pages the ledger already has. In `Merge` these are folded; in
+         * `Replace` they are simply the overlap, which is the number that tells
+         * the user how much of the old ledger the new one still covers.
+         */alreadyKnown: UInt32, 
+        /**
+         * Source pages the ledger has never seen.
+         */newPages: UInt32, 
+        /**
+         * Epoch ms of the oldest and newest visit in the source. `None` for an
+         * empty source.
+         */earliestVisitAt: Int64?, latestVisitAt: Int64?, 
+        /**
+         * Pages in the ledger before the import.
+         */existingPages: UInt32, 
+        /**
+         * Pages in the ledger afterwards.
+         */resultingPages: UInt32) {
+        self.sourcePages = sourcePages
+        self.skipped = skipped
+        self.alreadyKnown = alreadyKnown
+        self.newPages = newPages
+        self.earliestVisitAt = earliestVisitAt
+        self.latestVisitAt = latestVisitAt
+        self.existingPages = existingPages
+        self.resultingPages = resultingPages
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ImportPlan: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImportPlan: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImportPlan {
+        return
+            try ImportPlan(
+                sourcePages: FfiConverterUInt32.read(from: &buf), 
+                skipped: FfiConverterUInt32.read(from: &buf), 
+                alreadyKnown: FfiConverterUInt32.read(from: &buf), 
+                newPages: FfiConverterUInt32.read(from: &buf), 
+                earliestVisitAt: FfiConverterOptionInt64.read(from: &buf), 
+                latestVisitAt: FfiConverterOptionInt64.read(from: &buf), 
+                existingPages: FfiConverterUInt32.read(from: &buf), 
+                resultingPages: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ImportPlan, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.sourcePages, into: &buf)
+        FfiConverterUInt32.write(value.skipped, into: &buf)
+        FfiConverterUInt32.write(value.alreadyKnown, into: &buf)
+        FfiConverterUInt32.write(value.newPages, into: &buf)
+        FfiConverterOptionInt64.write(value.earliestVisitAt, into: &buf)
+        FfiConverterOptionInt64.write(value.latestVisitAt, into: &buf)
+        FfiConverterUInt32.write(value.existingPages, into: &buf)
+        FfiConverterUInt32.write(value.resultingPages, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportPlan_lift(_ buf: RustBuffer) throws -> ImportPlan {
+    return try FfiConverterTypeImportPlan.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportPlan_lower(_ value: ImportPlan) -> RustBuffer {
+    return FfiConverterTypeImportPlan.lower(value)
 }
 
 
@@ -3799,6 +4241,159 @@ public func FfiConverterTypeDockSide_lower(_ value: DockSide) -> RustBuffer {
 
 
 /**
+ * Which schema a history file has, which is a smaller question than which
+ * browser wrote it: every Chromium fork shares `urls`/`visits` down to the
+ * column names, so Vivaldi, Chrome, Brave, Edge and Arc are one reader.
+ */
+
+public enum HistorySourceKind: Equatable, Hashable {
+    
+    case chromium
+    case safari
+    case firefox
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension HistorySourceKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeHistorySourceKind: FfiConverterRustBuffer {
+    typealias SwiftType = HistorySourceKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HistorySourceKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .chromium
+        
+        case 2: return .safari
+        
+        case 3: return .firefox
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: HistorySourceKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .chromium:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .safari:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .firefox:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHistorySourceKind_lift(_ buf: RustBuffer) throws -> HistorySourceKind {
+    return try FfiConverterTypeHistorySourceKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHistorySourceKind_lower(_ value: HistorySourceKind) -> RustBuffer {
+    return FfiConverterTypeHistorySourceKind.lower(value)
+}
+
+
+
+/**
+ * What to do with the history already in the ledger.
+ */
+
+public enum ImportMode: Equatable, Hashable {
+    
+    /**
+     * Keep it, and fold the source into it.
+     */
+    case merge
+    /**
+     * Drop it, and let the source stand alone. Backed up first.
+     */
+    case replace
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ImportMode: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeImportMode: FfiConverterRustBuffer {
+    typealias SwiftType = ImportMode
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ImportMode {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .merge
+        
+        case 2: return .replace
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ImportMode, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .merge:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .replace:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportMode_lift(_ buf: RustBuffer) throws -> ImportMode {
+    return try FfiConverterTypeImportMode.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeImportMode_lower(_ value: ImportMode) -> RustBuffer {
+    return FfiConverterTypeImportMode.lower(value)
+}
+
+
+
+/**
  * What the shell should do about one pane, this frame.
  */
 
@@ -4483,6 +5078,30 @@ fileprivate struct FfiConverterOptionUInt32: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionInt64: FfiConverterRustBuffer {
+    typealias SwiftType = Int64?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterInt64.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterInt64.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionDouble: FfiConverterRustBuffer {
     typealias SwiftType = Double?
 
@@ -4669,6 +5288,31 @@ fileprivate struct FfiConverterSequenceTypeHistoryEntry: FfiConverterRustBuffer 
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeHistoryEntry.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeHistorySource: FfiConverterRustBuffer {
+    typealias SwiftType = [HistorySource]
+
+    public static func write(_ value: [HistorySource], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeHistorySource.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [HistorySource] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [HistorySource]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeHistorySource.read(from: &buf))
         }
         return seq
     }
@@ -4937,6 +5581,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_history_searchable_count() != 31221) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_history_sources() != 17106) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_import_history() != 45848) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_import_strip() != 44112) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4977,6 +5627,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_plan_eviction() != 2727) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_plan_history_import() != 57431) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_project_root_of() != 21459) {

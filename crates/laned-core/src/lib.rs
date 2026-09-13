@@ -13,6 +13,7 @@ uniffi::setup_scaffolding!();
 pub mod error;
 pub mod eviction;
 pub mod history;
+pub mod import;
 pub mod ledger;
 pub mod model;
 pub mod ordinal;
@@ -807,6 +808,67 @@ impl Core {
         inner.ledger.clear_history()
     }
 
+    /// Every browser on this machine we could import history from — found by
+    /// looking for the files, so the wizard offers what is installed rather
+    /// than a list of browsers the user does not have.
+    ///
+    /// A source we are not allowed to read is still returned, carrying the
+    /// sentence that says why. Safari's history is behind Full Disk Access and
+    /// the failure without it reads exactly like a corrupt database; a row that
+    /// says so is the difference between a checkbox and a bug report.
+    pub fn history_sources(&self) -> Vec<import::HistorySource> {
+        import::detect()
+    }
+
+    /// What importing `source` would do, without doing any of it.
+    ///
+    /// The wizard's dry run, and the only screen between the user and a
+    /// `Replace`. It costs one snapshot of the source — 1.1 s for the owner's
+    /// 642 MB Vivaldi profile, because APFS copies by reference — so the import
+    /// that follows takes a second one rather than this holding 642 MB of his
+    /// browsing history open across however long he reads the report for.
+    pub fn plan_history_import(
+        &self,
+        source: import::HistorySource,
+        mode: import::ImportMode,
+    ) -> Result<import::ImportPlan> {
+        let inner = self.inner.lock();
+        let (pages, skipped) = Self::read_source(&inner.ledger, &source)?;
+        let known = inner.ledger.preview_import(&pages)?;
+        Ok(Self::plan(&inner.ledger, &pages, skipped, known, mode)?)
+    }
+
+    /// Import `source`, for real.
+    ///
+    /// `Replace` backs the ledger up first and names the file in the outcome —
+    /// the whole strip, not only history, because the ledger is one file and a
+    /// backup of part of it is not a way back.
+    pub fn import_history(
+        &self,
+        source: import::HistorySource,
+        mode: import::ImportMode,
+    ) -> Result<import::ImportOutcome> {
+        let started = now_ms();
+        let mut inner = self.inner.lock();
+        let (pages, skipped) = Self::read_source(&inner.ledger, &source)?;
+        let known = inner.ledger.preview_import(&pages)?;
+        let plan = Self::plan(&inner.ledger, &pages, skipped, known, mode)?;
+
+        let backup_path = match mode {
+            import::ImportMode::Replace => Self::back_up_ledger(&inner.ledger)?,
+            import::ImportMode::Merge => None,
+        };
+        let (inserted, updated, discarded) = inner.ledger.apply_import(&pages, mode)?;
+        Ok(import::ImportOutcome {
+            plan,
+            inserted,
+            updated,
+            discarded,
+            backup_path,
+            elapsed_ms: now_ms() - started,
+        })
+    }
+
     /// Remember how far a pane's contents are scaled. No snapshot is
     /// published: zoom changes what a pane draws, not the shape of the strip.
     pub fn set_pane_zoom(&self, pane_id: String, zoom: f64) -> Result<()> {
@@ -1064,6 +1126,62 @@ impl Core {
 // ---- internals (not exported over FFI) -------------------------------------
 
 impl Core {
+    /// Snapshot a source history file and read every page out of it.
+    ///
+    /// The snapshot's lifetime is this function: it is taken, read and deleted
+    /// before the pages are handed back, so nothing further up has to remember
+    /// to clean up 642 MB of someone's browsing history.
+    fn read_source(
+        ledger: &Ledger,
+        source: &import::HistorySource,
+    ) -> Result<(Vec<import::SourcePage>, u32)> {
+        if let Some(why) = &source.blocked {
+            return Err(CoreError::Invalid { message: why.clone() });
+        }
+        let snapshot = import::Snapshot::take(std::path::Path::new(&source.path), ledger.path())?;
+        let conn = snapshot.open()?;
+        import::read_pages(&conn, source.kind)
+    }
+
+    fn plan(
+        ledger: &Ledger,
+        pages: &[import::SourcePage],
+        skipped: u32,
+        known: u32,
+        mode: import::ImportMode,
+    ) -> Result<import::ImportPlan> {
+        let existing = ledger.history_count()?;
+        let source_pages = pages.len() as u32;
+        Ok(import::ImportPlan {
+            source_pages,
+            skipped,
+            already_known: known,
+            new_pages: source_pages - known,
+            earliest_visit_at: pages.iter().map(|p| p.first_visit_at).min(),
+            latest_visit_at: pages.iter().map(|p| p.last_visit_at).max(),
+            existing_pages: existing,
+            resulting_pages: match mode {
+                import::ImportMode::Merge => existing + (source_pages - known),
+                import::ImportMode::Replace => source_pages,
+            },
+        })
+    }
+
+    /// Put the ledger aside before `Replace` empties its history.
+    ///
+    /// Named with the epoch millisecond rather than a date, so a second
+    /// `Replace` cannot quietly overwrite the way back from the first — the
+    /// wizard prints the whole path, and a file name that is unique matters
+    /// more there than a file name that is pretty.
+    fn back_up_ledger(ledger: &Ledger) -> Result<Option<String>> {
+        let Some(path) = ledger.path() else { return Ok(None) };
+        let mut name = path.as_os_str().to_os_string();
+        name.push(format!(".pre-import-{}", now_ms()));
+        let dest = PathBuf::from(name);
+        ledger.backup_to(&dest)?;
+        Ok(Some(dest.to_string_lossy().into_owned()))
+    }
+
     /// The ordinal for a new or moved lane, renormalizing the strip if the gap
     /// has been subdivided past what f64 can carry.
     fn place(ledger: &mut Ledger, placement: &Placement) -> Result<f64> {

@@ -59,7 +59,8 @@ default_run() {
   # tests print are invisible here. Say it out loud instead: a suite that does
   # not announce what it left out is a suite you stop trusting.
   echo
-  echo "note: skipped the cost tests (rust_side_snapshot_cost, cost_of_a_keystroke)"
+  echo "note: skipped the cost tests (rust_side_snapshot_cost, cost_of_a_keystroke,"
+  echo "      cost_of_importing_a_real_profile)"
   echo "      and the render sheets. $0 all runs them."
 }
 
@@ -69,8 +70,13 @@ bench_run() {
   # Release, because a debug timing number measures the debug build and nothing
   # a user will ever run. --nocapture so the measurements are actually printed;
   # they are the point, the assertion is only a floor under them.
+  #
+  # `cost_of_importing_a_real_profile` is here but will print SKIPPED unless
+  # MAXPANE_IMPORT_SOURCE names a browser history file: it is the one measurement
+  # that has no synthetic stand-in, because it reads a real person's browsing off
+  # a real disk. Listed anyway so `bench` says out loud that it exists.
   MAXPANE_BENCH=1 cargo test --release --workspace -- --nocapture \
-    rust_side_snapshot_cost cost_of_a_keystroke
+    rust_side_snapshot_cost cost_of_a_keystroke cost_of_importing_a_real_profile
 }
 
 shots_run() {
