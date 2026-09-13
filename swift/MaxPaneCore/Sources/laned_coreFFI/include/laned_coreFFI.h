@@ -434,6 +434,16 @@ void uniffi_laned_core_fn_method_core_move_bookmark(uint64_t ptr, RustBuffer id,
 RustBuffer uniffi_laned_core_fn_method_core_move_lane(uint64_t ptr, RustBuffer lane_id, RustBuffer placement, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_MOVE_PANE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_MOVE_PANE
+RustBuffer uniffi_laned_core_fn_method_core_move_pane(uint64_t ptr, RustBuffer pane_id, RustBuffer lane_id, uint32_t index, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_MOVE_PANE_TO_NEW_LANE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_MOVE_PANE_TO_NEW_LANE
+RustBuffer uniffi_laned_core_fn_method_core_move_pane_to_new_lane(uint64_t ptr, RustBuffer pane_id, RustBuffer placement, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_NAME_VISIT
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_NAME_VISIT
 void uniffi_laned_core_fn_method_core_name_visit(uint64_t ptr, RustBuffer url, RustBuffer title, RustCallStatus *_Nonnull out_status
@@ -1100,6 +1110,18 @@ uint16_t uniffi_laned_core_checksum_method_core_move_bookmark(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_MOVE_LANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_MOVE_LANE
 uint16_t uniffi_laned_core_checksum_method_core_move_lane(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_MOVE_PANE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_MOVE_PANE
+uint16_t uniffi_laned_core_checksum_method_core_move_pane(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_MOVE_PANE_TO_NEW_LANE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_MOVE_PANE_TO_NEW_LANE
+uint16_t uniffi_laned_core_checksum_method_core_move_pane_to_new_lane(void
     
 );
 #endif

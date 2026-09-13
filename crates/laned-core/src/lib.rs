@@ -317,6 +317,131 @@ impl Core {
         Self::snapshot(&inner)
     }
 
+    // ---- moving a pane between lanes ---------------------------------------
+
+    /// Move a pane into another lane's stack — or to a different place in its
+    /// own — landing at `index` among the panes already there, counted
+    /// **without** this one.
+    ///
+    /// The drop half of a pane drag. One level of nesting is preserved by
+    /// construction: a pane's new home is a lane, and a lane holds panes, so
+    /// there is no shape here that could become a tree.
+    ///
+    /// # What happens to a lane left empty
+    ///
+    /// It is deleted, and this is `close_pane`'s rule rather than a new one:
+    /// *an empty column is not a thing the user can do anything with*. Leaving
+    /// it would put a lane on the strip with a header, a width and nothing
+    /// under it — reachable by ⌘[ and ⌘], counted by the edge rails, offered by
+    /// ⌘P, and impossible to remove except by a ⋯ menu nobody would think to
+    /// look in. The alternative that was considered and rejected is keeping the
+    /// lane so an undo could put the pane back; there is no undo in this app
+    /// yet, and a ghost column waiting for one that does not exist is a lie on
+    /// screen today.
+    ///
+    /// # What happens to the pane's height
+    ///
+    /// A pane joining a *different* lane arrives at the mean of that lane's
+    /// weights — the same rule `add_pane` follows, and for the same reason: the
+    /// newcomer takes an equal share of the enlarged stack and everyone already
+    /// there gives up height in proportion to what they had. A reorder inside
+    /// one lane changes no weight at all. Heights are shares of a column, and
+    /// a share is only meaningful against the column it was measured in.
+    pub fn move_pane(&self, pane_id: String, lane_id: String, index: u32) -> Result<StripState> {
+        let mut inner = self.inner.lock();
+        let pane = inner.ledger.pane(&pane_id)?;
+        let target = inner.ledger.lane(&lane_id)?;
+
+        let weight = if pane.lane_id == lane_id {
+            None
+        } else {
+            Some(mean_weight(&target.panes.iter().map(|p| p.height_weight).collect::<Vec<_>>()))
+        };
+        let from = inner.ledger.move_pane_to(&pane_id, &lane_id, index, weight)?;
+        if from != lane_id && inner.ledger.lane(&from)?.panes.is_empty() {
+            inner.ledger.delete_lane(&from)?;
+        }
+        // The pane the user just picked up and put down is the pane they are
+        // now working in. Without this the keyboard stays wherever it was,
+        // which after a drag that dissolved the source lane is a pane that no
+        // longer exists.
+        inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane_id)?;
+        inner.ledger.touch_focus(&lane_id, now_ms())?;
+        Self::bump(&mut inner);
+        Self::snapshot(&inner)
+    }
+
+    /// Pull a pane out into a lane of its own, placed by `placement`.
+    ///
+    /// The other half of the drop: between two lanes, or off either end of the
+    /// strip.
+    ///
+    /// # A lane that is only this pane is *moved*, not rebuilt
+    ///
+    /// Pulling the single pane of a lane into a new lane and deleting the old
+    /// one is the same strip, one lane at a time — except that it would throw
+    /// away everything the lane carries and the pane does not: the width the
+    /// user dragged it to, its title, its project tag, and `keep_live`. So that
+    /// case is a `move_lane`, and the only thing that makes it look different
+    /// from ⌘⇧→ is where the pointer was. A lane dragged into the strip stops
+    /// holding an edge, because a dock that has visibly been dropped between
+    /// two lanes and is still at the wall is a gesture that did nothing.
+    pub fn move_pane_to_new_lane(
+        &self,
+        pane_id: String,
+        placement: Placement,
+    ) -> Result<StripState> {
+        let mut inner = self.inner.lock();
+        let pane = inner.ledger.pane(&pane_id)?;
+        let source = inner.ledger.lane(&pane.lane_id)?;
+
+        if source.panes.len() == 1 {
+            // Placed against the lane it is already in: it is already there.
+            if let Placement::RightOf { lane_id } | Placement::LeftOf { lane_id } = &placement {
+                if lane_id == &source.id {
+                    return Self::snapshot(&inner);
+                }
+            }
+            let ordinal = Self::place(&mut inner.ledger, &placement)?;
+            inner.ledger.set_ordinal(&source.id, ordinal)?;
+            if source.dock.is_some() {
+                inner.ledger.set_dock(&source.id, None)?;
+            }
+            inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane_id)?;
+            inner.ledger.touch_focus(&source.id, now_ms())?;
+            Self::bump(&mut inner);
+            return Self::snapshot(&inner);
+        }
+
+        let ordinal = Self::place(&mut inner.ledger, &placement)?;
+        let now = now_ms();
+        let lane = Lane {
+            id: new_id(),
+            // The width the pane was already being drawn at. A terminal's grid
+            // is derived from it (ADR-0007 forbids reshaping the PTY), so a
+            // pane that came out of a 900 pt column into a 656 pt one would
+            // reflow every line of scrollback as a side effect of being moved.
+            width_pt: source.width_pt,
+            ordinal,
+            title: None,
+            project_root: source.project_root.clone(),
+            project_source: ProjectSource::Inherited,
+            created_at: now,
+            last_focus_at: now,
+            keep_live: false,
+            dock: None,
+            span: 1,
+            panes: Vec::new(),
+        };
+        inner.ledger.insert_lane(&lane)?;
+        // 1.0, the weight a lane's first pane is born with everywhere else:
+        // the only ratio in a stack of one is a share of the whole.
+        inner.ledger.move_pane_to(&pane_id, &lane.id, 0, Some(1.0))?;
+        inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane_id)?;
+        Self::bump(&mut inner);
+        Self::snapshot(&inner)
+    }
+
     // ---- ordering ----------------------------------------------------------
 
     /// Move a lane to a new place in the strip. The only thing that ever writes

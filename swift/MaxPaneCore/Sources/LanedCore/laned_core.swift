@@ -967,6 +967,57 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func moveLane(laneId: String, placement: Placement) throws  -> StripState
     
     /**
+     * Move a pane into another lane's stack — or to a different place in its
+     * own — landing at `index` among the panes already there, counted
+     * **without** this one.
+     *
+     * The drop half of a pane drag. One level of nesting is preserved by
+     * construction: a pane's new home is a lane, and a lane holds panes, so
+     * there is no shape here that could become a tree.
+     *
+     * # What happens to a lane left empty
+     *
+     * It is deleted, and this is `close_pane`'s rule rather than a new one:
+     * *an empty column is not a thing the user can do anything with*. Leaving
+     * it would put a lane on the strip with a header, a width and nothing
+     * under it — reachable by ⌘[ and ⌘], counted by the edge rails, offered by
+     * ⌘P, and impossible to remove except by a ⋯ menu nobody would think to
+     * look in. The alternative that was considered and rejected is keeping the
+     * lane so an undo could put the pane back; there is no undo in this app
+     * yet, and a ghost column waiting for one that does not exist is a lie on
+     * screen today.
+     *
+     * # What happens to the pane's height
+     *
+     * A pane joining a *different* lane arrives at the mean of that lane's
+     * weights — the same rule `add_pane` follows, and for the same reason: the
+     * newcomer takes an equal share of the enlarged stack and everyone already
+     * there gives up height in proportion to what they had. A reorder inside
+     * one lane changes no weight at all. Heights are shares of a column, and
+     * a share is only meaningful against the column it was measured in.
+     */
+    func movePane(paneId: String, laneId: String, index: UInt32) throws  -> StripState
+    
+    /**
+     * Pull a pane out into a lane of its own, placed by `placement`.
+     *
+     * The other half of the drop: between two lanes, or off either end of the
+     * strip.
+     *
+     * # A lane that is only this pane is *moved*, not rebuilt
+     *
+     * Pulling the single pane of a lane into a new lane and deleting the old
+     * one is the same strip, one lane at a time — except that it would throw
+     * away everything the lane carries and the pane does not: the width the
+     * user dragged it to, its title, its project tag, and `keep_live`. So that
+     * case is a `move_lane`, and the only thing that makes it look different
+     * from ⌘⇧→ is where the pointer was. A lane dragged into the strip stops
+     * holding an edge, because a dock that has visibly been dropped between
+     * two lanes and is still at the wall is a gesture that did nothing.
+     */
+    func movePaneToNewLane(paneId: String, placement: Placement) throws  -> StripState
+    
+    /**
      * The page's `<title>`, which usually lands after the navigation finished.
      *
      * Separate from [`Core::record_visit`] because it is a correction to a
@@ -1986,6 +2037,76 @@ open func moveLane(laneId: String, placement: Placement)throws  -> StripState  {
     uniffi_laned_core_fn_method_core_move_lane(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(laneId),
+        FfiConverterTypePlacement_lower(placement),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Move a pane into another lane's stack — or to a different place in its
+     * own — landing at `index` among the panes already there, counted
+     * **without** this one.
+     *
+     * The drop half of a pane drag. One level of nesting is preserved by
+     * construction: a pane's new home is a lane, and a lane holds panes, so
+     * there is no shape here that could become a tree.
+     *
+     * # What happens to a lane left empty
+     *
+     * It is deleted, and this is `close_pane`'s rule rather than a new one:
+     * *an empty column is not a thing the user can do anything with*. Leaving
+     * it would put a lane on the strip with a header, a width and nothing
+     * under it — reachable by ⌘[ and ⌘], counted by the edge rails, offered by
+     * ⌘P, and impossible to remove except by a ⋯ menu nobody would think to
+     * look in. The alternative that was considered and rejected is keeping the
+     * lane so an undo could put the pane back; there is no undo in this app
+     * yet, and a ghost column waiting for one that does not exist is a lie on
+     * screen today.
+     *
+     * # What happens to the pane's height
+     *
+     * A pane joining a *different* lane arrives at the mean of that lane's
+     * weights — the same rule `add_pane` follows, and for the same reason: the
+     * newcomer takes an equal share of the enlarged stack and everyone already
+     * there gives up height in proportion to what they had. A reorder inside
+     * one lane changes no weight at all. Heights are shares of a column, and
+     * a share is only meaningful against the column it was measured in.
+     */
+open func movePane(paneId: String, laneId: String, index: UInt32)throws  -> StripState  {
+    return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_move_pane(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(paneId),
+        FfiConverterString.lower(laneId),
+        FfiConverterUInt32.lower(index),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Pull a pane out into a lane of its own, placed by `placement`.
+     *
+     * The other half of the drop: between two lanes, or off either end of the
+     * strip.
+     *
+     * # A lane that is only this pane is *moved*, not rebuilt
+     *
+     * Pulling the single pane of a lane into a new lane and deleting the old
+     * one is the same strip, one lane at a time — except that it would throw
+     * away everything the lane carries and the pane does not: the width the
+     * user dragged it to, its title, its project tag, and `keep_live`. So that
+     * case is a `move_lane`, and the only thing that makes it look different
+     * from ⌘⇧→ is where the pointer was. A lane dragged into the strip stops
+     * holding an edge, because a dock that has visibly been dropped between
+     * two lanes and is still at the wall is a gesture that did nothing.
+     */
+open func movePaneToNewLane(paneId: String, placement: Placement)throws  -> StripState  {
+    return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_move_pane_to_new_lane(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(paneId),
         FfiConverterTypePlacement_lower(placement),uniffiCallStatus
     )
 })
@@ -6782,6 +6903,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_move_lane() != 14936) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_move_pane() != 24780) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_move_pane_to_new_lane() != 17233) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_name_visit() != 65330) {

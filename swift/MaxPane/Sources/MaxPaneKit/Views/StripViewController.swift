@@ -77,6 +77,11 @@ public final class StripViewController: NSViewController {
     private var memoryTimer: Timer?
     /// `(lane being dragged, index it would land at)` during a drag.
     private var dragPreview: (laneId: String, target: Int)?
+    /// Where a pane being dragged would land, and what picked it up. Both live
+    /// in the document view, above every lane, and exist only while the mouse
+    /// is down — see `PaneDropIndicatorView`.
+    private let dropIndicator = PaneDropIndicatorView()
+    private let dragSourceMark = PaneDropIndicatorView()
     /// True until the strip has settled after launch. See `makeController`.
     private var isColdLaunch = true
     /// Latest session telemetry, so a lane materialised mid-stream is not blank
@@ -393,6 +398,16 @@ public final class StripViewController: NSViewController {
         // the wall, and the reverse. The one thing that must differ from a real
         // departure is that the view survives it, which is `beginDockDeparture`.
         let diff = StripDiff.between(previousStrip.map(\.id), strip.map(\.id))
+
+        // **Before anything else touches a view.** A pane that changed lane has
+        // its view *moved*, never rebuilt: a Ghostty surface and a `WKWebView`
+        // both die badly when they are torn down and made again, and the
+        // reconcile below would otherwise see a departure in one lane and an
+        // arrival in another and do exactly that. Worse, the animated departure
+        // unparents on a completion handler — by which time the view is in its
+        // new lane, and the fade would take it out of the stack it had just
+        // joined and leave it at alpha 0 in nobody's column.
+        releaseMovedPaneViews(from: previous, to: state.lanes)
 
         // What arrived, before anything is laid out: a lane whose column is
         // about to open must never take its full slot first, not even for the
@@ -738,6 +753,18 @@ public final class StripViewController: NSViewController {
         laneView.onHeaderDrag = { [weak self] x, isFinal in
             self?.handleLaneDrag(laneId: lane.id, toX: x, isFinal: isFinal)
         }
+        // The header drags the lane; a grip drags one pane out of it. Two
+        // gestures rather than one because a lane carries a width, a title and
+        // a tag that a pane does not, and "move this column" and "move this
+        // pane into that column" are different sentences.
+        laneView.onPaneGrab = { [weak self] paneId, point, isFinal in
+            self?.handlePaneDrag(paneId: paneId, at: point, isFinal: isFinal)
+        }
+        // A press on a grip that never became a drag. The click monitor would
+        // reach the same conclusion — the grip is inside the pane's rectangle —
+        // but a handle that depends on a window-wide monitor to not swallow
+        // clicks is a handle that breaks the day the monitor is narrowed.
+        laneView.onFocusPane = { [weak self] paneId in self?.focus(paneId) }
         laneView.onHeaderDoubleClick = { [weak self] in
             guard let self, let root = self.store.lane(lane.id)?.projectRoot else { return }
             try? self.store.gather(projectRoot: root)
@@ -1526,6 +1553,114 @@ public final class StripViewController: NSViewController {
         } catch {
             Log.warn("could not move lane \(laneId): \(error)")
         }
+    }
+
+    /// Take the view of every pane that changed lane out of the lane it left,
+    /// with no animation and no teardown.
+    ///
+    /// `setPaneView(nil, …)` takes the view out of the arrangement and clears
+    /// the height and width constraints that pinned it to the lane it is
+    /// leaving. It does **not** touch the controller, so the surface inside is
+    /// untouched — the pane is reparented into its new lane later in this same
+    /// synchronous pass, which is the reparent `movePaneView` describes for a
+    /// move *within* a lane, one level up.
+    ///
+    /// A stale entry here is not a cosmetic bug: the old lane would keep a
+    /// height constraint on a view that now lives in a different stack, which
+    /// is an unsatisfiable constraint the instant either lane lays out.
+    private func releaseMovedPaneViews(from previous: [Lane], to next: [Lane]) {
+        guard !previous.isEmpty else { return }
+        var was: [String: String] = [:]
+        for lane in previous {
+            for pane in lane.panes { was[pane.id] = lane.id }
+        }
+        for lane in next {
+            for pane in lane.panes {
+                guard let from = was[pane.id], from != lane.id else { continue }
+                laneViews[from]?.setPaneView(nil, for: pane.id, at: 0)
+                // It is not departing: it arrived somewhere else.
+                departingPanes.remove(pane.id)
+            }
+        }
+    }
+
+    // MARK: - dragging a pane between lanes
+
+    /// A pane being dragged by its grip.
+    ///
+    /// Every decision in here is `PaneDrag`'s; this is the wiring — convert a
+    /// window point into the document's own space, draw what comes back, and on
+    /// the drop turn it into exactly one ledger write. The strip is deliberately
+    /// **not** re-laid-out live the way a lane drag previews its reorder: moving
+    /// a pane between stacks would resize live terminals on every frame of the
+    /// gesture, which is a grid change per frame for a session that may have a
+    /// phone attached (ADR-0007). The indicator says where it will land instead.
+    private func handlePaneDrag(paneId: String, at windowPoint: NSPoint, isFinal: Bool) {
+        let laneHeight = content.bounds.height
+        let boxes = PaneDrag.boxes(lanes: store.stripLanes, laneHeight: laneHeight)
+        let point = content.convert(windowPoint, from: nil)
+        let target = PaneDrag.target(at: point, in: boxes, dragging: paneId)
+
+        guard isFinal else {
+            showDropFeedback(target, dragging: paneId, boxes: boxes, laneHeight: laneHeight)
+            return
+        }
+        hideDropFeedback()
+        // nil is both "nowhere" and "back where it started", and both mean the
+        // same thing here: one less write than a drag that ended in mid-air.
+        guard let target else { return }
+        do {
+            switch target {
+            case .into(let laneId, let index):
+                try store.movePane(paneId, to: laneId, at: index)
+            case .newLane(let before):
+                try store.movePaneToNewLane(paneId, before: before)
+            }
+        } catch {
+            Log.warn("could not move pane \(paneId): \(error)")
+        }
+    }
+
+    private func showDropFeedback(
+        _ target: PaneDrag.Target?, dragging paneId: String,
+        boxes: [PaneDrag.LaneBox], laneHeight: CGFloat
+    ) {
+        if let slot = PaneDrag.slot(of: paneId, in: boxes) {
+            raise(dragSourceMark)
+            dragSourceMark.show(.source, frame: slot)
+        } else {
+            dragSourceMark.hide()
+        }
+
+        guard let target,
+              let indicator = PaneDrag.indicator(
+                  for: target, in: boxes, laneHeight: laneHeight, dragging: paneId)
+        else {
+            dropIndicator.hide()
+            return
+        }
+        raise(dropIndicator)
+        switch indicator {
+        case .insertion(let lane, let y):
+            dropIndicator.show(.insertion(y: y), frame: lane)
+        case .seam(let rect):
+            dropIndicator.show(.seam, frame: rect)
+        }
+    }
+
+    private func hideDropFeedback() {
+        dropIndicator.hide()
+        dragSourceMark.hide()
+    }
+
+    /// Put an overlay above every lane, once per drag rather than once per
+    /// frame: lane views come and go with materialization, so "last subview"
+    /// is only true until the next one is built — and re-adding a view sixty
+    /// times a second is a subview list churning under a live drag.
+    private func raise(_ overlay: NSView) {
+        guard overlay.isHidden || overlay.superview !== content else { return }
+        overlay.removeFromSuperview()
+        content.addSubview(overlay)
     }
 
     /// `lanes` with the lane at `from` moved to `to`. Preview only — the ledger

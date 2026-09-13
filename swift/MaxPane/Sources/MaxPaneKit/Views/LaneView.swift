@@ -39,6 +39,14 @@ final class LaneView: NSView {
     /// pass loses its tracking area, and the cursor stops changing halfway
     /// through a drag.
     private var dividers: [PaneDividerView] = []
+    /// One per pane, pooled for the same reason the seams are: a handle that is
+    /// destroyed and rebuilt on every layout pass loses its tracking area, and
+    /// the cursor stops changing halfway through a drag. `gripPaneIds` is what
+    /// each pool slot is currently the handle *for*, read at click time rather
+    /// than captured, so a lane view recycled onto a different lane does not
+    /// carry a closure naming a pane it no longer holds.
+    private var grips: [PaneGripView] = []
+    private var gripPaneIds: [String] = []
     /// A pane whose slot is still opening, and how far it has got. Purely
     /// visual: the weights the ledger stores are untouched, so a snapshot
     /// arriving mid-entrance re-lays the lane out without knocking it off
@@ -55,6 +63,12 @@ final class LaneView: NSView {
     /// per decision. Only the two panes either side of the seam appear in it.
     var onPaneHeights: (([(paneId: String, weight: Double)], _ final: Bool) -> Void)?
     var onFocusPane: ((String) -> Void)?
+    /// Dragging a pane by its grip. `(pane, where the pointer is in window
+    /// coordinates, is this the drop)` — the same shape and the same discipline
+    /// as `onHeaderDrag`: live while the pointer moves so the strip can show
+    /// where the pane would land, once more on the drop so the ledger takes one
+    /// write per decision.
+    var onPaneGrab: ((String, NSPoint, Bool) -> Void)?
     var onHeaderDoubleClick: (() -> Void)?
     /// Dragging the header reorders the strip (PRD §7.2). `x` is in the strip's
     /// coordinate space; `final` marks the drop.
@@ -511,6 +525,10 @@ final class LaneView: NSView {
         paneWeights.removeAll()
         draggedWeights = nil
         for divider in dividers { divider.isHidden = true }
+        // And the handles, for the same reason: a grip left pointing at a pane
+        // id this view no longer holds is a drag that moves somebody else.
+        for grip in grips { grip.isHidden = true }
+        gripPaneIds = []
         // And the mark, for the same reason: this chrome is going to the pool
         // and will come back holding a different lane's panes.
         focusedPaneId = nil
@@ -609,6 +627,8 @@ final class LaneView: NSView {
         let ids = visiblePaneIds
         guard !ids.isEmpty else {
             for divider in dividers { divider.isHidden = true }
+            for grip in grips { grip.isHidden = true }
+            gripPaneIds = []
             focusMark.isHidden = true
             return
         }
@@ -645,6 +665,57 @@ final class LaneView: NSView {
 
         layOutDividers(above: heights)
         layOutFocusMark(ids: ids, heights: heights)
+        layOutGrips(ids: ids, heights: heights)
+    }
+
+    /// Put a grip at the top-left of every pane's slot.
+    ///
+    /// Measured downward from the top of the pane area exactly as the seams and
+    /// the focus mark are, so the three cannot drift apart — a handle a seam
+    /// away from the pane it picks up would pick up the wrong one.
+    private func layOutGrips(ids: [String], heights: [CGFloat]) {
+        gripPaneIds = ids
+        while grips.count < ids.count {
+            let grip = PaneGripView(frame: .zero)
+            let slot = grips.count
+            grip.onDrag = { [weak self] point, isFinal in
+                guard let self, self.gripPaneIds.indices.contains(slot) else { return }
+                self.onPaneGrab?(self.gripPaneIds[slot], point, isFinal)
+            }
+            grip.onClick = { [weak self] in
+                guard let self, self.gripPaneIds.indices.contains(slot) else { return }
+                self.onFocusPane?(self.gripPaneIds[slot])
+            }
+            // Below the width handle for the reason the seams are: the two
+            // overlap in no corner today, and the lane's edge has to keep
+            // winning if they ever do.
+            addSubview(grip, positioned: .below, relativeTo: resizeHandle)
+            grips.append(grip)
+        }
+
+        let size = PaneGripView.size
+        let top = bounds.height - Theme.laneHeaderHeight
+        for (slot, grip) in grips.enumerated() {
+            guard slot < ids.count else {
+                grip.isHidden = true
+                continue
+            }
+            grip.isHidden = false
+            let paneTop = top - PaneSplit.top(ofPaneAt: slot, heights: heights)
+            let frame = NSRect(
+                x: PaneGripView.insetX,
+                y: paneTop - PaneGripView.insetY - size.height,
+                width: size.width, height: size.height)
+            guard grip.frame != frame else { continue }
+            // No implicit animation: this is set from inside `layout`, and an
+            // eased handle would trail the seam it sits under during a drag.
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            grip.frame = frame
+            CATransaction.commit()
+            window?.invalidateCursorRects(for: grip)
+            grip.pointerMayHaveLeft()
+        }
     }
 
     /// Put the focus tick at the top of the focused pane's slot.

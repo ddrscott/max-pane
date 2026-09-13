@@ -669,6 +669,42 @@ these gets the next keystroke" is a question with a real answer and, until now,
 nothing on screen to give it; a terminal at least blinks a cursor, and a page
 looks identical either way.
 
+### Moving a pane
+
+**Drag a pane by the grip at its top-left.** Drop it in the upper or lower half
+of a pane in another lane and it joins that lane's stack, there; drop it in the
+gap between two lanes — or off either end of the strip — and it comes out into a
+column of its own. Which is ⇧⌘D and ⌘D in the other direction, by hand: the
+stack and the strip are the two axes this app has, and until now a pane could
+only be *made* on one of them and never moved to the other.
+
+A bar between two columns means a new lane opens there. A column outlined, with
+a rule across it, means the pane lands in that stack at that rule. A drop that
+would put the pane back where it already is shows nothing and does nothing —
+including dropping a lane's only pane onto its own lane, which would otherwise
+dissolve the lane and put the pane into the column it had just destroyed.
+
+**One level of nesting, still.** Lanes hold panes and panes hold nothing, so
+there is no drop that could make a tree; the drag has exactly two outcomes
+because the strip has exactly two places to put something.
+
+A lane left with no panes goes with the pane that left it, for the reason ⌘W
+already deletes one: an empty column is not a thing you can do anything with.
+And a lane that was *only* that pane is **moved** rather than rebuilt, so the
+width you dragged it to, its title, its tag and ⇧⌘P come with it — a lane of one
+dropped between two lanes is ⌘⇧→ with a mouse, and the only difference is where
+the pointer was.
+
+A pane joining another lane takes the mean of that stack's heights, which is the
+rule ⇧⌘D already follows: the newcomer gets an equal share of the enlarged lane
+and every pane already there gives up height in proportion to what it had.
+Reordering *inside* one lane changes no height at all.
+
+The grip costs the pane 14 × 14 pt of its top-left corner — about two characters
+of a terminal's first row — and that is the price of a pane having a handle at
+all: a lane is dragged by its header, and a pane has no chrome of its own. A
+press on the grip that never moves is a click, and focuses the pane.
+
 ### Docking a lane to an edge
 
 **⌃⌘[** and **⌃⌘]** hold a lane at the left or right edge of the window instead

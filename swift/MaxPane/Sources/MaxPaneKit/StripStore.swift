@@ -131,6 +131,29 @@ public final class StripStore {
         publish(try core.moveLane(laneId: laneId, placement: .leftOf(laneId: target)))
     }
 
+    /// Move a pane into a lane's stack — the drop half of a pane drag.
+    ///
+    /// `index` counts the panes that will be its siblings, **without** it, the
+    /// same way `moveBookmark`'s does. `PaneDrag` is what converts a point over
+    /// the strip into one of these, and is where that one-off is kept.
+    func movePane(_ paneId: String, to laneId: String, at index: Int) throws {
+        publish(try core.movePane(
+            paneId: paneId, laneId: laneId, index: UInt32(max(0, index))))
+    }
+
+    /// Pull a pane out into a lane of its own, immediately left of `before` —
+    /// or at the far right of the strip when that is nil.
+    ///
+    /// Stated as a neighbour rather than as a position because that is what
+    /// survives the question "does the lane this pane is leaving still exist
+    /// when it lands": a lane id is the same lane whatever happens to the
+    /// count, and an index is not.
+    func movePaneToNewLane(_ paneId: String, before laneId: String?) throws {
+        publish(try core.movePaneToNewLane(
+            paneId: paneId,
+            placement: laneId.map { .leftOf(laneId: $0) } ?? .end))
+    }
+
     /// ⌘⇧← / ⌘⇧→.
     func nudgeLane(_ laneId: String, right: Bool) throws {
         publish(try core.nudgeLane(laneId: laneId, right: right))

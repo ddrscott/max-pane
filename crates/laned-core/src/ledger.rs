@@ -365,6 +365,99 @@ impl Ledger {
         Ok(pane.lane_id)
     }
 
+    /// Move a pane into `lane_id`'s stack, landing at `index` among the panes
+    /// already there — counted **without** this one.
+    ///
+    /// Returns the lane it came out of, so the caller can decide what to do
+    /// with a column that is now empty.
+    ///
+    /// `position` is a dense `0..n` in both lanes when this returns, and that
+    /// is the whole reason this is one transaction rather than a delete and an
+    /// insert. Half of it is a lane with two panes at position 1, which
+    /// `lanes()` orders by whatever SQLite feels like — a stack that
+    /// rearranges itself on the next launch, which is exactly the failure
+    /// PRD §6's commit-before-you-animate rule exists to make impossible.
+    ///
+    /// The shape is deliberately `move_bookmark_to`'s, down to the correlated
+    /// subquery that closes the gap in the source: these are the same problem —
+    /// a row leaving one ordered sibling list and joining another — and two
+    /// implementations of it is how they come to disagree about what an index
+    /// counts.
+    ///
+    /// `height_weight` is `Some` only for a move that changes lane. Heights are
+    /// shares of a column, so a share carried over from a different column
+    /// means nothing; a reorder *inside* one lane must leave every weight
+    /// bit-identical, which is what `None` says.
+    pub fn move_pane_to(
+        &mut self,
+        pane_id: &str,
+        lane_id: &str,
+        index: u32,
+        height_weight: Option<f64>,
+    ) -> Result<String> {
+        let pane = self.pane(pane_id)?;
+        // Existence, before anything is written: reparenting a pane onto a lane
+        // that is not there would leave it unreachable from `lanes()` and
+        // therefore invisible, with nothing on screen to say where it went.
+        self.ordinal_of(lane_id)?;
+        let from = pane.lane_id;
+        if let Some(weight) = height_weight {
+            if !weight.is_finite() || weight <= 0.0 {
+                return Err(CoreError::Ledger {
+                    message: format!("height weight must be positive and finite, got {weight}"),
+                });
+            }
+        }
+
+        let tx = self.conn.transaction()?;
+
+        // Ordered ids of the stack it is joining, with the pane itself taken
+        // out first: a move within one lane is the common case, and leaving it
+        // in would make "put it at index 2" mean two different things depending
+        // on which side of 2 it started.
+        let mut siblings: Vec<String> = {
+            let mut stmt =
+                tx.prepare("SELECT id FROM pane WHERE lane_id = ?1 ORDER BY position, id")?;
+            let ids: Vec<String> =
+                stmt.query_map([lane_id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+            ids
+        };
+        siblings.retain(|s| s != pane_id);
+        let at = (index as usize).min(siblings.len());
+        siblings.insert(at, pane_id.to_string());
+
+        {
+            let mut stmt =
+                tx.prepare("UPDATE pane SET lane_id = ?2, position = ?3 WHERE id = ?1")?;
+            for (position, sibling) in siblings.iter().enumerate() {
+                stmt.execute(params![sibling, lane_id, position as i64])?;
+            }
+        }
+
+        if let Some(weight) = height_weight {
+            tx.execute(
+                "UPDATE pane SET height_weight = ?2 WHERE id = ?1",
+                params![pane_id, weight],
+            )?;
+        }
+
+        // The lane it came out of is left dense too, for the reason
+        // `delete_pane` closes its gap: nothing reads the hole, but a sparse
+        // column is one whose next value is not obvious to whoever writes here
+        // next — and `next_position` is `MAX + 1`, which a hole makes a lie.
+        if from != lane_id {
+            tx.execute(
+                "UPDATE pane SET position = (
+                     SELECT COUNT(*) FROM pane s
+                      WHERE s.lane_id = pane.lane_id AND s.position < pane.position
+                 ) WHERE lane_id = ?1",
+                params![from],
+            )?;
+        }
+        tx.commit()?;
+        Ok(from)
+    }
+
     pub fn update_lane_tag(&self, lane_id: &str, root: Option<&str>, source: ProjectSource) -> Result<()> {
         self.conn.execute(
             "UPDATE lane SET project_root = ?2, project_source = ?3 WHERE id = ?1",
