@@ -1,5 +1,6 @@
 # Work Queue
 
+- [ ] Gallery: every lane on one screen as live thumbnails, a sticky second layout beside Lanes — [detail](gallery-layout.md)
 - [x] Dock a lane to the left or right, overlaying or insetting the strip — [detail](docked-panes.md) — both halves merged, audio proved
 - [x] The five silent web failures: dialogs, file inputs, downloads, camera/mic, HTTP auth — merged in 36be318
 - [x] One `--profile` instead of four environment variables — [detail](profiles.md) — everything under profiles/, migration verified with sqlite3 .backup
