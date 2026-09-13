@@ -104,18 +104,13 @@ public struct Config: Codable {
     /// enough to read as the strip moving rather than jumping.
     public var snapSeconds: Double = 0.18
 
-    public static var path: URL {
-        // `MAXPANE_CONFIG` points a launch at a different file. Without it the
-        // only way to exercise a preference at runtime is to edit the config
-        // of whoever is using the app — which is why the lane-rail and
-        // default-width settings shipped covered by unit tests and never once
-        // tried in a running instance.
-        if let override = ProcessInfo.processInfo.environment["MAXPANE_CONFIG"] {
-            return URL(fileURLWithPath: (override as NSString).expandingTildeInPath)
-        }
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/maxpane/config.json")
-    }
+    /// `~/.config/maxpane/profiles/<profile>/config.json`.
+    ///
+    /// Per profile, so a preference can be exercised at runtime without editing
+    /// the config of whoever is using the app — which is why the lane-rail and
+    /// default-width settings once shipped covered by unit tests and never
+    /// tried in a running instance.
+    public static var path: URL { Profile.current.configPath }
 
     public static func load() -> Config {
         guard let data = try? Data(contentsOf: path) else { return Config() }

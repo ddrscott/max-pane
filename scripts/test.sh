@@ -28,11 +28,16 @@ cd "$REPO_ROOT"
 CLT_FW=/Library/Developer/CommandLineTools/Library/Developer/Frameworks
 CLT_LIB=/Library/Developer/CommandLineTools/Library/Developer/usr/lib
 
-# `DataStorePool` derives a WKWebsiteDataStore UUID from this salt, and an unset
-# salt derives exactly the UUID the real app uses. The store tests only ask for
-# identity, so nothing is written today — but a test process that can name the
-# owner's live cookie jar is one WebKit release away from touching it.
-export MAXPANE_DATA_SALT="${MAXPANE_DATA_SALT:-tests}"
+# The suite runs as its own profile, which is the whole of isolating it: ledger,
+# config, socket and cookie jars all follow the name.
+#
+# The cookie jars are why it is not optional. `DataStorePool` derives a
+# WKWebsiteDataStore UUID from the profile's salt, and the *default* profile's
+# salt is empty — so a test process with no profile derives exactly the UUIDs the
+# real app uses. The store tests only ask for identity, so nothing is written
+# today, but a test process that can name the owner's live cookie jar is one
+# WebKit release away from touching it.
+export MAXPANE_PROFILE="${MAXPANE_PROFILE:-tests}"
 
 swift_test() {
   (cd swift/MaxPane && swift test "$@" \

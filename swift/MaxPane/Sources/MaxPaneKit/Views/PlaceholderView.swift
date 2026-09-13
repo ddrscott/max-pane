@@ -94,13 +94,7 @@ final class PlaceholderView: NSView {
 /// Where a pane's snapshot lives, and the housekeeping that keeps the directory
 /// from growing without bound.
 enum SnapshotStore {
-    static var directory: URL {
-        let dir = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("MaxPane/snapshots", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
+    static var directory: URL { Profile.current.snapshotsDirectory }
 
     static func path(for paneId: String) -> String {
         directory.appendingPathComponent("\(paneId).jpg").path

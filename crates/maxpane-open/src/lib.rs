@@ -15,8 +15,13 @@
 //! maxpane run htop                 # a terminal lane running htop
 //! maxpane run                      # a terminal lane running your shell
 //! maxpane ls                       # what is on the strip
+//! maxpane --profile test ls         # ...on the test instance's strip
 //! echo https://example.com | maxpane-open
 //! ```
+//!
+//! `--profile NAME` picks which instance to talk to. Every instance has its own
+//! socket under its own profile directory, so naming the profile is the whole of
+//! addressing it — there is no second variable to keep in step.
 //!
 //! Reads from argv or stdin, writes what it did to stdout, exits non-zero when
 //! it could not deliver. If Max Pane is not running, `open` falls back to the
@@ -30,19 +35,90 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
 
+/// The profile a launch with no `--profile` gets.
+const DEFAULT_PROFILE: &str = "default";
+
+/// Names go into a directory path and into a `sockaddr_un`, whose `sun_path` is
+/// 104 bytes on Darwin. Kept in step with `Profile.maximumNameLength` on the
+/// Swift side: a name the app accepts and the CLI refuses is worse than either.
+const MAX_PROFILE_NAME: usize = 32;
+
+/// Take `--profile <name>` / `--profile=<name>` out of the arguments.
+///
+/// Removed rather than skipped, because `open` filters its remaining arguments
+/// on `!starts_with('-')` — leave the pair in place and the profile's *name*
+/// survives that filter and is opened as a URL.
+fn take_profile(args: &mut Vec<String>) -> Option<String> {
+    let mut found = None;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--profile" {
+            args.remove(i);
+            if i < args.len() {
+                found = Some(args.remove(i));
+            } else {
+                eprintln!("maxpane: --profile needs a name");
+                std::process::exit(2);
+            }
+            continue;
+        }
+        if let Some(name) = args[i].strip_prefix("--profile=") {
+            found = Some(name.to_string());
+            args.remove(i);
+            continue;
+        }
+        i += 1;
+    }
+    found
+}
+
+/// `--profile`, then `MAXPANE_PROFILE`, then the default — the same three rules
+/// the app applies, which is what makes `maxpane --profile test ls` reach the
+/// instance launched with `--profile test`.
+fn resolve_profile(named: Option<String>) -> String {
+    let name = profile_or_default(named.or_else(|| env::var("MAXPANE_PROFILE").ok()));
+    // Refused, never sanitised. A name quietly rewritten to something valid
+    // points the CLI at whichever instance holds that name's socket, and the
+    // whole reason to name a profile is to know which instance you are driving.
+    if !is_profile_name(&name) {
+        eprintln!("maxpane: {name:?} is not a profile name (letters, digits, '.', '_', '-'; at most {MAX_PROFILE_NAME})");
+        std::process::exit(2);
+    }
+    name
+}
+
+fn profile_or_default(named: Option<String>) -> String {
+    named.unwrap_or_else(|| DEFAULT_PROFILE.to_string())
+}
+
+fn is_profile_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_PROFILE_NAME
+        && name != "."
+        && name != ".."
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
 /// Where the app listens. Under Application Support next to the ledger, so the
 /// two things that define a running Max Pane live together.
-fn socket_path() -> PathBuf {
+fn socket_path(profile: &str) -> PathBuf {
     if let Ok(p) = env::var("MAXPANE_SOCKET") {
         return PathBuf::from(p);
     }
     let home = env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    PathBuf::from(home).join("Library/Application Support/MaxPane/open.sock")
+    socket_under(&home, profile)
+}
+
+/// Split from `socket_path` so the layout can be asserted without a test having
+/// to reach for `set_var`: cargo runs tests in threads, and the environment is
+/// the one piece of state they all share.
+fn socket_under(home: &str, profile: &str) -> PathBuf {
+    PathBuf::from(home).join(format!("Library/Application Support/MaxPane/profiles/{profile}/open.sock"))
 }
 
 fn usage() -> ! {
     eprintln!(
-        "usage: maxpane <command> [args]
+        "usage: maxpane [--profile NAME] <command> [args]
        maxpane-open [URL]          (the BROWSER shim)
 
 commands:
@@ -50,6 +126,11 @@ commands:
   run [COMMAND...]      new terminal lane running COMMAND (default: your shell)
   ls                    list what is on the strip
   socket                print the control socket path
+  profile               print which profile this would talk to
+
+--profile NAME talks to the instance launched with `--profile NAME`, which has
+its own strip, config, logins and socket. Without it, the default profile — the
+one you are working in. MAXPANE_PROFILE sets it for a whole shell.
 
 With no URL, `open` reads one per line from stdin. When Max Pane is not running,
 `open` falls back to the system browser."
@@ -62,23 +143,29 @@ pub fn run() {
     let argv0 = env::args().next().unwrap_or_default();
     let invoked_as_shim = PathBuf::from(&argv0).file_name().map(|n| n == "maxpane-open").unwrap_or(false);
 
-    let args: Vec<String> = env::args().skip(1).collect();
+    let mut args: Vec<String> = env::args().skip(1).collect();
+    // Pulled out before dispatch so `--profile` may sit anywhere — before the
+    // subcommand or after it. Requiring one position means the other one fails
+    // by talking to the default instance, which is silent and is the whole
+    // class of mistake this argument exists to end.
+    let profile = resolve_profile(take_profile(&mut args));
 
     // `maxpane-open <url>`: BROWSER passes a bare URL and nothing else.
     if invoked_as_shim {
         if matches!(args.first().map(String::as_str), Some("--print-socket")) {
-            println!("{}", socket_path().display());
+            println!("{}", socket_path(&profile).display());
             return;
         }
-        return open_command(&args);
+        return open_command(&args, &profile);
     }
 
     match args.first().map(String::as_str) {
         None | Some("-h") | Some("--help") => usage(),
-        Some("socket") | Some("--print-socket") => println!("{}", socket_path().display()),
-        Some("open") => open_command(&args[1..]),
-        Some("run") => run_command(&args[1..]),
-        Some("ls") => list_command(),
+        Some("socket") | Some("--print-socket") => println!("{}", socket_path(&profile).display()),
+        Some("profile") => println!("{profile}"),
+        Some("open") => open_command(&args[1..], &profile),
+        Some("run") => run_command(&args[1..], &profile),
+        Some("ls") => list_command(&profile),
         Some(other) => {
             eprintln!("maxpane: unknown command {other:?}");
             usage()
@@ -88,7 +175,7 @@ pub fn run() {
 
 // ---- open ------------------------------------------------------------------
 
-fn open_command(args: &[String]) {
+fn open_command(args: &[String], profile: &str) {
     let urls: Vec<String> = if args.is_empty() {
         let mut buf = String::new();
         if io::stdin().read_to_string(&mut buf).is_err() {
@@ -113,7 +200,7 @@ fn open_command(args: &[String]) {
             json_string(&session_id()),
             json_string(&cwd())
         );
-        match request(&payload) {
+        match request(&payload, profile) {
             Ok(_) => println!("{normalized}\tmaxpane"),
             Err(reason) => {
                 // The app is not there. Do not eat the URL.
@@ -167,7 +254,7 @@ fn normalize_url(raw: &str) -> String {
 /// The session is started by the *app*, not here, so it inherits the app's
 /// environment and gets `BROWSER` pointed back at this binary. Starting it here
 /// would produce a session with no lane attached to it.
-fn run_command(args: &[String]) {
+fn run_command(args: &[String], profile: &str) {
     let command = args.first().cloned().unwrap_or_default();
     let rest: Vec<String> = args.iter().skip(1).cloned().collect();
     let json_args: String = rest.iter().map(|a| json_string(a)).collect::<Vec<_>>().join(",");
@@ -180,7 +267,7 @@ fn run_command(args: &[String]) {
         json_string(&cwd())
     );
 
-    match request(&payload) {
+    match request(&payload, profile) {
         Ok(reply) => {
             let id = field(&reply, "session").unwrap_or_default();
             let shown = if command.is_empty() { "$SHELL".to_string() } else { args.join(" ") };
@@ -196,8 +283,8 @@ fn run_command(args: &[String]) {
 // ---- ls --------------------------------------------------------------------
 
 /// One line per lane, tab-separated, so it pipes.
-fn list_command() {
-    match request("{\"op\":\"ls\"}") {
+fn list_command(profile: &str) {
+    match request("{\"op\":\"ls\"}", profile) {
         Ok(reply) => {
             if let Some(lanes) = field(&reply, "lanes") {
                 print!("{lanes}");
@@ -216,8 +303,8 @@ fn list_command() {
 // ---- transport -------------------------------------------------------------
 
 /// One line of JSON out, one line back.
-fn request(payload: &str) -> Result<String, String> {
-    let path = socket_path();
+fn request(payload: &str, profile: &str) -> Result<String, String> {
+    let path = socket_path(profile);
     let mut stream = UnixStream::connect(&path)
         .map_err(|e| format!("max pane not listening at {}: {e}", path.display()))?;
     stream.set_read_timeout(Some(Duration::from_secs(10))).map_err(|e| e.to_string())?;
@@ -363,7 +450,61 @@ mod tests {
     fn socket_path_is_overridable() {
         // The app sets this when it listens somewhere else, e.g. under test.
         unsafe { env::set_var("MAXPANE_SOCKET", "/tmp/x.sock") };
-        assert_eq!(socket_path(), PathBuf::from("/tmp/x.sock"));
+        assert_eq!(socket_path("default"), PathBuf::from("/tmp/x.sock"));
         unsafe { env::remove_var("MAXPANE_SOCKET") };
+    }
+
+    #[test]
+    fn each_profile_has_its_own_socket() {
+        assert_eq!(
+            socket_under("/Users/nobody", "default"),
+            PathBuf::from("/Users/nobody/Library/Application Support/MaxPane/profiles/default/open.sock")
+        );
+        assert_ne!(socket_under("/Users/nobody", "test"), socket_under("/Users/nobody", "default"));
+    }
+
+    #[test]
+    fn a_name_at_the_cap_still_fits_in_sun_path() {
+        // 104 bytes on Darwin, and the longest accepted name must still fit or
+        // `bind` fails at launch with the CLI reporting only "not listening".
+        let longest = "x".repeat(MAX_PROFILE_NAME);
+        assert!(socket_under("/Users/nobody", &longest).as_os_str().len() < 104);
+    }
+
+    #[test]
+    fn refuses_a_name_that_would_escape_the_profiles_directory() {
+        assert!(!is_profile_name("../../../etc"));
+        assert!(!is_profile_name(".."));
+        assert!(!is_profile_name(""));
+        assert!(!is_profile_name(&"x".repeat(MAX_PROFILE_NAME + 1)));
+        assert!(is_profile_name("test"));
+        assert!(is_profile_name("gauntlet-p1.2_x"));
+    }
+
+    #[test]
+    fn profile_arguments_are_removed_not_merely_read() {
+        // The name must not survive into `open`'s argument list: it does not
+        // start with '-', so it would be normalised into a URL and opened.
+        let mut args: Vec<String> = ["--profile", "test", "open", "example.com"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(take_profile(&mut args), Some("test".into()));
+        assert_eq!(args, vec!["open", "example.com"]);
+    }
+
+    #[test]
+    fn profile_may_follow_the_subcommand() {
+        let mut args: Vec<String> =
+            ["ls", "--profile=test"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(take_profile(&mut args), Some("test".into()));
+        assert_eq!(args, vec!["ls"]);
+    }
+
+    #[test]
+    fn no_profile_named_is_the_default_profile() {
+        let mut args: Vec<String> = ["ls"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(take_profile(&mut args), None);
+        assert_eq!(profile_or_default(None), DEFAULT_PROFILE);
     }
 }

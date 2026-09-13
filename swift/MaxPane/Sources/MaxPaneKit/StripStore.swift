@@ -21,18 +21,13 @@ public final class StripStore {
 
     /// Where the ledger lives. PRD §6.
     ///
-    /// `MAXPANE_LEDGER` points a launch at a different one, which is how the
-    /// app gets driven — by a test, a critic, or anyone poking at it — without
-    /// touching the strip someone is working in. Pair it with `MAXPANE_SOCKET`
-    /// so the CLI talks to the instance you meant.
-    public static var defaultLedgerPath: String {
-        if let override = ProcessInfo.processInfo.environment["MAXPANE_LEDGER"] { return override }
-        let dir = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("MaxPane", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("ledger.db").path
-    }
+    /// The profile decides, which is how the app gets driven — by a test, a
+    /// critic, or anyone poking at it — without touching the strip someone is
+    /// working in. `--profile test` moves the ledger, the socket, the config and
+    /// the cookie jars together; pointing only the ledger somewhere else is
+    /// still possible with `MAXPANE_LEDGER`, and is still a half-isolated
+    /// instance whose CLI talks to whoever holds the default socket.
+    public static var defaultLedgerPath: String { Profile.current.ledgerPath }
 
     /// `laneDefaultPt` is stated once, here, before anything can create a lane.
     ///

@@ -40,7 +40,11 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false)
-        window.title = "Max Pane"
+        // Two identical windows is how several agents drove the wrong instance
+        // in one afternoon. The title carries it for Mission Control and the
+        // window list, where a title is all there is; the footer carries it on
+        // screen, where the title bar is hidden.
+        window.title = Profile.current.isDefault ? "Max Pane" : "Max Pane — \(Profile.current.name)"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         // The strip is the interface; the menu bar is an interruption.

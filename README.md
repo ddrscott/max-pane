@@ -113,11 +113,12 @@ run.** A gated test measures a number or produces a picture for a human to look
 at. Nothing that can fail because the code is wrong is behind a switch, and
 every gated test prints a `SKIPPED` line naming the switch that runs it.
 
-`MAXPANE_DATA_SALT` is set for the Swift half by `scripts/test.sh`. Unset, the
+`scripts/test.sh` runs the Swift half as the `tests` profile. Without one the
 `WKWebsiteDataStore` identity tests derive exactly the UUIDs the real app uses
-for its cookie jars; they only ask for identity so nothing is written today, but
-a test process that can name the live jar should not be one WebKit release away
-from opening it.
+for its cookie jars — the default profile's salt is empty — and they only ask
+for identity so nothing is written today, but a test process that can name the
+live jar should not be one WebKit release away from opening it. See
+[Profiles](#profiles).
 
 `crates/laned-core/tests/durability.rs` holds the half of PRD §15's acceptance
 tests that the core owns — mostly "the strip is identical after a `kill -9`",
@@ -317,15 +318,61 @@ Every field of `Config` is a key here. A value of the wrong type is skipped —
 with a line on stderr saying which — rather than taking the rest of the file
 down with it.
 
+### Profiles
+
+A profile is one instance's whole world: its ledger, its config, its cookie
+jars, its control socket, its snapshots. Naming one is how you drive the app to
+test it without disturbing the instance someone is working in.
+
+```sh
+./build/MaxPane.app/Contents/MacOS/MaxPane --profile test    # or: open build/MaxPane.app --args --profile test
+maxpane --profile test ls                                    # ...talks to that instance, never the default one
+export MAXPANE_PROFILE=test                                  # ...for a whole shell
+```
+
+**No `--profile` means the default profile** — the one you are working in. A
+named profile's window says so in the footer and in its title, because two
+identical windows is how the wrong instance gets driven.
+
+Everything lives under the name, the default profile included:
+
+| | |
+|---|---|
+| ledger, socket, snapshots | `~/Library/Application Support/MaxPane/profiles/<name>/` |
+| config | `~/.config/maxpane/profiles/<name>/config.json` |
+| cookie jars | `WKWebsiteDataStore` UUIDs salted with the name |
+
+The default profile's cookie salt is **empty**, and has to stay that way: WebKit
+keys the on-disk store by that UUID, so salting the default profile would point
+it at new empty stores and every login on the machine would be gone.
+
+Names are letters, digits, `.`, `_` and `-`, up to 32 characters. A bad one is
+refused rather than scrubbed — a name quietly rewritten to something valid lands
+you back on the live strip, which is the thing you were trying to stay off.
+
+The **CLI and the app must be from the same build.** The socket moved into the
+profile directory, so a new `maxpane` cannot see an old running app and vice
+versa. Rebuild and relaunch together.
+
+The first launch after this change moves the pre-profiles layout into
+`profiles/default/`. The ledger is copied with `sqlite3 .backup` rather than
+`cp` — a WAL is not part of the file, and the live one held 4 MB the day this
+was written — then lane and pane counts are compared, and only then is the
+original set aside as `ledger.db.pre-profiles`. If the counts disagree, nothing
+moves and the app says so. It also refuses to start the move while another
+instance is still listening on the old socket: renaming a file out from under
+SQLite does not fail, it just leaves that instance writing somewhere nothing
+reads.
+
 ### Debugging
 
 `MAXPANE_CONFIG`, `MAXPANE_LEDGER`, `MAXPANE_SOCKET` and `MAXPANE_DATA_SALT`
-point a launch at its own config file, strip, control socket and cookie jars —
-which is how you drive the app to test it without disturbing the instance you
-are working in. `MAXPANE_APP=build/mine.app ./scripts/build-app.sh` builds
-somewhere else; the script refuses to rebuild a bundle that has a live process,
-because `rm -rf`-ing a bundle out from under a running app kills it with no
-message at all.
+still point one path somewhere else, and still win over the profile. They are
+for the case where you want exactly one thing moved; `--profile` is for the case
+you almost always mean, which is all of them at once.
+`MAXPANE_APP=build/mine.app ./scripts/build-app.sh` builds somewhere else; the
+script refuses to rebuild a bundle that has a live process, because `rm -rf`-ing
+a bundle out from under a running app kills it with no message at all.
 
 `MAXPANE_WINDOWED=1` skips fullscreen and `MAXPANE_DEBUG=1` turns on the chatty
 logging. Both write to stderr, which you only see by running the executable

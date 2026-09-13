@@ -12,6 +12,7 @@ import LanedCore
 /// chrome bar across the top would eat the lane headers' room.
 @MainActor
 public final class StatusBar: NSView {
+    private let profile = NSTextField(labelWithString: "")
     private let lanes = NSTextField(labelWithString: "")
     private let sessions = NSTextField(labelWithString: "")
     private let attention = NSTextField(labelWithString: "")
@@ -53,7 +54,12 @@ public final class StatusBar: NSView {
         ])
         setSidebarOpen(true)
 
-        let row = NSStackView(views: [sidebarToggle, lanes, sessions, attention, NSView(), memory, hint])
+        // Held rather than looked up by index: the hugging priority below is
+        // what pushes the right-hand group to the edge, and an index into
+        // `row.views` silently starts pointing at a readout the moment anything
+        // is inserted before it.
+        let spacer = NSView()
+        let row = NSStackView(views: [sidebarToggle, profile, lanes, sessions, attention, spacer, memory, hint])
         row.orientation = .horizontal
         row.spacing = 14
         row.alignment = .centerY
@@ -65,13 +71,14 @@ public final class StatusBar: NSView {
             row.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
         // The spacer view is what pushes the right-hand group to the edge.
-        row.views[4].setContentHuggingPriority(.init(1), for: .horizontal)
+        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
 
-        for field in [lanes, sessions, attention, memory, hint] {
+        for field in [profile, lanes, sessions, attention, memory, hint] {
             field.font = Theme.mono(10)
             field.textColor = Theme.dimText
         }
         hint.stringValue = "⌘/ shortcuts"
+        setProfile(Profile.current)
 
         let click = NSClickGestureRecognizer(target: self, action: #selector(clicked))
         addGestureRecognizer(click)
@@ -85,6 +92,21 @@ public final class StatusBar: NSView {
         // A hairline above, so the footer reads as chrome rather than as content.
         Theme.laneBorder.setFill()
         NSRect(x: 0, y: bounds.height - Theme.borderWidth, width: bounds.width, height: Theme.borderWidth).fill()
+    }
+
+    /// Name the profile, unless it is the default one.
+    ///
+    /// Silent for the default because that is where the work happens and a
+    /// permanent `default` chip would be read once and then never again. Loud
+    /// for anything else, because two identical windows is how agents drove the
+    /// wrong instance three times in one afternoon — and the one being driven
+    /// is exactly the one that is not the default.
+    public func setProfile(_ profile: Profile) {
+        self.profile.stringValue = profile.isDefault ? "" : "$ \(profile.name)"
+        self.profile.textColor = Theme.accent
+        self.profile.toolTip = profile.isDefault
+            ? nil
+            : "This window is the \"\(profile.name)\" profile — its own strip, config and logins"
     }
 
     /// Filled when the sidebar is showing, hollow when it is not — the glyph

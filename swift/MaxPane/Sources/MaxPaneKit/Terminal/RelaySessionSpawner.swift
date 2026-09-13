@@ -62,7 +62,13 @@ public struct RelaySessionSpawner {
         // it knows which terminal asked.
         if let shim = Self.shimPath() {
             env["BROWSER"] = shim
+            // Both, and not just the profile: the socket is the exact path this
+            // instance is listening on, which is right even when it came from
+            // `MAXPANE_SOCKET` and no profile would derive it. `MAXPANE_PROFILE`
+            // is for the person in the pane — `maxpane ls` typed there answers
+            // for this instance, and says which one it is.
             env["MAXPANE_SOCKET"] = OpenServer.socketPath
+            env["MAXPANE_PROFILE"] = Profile.current.name
         }
         process.environment = env
         // Detached with stdio ignored: the session must outlive MaxPane, which

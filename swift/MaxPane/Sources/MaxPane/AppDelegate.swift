@@ -13,11 +13,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         app.run()
     }
 
-    private var config = Config.load()
+    /// Not `Config.load()` at initialisation: the config file's path depends on
+    /// the profile, and the profile's directories may not exist until the
+    /// migration below has run. An initialiser would read the wrong file, once,
+    /// on the one launch where it matters.
+    private var config = Config()
     private var store: StripStore!
     private var windowController: StripWindowController!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Before anything derives a path. A refused `--profile` stops the
+        // launch rather than falling back to the default, because falling back
+        // means writing into the strip the person was trying to stay out of.
+        if let complaint = Profile.currentComplaint {
+            presentFatal("Could not start", ProfileArgumentError(complaint))
+            return
+        }
+        Profile.current.prepareDirectories()
+        do {
+            // Only the default profile's own launch moves the default profile's
+            // ledger. A throwaway `--profile probe` instance touching the live
+            // strip — even to reorganise it — is the exact thing `--profile`
+            // exists to make impossible, and it would do it on first launch,
+            // before anyone had a reason to be watching.
+            if Profile.current.isDefault { try Profile.migrateLegacyLayout() }
+        } catch {
+            presentFatal("Could not move the ledger into the default profile", error)
+            return
+        }
+        config = Config.load()
+
         do {
             // Clamped here rather than trusted: `laneDefaultPt` is a number in a
             // file a person edits, and the core would clamp it anyway — doing it
@@ -162,6 +187,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
         NSApp.terminate(nil)
     }
+}
+
+/// So a refused `--profile` reaches the same alert as a failure to open the
+/// ledger, and says the same kind of thing.
+private struct ProfileArgumentError: LocalizedError {
+    let errorDescription: String?
+    init(_ message: String) { errorDescription = message }
 }
 
 extension AppDelegate: NSMenuDelegate {

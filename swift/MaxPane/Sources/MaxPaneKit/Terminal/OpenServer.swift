@@ -45,14 +45,7 @@ public final class OpenServer: @unchecked Sendable {
         public static func refused(_ why: String) -> Reply { Reply(ok: false, error: why) }
     }
 
-    public static var socketPath: String {
-        if let override = ProcessInfo.processInfo.environment["MAXPANE_SOCKET"] { return override }
-        let dir = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("MaxPane", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("open.sock").path
-    }
+    public static var socketPath: String { Profile.current.socketPath }
 
     private var fd: Int32 = -1
     private var source: DispatchSourceRead?
