@@ -12,7 +12,7 @@
 - [x] History round 2: search the whole corpus, substring ranking, client-side redirects, real dates — [detail](history-round-2.md) — no caps at all, a trigram index in their place (7 ms a keystroke over 112,840 pages), every redirect hop searchable and no interstitial left as a page, and rows that say `Tue 09:15`
 - [x] Every shortcut configurable, with the current ones as defaults — [detail](configurable-hotkeys.md) — `keys` in the config file moves any of them; Esc, declared for years and listened for by nothing, is finally wired
 - [x] `maxpane run "a | pipeline"` returns a session id, logs a lane, and produces none — the quoting is not the bug; the silence is. A shell line is refused before anything starts, because afterwards nobody can tell: pty-host is listening at 20 ms, the 127 lands 355 ms–1.1 s later
-- [ ] Import history from another browser, with a merge-or-replace wizard — [detail](import-history.md) — unblocked: there is no row cap to raise
+- [-] Import history from another browser, with a merge-or-replace wizard — [detail](import-history.md) — unblocked: there is no row cap to raise
 - [ ] History round 3: a view with room in it — day grouping, paging past 60 rows, the full URL, a confirmed delete, and a way to clear it — [detail](history-round-2.md)
 - [ ] Bookmarks: a store, a way to add and reach them, then import from other browsers
 - [ ] Passwords: macOS Keychain only, never our own store; explicit fill, then Chromium import — [detail](passwords.md)
