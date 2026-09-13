@@ -62,7 +62,15 @@ Two very different jobs, and one of them is nearly free:
   under a single key stored in the Keychain as `<Browser> Safe Storage`. So an
   import means: read that one Keychain item (macOS will prompt him), derive the
   key, decrypt each row, then write each credential as its own Keychain item.
-  The file is locked while the browser runs — copy it first, as with history.
+
+  **Do not reach for `sqlite3 .backup` to read it.** The history import proved
+  that a running Chromium holds `locking_mode = EXCLUSIVE` for the life of the
+  process, so `.backup` answers `database is locked` every time. What works is a
+  plain file copy *plus* its `-journal`, `-wal` and `-shm` siblings, opened
+  read-**write** so a hot journal can roll back. The same is true of `Bookmarks`
+  and `Login Data`. Read `crates/laned-core/src/import.rs` before writing the
+  copy; it already solved this, including why rusqlite's `run_to_completion`
+  had to go (it retries `SQLITE_BUSY` unbounded and simply hangs).
 - **Firefox**: `logins.json` plus `key4.db`, encrypted through NSS. A different
   mechanism again, and reasonable to leave out of a first version.
 

@@ -14,7 +14,7 @@
 - [x] `maxpane run "a | pipeline"` returns a session id, logs a lane, and produces none — the quoting is not the bug; the silence is. A shell line is refused before anything starts, because afterwards nobody can tell: pty-host is listening at 20 ms, the 127 lands 355 ms–1.1 s later
 - [x] Import history from another browser, with a merge-or-replace wizard — [detail](import-history.md) — ⌥⌘Y; interleaved by re-deriving every `seq` from `last_visit_at` rather than appended, so the MRU is still today; merge is min/max in every field, which is what makes a second import a no-op; his Vivaldi measured at 108,854 pages in 15.4 s and 180 MB. `.backup` cannot read a running Chromium at all
 - [ ] History round 3: a view with room in it — day grouping, paging past 60 rows, the full URL, a confirmed delete, and a way to clear it — [detail](history-round-2.md)
-- [ ] Bookmarks: a store, a way to add and reach them, then import from other browsers
+- [ ] Bookmarks: a store, a way to add and reach them, then import from other browsers — a running Chromium holds its files with locking_mode=EXCLUSIVE, so copy the file plus its -wal/-shm siblings rather than using sqlite3 .backup; see crates/laned-core/src/import.rs
 - [ ] Passwords: macOS Keychain only, never our own store; explicit fill, then Chromium import — [detail](passwords.md)
 - [ ] History: 1–2 character keystrokes cost ~60ms because trigrams need three — boundary-prefixed trigram queries make short needles indexable; measured fix, left out of round 2 as scope
 - [ ] ⌘O splits a command on whitespace, so `yes | head` runs `yes` with literal args `|` and `head` — the same fault `maxpane run` just had, at a different door, and it produces a lane that spews rather than an error
