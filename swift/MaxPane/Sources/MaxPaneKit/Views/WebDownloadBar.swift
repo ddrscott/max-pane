@@ -91,10 +91,10 @@ private final class DownloadRowView: NSView {
     var onDismiss: (() -> Void)?
     var onReveal: (() -> Void)?
 
-    private let glyph = NSTextField(labelWithString: "")
+    private let glyph = NSImageView()
     private let name = NSTextField(labelWithString: "")
     private let status = NSTextField(labelWithString: "")
-    private let close = ChromeButton(glyph: "×")
+    private let close = ChromeButton(icon: .x)
     private let fraction: Double
     private let isRunning: Bool
 
@@ -106,16 +106,13 @@ private final class DownloadRowView: NSView {
 
         switch job.state {
         case .running:
-            glyph.stringValue = "↓"
-            glyph.textColor = Theme.flowing
+            glyph.image = IconImage.make(.download, points: 12, colour: Theme.flowing)
         case .finished:
-            glyph.stringValue = "✓"
-            glyph.textColor = Theme.flowing
+            glyph.image = IconImage.make(.check, points: 12, colour: Theme.flowing)
         case .failed:
-            glyph.stringValue = "✕"
-            glyph.textColor = WebChromeBar.warning
+            glyph.image = IconImage.make(.x, points: 12, colour: WebChromeBar.warning)
         }
-        glyph.font = Theme.mono(11, weight: .medium)
+        glyph.imageScaling = .scaleProportionallyDown
 
         name.stringValue = job.name
         name.font = Theme.mono(10)

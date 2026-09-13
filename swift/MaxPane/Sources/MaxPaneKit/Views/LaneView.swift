@@ -1363,15 +1363,13 @@ final class LaneHeaderMenuButton: NSView {
     override func mouseDown(with event: NSEvent) { onPress?() }
 
     override func draw(_ dirtyRect: NSRect) {
-        let glyph = "⋯" as NSString
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: Theme.mono(13, weight: .bold),
-            .foregroundColor: hovering ? Theme.accent : Theme.dimText,
-        ]
-        let size = glyph.size(withAttributes: attributes)
-        glyph.draw(
-            at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2),
-            withAttributes: attributes)
+        let points: CGFloat = 15
+        guard let image = IconImage.make(
+            .ellipsis, points: points, colour: hovering ? Theme.accent : Theme.dimText)
+        else { return }
+        image.draw(in: NSRect(
+            x: (bounds.width - points) / 2, y: (bounds.height - points) / 2,
+            width: points, height: points))
     }
 
     override func resetCursorRects() {

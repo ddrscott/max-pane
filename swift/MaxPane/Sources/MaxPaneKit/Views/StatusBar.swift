@@ -113,9 +113,10 @@ public final class StatusBar: NSView {
     /// says what is there rather than what pressing it will do, because a
     /// button labelled with its own action reads backwards once it is toggled.
     public func setSidebarOpen(_ open: Bool) {
-        sidebarToggle.attributedTitle = NSAttributedString(
-            string: open ? "◧" : "□",
-            attributes: [.font: Theme.mono(11), .foregroundColor: Theme.dimText])
+        sidebarToggle.image = IconImage.make(
+            open ? .panelLeftClose : .panelLeft, points: 13, colour: Theme.dimText)
+        sidebarToggle.imagePosition = .imageOnly
+        sidebarToggle.attributedTitle = NSAttributedString(string: "")
         sidebarToggle.toolTip = (open ? "Hide" : "Show") + " the session sidebar (⌘B)"
     }
 

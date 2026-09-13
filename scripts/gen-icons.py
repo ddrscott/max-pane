@@ -21,7 +21,25 @@ DEFAULT_LUCIDE = os.path.expanduser("~/code/editor/node_modules/lucide")
 OUT = "swift/MaxPane/Sources/MaxPaneKit/Views/LucideIcons.swift"
 
 # The icons the app uses. Add here, re-run, commit the result.
-WANTED = ["globe"]
+WANTED = [
+    # sidebar rows and controls
+    "globe", "square-terminal", "plus", "chevron-down", "chevron-right",
+    "arrow-up", "arrow-down", "panel-left", "panel-left-close",
+    "list-filter", "chevrons-down-up", "chevrons-up-down",
+    # web chrome
+    "arrow-left", "arrow-right", "rotate-cw", "star", "search", "download",
+    "x", "chevron-up",
+    # lane header
+    "ellipsis", "pin",
+    # web chrome, continued
+    "key-round", "check",
+]
+
+# Lucide draws everything as an outline. A filled variant is emitted for the
+# icons whose *state* is the whole point — a kept bookmark against an unkept
+# one — because two colours of the same outline is not a difference you can see
+# across a row of controls.
+FILLED = ["star"]
 
 PAIR = re.compile(r'\[\s*"([A-Za-z][\w-]*)"\s*,\s*\{([^}]*)\}\s*\]')
 ATTR = re.compile(r'([A-Za-z][\w-]*)\s*:\s*"([^"]*)"')
@@ -73,10 +91,16 @@ def main() -> None:
     ]
     for name in WANTED:
         lines.append(f'    case {swift_case(name)} = "{name}"')
+    for name in FILLED:
+        lines.append(f'    case {swift_case(name)}Filled = "{name}-filled"')
     lines += ["", "    /// The icon's SVG source.", "    var svg: String {", "        switch self {"]
     for name in WANTED:
         lines.append(f"        case .{swift_case(name)}:")
         lines.append(f'            return ##"{svg_for(root, name)}"##')
+    for name in FILLED:
+        filled = svg_for(root, name).replace('fill="none"', 'fill="black"')
+        lines.append(f"        case .{swift_case(name)}Filled:")
+        lines.append(f'            return ##"{filled}"##')
     lines += ["        }", "    }", "}", ""]
 
     with open(OUT, "w") as fh:

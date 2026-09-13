@@ -68,10 +68,7 @@ final class SidebarRowView: NSTableRowView {
 /// and the agent-state chip is the thing you actually scan ten rows for.
 final class SidebarEntryView: NSTableCellView {
     private let status = NSView()
-    private let marker = NSTextField(labelWithString: "")
-    /// The marker slot's other occupant: a web row gets a globe here instead of
-    /// a character. Two views rather than one, because an `NSTextField` cannot
-    /// hold a template image that tints with the row.
+    /// What kind of pane this row is, and whether it is on the strip.
     private let markerIcon = NSImageView()
     private let glyph = NSTextField(labelWithString: "")
     private let title = NSTextField(labelWithString: "")
@@ -100,24 +97,13 @@ final class SidebarEntryView: NSTableCellView {
             status.layer?.borderColor = tint.cgColor
         }
 
-        // The orange `$` says "this one is on the strip"; a dim `+` says
-        // "click and it will be". A web lane is neither of those things — it is
-        // a different kind of pane, not a different state — so it gets a globe.
-        // `◍` was standing in for one and reads as a bullet at 11pt.
-        marker.stringValue = isWeb ? "" : (attached ? "$" : "+")
-        marker.font = Theme.mono(11, weight: attached ? .bold : .regular)
-        // The orange prompt means "live, and on the strip". A lane whose session
-        // has died is neither, so it goes grey with the rest of the row.
-        marker.textColor = (attached && entry.isRunning && !isWeb) ? Theme.flowing : SidebarInk.gone
-        marker.alignment = .center
-
-        // Same ink as the character it replaces, so adding the globe changes
-        // the shape of a web row and nothing else about its weight.
-        markerIcon.isHidden = !isWeb
-        if isWeb {
-            markerIcon.image = IconImage.make(.globe, points: 12, colour: SidebarInk.gone)
-            markerIcon.imageScaling = .scaleProportionallyDown
-        }
+        // Kind first, then state: a terminal, a page, or a session that is not
+        // on the strip yet. Orange means "live, and on the strip" — a lane whose
+        // session has died is neither, so it goes grey with the rest of the row.
+        let markerInk = (attached && entry.isRunning && !isWeb) ? Theme.flowing : SidebarInk.gone
+        let markerIsFor: LucideIcon = isWeb ? .globe : (attached ? .squareTerminal : .plus)
+        markerIcon.image = IconImage.make(markerIsFor, points: 12, colour: markerInk)
+        markerIcon.imageScaling = .scaleProportionallyDown
 
         glyph.stringValue = isWeb ? "" : entry.glyph
         glyph.font = Theme.mono(11, weight: entry.needsAttention ? .bold : .regular)
@@ -158,7 +144,7 @@ final class SidebarEntryView: NSTableCellView {
             ? "\(entry.title)\n\(entry.sessionId ?? "web lane") — click to reveal on the strip"
             : "\(entry.title)\n\(entry.sessionId ?? "") — click to attach"
 
-        for v in [marker, glyph, title, badge, age, chip] {
+        for v in [glyph, title, badge, age, chip] {
             v.isBezeled = false
             v.drawsBackground = false
             // A label that wraps eats the row below it. Every column here is one
@@ -170,7 +156,7 @@ final class SidebarEntryView: NSTableCellView {
             v.lineBreakMode = .byTruncatingTail
             v.cell?.truncatesLastVisibleLine = true
         }
-        for v: NSView in [status, marker, markerIcon, glyph, title, badge, age, chip] {
+        for v: NSView in [status, markerIcon, glyph, title, badge, age, chip] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -181,16 +167,12 @@ final class SidebarEntryView: NSTableCellView {
             status.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
             status.centerYAnchor.constraint(equalTo: title.centerYAnchor),
 
-            marker.leadingAnchor.constraint(equalTo: status.trailingAnchor, constant: 5),
-            marker.widthAnchor.constraint(equalToConstant: 10),
-            marker.centerYAnchor.constraint(equalTo: title.centerYAnchor),
-
-            markerIcon.centerXAnchor.constraint(equalTo: marker.centerXAnchor),
-            markerIcon.centerYAnchor.constraint(equalTo: marker.centerYAnchor),
+            markerIcon.leadingAnchor.constraint(equalTo: status.trailingAnchor, constant: 5),
             markerIcon.widthAnchor.constraint(equalToConstant: 12),
             markerIcon.heightAnchor.constraint(equalToConstant: 12),
+            markerIcon.centerYAnchor.constraint(equalTo: title.centerYAnchor),
 
-            glyph.leadingAnchor.constraint(equalTo: marker.trailingAnchor, constant: 1),
+            glyph.leadingAnchor.constraint(equalTo: markerIcon.trailingAnchor, constant: 3),
             glyph.widthAnchor.constraint(equalToConstant: 12),
             glyph.centerYAnchor.constraint(equalTo: title.centerYAnchor),
 
@@ -285,7 +267,7 @@ final class SidebarEntryView: NSTableCellView {
 /// count folded into it. Grouping is unconditional here: ten sessions across six
 /// projects is exactly when a flat list stops being a browser.
 final class SidebarGroupView: NSTableCellView {
-    private let triangle = NSTextField(labelWithString: "")
+    private let triangle = NSImageView()
     private let label = NSTextField(labelWithString: "")
     private let count = NSTextField(labelWithString: "")
     private let rule = NSView()
@@ -295,10 +277,9 @@ final class SidebarGroupView: NSTableCellView {
     init(group: SidebarModel.Group) {
         super.init(frame: .zero)
 
-        triangle.stringValue = group.collapsed ? "▶" : "▼"
-        triangle.font = Theme.mono(8)
-        triangle.textColor = Theme.dimText
-        triangle.alignment = .center
+        triangle.image = IconImage.make(
+            group.collapsed ? .chevronRight : .chevronDown, points: 11, colour: Theme.dimText)
+        triangle.imageScaling = .scaleProportionallyDown
 
         // A header separates by being *quieter* than the rows, not louder.
         //
@@ -332,7 +313,7 @@ final class SidebarGroupView: NSTableCellView {
         rule.wantsLayer = true
         rule.layer?.backgroundColor = Theme.laneBorder.cgColor
 
-        for v in [triangle, label, count] {
+        for v in [label, count] {
             v.isBezeled = false
             v.drawsBackground = false
             v.usesSingleLineMode = true
@@ -352,7 +333,8 @@ final class SidebarGroupView: NSTableCellView {
             rule.heightAnchor.constraint(equalToConstant: 1),
 
             triangle.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 7),
-            triangle.widthAnchor.constraint(equalToConstant: 10),
+            triangle.widthAnchor.constraint(equalToConstant: 11),
+            triangle.heightAnchor.constraint(equalToConstant: 11),
             triangle.centerYAnchor.constraint(equalTo: centerYAnchor, constant: 2),
 
 
@@ -380,12 +362,20 @@ final class SidebarButton: NSButton {
 
     private var look: Look = .quiet
     private var text: String = ""
+    /// Drawn to the left of the text, or alone when there is none. Retinted on
+    /// every `restyle`, because the icon has to go orange with the label when
+    /// the control turns on — a template image cannot be tinted after the fact.
+    private var icon: LucideIcon?
     var isOn = false { didSet { restyle() } }
 
-    init(text: String, look: Look, size: CGFloat = 10, action: Selector?, target: AnyObject?) {
+    init(
+        text: String, icon: LucideIcon? = nil, look: Look, size: CGFloat = 10,
+        action: Selector?, target: AnyObject?
+    ) {
         super.init(frame: .zero)
         self.look = look
         self.text = text
+        self.icon = icon
         self.font = Theme.mono(size, weight: .medium)
         self.isBordered = false
         self.bezelStyle = .shadowlessSquare
@@ -406,6 +396,11 @@ final class SidebarButton: NSButton {
         restyle()
     }
 
+    func setIcon(_ next: LucideIcon?) {
+        icon = next
+        restyle()
+    }
+
     private func restyle() {
         let ink: NSColor
         let border: NSColor
@@ -422,6 +417,14 @@ final class SidebarButton: NSButton {
         }
         layer?.borderColor = border.cgColor
         layer?.backgroundColor = isOn ? Theme.accent.withAlphaComponent(0.12).cgColor : NSColor.clear.cgColor
+        if let icon {
+            image = IconImage.make(icon, points: (font?.pointSize ?? 10) + 2, colour: ink)
+            imagePosition = text.isEmpty ? .imageOnly : .imageLeading
+            imageHugsTitle = true
+        } else {
+            image = nil
+            imagePosition = .noImage
+        }
         attributedTitle = NSAttributedString(
             string: text,
             attributes: [
@@ -440,8 +443,8 @@ final class SidebarButton: NSButton {
 /// folder of twenty is one glance.
 @MainActor
 final class SidebarBookmarkView: NSTableCellView {
-    private let triangle = NSTextField(labelWithString: "")
-    private let glyph = NSTextField(labelWithString: "")
+    private let triangle = NSImageView()
+    private let glyph = NSImageView()
     private let title = NSTextField(labelWithString: "")
     private let detail = NSTextField(labelWithString: "")
 
@@ -454,10 +457,11 @@ final class SidebarBookmarkView: NSTableCellView {
     init(row: SidebarModel.BookmarkRow) {
         super.init(frame: .zero)
 
-        triangle.stringValue = row.isFolder ? (row.collapsed ? "▶" : "▼") : ""
-        triangle.font = Theme.mono(8)
-        triangle.textColor = Theme.dimText
-        triangle.alignment = .center
+        triangle.image = row.isFolder
+            ? IconImage.make(row.collapsed ? .chevronRight : .chevronDown,
+                             points: 11, colour: Theme.dimText)
+            : nil
+        triangle.imageScaling = .scaleProportionallyDown
 
         // A kept page is a star — the same glyph the chrome bar lights and the
         // same one ⌘O prints beside the row. Three surfaces, one mark.
@@ -467,10 +471,10 @@ final class SidebarBookmarkView: NSTableCellView {
         // marks for one fact, and the triangle is the one that also says
         // whether the folder is open. The column stays so that a folder's name
         // and a page's name start at the same x.
-        glyph.stringValue = row.isFolder ? "" : "★"
-        glyph.font = Theme.mono(10, weight: .medium)
-        glyph.textColor = Theme.accent
-        glyph.alignment = .center
+        glyph.image = row.isFolder
+            ? nil
+            : IconImage.make(.star, points: 11, colour: Theme.accent)
+        glyph.imageScaling = .scaleProportionallyDown
 
         title.stringValue = row.title
         title.font = Theme.mono(11, weight: row.isFolder ? .bold : .regular)
@@ -481,7 +485,11 @@ final class SidebarBookmarkView: NSTableCellView {
         detail.textColor = SidebarInk.gone
         detail.alignment = .right
 
-        for label in [triangle, glyph, title, detail] {
+        for v: NSView in [triangle, glyph] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(v)
+        }
+        for label in [title, detail] {
             label.isBezeled = false
             label.drawsBackground = false
             label.usesSingleLineMode = true
@@ -512,11 +520,13 @@ final class SidebarBookmarkView: NSTableCellView {
         let lead = 10 + Self.indent * CGFloat(row.depth)
         NSLayoutConstraint.activate([
             triangle.leadingAnchor.constraint(equalTo: leadingAnchor, constant: lead),
-            triangle.widthAnchor.constraint(equalToConstant: 10),
+            triangle.widthAnchor.constraint(equalToConstant: 11),
+            triangle.heightAnchor.constraint(equalToConstant: 11),
             triangle.centerYAnchor.constraint(equalTo: centerYAnchor),
 
             glyph.leadingAnchor.constraint(equalTo: triangle.trailingAnchor, constant: 2),
             glyph.widthAnchor.constraint(equalToConstant: 12),
+            glyph.heightAnchor.constraint(equalToConstant: 12),
             glyph.centerYAnchor.constraint(equalTo: centerYAnchor),
 
             title.leadingAnchor.constraint(equalTo: glyph.trailingAnchor, constant: 5),

@@ -165,22 +165,22 @@ final class SidebarViewController: NSViewController {
 
     private func buildHeader() {
         let newButton = SidebarButton(
-            text: "+ NEW", look: .accent, size: 11,
+            text: "NEW", icon: .plus, look: .accent, size: 11,
             action: #selector(newSession), target: self)
         newButton.toolTip = "New session (⌘R)"
 
         foldButton = SidebarButton(
-            text: "⌃⌄", look: .quiet, size: 9,
+            text: "", icon: .chevronsDownUp, look: .quiet, size: 9,
             action: #selector(toggleFold), target: self)
         foldButton.toolTip = "Collapse all projects"
 
         filterButton = SidebarButton(
-            text: "▽", look: .quiet, size: 11,
+            text: "", icon: .listFilter, look: .quiet, size: 11,
             action: #selector(toggleFilter), target: self)
         filterButton.toolTip = "Filter sessions"
 
         sortButton = SidebarButton(
-            text: "↓ CREATED", look: .quiet, size: 9,
+            text: "CREATED", icon: .arrowDown, look: .quiet, size: 9,
             action: #selector(showSortMenu), target: self)
         sortButton.toolTip = "Sort sessions within each project"
 
@@ -599,7 +599,8 @@ final class SidebarViewController: NSViewController {
     }
 
     private func refreshSortButton() {
-        sortButton.setText("\(controls.descending ? "↓" : "↑") \(controls.sort.label)")
+        sortButton.setIcon(controls.descending ? .arrowDown : .arrowUp)
+        sortButton.setText(controls.sort.label)
     }
 
     @objc private func showSettingsMenu(_ sender: SidebarButton) {

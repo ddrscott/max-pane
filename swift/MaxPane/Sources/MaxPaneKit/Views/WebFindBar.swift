@@ -21,9 +21,9 @@ final class WebFindBar: NSView {
 
     private let field = NSTextField()
     private let status = NSTextField(labelWithString: "")
-    private let previous = ChromeButton(glyph: "↑")
-    private let next = ChromeButton(glyph: "↓")
-    private let close = ChromeButton(glyph: "×")
+    private let previous = ChromeButton(icon: .chevronUp)
+    private let next = ChromeButton(icon: .chevronDown)
+    private let close = ChromeButton(icon: .x)
 
     var query: String { field.stringValue }
 

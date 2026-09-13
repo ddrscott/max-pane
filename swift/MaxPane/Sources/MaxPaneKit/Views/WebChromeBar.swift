@@ -76,17 +76,17 @@ final class WebChromeBar: NSView {
     var onBackMenu: (() -> NSMenu?)?
     var onForwardMenu: (() -> NSMenu?)?
 
-    private let back = ChromeButton(glyph: "←")
-    private let forward = ChromeButton(glyph: "→")
-    private let reload = ChromeButton(glyph: "⟳")
-    private let find = ChromeButton(glyph: "⌕")
-    private let star = ChromeButton(glyph: "☆")
+    private let back = ChromeButton(icon: .arrowLeft)
+    private let forward = ChromeButton(icon: .arrowRight)
+    private let reload = ChromeButton(icon: .rotateCw)
+    private let find = ChromeButton(icon: .search)
+    private let star = ChromeButton(icon: .star)
     /// `•••` and not a key glyph. U+26BF ⚿ is the obvious choice and is in
     /// neither JetBrains Mono nor Menlo, so AppKit would substitute a face for
     /// that one character in a 26 pt mono row — the one place a font fallback
     /// is impossible not to notice. Three bullets are a password field drawn at
     /// glyph size, they exist in every font, and they need no legend.
-    private let key = ChromeButton(glyph: "•••")
+    private let key = ChromeButton(icon: .keyRound)
     private let zoom = ChromeButton(glyph: "100%")
     private let security = NSTextField(labelWithString: "")
     private let address = AddressField()
@@ -206,7 +206,7 @@ final class WebChromeBar: NSView {
             // The same button, because stop and reload are the same intention
             // at two moments and a portrait column has no room for the second
             // one to be a separate target.
-            reload.glyph = loading ? "×" : "⟳"
+            reload.icon = loading ? .x : .rotateCw
             reload.toolTip = loading ? "Stop" : "Reload (⌘R)"
         }
     }
@@ -276,7 +276,7 @@ final class WebChromeBar: NSView {
     /// between the two states has to survive being glanced at in a 420 pt
     /// column, and `☆`/`★` differ in their middle rather than only in weight.
     func setKept(_ kept: Bool) {
-        star.glyph = kept ? "★" : "☆"
+        star.icon = kept ? .starFilled : .star
         star.tint = kept ? Theme.accent : nil
         star.toolTip = kept ? "Kept — click to edit or remove (⌘D)" : "Keep this page (⌘D)"
     }
@@ -745,6 +745,9 @@ final class ChromeButton: NSView {
     var onMenu: (() -> NSMenu?)?
 
     var glyph: String { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
+    /// Set instead of `glyph` for every control that is an affordance rather
+    /// than a readout. The zoom percentage is the one that stays text.
+    var icon: LucideIcon? { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
     var isEnabled = true { didSet { needsDisplay = true } }
     /// Overrides the ink when the button is enabled. One caller: the star,
     /// which is the only control on the row whose colour is a *state* rather
@@ -755,6 +758,11 @@ final class ChromeButton: NSView {
     private var isHovered = false { didSet { needsDisplay = true } }
     private var holdTimer: Timer?
     private var menuShown = false
+
+    convenience init(icon: LucideIcon) {
+        self.init(glyph: "")
+        self.icon = icon
+    }
 
     init(glyph: String) {
         self.glyph = glyph
@@ -781,6 +789,8 @@ final class ChromeButton: NSView {
     }
 
     override var intrinsicContentSize: NSSize {
+        // An icon is drawn at a fixed size, so the button is simply square.
+        if icon != nil { return NSSize(width: 22, height: 22) }
         let width = (glyph as NSString).size(withAttributes: [.font: font]).width
         return NSSize(width: max(22, width + 10), height: 22)
     }
@@ -840,6 +850,15 @@ final class ChromeButton: NSView {
         let colour: NSColor = !isEnabled
             ? Theme.dimText.withAlphaComponent(0.3)
             : (tint ?? (isDimmed ? Theme.dimText : .labelColor))
+        if let icon {
+            let points: CGFloat = 15
+            if let image = IconImage.make(icon, points: points, colour: colour) {
+                image.draw(in: NSRect(
+                    x: (bounds.width - points) / 2, y: (bounds.height - points) / 2,
+                    width: points, height: points))
+            }
+            return
+        }
         let text = NSAttributedString(string: glyph, attributes: [
             .font: font, .foregroundColor: colour,
         ])
