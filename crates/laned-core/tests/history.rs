@@ -454,9 +454,17 @@ fn alias_count(path: &Path) -> i64 {
 /// thread, with no debounce — the same bet ⌘P makes. This is the number that
 /// bet rests on, measured rather than assumed.
 ///
-/// `cargo test --release --test history -- --nocapture cost_of_a_keystroke`
+/// Gated on `MAXPANE_BENCH`: filling the ledger to its row cap is ~0.33 s, the
+/// second-largest single cost in the suite, and the number only means anything
+/// in release. `./scripts/test.sh bench` runs it.
 #[test]
 fn cost_of_a_keystroke() {
+    if std::env::var_os("MAXPANE_BENCH").is_none() {
+        // Loud rather than silent: a suite that quietly does less than it says
+        // is how a gate turns into a hole.
+        println!("SKIPPED cost_of_a_keystroke — set MAXPANE_BENCH=1, or ./scripts/test.sh bench");
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let path = db(&dir);
     let ledger = Ledger::open(Some(Path::new(&path))).unwrap();

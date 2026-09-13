@@ -558,13 +558,13 @@ struct OmniStoreTests {
 /// legible is not. Gated on an environment variable so it costs nothing in a
 /// normal run.
 ///
-///     MAXPANE_OMNI_SHOTS=/tmp/shots ./scripts/test.sh
+///     ./scripts/test.sh shots /tmp/shots
 @Suite("omni picker rendering")
 @MainActor
 struct OmniPickerRenderTests {
     @Test("renders the rows that have the least to work with")
     func renderSheet() throws {
-        guard let dir = ProcessInfo.processInfo.environment["MAXPANE_OMNI_SHOTS"] else { return }
+        guard let dir = ProcessInfo.processInfo.environment["MAXPANE_SHOTS"] else { return }
 
         let pages: [HistoryEntry] = [
             HistoryEntry(url: "https://doc.rust-lang.org/std/collections/struct.HashMap.html",

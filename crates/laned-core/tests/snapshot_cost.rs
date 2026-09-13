@@ -3,7 +3,12 @@
 //! Spike M3 measures ~2.4 ms for a 300-lane / 400-pane `state()` called from
 //! Swift. This splits that between the Rust half (SQLite query + building the
 //! snapshot) and everything uniffi does on top of it, so an optimisation has
-//! somewhere to aim. Run with `cargo test --release --test snapshot_cost -- --nocapture`.
+//! somewhere to aim.
+//!
+//! Gated on `MAXPANE_BENCH`. Building 300 lanes and taking 200 samples costs
+//! ~0.95 s — a third of the whole suite's wall time for one test — and the
+//! number it prints is only meaningful in release anyway, so the edit-loop run
+//! skips it. `./scripts/test.sh bench` is the way to get it.
 
 use laned_core::model::*;
 use laned_core::Core;
@@ -18,6 +23,12 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
 
 #[test]
 fn rust_side_snapshot_cost() {
+    if std::env::var_os("MAXPANE_BENCH").is_none() {
+        // Loud rather than silent: a suite that quietly does less than it says
+        // is how a gate turns into a hole.
+        println!("SKIPPED rust_side_snapshot_cost — set MAXPANE_BENCH=1, or ./scripts/test.sh bench");
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let core = Core::open(dir.path().join("ledger.db").to_string_lossy().into_owned()).unwrap();
 

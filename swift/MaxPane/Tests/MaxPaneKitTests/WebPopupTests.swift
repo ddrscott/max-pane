@@ -35,16 +35,11 @@ struct PopupPolicyTests {
     }
 
     /// The behaviour that must not change: half the web opens a second page for
-    /// reading this way, and those belong in lanes.
-    @Test("a target=_blank link is a lane")
+    /// reading this way, and those belong in lanes. A `target=_blank` form
+    /// arrives as the same intent — unscripted, no geometry, no chrome request
+    /// — so this is the form case too, and a second test of it was a copy.
+    @Test("a target=_blank link or form is a lane")
     func linkIsALane() {
-        let intent = PopupIntent(
-            opensNewView: true, isScripted: false, specifiesGeometry: false, suppressesChrome: false)
-        #expect(PopupPolicy.disposition(for: intent) == .lane)
-    }
-
-    @Test("a form with target=_blank is a lane")
-    func formIsALane() {
         let intent = PopupIntent(
             opensNewView: true, isScripted: false, specifiesGeometry: false, suppressesChrome: false)
         #expect(PopupPolicy.disposition(for: intent) == .lane)

@@ -75,17 +75,49 @@ symbols at all, which fails at link time in a thoroughly unhelpful way.
 ## Test
 
 ```sh
-./scripts/test.sh                             # Rust + Swift, everything
-
-source scripts/env.sh
-cargo test                                    # unit + durability acceptance tests
-cargo test --release --test snapshot_cost -- --nocapture   # the M3 timing split
+./scripts/test.sh                # the edit-loop run: Rust + Swift, ~1.5 s
+./scripts/test.sh bench          # the cost tests, in release
+./scripts/test.sh shots DIR      # render the header and picker sheets as PNGs
+./scripts/test.sh all            # all three
 ```
 
 Use `scripts/test.sh` rather than a bare `swift test`: swift-testing ships inside
 Command Line Tools but SwiftPM does not look for it there, and the fix is a
 framework search path plus two rpaths pointing at two different directories. The
 failure without them is a `dlopen` error that names neither.
+
+### What the default run leaves out, and why
+
+**Two tests, not two hundred.** Measured: the default run is ~1.5 s, of which
+the 320 Swift tests are 0.2 s and SwiftPM's own no-op overhead is another 0.4 s.
+Nothing in the Swift suite is worth gating — the slowest single test in it is
+76 ms. The cost lived on the Rust side, in two timing measurements:
+
+| | before | why it costs |
+|---|---|---|
+| `rust_side_snapshot_cost` | 0.95 s | builds 300 lanes / 400 panes, then 200 samples |
+| `cost_of_a_keystroke` | 0.33 s | fills the ledger to its 5,000-row cap, then 7 queries |
+
+Together that was 1.28 s of a 2.7 s suite — and both print numbers that only
+mean anything in a release build, which the default run is not. They are gated
+on **`MAXPANE_BENCH`** and `./scripts/test.sh bench` runs them in release, where
+the numbers are worth reading.
+
+Render-sheet tests (`LaneHeaderRenderTests`, `OmniPickerRenderTests`) draw views
+into bitmaps and write PNGs. They are gated on **`MAXPANE_SHOTS`**, which names
+the directory to write into — one variable for every sheet, so a new render test
+joins the same command rather than adding a third switch.
+
+The rule for the gate: **anything that protects correctness stays in the default
+run.** A gated test measures a number or produces a picture for a human to look
+at. Nothing that can fail because the code is wrong is behind a switch, and
+every gated test prints a `SKIPPED` line naming the switch that runs it.
+
+`MAXPANE_DATA_SALT` is set for the Swift half by `scripts/test.sh`. Unset, the
+`WKWebsiteDataStore` identity tests derive exactly the UUIDs the real app uses
+for its cookie jars; they only ask for identity so nothing is written today, but
+a test process that can name the live jar should not be one WebKit release away
+from opening it.
 
 `crates/laned-core/tests/durability.rs` holds the half of PRD §15's acceptance
 tests that the core owns — mostly "the strip is identical after a `kill -9`",

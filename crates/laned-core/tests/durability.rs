@@ -258,6 +258,30 @@ fn scroll_and_focus_survive_a_restart() {
     assert_eq!(st.scroll_x, 1337.5);
 }
 
+/// `set_pane_scroll` is the write a web pane makes as the user scrolls, and it
+/// had no cover: its only caller was `eviction_round_trips_through_the_ledger`,
+/// where `mark_evicted` writes the same number one line later and would have
+/// masked the write vanishing entirely. Proven by deleting the UPDATE — that
+/// suite stayed green, this one does not.
+#[test]
+fn a_panes_scroll_position_survives_a_restart_on_its_own() {
+    let dir = tempfile::tempdir().unwrap();
+    let pane_id = {
+        let core = Core::open(db(&dir)).unwrap();
+        let st = core
+            .create_lane(Placement::End, PaneKind::Web, None, Some("https://example.com/long".into()), None)
+            .unwrap();
+        let pane = st.lanes[0].panes[0].id.clone();
+        core.set_pane_scroll(pane.clone(), 4200.0).unwrap();
+        pane
+    };
+
+    let core = Core::open(db(&dir)).unwrap();
+    let pane = core.state().unwrap().lanes[0].panes[0].clone();
+    assert_eq!(pane.id, pane_id);
+    assert_eq!(pane.scroll_y, Some(4200.0), "the pane came back at the top of the page");
+}
+
 /// Nesting depth is 1 (§8): a lane holds panes, and that is the whole tree.
 /// Deleting a lane takes its panes with it and leaves nothing dangling.
 #[test]

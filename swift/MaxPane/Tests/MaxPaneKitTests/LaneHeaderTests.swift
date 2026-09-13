@@ -229,14 +229,15 @@ struct LaneHeaderModelTests {
 /// machine's screen is locked — `screencapture` returns black then, but a view
 /// drawing into a bitmap does not care.
 ///
-/// Skipped unless `MAXPANE_HEADER_SHOTS` names a directory, so it stays a
-/// development tool rather than a test that writes files in CI.
+/// Skipped unless `MAXPANE_SHOTS` names a directory, so it stays a development
+/// tool rather than a test that writes files in CI. One variable for every
+/// render sheet, so `./scripts/test.sh shots DIR` gets all of them at once.
 @Suite("lane header rendering")
 @MainActor
 struct LaneHeaderRenderTests {
     @Test("renders at the widths that matter")
     func renderSheet() throws {
-        guard let dir = ProcessInfo.processInfo.environment["MAXPANE_HEADER_SHOTS"] else { return }
+        guard let dir = ProcessInfo.processInfo.environment["MAXPANE_SHOTS"] else { return }
 
         // The pair that has to be distinguishable at a glance is the first
         // two: a blocked lane nobody is looking at, and a focused lane with
