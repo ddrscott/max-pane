@@ -44,7 +44,13 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         window.collectionBehavior = [.fullScreenPrimary, .managed]
         super.init(window: window)
 
-        let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
+        // Deliberately not `NSSplitViewItem(sidebarWithViewController:)`. That
+        // gives the item `.sidebar` behaviour, and the system collapses a
+        // sidebar on its own when it decides space is tight — which on a strip
+        // that is *meant* to be wider than the window means the session list
+        // vanishes while you are working and you did not ask it to. A plain
+        // item collapses only when told.
+        let sidebarItem = NSSplitViewItem(viewController: sidebar)
         // 260, not 220. A session row carries a title, a state chip, a
         // throughput reading and an age; at 220 the title — the only part that
         // tells two sessions apart — is the one that truncates.
@@ -90,6 +96,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         window.minSize = NSSize(width: 720, height: 400)
         window.center()
 
+        statusBar.onToggleSidebar = { [weak self] in self?.perform(.toggleSidebar) }
         sidebar.registry = sessions
         sidebar.onSelect = { [weak self] laneId in self?.strip.reveal(laneId: laneId, flash: true) }
         sidebar.onNewSession = { [weak self] in self?.perform(.openAnything) }
@@ -426,7 +433,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             case .focusDockRight: try focusDock(.right)
 
             case .toggleSidebar:
-                split.splitViewItems[0].animator().isCollapsed.toggle()
+                let item = split.splitViewItems[0]
+                item.animator().isCollapsed.toggle()
+                statusBar.setSidebarOpen(!item.isCollapsed)
 
             case .search:
                 showPalette()

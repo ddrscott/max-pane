@@ -20,6 +20,11 @@ public final class StatusBar: NSView {
 
     public var onClickSessions: (() -> Void)?
     public var onClickMemory: (() -> Void)?
+    public var onToggleSidebar: (() -> Void)?
+
+    /// The one control that has to be reachable while the thing it controls is
+    /// hidden, which is why it lives in the footer and not in the sidebar.
+    private let sidebarToggle = NSButton()
 
     public static let height: CGFloat = 24
 
@@ -28,7 +33,22 @@ public final class StatusBar: NSView {
         wantsLayer = true
         layer?.backgroundColor = Theme.laneBackground.cgColor
 
-        let row = NSStackView(views: [lanes, sessions, attention, NSView(), memory, hint])
+        sidebarToggle.isBordered = false
+        sidebarToggle.bezelStyle = .inline
+        sidebarToggle.target = self
+        sidebarToggle.action = #selector(toggleSidebar)
+        sidebarToggle.setButtonType(.momentaryChange)
+        sidebarToggle.translatesAutoresizingMaskIntoConstraints = false
+        // A glyph this size is an 11×14pt target, which is smaller than the
+        // pointer that has to find it. Widened deliberately rather than by
+        // padding the hit test, so what is clickable is what is drawn.
+        NSLayoutConstraint.activate([
+            sidebarToggle.widthAnchor.constraint(equalToConstant: 26),
+            sidebarToggle.heightAnchor.constraint(equalToConstant: 20),
+        ])
+        setSidebarOpen(true)
+
+        let row = NSStackView(views: [sidebarToggle, lanes, sessions, attention, NSView(), memory, hint])
         row.orientation = .horizontal
         row.spacing = 14
         row.alignment = .centerY
@@ -40,7 +60,7 @@ public final class StatusBar: NSView {
             row.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
         // The spacer view is what pushes the right-hand group to the edge.
-        row.views[3].setContentHuggingPriority(.init(1), for: .horizontal)
+        row.views[4].setContentHuggingPriority(.init(1), for: .horizontal)
 
         for field in [lanes, sessions, attention, memory, hint] {
             field.font = Theme.mono(10)
@@ -62,8 +82,35 @@ public final class StatusBar: NSView {
         NSRect(x: 0, y: bounds.height - Theme.borderWidth, width: bounds.width, height: Theme.borderWidth).fill()
     }
 
+    /// Filled when the sidebar is showing, hollow when it is not — the glyph
+    /// says what is there rather than what pressing it will do, because a
+    /// button labelled with its own action reads backwards once it is toggled.
+    public func setSidebarOpen(_ open: Bool) {
+        sidebarToggle.attributedTitle = NSAttributedString(
+            string: open ? "◧" : "□",
+            attributes: [.font: Theme.mono(11), .foregroundColor: Theme.dimText])
+        sidebarToggle.toolTip = (open ? "Hide" : "Show") + " the session sidebar (⌘B)"
+    }
+
+    @objc private func toggleSidebar() { onToggleSidebar?() }
+
     @objc private func clicked(_ gesture: NSClickGestureRecognizer) {
-        let x = gesture.location(in: self).x
+        let point = gesture.location(in: self)
+        // This gesture is on the whole footer, so it sees the press before the
+        // button does and the button's own action never runs. Rather than fight
+        // that, the footer dispatches it — the button is then there for its
+        // look, its tooltip and its accessibility, not for its target.
+        //
+        // The rect has to be converted, not read: `frame` is in the stack
+        // view's coordinates and `point` is in the footer's, and comparing them
+        // directly silently opens the session picker instead, which is exactly
+        // what it did.
+        let button = sidebarToggle.convert(sidebarToggle.bounds, to: self)
+        if button.insetBy(dx: -6, dy: -6).contains(point) {
+            onToggleSidebar?()
+            return
+        }
+        let x = point.x
         // The right-hand third is the memory readout; the rest is sessions.
         if x > bounds.width * 0.7 { onClickMemory?() } else { onClickSessions?() }
     }
