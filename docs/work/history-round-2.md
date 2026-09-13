@@ -20,7 +20,26 @@ browsing, not a guess:
 His rate is 1,010 distinct URLs a week, 5,136 a month. The 90-day age cap never
 fires — the row cap evicts him at ~29 days first.
 
-## 1. Search the whole table, and keep more than a month of it
+## 1. No row cap at all, and search the whole table
+
+**The owner has decided there is no limit**: "i don't think we need any limits
+on history." That is the right call and the arithmetic supports it — a `visit`
+row is one per normalised URL, roughly 250 bytes with a title, so his entire
+112,840-URL history is about **28 MB** and ten years at his measured rate lands
+near **155 MB**. SQLite does not care; Vivaldi spends 642 MB on the same data.
+
+So `HISTORY_MAX_ROWS` goes, and the 90-day age cap with it unless there is a
+reason to keep it that is about *him* rather than about the database.
+
+**The cap was hiding a linear scan, and removing it makes the index
+mandatory.** The 2 ms measured over 2,000 rows is a scan in Rust; at 112,000
+rows the same code costs on the order of 100 ms per keystroke, which is worse
+than the truncation ever was. An index or FTS over url and title is therefore
+not an optimisation to consider afterwards — it is the thing that makes "no
+limits" possible. Measure the keystroke cost at his real corpus size and put
+the number in a comment.
+
+## 1a. What the cap was hiding
 
 **The single biggest gap.** A row at depth 2,499 is silently unfindable while
 the palette's footer reads `0 OF 5013 PAGES` — proved with planted needles at
