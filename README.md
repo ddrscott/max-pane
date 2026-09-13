@@ -96,7 +96,7 @@ Nothing in the Swift suite is worth gating — the slowest single test in it is
 | | before | why it costs |
 |---|---|---|
 | `rust_side_snapshot_cost` | 0.95 s | builds 300 lanes / 400 panes, then 200 samples |
-| `cost_of_a_keystroke` | 21 s | builds 112,840 pages — the owner's real corpus size — then 8 queries |
+| `cost_of_a_keystroke` | 22 s | builds 112,840 pages — the owner's real corpus size — then 8 queries |
 
 A third, `cost_of_importing_a_real_profile`, is behind `MAXPANE_BENCH` **and**
 `MAXPANE_IMPORT_SOURCE`, which has to name a browser history file. It is the one
@@ -247,10 +247,45 @@ That is affordable because the search is indexed rather than scanned. Every
 page's address, title and redirect sources go into a trigram index (migration
 0009), which narrows the table before anything is ranked. Measured over 112 840
 pages, release build: **a keystroke costs about 7 ms from the third character
-on**, and 1 ms once the query is distinctive. The first two characters cost
-about 60 ms, because a trigram index has nothing to say below three characters
-and every row is read — that is the price of the answer being the whole table
-rather than the newest fortnight of it, and it is two keystrokes.
+on**, and 1 ms once the query is distinctive.
+
+**The first two characters used to cost about 60 ms** and now cost 10 ms,
+because a trigram index has nothing to say below three characters and every row
+was read. Migration 0011 gives a short needle three characters to find: at each
+place a match can *start* — the front of a field, and every position after a
+word boundary — the row carries a **shoulder** entry, a doubled marker character
+and the two that follow, so `de` is looked up as a trigram like everything else.
+Measured over the owner's real 108 854 imported pages, every letter of the
+alphabet as a first keystroke:
+
+| a–z, first keystroke | before 0011 | after |
+|---|---|---|
+| best | 61.5 ms (`a`) | **1.0 ms** (`z`) |
+| median | 66.7 ms | **10.8 ms** |
+| worst | 84.9 ms (`z`) | **48.2 ms** (`g`) |
+
+Every one of the 36 letters and digits got faster, and so did every second
+keystroke sampled — `gi`, `do`, `ma`, `co`, `gh`, `ne`, `lo`, `ap` went from
+65–102 ms to 0.5–22 ms. `g` is the worst because a fifth of his pages have a
+field that starts with one. The one keystroke that got *slower* in a first draft
+was `w`, and the reason is pinned in
+`the_www_a_reader_never_sees_is_not_a_shoulder`: `www.` is stripped before
+anything is matched, so it is nobody's prefix and had no business being indexed
+as one.
+
+**The shoulder narrows, and it is refused the moment it could be lossy.** It
+drops the rows that contain what you typed only mid-word, so it is trusted only
+where that cannot cost a row its place: the match tiers are 10 000 apart and a
+score inside one spans under 1 000, so every prefix match outranks every
+word-prefix match, which outranks every mid-word one — and once the shoulder has
+handed back a page's worth at a tier, the rows it left out were all a tier lower.
+When it hands back fewer, the whole table is read instead, which is why `z` still
+finds a page whose only `z` is in the middle of a word. It is also refused when
+its answer would be more than a third of the table, because reading a third of
+the rows one at a time costs more than reading all of them in one pass. The
+price is 45 MB of ledger (171 MB → 217 MB at 108 854 pages) and a **6.4 s
+migration** on the launch that upgrades — 4.7 s of which is rebuilding the 0009
+index that an FTS5 table cannot have a column added to.
 
 The index narrows; it never ranks. `history.rs` still decides the order, so what
 comes back is what an uncapped scan would have produced — including `mxp`
@@ -441,15 +476,15 @@ to 2024-02-22 — release build:
 | import | **15.4 s**, 108 854 pages (3 992 not importable: `chrome-extension:`, `mailto:`, rows Chromium itself hides, and second spellings of a page already counted) |
 | ledger afterwards | **180 MB**, WAL checkpointed back into the file |
 | importing it a second time | 0 rows added, nothing moved |
-| a keystroke afterwards | **16–18 ms** from the third character; 183 ms for `com`, which is a substring of most of the corpus |
+| a keystroke afterwards | **16–18 ms** from the third character; 0.5–48 ms for the first and second, since migration 0011; 183 ms for `com`, which is a substring of most of the corpus |
 
 The keystroke numbers are worse than the 7 ms this README quotes for a *synthetic*
 corpus of the same size, and the reason is the corpus rather than the size: real
 browsing is full of `com`, `www` and `github`, so a short real needle narrows to
 tens of thousands of rows where a generated one narrows to hundreds. 183 ms is
 the worst case measured and it is a query nobody stops typing at; from the third
-distinctive character it is under 20 ms. The one- and two-character cost is the
-known trigram floor and has its own queue item.
+distinctive character it is under 20 ms. The one- and two-character cost was the
+trigram floor, and is now the shoulder entries described under **History** above.
 
 The wizard runs both long calls off the main thread — the only place in the app
 that does, because everything else takes microseconds.

@@ -3,6 +3,7 @@
 
 use crate::error::{CoreError, Result};
 use crate::model::*;
+use rusqlite::functions::FunctionFlags;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use std::path::{Path, PathBuf};
 
@@ -27,6 +28,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("../migrations/0009_history_index.sql"),
     ),
     ("0010_bookmarks", include_str!("../migrations/0010_bookmarks.sql")),
+    ("0011_history_edges", include_str!("../migrations/0011_history_edges.sql")),
 ];
 
 /// A needle as an FTS5 query: one quoted phrase, nothing else.
@@ -36,6 +38,26 @@ const MIGRATIONS: &[(&str, &str)] = &[
 /// made of those characters, so an unquoted address is a syntax error rather
 /// than a search. A phrase over the trigram tokenizer means "contains this
 /// substring", which is exactly the tier `history::tier` is about to assign.
+/// How much of the table a shoulder query may hand back before reading its
+/// answer costs more than reading the whole table.
+///
+/// There is a crossing point and it is not the same on every corpus. Reading a
+/// row by rowid out of the FTS5 content table costs about 2.0 µs on the owner's
+/// real 108 855 pages and about 0.6 µs on the generated corpus
+/// `cost_of_a_keystroke` builds, where the rows are shorter and the table stays
+/// in the page cache; reading the same row in one sequential pass costs about
+/// 0.5 µs on either. So the narrowing wins up to somewhere between a quarter
+/// and all of the table depending on how cold it is, and a third is the middle
+/// of that: it keeps the measured wins on both corpora and refuses the case the
+/// budget is actually for — a one-character needle against a corpus that is
+/// mostly one host, where "the rows whose URL starts with g" is not a narrowing
+/// at all and would be several times *slower* than the scan it replaced.
+///
+/// Above the budget the stage is skipped, not truncated. The answer is the
+/// scan's answer either way; only its cost changes. Nothing here can make a row
+/// unfindable, which is the property this whole file is arranged around.
+const SHOULDER_BUDGET_DIVISOR: i64 = 3;
+
 fn fts_phrase(needle: &str) -> String {
     format!("\"{}\"", needle.replace('"', "\"\""))
 }
@@ -75,6 +97,7 @@ impl Ledger {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
+        Self::register_edges(&conn)?;
         let mut l = Ledger { conn, path: path.map(|p| p.to_path_buf()) };
         l.migrate()?;
         Ok(l)
@@ -83,6 +106,27 @@ impl Ledger {
     /// The file this ledger is, or `None` in memory.
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()
+    }
+
+    /// Teach this connection to build [`crate::history::edges`].
+    ///
+    /// Registered before the migrations run, because 0011 fills its new column
+    /// with it. In SQL rather than in Rust so that the backfill, the wholesale
+    /// rebuild an import does and the single-row reindex every visit does are
+    /// one statement each against one definition — a second copy of "what is a
+    /// word start" living in SQL is how the index and the ranker would come to
+    /// disagree, and a disagreement there is a page that is in the table and
+    /// cannot be found.
+    fn register_edges(conn: &Connection) -> Result<()> {
+        conn.create_scalar_function(
+            "maxpane_edges",
+            1,
+            FunctionFlags::SQLITE_UTF8
+                | FunctionFlags::SQLITE_DETERMINISTIC
+                | FunctionFlags::SQLITE_INNOCUOUS,
+            |ctx| Ok(crate::history::edges(ctx.get_raw(0).as_str().unwrap_or_default())),
+        )?;
+        Ok(())
     }
 
     fn migrate(&mut self) -> Result<()> {
@@ -563,8 +607,10 @@ impl Ledger {
         )?;
         self.conn.execute(
             &format!(
-                "INSERT INTO visit_search (rowid, haystack, seq)
-                 SELECT v.rowid, {}, v.seq FROM visit v WHERE v.url = ?1",
+                "INSERT INTO visit_search (rowid, haystack, edges, seq)
+                 SELECT rid, hay, maxpane_edges(hay), sq
+                   FROM (SELECT v.rowid AS rid, {} AS hay, v.seq AS sq
+                           FROM visit v WHERE v.url = ?1)",
                 Self::HAYSTACK_SQL
             ),
             [url],
@@ -688,6 +734,51 @@ impl Ledger {
         Ok(rows)
     }
 
+    /// Score every row the FTS5 expression `query` matches.
+    ///
+    /// One place, because the narrowings above differ only in what they ask the
+    /// index — what is done with a candidate row is the same scan of the same
+    /// borrowed text either way.
+    fn offer_matching(&self, ranking: &mut crate::history::Ranking<'_>, query: &str) -> Result<()> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT rowid, haystack, seq FROM visit_search WHERE visit_search MATCH ?1")?;
+        let mut rows = stmt.query(params![query])?;
+        while let Some(r) = rows.next()? {
+            let hay: &str = r.get_ref(1)?.as_str().unwrap_or_default();
+            ranking.offer(r.get(0)?, r.get(2)?, crate::history::Haystack::new(hay));
+        }
+        Ok(())
+    }
+
+    /// How many rows the expression matches, without reading one of them.
+    ///
+    /// Measured on the owner's 108 855 pages: walking the posting list for the
+    /// 21 501 rows a field of which starts with `g` costs 0.87 ms, and reading
+    /// those same rows out of the FTS5 content table costs 42.6 ms. The count
+    /// is 2% of the read, which is what makes it worth asking first.
+    fn matching_count(&self, query: &str) -> Result<i64> {
+        let n = self.conn.query_row(
+            "SELECT COUNT(*) FROM visit_search WHERE visit_search MATCH ?1",
+            params![query],
+            |r| r.get(0),
+        )?;
+        Ok(n)
+    }
+
+    /// The largest `visit.rowid`, which is O(1) on a rowid table and is the row
+    /// count plus whatever has since been forgotten.
+    ///
+    /// A budget wants an order of magnitude, not a census: `COUNT(*)` over
+    /// 108 855 rows walks the `url` index and costs milliseconds a keystroke,
+    /// which is a large fraction of the query it is trying to protect.
+    fn rowid_ceiling(&self) -> Result<i64> {
+        let n = self
+            .conn
+            .query_row("SELECT MAX(rowid) FROM visit", [], |r| r.get::<_, Option<i64>>(0))?;
+        Ok(n.unwrap_or(0))
+    }
+
     /// The best `limit` pages for `needle`, best first.
     ///
     /// # Why the whole corpus is in play and it is still fast
@@ -695,40 +786,87 @@ impl Ledger {
     /// Round 1 scored the newest 2 000 rows and called the rest unreachable —
     /// a row at depth 2 499 sat in the table and could not be found while the
     /// footer counted it. There is no depth here. What replaces it is the
-    /// trigram index of migration 0009, used two ways:
+    /// index of migrations 0009 and 0011, used three ways:
     ///
-    /// * **Three characters or more** — `MATCH` narrows the table to the rows
-    ///   that literally contain them, and every one of those is scored.
-    /// * **One or two characters, or a needle nothing contains** — below the
-    ///   trigram tokenizer's floor there is no narrowing to do, so every row is
-    ///   scored. Which is affordable only because the index stores the text: a
-    ///   row is scored where it lies in the statement, lowercase already, with
-    ///   nothing allocated per candidate. See [`crate::history::Haystack`].
+    /// * **Three characters or more** — `MATCH` on the haystack column narrows
+    ///   the table to the rows that literally contain them, and every one of
+    ///   those is scored.
+    /// * **One or two characters** — below the trigram tokenizer's floor the
+    ///   haystack column has nothing to say, so the *shoulder* column of 0011
+    ///   is asked instead: first for the rows a field of which starts with what
+    ///   was typed, then for the rows a word of which does. See
+    ///   [`crate::history::edges`].
+    /// * **A needle nothing contains** — every row is scored. Which is
+    ///   affordable only because the index stores the text: a row is scored
+    ///   where it lies in the statement, lowercase already, with nothing
+    ///   allocated per candidate. See [`crate::history::Haystack`].
     ///
-    /// The second case is also what keeps `mxp` finding `max-pane`. A trigram
+    /// The last case is also what keeps `mxp` finding `max-pane`. A trigram
     /// index cannot see a subsequence, and the subsequence tier only ever
     /// applies when nothing matched literally — which is exactly when `MATCH`
     /// comes back empty and this falls through to the scan.
     ///
-    /// The index narrows; it never ranks. It can only drop rows that contain
-    /// none of the typed characters anywhere, so what
+    /// # Why a narrowed answer is the same answer
+    ///
+    /// The index narrows; it never ranks. The haystack column can only drop
+    /// rows that contain none of the typed characters anywhere, so what
     /// [`crate::history::Ranking`] sees is what an uncapped scan would have
     /// handed it.
+    ///
+    /// The shoulder column is narrower than that — it drops rows that contain
+    /// the needle only mid-word — so it is trusted only where it provably
+    /// cannot cost a row a place. [`crate::history::MatchTier`] puts 10 000
+    /// between tiers and under 1 000 inside one, so every prefix match outranks
+    /// every word-prefix match, which outranks every mid-word one. A shoulder
+    /// query returns *every* row that can reach the tier it was asked about
+    /// (the entries are a superset of the positions the ranker calls a prefix —
+    /// see [`crate::history::edges`]), so once `offset + limit` of them have
+    /// reached it, the rows left behind are all a tier lower and none of them
+    /// could have been on the page. When fewer reach it, the tier below is in
+    /// play and the whole table is read instead. Nothing is ever dropped for
+    /// being slow to find: that was round 1's `0 OF 5013 PAGES`, and it is not
+    /// being built a second door.
     pub fn history_search(
         &self,
         needle: &str,
         offset: u32,
         limit: u32,
     ) -> Result<Vec<crate::model::HistoryEntry>> {
+        let want = offset as usize + limit as usize;
         let mut ranking = crate::history::Ranking::new(needle);
         if needle.chars().count() >= crate::history::TRIGRAM_MIN_CHARS {
-            let mut stmt = self.conn.prepare(
-                "SELECT rowid, haystack, seq FROM visit_search WHERE visit_search MATCH ?1",
-            )?;
-            let mut rows = stmt.query(params![fts_phrase(needle)])?;
-            while let Some(r) = rows.next()? {
-                let hay: &str = r.get_ref(1)?.as_str().unwrap_or_default();
-                ranking.offer(r.get(0)?, r.get(2)?, crate::history::Haystack::new(hay));
+            self.offer_matching(&mut ranking, &fts_phrase(needle))?;
+        } else {
+            // Widest last: a field-start query is the most selective thing that
+            // can still be complete, and on the owner's corpus it is what
+            // answers 34 of the 36 first keystrokes. Each stage starts a fresh
+            // `Ranking` rather than adding to the last, because the second
+            // query's rows are a superset of the first's and offering a row
+            // twice would count it twice.
+            //
+            // One budget for the pass, not one per stage: a field-start query
+            // that comes back with too few prefix matches to fill the page has
+            // still been paid for, and the word-start query after it has to fit
+            // in what is left, or the two together cost more than the scan they
+            // were avoiding.
+            let mut budget = self.rowid_ceiling()? / SHOULDER_BUDGET_DIVISOR;
+            for (shoulder, tier) in [
+                (crate::history::EDGE_FIELD, crate::history::MatchTier::Prefix),
+                (crate::history::EDGE_WORD, crate::history::MatchTier::WordPrefix),
+            ] {
+                let Some(q) = crate::history::edge_query(needle, shoulder) else { continue };
+                let q = format!("edges : {}", fts_phrase(&q));
+                let n = self.matching_count(&q)?;
+                if n == 0 || n > budget {
+                    continue;
+                }
+                budget -= n;
+                let mut staged = crate::history::Ranking::new(needle);
+                self.offer_matching(&mut staged, &q)?;
+                if staged.hits_down_to(tier) >= want {
+                    ranking = staged;
+                    break;
+                }
             }
         }
         if ranking.is_empty() {
@@ -1628,8 +1766,9 @@ impl Ledger {
         tx.execute("DELETE FROM visit_search", [])?;
         tx.execute(
             &format!(
-                "INSERT INTO visit_search (rowid, haystack, seq)
-                 SELECT v.rowid, {}, v.seq FROM visit v",
+                "INSERT INTO visit_search (rowid, haystack, edges, seq)
+                 SELECT rid, hay, maxpane_edges(hay), sq
+                   FROM (SELECT v.rowid AS rid, {} AS hay, v.seq AS sq FROM visit v)",
                 Self::HAYSTACK_SQL
             ),
             [],

@@ -12,7 +12,7 @@ name = "laned_core"
 
 [dependencies]
 uniffi = { version = "0.32", features = ["cli"] }
-rusqlite = { version = "0.37", features = ["bundled", "backup"] }
+rusqlite = { version = "0.37", features = ["bundled", "backup", "functions"] }
 ulid = "1"
 # Chromium keeps its bookmarks as JSON rather than in the SQLite file next to
 # it, and it is the one format in this crate SQLite cannot read for us.
@@ -22,7 +22,7 @@ parking_lot = "0.12"
 
 [dev-dependencies]
 tempfile = "3"
-rusqlite = { version = "0.37", features = ["bundled", "backup"] }
+rusqlite = { version = "0.37", features = ["bundled", "backup", "functions"] }
 
 [[bin]]
 name = "uniffi-bindgen"

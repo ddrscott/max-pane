@@ -457,8 +457,14 @@ fn a_ledger_written_before_the_index_is_backfilled() {
         // Pretend 0009 never ran.
         let conn = rusqlite::Connection::open(&path).unwrap();
         conn.execute("DROP TABLE visit_search", []).unwrap();
-        conn.execute("DELETE FROM schema_migration WHERE name = '0009_history_index'", [])
-            .unwrap();
+        // Both, because 0011 is the migration that owns the table's shape now:
+        // leaving it applied would let 0009 rebuild the three-column table of
+        // the round before and nothing would put the fourth column back.
+        conn.execute(
+            "DELETE FROM schema_migration WHERE name IN ('0009_history_index', '0011_history_edges')",
+            [],
+        )
+        .unwrap();
     }
     let core = Core::open(path).unwrap();
     assert_eq!(core.history("backfill".into(), 10).unwrap().len(), 1, "the URL was not indexed");
@@ -620,6 +626,181 @@ fn alias_count(path: &Path) -> i64 {
     conn.query_row("SELECT COUNT(*) FROM visit_alias", [], |r| r.get(0)).unwrap()
 }
 
+// ---- short needles ----------------------------------------------------------
+
+/// What the answer would be with no index at all: every row in the table,
+/// offered to the same [`Ranking`] the ledger uses, paged the same way.
+///
+/// The reference the shoulder index is held against. Written here rather than
+/// borrowed from the crate on purpose — a narrowing that is only ever compared
+/// to itself is a narrowing nobody has checked.
+fn scanned(path: &Path, query: &str, offset: usize, limit: usize) -> Vec<String> {
+    use laned_core::history::{needle, Haystack, Ranking};
+    let conn = rusqlite::Connection::open(path).unwrap();
+    let needle = needle(query);
+    let mut ranking = Ranking::new(&needle);
+    {
+        let mut stmt = conn.prepare("SELECT rowid, haystack, seq FROM visit_search").unwrap();
+        let mut rows = stmt.query([]).unwrap();
+        while let Some(r) = rows.next().unwrap() {
+            let hay: String = r.get(1).unwrap();
+            ranking.offer(r.get(0).unwrap(), r.get(2).unwrap(), Haystack::new(&hay));
+        }
+    }
+    let mut stmt = conn.prepare("SELECT url FROM visit WHERE rowid = ?1").unwrap();
+    ranking
+        .finish(offset + limit)
+        .into_iter()
+        .skip(offset)
+        .map(|h| stmt.query_row([h.rowid], |r| r.get::<_, String>(0)).unwrap())
+        .collect()
+}
+
+/// A corpus wide enough that a one-character needle has more prefix matches
+/// than a page holds, plus rows whose only match is mid-word.
+fn a_corpus_with_shoulders(core: &Core) {
+    let pane = web_pane(core, "https://example.com");
+    const WORDS: [&str; 10] = [
+        "deploy", "grafana", "issues", "dashboard", "inbox", "release", "schema", "migration",
+        "queue", "worker",
+    ];
+    for i in 0..900usize {
+        // Twenty letters, so `z` is left out of every host: the corpus above
+        // must not contain the character the buried rows are found by.
+        let letter = (b'a' + (i % 20) as u8) as char;
+        let word = WORDS[i % WORDS.len()];
+        let other = WORDS[(i * 7) % WORDS.len()];
+        core.record_visit(
+            pane.clone(),
+            format!("https://{letter}{i}.example.com/{word}/{i}"),
+            Some(format!("{other} notes {i}")),
+            Vec::new(),
+        )
+        .unwrap();
+    }
+    // `z` and `zq` appear nowhere else in the corpus above — not in a host, not
+    // in a word, not in `example.com` — and here only in the middle of a word:
+    // nothing starts with either. These are the rows a shoulder query cannot
+    // see, and the ones that prove it is not trusted when it cannot.
+    for i in 0..4usize {
+        core.record_visit(
+            pane.clone(),
+            format!("https://hidden.example/aazq{i}b"),
+            Some(format!("hidden {i}")),
+            Vec::new(),
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn a_one_character_needle_returns_what_the_whole_table_would() {
+    // The fix this test exists for: below three characters the trigram index
+    // has nothing to say, and the shoulder column of 0011 answers instead. It
+    // may be faster; it may not be different.
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    let core = Core::open(path.clone()).unwrap();
+    a_corpus_with_shoulders(&core);
+    let file = Path::new(&path);
+
+    for q in ["d", "g", "i", "e", "q", "x", "z", "/", "-", "9"] {
+        assert_eq!(
+            urls(&core.history_page(q.to_string(), 0, 60).unwrap()),
+            scanned(file, q, 0, 60),
+            "the index and the scan disagree about {q:?}"
+        );
+    }
+}
+
+#[test]
+fn a_two_character_needle_returns_what_the_whole_table_would() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    let core = Core::open(path.clone()).unwrap();
+    a_corpus_with_shoulders(&core);
+    let file = Path::new(&path);
+
+    // `de` and `gr` are word starts everywhere; `xz` is mid-word only; `ax`
+    // is nowhere at all, which is the subsequence tier's case; `y-` and `e.`
+    // straddle a boundary, which the entries have to carry or a word prefix
+    // ending at one would be missed.
+    for q in ["de", "gr", "is", "zq", "ax", "y-", "e.", "0/", "zz"] {
+        assert_eq!(
+            urls(&core.history_page(q.to_string(), 0, 60).unwrap()),
+            scanned(file, q, 0, 60),
+            "the index and the scan disagree about {q:?}"
+        );
+    }
+}
+
+#[test]
+fn a_short_needle_pages_the_same_list_the_scan_would() {
+    // The narrowing is trusted on `offset + limit`, not on `limit`: a deep page
+    // is where taking the first answer that looked long enough would start
+    // returning a different list from the one the reader was scrolling.
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    let core = Core::open(path.clone()).unwrap();
+    a_corpus_with_shoulders(&core);
+    let file = Path::new(&path);
+
+    for q in ["d", "de", "q"] {
+        for offset in [0u32, 60, 240, 600] {
+            assert_eq!(
+                urls(&core.history_page(q.to_string(), offset, 60).unwrap()),
+                scanned(file, q, offset as usize, 60),
+                "page {offset} of {q:?} is not the scan's page {offset}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_corpus_that_is_mostly_one_host_still_answers_the_scan() {
+    // The case the shoulder budget exists for: when almost every row's URL
+    // starts with the same letter, narrowing to "the rows that start with it"
+    // narrows nothing and costs more than reading the table. The stage is then
+    // skipped — and skipping a stage may never change an answer.
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    let core = Core::open(path.clone()).unwrap();
+    let pane = web_pane(&core, "https://example.com");
+    for i in 0..400usize {
+        core.record_visit(
+            pane.clone(),
+            format!("https://github.com/anthropics/repo-{i}/pull/{i}"),
+            Some(format!("Pull {i} · anthropics/repo-{i}")),
+            Vec::new(),
+        )
+        .unwrap();
+    }
+    let file = Path::new(&path);
+    for q in ["g", "gi", "a", "p", "r"] {
+        assert_eq!(
+            urls(&core.history_page(q.to_string(), 0, 60).unwrap()),
+            scanned(file, q, 0, 60),
+            "the budget changed the answer for {q:?}"
+        );
+    }
+}
+
+#[test]
+fn a_page_matched_only_in_the_middle_of_a_word_is_still_found() {
+    // Stated as its own test rather than left implicit in the comparisons
+    // above, because this is the exact shape of round 1's hole: a row that is
+    // in the table, matches what was typed, and cannot be reached.
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    let core = Core::open(path).unwrap();
+    a_corpus_with_shoulders(&core);
+
+    let hits = urls(&core.history_page("z".into(), 0, 60).unwrap());
+    assert_eq!(hits.len(), 4, "the mid-word rows were narrowed away");
+    assert!(hits.iter().all(|u| u.contains("hidden.example")), "{hits:?}");
+    assert_eq!(urls(&core.history_page("zq".into(), 0, 60).unwrap()).len(), 4);
+}
+
 // ---- cost -------------------------------------------------------------------
 
 /// How many pages the cost test builds.
@@ -638,36 +819,40 @@ const HIS_CORPUS: u32 = 112_840;
 /// # The measurement, release build, M-series, 112 840 pages
 ///
 /// ```text
-///           d:  56.27 ms, 60 hits    one character — below the trigram floor, so every row
-///          de:  61.96 ms, 60 hits    two — the same, and the last keystroke that costs this
-///         dep:   6.11 ms, 60 hits    three — the index takes over, and stays over
-///        depl:   6.43 ms, 60 hits
-///      deploy:   6.98 ms, 60 hits
-/// log-group/2:   1.26 ms, 60 hits    a distinctive query barely touches the table
-///         com:  25.15 ms, 60 hits    a needle three rows in five contain
-///        zzqq:  65.38 ms,  0 hits    nothing literal: every row, for the subsequence tier
+///           d:  20.29 ms, 60 hits    one character — the shoulder entries of 0011
+///          de:  11.23 ms, 60 hits    two — the same, and the last keystroke that needs them
+///         dep:   7.08 ms, 60 hits    three — the trigram index takes over, and stays over
+///        depl:   7.67 ms, 60 hits
+///      deploy:   8.23 ms, 60 hits
+/// log-group/2:   1.38 ms, 60 hits    a distinctive query barely touches the table
+///         com:  27.62 ms, 60 hits    a needle three rows in five contain
+///        zzqq:  71.78 ms,  0 hits    nothing literal: every row, for the subsequence tier
 /// ```
 ///
-/// The line that matters is the third: from the third character on, a query
-/// costs single-digit milliseconds against 112 840 rows, where the round-1
-/// linear scan extrapolated to roughly 100 ms a keystroke — and round 1 only
-/// ever looked at the newest 2 000 rows to get its 2 ms.
+/// The first two lines were 56.27 ms and 61.96 ms before migration 0011. Below
+/// three characters the trigram tokenizer has nothing to index and every row in
+/// the table was read; what replaced that is `history::edges`, which gives a
+/// one- or two-character needle a trigram of its own to find at each place a
+/// match can *start*. It is a narrowing and not a cap: see `Ledger::history_search`
+/// for why the rows it leaves out could not have been on the page, and
+/// `a_one_character_needle_returns_what_the_whole_table_would` for the same
+/// claim checked against the scan rather than argued.
 ///
-/// Two shapes still pay for the whole table, both by construction and both
-/// documented rather than hidden:
+/// This corpus is drawn from twelve hosts, which makes `d` its worst letter by
+/// construction: a sixth of the rows have a URL that starts with one. Over the
+/// owner's *real* 108 854 imported pages — `cost_of_importing_a_real_profile`,
+/// and the sweep in the README — every letter cost 62–87 ms before and 0.5–48 ms
+/// after, with a median of 10 ms.
 ///
-/// * **One or two characters.** FTS5's trigram tokenizer indexes
-///   three-character windows, so there is no index below three and every row is
-///   scored. It is the first two keystrokes only, and it is the price of the
-///   answer being complete rather than the newest fourteen days of it.
-/// * **A needle nothing contains.** `Ranking` comes back empty, and the scan
-///   that follows is what lets `mxp` still find `max-pane`. It fires exactly
-///   when the answer is "nothing matched", which is the one case where nobody
-///   is reading a list.
+/// One shape still pays for the whole table, by construction and documented
+/// rather than hidden: **a needle nothing contains**. `Ranking` comes back
+/// empty, and the scan that follows is what lets `mxp` still find `max-pane`.
+/// It fires exactly when the answer is "nothing matched", which is the one case
+/// where nobody is reading a list.
 ///
-/// The reason those are 60 ms rather than 150 is in `Haystack`: the index keeps
-/// the text lowercase and scheme-stripped, so a row is scored where it lies in
-/// the statement with nothing allocated per candidate.
+/// The reason a whole-table pass is 70 ms rather than 150 is in `Haystack`: the
+/// index keeps the text lowercase and scheme-stripped, so a row is scored where
+/// it lies in the statement with nothing allocated per candidate.
 ///
 /// Gated on `MAXPANE_BENCH`: building the corpus is ~19 s, far the largest cost
 /// in the suite, and the number only means anything in release.

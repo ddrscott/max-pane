@@ -30,8 +30,10 @@
 //! 2 000 rows costs 2 ms; scoring 112 840 costs about a hundred times that,
 //! per keystroke, on the main thread. So removing the cap is not free — it is
 //! paid for by the trigram index in migration 0009, which narrows the table
-//! before anything is scored. The measured cost at his real corpus size is in
-//! `cost_of_a_keystroke` in `tests/history.rs`, which builds one.
+//! before anything is scored, and by the shoulder entries of 0011 ([`edges`]),
+//! which narrow it for the first two characters that a trigram cannot reach.
+//! The measured cost at his real corpus size is in `cost_of_a_keystroke` in
+//! `tests/history.rs`, which builds one.
 //!
 //! It reuses [`crate::search::fuzzy_score`] rather than growing a scorer of its
 //! own, because ⌘P and this palette would otherwise disagree about which of two
@@ -58,8 +60,10 @@ pub const VISIT_COALESCE_MS: i64 = 2_000;
 /// The floor the trigram index works above.
 ///
 /// FTS5's trigram tokenizer indexes three-character windows, so it has nothing
-/// to say about a one- or two-character needle. Below this the table is scanned
-/// instead; see [`crate::ledger::Ledger::history_search`].
+/// to say about a one- or two-character needle *of the haystack*. Below this
+/// the shoulder entries of [`edges`] are asked instead, and the table is
+/// scanned only when they cannot give a complete answer; see
+/// [`crate::ledger::Ledger::history_search`].
 pub const TRIGRAM_MIN_CHARS: usize = 3;
 
 /// The canonical form of a URL, or `None` if it is not history.
@@ -309,6 +313,132 @@ fn literal(needle: &str, hay: &str) -> Option<(MatchTier, i32)> {
     best
 }
 
+/// The two shoulders an edge entry can be built against: the start of a field,
+/// and the start of a word inside one. See [`edges`].
+///
+/// Control characters because they are the only thing a page title cannot
+/// contain by accident — the haystack is already newline-separated, so this
+/// string was never plain text. A needle carrying one is refused rather than
+/// escaped ([`edge_query`]): nobody types `\u{1}` and a query that could forge
+/// an entry would match rows that do not contain it.
+pub const EDGE_FIELD: char = '\u{2}';
+/// The shoulder for a word start — the position after a [`is_boundary`] char.
+pub const EDGE_WORD: char = '\u{1}';
+
+/// The boundary-anchored shoulders of one row, as migration 0011 stores them.
+///
+/// # What this is for
+///
+/// FTS5's trigram tokenizer indexes three-character windows, so it has nothing
+/// to say about a one- or two-character needle: below [`TRIGRAM_MIN_CHARS`] the
+/// index cannot narrow and every row in the table is scored. Measured over the
+/// owner's real 108 854 imported pages, every letter of the alphabet cost
+/// between 62 and 87 ms as a first keystroke, against 17 ms from the third
+/// character on. With the entries below, the worst letter is 48 ms and the
+/// median one 10 ms.
+///
+/// The fix is to give the short needle three characters to find. Each place a
+/// match could *start* — the front of a field, and every position after a word
+/// boundary — contributes one entry: a doubled shoulder character and the two
+/// characters that follow. `deploy` at a word start becomes `\u{1}\u{1}de`,
+/// whose trigrams are `\u{1}\u{1}d` and `\u{1}de` — the first indexable form
+/// of a one-character needle and of a two-character one.
+///
+/// Entries are run together with no separator, which is safe because a trigram
+/// can only begin with a shoulder character at the start of a real entry: the
+/// windows that straddle two entries all begin with ordinary text.
+///
+/// # Why this does not change any answer
+///
+/// It narrows, exactly like the trigram index it sits beside, and the caller
+/// stops using it the moment it could be lossy. The entries are a *superset* of
+/// the positions [`literal`] can call [`MatchTier::Prefix`] or
+/// [`MatchTier::WordPrefix`]: the ranker matches URL fields through
+/// [`search_handle`], which only ever strips a leading `www.` — so the entries
+/// begin where the ranker begins reading, and every word start inside what is
+/// left is a word start here too. The few entries that are not matches are
+/// false positives, which cost a row's scoring and nothing else.
+///
+/// What makes the narrowing *complete* rather than merely likely is that the
+/// tiers are 10 000 apart and a score inside one spans under 1 000
+/// ([`MatchTier::base`]): every prefix match outranks every word-prefix match,
+/// which outranks every mid-word one. So if the shoulder query returns enough
+/// rows at a tier, the rows it did not return could not have reached the page —
+/// and if it does not, [`crate::ledger::Ledger::history_search`] falls back to
+/// the whole table. Round 1's silent truncation is the thing this round exists
+/// not to repeat.
+pub fn edges(hay: &str) -> String {
+    let mut out = String::with_capacity(hay.len() / 2);
+    let mut seen = SeenEdges::new();
+    for (i, part) in hay.split('\n').enumerate() {
+        // Where the ranker starts reading this field. The haystack is stored
+        // raw and `search_handle` is applied at scoring time, so a row stored
+        // as `www.example.com/en` is *matched* as `example.com/en` — while the
+        // title, the one field `search_handle` must not touch, starts where it
+        // starts. Offset 0 of a URL is deliberately not a field start and the
+        // `www.` is not word starts: `w` cannot be a prefix match on a field
+        // whose `www.` the ranker never sees, and indexing it anyway put 34 456
+        // candidates in front of the 4 408 real ones the one time the owner is
+        // most likely to type a single `w`.
+        let from = if i == 1 { 0 } else { part.len() - search_handle(part).len() };
+        let mut after_boundary = true;
+        for (at, c) in part.char_indices() {
+            if after_boundary && at >= from {
+                push_edge(&mut out, &mut seen, EDGE_WORD, &part[at..]);
+                if at == from {
+                    push_edge(&mut out, &mut seen, EDGE_FIELD, &part[at..]);
+                }
+            }
+            after_boundary = is_boundary(c);
+        }
+    }
+    out
+}
+
+/// One entry, unless this row already has it. Deduplicated because a corpus of
+/// URLs repeats its word starts — `com`, `www`, `github` — and an entry that is
+/// already in the column narrows nothing a second time.
+type SeenEdges = std::collections::HashSet<(char, char, Option<char>)>;
+
+fn push_edge(out: &mut String, seen: &mut SeenEdges, kind: char, rest: &str) {
+    let mut it = rest.chars();
+    let Some(a) = it.next() else { return };
+    // Whatever the next character is, including a boundary: `a-` really does
+    // match at the word start of `a-b`, and the ranker would call it a word
+    // prefix, so the index has to agree.
+    let b = it.next();
+    if !seen.insert((kind, a, b)) {
+        return;
+    }
+    out.push(kind);
+    out.push(kind);
+    out.push(a);
+    if let Some(b) = b {
+        out.push(b);
+    }
+}
+
+/// The trigram a one- or two-character `needle` has to find in [`edges`], or
+/// `None` when there is no such thing — an empty needle, one already long
+/// enough for the haystack index, or one carrying a shoulder character.
+pub fn edge_query(needle: &str, kind: char) -> Option<String> {
+    let mut it = needle.chars();
+    let a = it.next()?;
+    let b = it.next();
+    if it.next().is_some() {
+        return None;
+    }
+    if [Some(a), b].iter().flatten().any(|c| *c == EDGE_FIELD || *c == EDGE_WORD) {
+        return None;
+    }
+    Some(match b {
+        // `\u{1}\u{1}d`: the first trigram of every entry, whatever follows.
+        None => format!("{kind}{kind}{a}"),
+        // `\u{1}de`: the second, which only an entry can produce.
+        Some(b) => format!("{kind}{a}{b}"),
+    })
+}
+
 /// The best tier `needle` reaches in `hay`, subsequence included. The shape the
 /// tier rules are stated in, and what the tests pin.
 pub fn tier(needle: &str, hay: &str) -> Option<MatchTier> {
@@ -384,6 +514,18 @@ impl<'a> Ranking<'a> {
     /// the caller has to go looking somewhere the index could not.
     pub fn is_empty(&self) -> bool {
         self.literal.is_empty() && self.scattered.is_empty()
+    }
+
+    /// How many rows have matched at `worst` or better.
+    ///
+    /// The question a narrowed search has to answer before it trusts itself: a
+    /// shoulder query ([`edges`]) returns every row that can reach
+    /// [`MatchTier::Prefix`], so once `limit` of them have, the rows it did not
+    /// return are all a tier below and none of them could have made the page.
+    /// Below `limit` the answer is honest only over the whole table, and
+    /// [`crate::ledger::Ledger::history_search`] goes and reads it.
+    pub fn hits_down_to(&self, worst: MatchTier) -> usize {
+        self.literal.iter().filter(|h| h.tier <= worst).count()
     }
 
     /// Offer one row. Cheap to call and cheap to reject: the common answer is
@@ -681,6 +823,97 @@ mod tests {
         // `mxp` finding `max-pane` is the reason the last tier exists.
         assert_eq!(tier("mxp", "max-pane"), Some(MatchTier::Scattered));
         assert_eq!(tier("zzq", "max-pane"), None);
+    }
+
+    // ---- the shoulder entries ----------------------------------------------
+
+    /// True when a needle of one or two characters would find `hay` through the
+    /// shoulder column — the question the ledger asks the index.
+    fn shouldered(hay: &str, needle: &str, kind: char) -> bool {
+        let column = edges(hay);
+        let q = edge_query(needle, kind).expect("no query for this needle");
+        column.contains(&q)
+    }
+
+    #[test]
+    fn a_word_start_is_reachable_by_one_character_and_by_two() {
+        let hay = row("https://github.com/anthropics/deploy", Some("Deploy"), &[]);
+        assert!(shouldered(&hay, "d", EDGE_WORD));
+        assert!(shouldered(&hay, "de", EDGE_WORD));
+        assert!(shouldered(&hay, "g", EDGE_FIELD), "the front of the URL is a field start");
+        assert!(shouldered(&hay, "d", EDGE_FIELD), "the front of the title is a field start");
+        // `pl` is inside `deploy` and starts nothing.
+        assert!(!shouldered(&hay, "pl", EDGE_WORD));
+        assert!(!shouldered(&hay, "an", EDGE_FIELD), "a word start is not a field start");
+    }
+
+    #[test]
+    fn a_word_prefix_that_ends_on_a_boundary_is_still_indexed() {
+        // `a-` really is a word prefix of `a-b`, and `literal` says so. If the
+        // entry stopped at the word's own characters the index would disagree
+        // with the ranker, which is a row in the table that cannot be found.
+        let hay = row("https://x.example/a-b", None, &[]);
+        assert_eq!(tier("a-", "x.example/a-b"), Some(MatchTier::WordPrefix));
+        assert!(shouldered(&hay, "a-", EDGE_WORD));
+    }
+
+    #[test]
+    fn the_www_a_reader_never_sees_is_not_a_shoulder() {
+        // `search_handle` strips it, so no field and no word of the matched
+        // text begins there — and over the owner's corpus indexing it anyway
+        // made `w` the one keystroke this round made slower.
+        let hay = row("https://www.example.com/en", Some("Example"), &[]);
+        assert!(!shouldered(&hay, "w", EDGE_FIELD));
+        assert!(!shouldered(&hay, "w", EDGE_WORD));
+        assert!(!shouldered(&hay, "ww", EDGE_WORD));
+        assert!(shouldered(&hay, "ex", EDGE_FIELD), "the field starts after the www.");
+        assert_eq!(tier("ex", search_handle("www.example.com/en")), Some(MatchTier::Prefix));
+    }
+
+    #[test]
+    fn every_prefix_and_word_prefix_the_ranker_can_see_has_a_shoulder() {
+        // The superset property the narrowing rests on, checked exhaustively
+        // over one row rather than argued: if the ranker would call a one- or
+        // two-character needle a prefix or a word prefix of a field, the
+        // shoulder column has to contain the trigram that finds it.
+        let raw = "www.example.com/a-b/Deploy?q=x#frag";
+        let hay = row(raw, Some("Deploy notes — 2026"), &["https://ex.am/pl"]);
+        let column = edges(&hay);
+        let fields: Vec<String> = hay
+            .split('\n')
+            .enumerate()
+            .map(|(i, p)| if i == 1 { p.to_string() } else { search_handle(p).to_string() })
+            .collect();
+        let alphabet: Vec<char> = "abcdefghijklmnopqrstuvwxyz0123456789-./?=# ".chars().collect();
+        let mut needles: Vec<String> = alphabet.iter().map(|c| c.to_string()).collect();
+        for a in &alphabet {
+            for b in &alphabet {
+                needles.push(format!("{a}{b}"));
+            }
+        }
+        for needle in needles {
+            for field in &fields {
+                let Some((t, _)) = literal(&needle, field) else { continue };
+                let kind = match t {
+                    MatchTier::Prefix => EDGE_FIELD,
+                    MatchTier::WordPrefix => EDGE_WORD,
+                    _ => continue,
+                };
+                let q = edge_query(&needle, kind).unwrap();
+                assert!(
+                    column.contains(&q),
+                    "{needle:?} is a {t:?} of {field:?} and the index cannot find it"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_shoulder_character_in_the_needle_is_refused_rather_than_indexed() {
+        assert!(edge_query("\u{1}", EDGE_WORD).is_none());
+        assert!(edge_query("a\u{2}", EDGE_FIELD).is_none());
+        assert!(edge_query("", EDGE_WORD).is_none());
+        assert!(edge_query("abc", EDGE_WORD).is_none(), "three characters have a trigram already");
     }
 
     #[test]
