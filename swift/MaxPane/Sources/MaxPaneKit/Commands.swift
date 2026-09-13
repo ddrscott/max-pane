@@ -11,6 +11,7 @@ public enum Command: String, CaseIterable {
     case openSessions
     case reload
     case hardReload
+    case editAddress
     case zoomIn
     case zoomOut
     case zoomReset
@@ -52,6 +53,7 @@ public enum Command: String, CaseIterable {
         case .openSessions: return "Attach a Session…"
         case .reload: return "Reload"
         case .hardReload: return "Reload Ignoring Cache"
+        case .editAddress: return "Edit Address"
         case .zoomIn: return "Bigger Text"
         case .zoomOut: return "Smaller Text"
         case .zoomReset: return "Actual Size"
@@ -115,6 +117,15 @@ public enum Command: String, CaseIterable {
         // ⌘O's job now, which is a better door for it than a prompt was.
         case .reload:          return ("r", [.command])
         case .hardReload:      return ("r", [.command, .shift])
+        // ⌘L, the way it is in every browser: the address, whole and selected,
+        // so ⌘L ⌘C copies it and ⌘L then typing replaces it. It was passed over
+        // once on the grounds that it "already means something else here" —
+        // that was ⌘L for a new web lane, which ⌘O took over long ago, so the
+        // key has been free and dead ever since. It has to be *here* rather
+        // than a pane key: a focused `WKWebView` claims every ⌘-chord in
+        // `performKeyEquivalent`, and `claims(_:)` below only rescues the
+        // chords this file declares.
+        case .editAddress:     return ("l", [.command])
         case .splitDown:       return ("d", [.command, .shift])
         case .closePane:       return ("w", [.command])
         case .closeLane:       return ("w", [.command, .shift])
@@ -264,7 +275,7 @@ public enum Command: String, CaseIterable {
         case .focusDockLeft, .focusDockRight: return .navigate
         case .claimSession: return .file
         case .showMemory, .showHelp: return .view
-        case .reload, .hardReload: return .navigate
+        case .reload, .hardReload, .editAddress: return .navigate
         case .zoomIn, .zoomOut, .zoomReset: return .view
         case .pairWithNext: return .navigate
         case .exportStrip, .importStrip: return .file

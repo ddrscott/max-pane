@@ -1326,6 +1326,14 @@ public final class StripViewController: NSViewController {
         paneControllers[paneId]?.reload(fromOrigin: fromOrigin)
     }
 
+    /// ⌘L, to the pane that has the keyboard — including a docked one, which is
+    /// exactly where an address you cannot reach without the mouse is most
+    /// annoying.
+    public func editFocusedPaneAddress() {
+        guard let paneId = store.state.focusedPaneId else { return }
+        paneControllers[paneId]?.editAddress()
+    }
+
     /// Ask every live pane to write down what it would otherwise lose.
     ///
     /// Only web panes have anything to say — their history and scroll live in

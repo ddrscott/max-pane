@@ -336,6 +336,11 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         case .claimSession:
             // Only meaningful for a terminal pane.
             return store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .pty
+        case .editAddress:
+            // The mirror of `claimSession`: only a page has an address. Greyed
+            // out rather than beeping, because the menu can say which panes it
+            // is for and a beep cannot.
+            return store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .web
         case .pairWithNext:
             return pairCandidates() != nil
         case .closePane, .closeLane, .splitDown, .toggleKeepLive,
@@ -374,6 +379,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .reload, .hardReload:
                 strip.reloadFocusedPane(fromOrigin: command == .hardReload)
+
+            case .editAddress:
+                strip.editFocusedPaneAddress()
 
             case .newTerminalLane:
                 try newTerminal(near: focusedLane)

@@ -221,6 +221,13 @@ final class WebPaneController: NSObject, PaneController {
         chrome.onBackMenu = { [weak self] in self?.historyMenu(back: true) }
         chrome.onForwardMenu = { [weak self] in self?.historyMenu(back: false) }
 
+        // Escape in the address bar has to land somewhere, and the only place
+        // worth landing is the page that was under it a moment ago. Without
+        // this the field gives first responder back to the *window*, which
+        // looks identical and is deaf — and the ledger still says this pane has
+        // the keyboard, so nothing else would ever come and claim it.
+        chrome.onAddressEditingEnded = { [weak self] in self?.applyPendingFocus() }
+
         findBar.onSearch = { [weak self] query, forward in self?.find(query, forward: forward) }
         findBar.onClose = { [weak self] in self?.setFindVisible(false) }
 
@@ -400,10 +407,13 @@ final class WebPaneController: NSObject, PaneController {
     /// Deliberately the only three. ⌘R goes through `Commands.swift` and
     /// `reload(fromOrigin:)` instead, because it now means reload for *every*
     /// pane and belongs in the one file that is the whole truth about the
-    /// keyboard. ⌘L and ⌘[ / ⌘] are what a browser user reaches for next and
-    /// both already mean something else here (`newWebLane`, focus left/right);
-    /// claiming them from a pane would make one shortcut mean two things
-    /// depending on what is focused, which is what that file exists to prevent.
+    /// keyboard. ⌘L goes the same way now, as `.editAddress`, and it had to:
+    /// `Command.claims` only rescues a chord `Commands.swift` declares, so a
+    /// ⌘L answered here and nowhere else would still have been swallowed by the
+    /// focused web view before the window ever looked at the responder chain.
+    /// ⌘[ / ⌘] stay out because they already mean focus left/right; claiming
+    /// them from a pane would make one shortcut mean two things depending on
+    /// what is focused, which is what that file exists to prevent.
     private func handleKey(_ event: NSEvent) -> Bool {
         guard store.state.focusedPaneId == paneId else { return false }
         // A text field owns its own keyboard. ⌘← in a field is "start of line".
@@ -455,6 +465,13 @@ final class WebPaneController: NSObject, PaneController {
         // dashboard that caches its own bundle.
         _ = fromOrigin ? webView.reloadFromOrigin() : webView.reload()
     }
+
+    /// ⌘L. Unconditional, including on a pane that is deferred or evicted: the
+    /// chrome bar is showing the ledger's URL either way, and "copy the address
+    /// of that lane" is a fair thing to want from a page that has not been
+    /// built yet. Nothing here loads anything — editing an address and
+    /// committing one are separate, and only the second navigates.
+    func editAddress() { chrome.beginEditingAddress() }
 
     // MARK: - zoom
 

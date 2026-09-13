@@ -37,7 +37,17 @@ whether a developer's browser should refuse plain http to the public internet �
 old docs, a vendor page, an internal service reached through a tunnel — and if
 it should not, ATS needs an exception with the ⚠ carrying the weight.
 
-## 3. ⌘L is dead, and the comment saying it is taken is stale
+## 3. ⌘L is dead, and the comment saying it is taken is stale — **DONE**
+
+> Landed out of order, with the dock-width fix, because the owner asked for it
+> directly mid-task. `Command.editAddress` is declared (⌘L, Navigate menu), the
+> pane seam is `PaneController.editAddress()`, and Escape now hands the keyboard
+> back to the page instead of to the window. Greyed out on a terminal pane
+> rather than beeping, the way "Resize Session to This Lane…" is greyed out on a
+> page. Verified by `AddressBarTests`, not by a live keypress: the owner's own
+> instance held the front and input was aborted rather than risked. **The rest
+> of this ticket is untouched.**
+
 
 Four attempts, two fresh instances, both focus states: nothing. There is no
 `focusAddressBar` in `Commands.swift`. The comment in `WebPaneController` says

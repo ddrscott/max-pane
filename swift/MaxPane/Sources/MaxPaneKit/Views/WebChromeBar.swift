@@ -207,7 +207,23 @@ final class WebChromeBar: NSView {
 
     var isEditingAddress: Bool { address.isEditingAddress }
 
+    /// Editing stopped. Forwarded rather than exposed, so nothing outside this
+    /// file has to know the field exists.
+    var onAddressEditingEnded: (() -> Void)? {
+        get { address.onEndEditing }
+        set { address.onEndEditing = newValue }
+    }
+
+    /// `currentURL`, not what the row is drawing. The drawn form has `https://`
+    /// and `www.` taken off it for reading, and an address you copied without
+    /// its scheme is an address that does not paste back.
     func beginEditingAddress() { address.beginEditing(with: currentURL) }
+
+    /// What the field is holding right now. Nothing in the chrome needs to read
+    /// this back — a test does, because "⌘L opened the *drawn* address instead
+    /// of the real one" is a bug that looks right on screen and only shows up
+    /// on the clipboard, hours later, in a URL with no scheme on it.
+    var editedText: String { address.stringValue }
 
     func endEditingAddress() { address.cancelEditing() }
 
@@ -308,6 +324,14 @@ final class AddressField: NSTextField, NSTextFieldDelegate {
     /// A committed line. Raw, exactly as typed.
     var onCommit: ((String) -> Void)?
 
+    /// Editing stopped, however it stopped — Return, Escape, or the pointer
+    /// landing somewhere else. The pane uses it to take the keyboard back, so
+    /// Escape returns you to the page you were reading rather than to a window
+    /// with the keyboard nowhere: `makeFirstResponder(nil)` below gives the
+    /// field editor up and hands first responder to the window itself, and
+    /// typing there reaches nothing at all.
+    var onEndEditing: (() -> Void)?
+
     private(set) var isEditingAddress = false
     private var display = NSAttributedString()
 
@@ -362,7 +386,16 @@ final class AddressField: NSTextField, NSTextFieldDelegate {
     /// Editing shows the whole URL and selects it, which is what every browser
     /// does and what makes "click, type, Return" one gesture rather than three.
     func beginEditing(with url: String?) {
-        guard !isEditingAddress else { return }
+        // ⌘L pressed twice by reflex re-selects; it does not toggle back out to
+        // the page. Every browser does this, and the reflex is real — the
+        // second press is how you undo a stray keystroke in the field without
+        // reaching for the mouse. What is *not* re-read is the URL: half an
+        // address you typed is yours until you cancel it.
+        guard !isEditingAddress else {
+            if window?.firstResponder !== currentEditor() { window?.makeFirstResponder(self) }
+            currentEditor()?.selectAll(nil)
+            return
+        }
         isEditingAddress = true
         isEditable = true
         isSelectable = true
@@ -387,6 +420,13 @@ final class AddressField: NSTextField, NSTextFieldDelegate {
     }
 
     private func finishEditing() {
+        // Re-entrant, and measured: giving the field editor up posts
+        // `textDidEndEditing`, which lands back here, so one Escape ran this
+        // three times. It was invisible while the body only reset properties
+        // that were already reset — it stopped being invisible the moment
+        // there was a callback in it, and a pane told three times to take the
+        // keyboard back is three `makeFirstResponder` calls racing a teardown.
+        guard isEditingAddress else { return }
         isEditingAddress = false
         isEditable = false
         isSelectable = false
@@ -394,6 +434,10 @@ final class AddressField: NSTextField, NSTextFieldDelegate {
         layer?.borderWidth = 0
         attributedStringValue = display
         if window?.firstResponder === currentEditor() { window?.makeFirstResponder(nil) }
+        // Last, and after `isEditingAddress` is already false: the pane's
+        // focus guard reads that flag, so calling out any earlier would be
+        // asking it to take a keyboard it believes is still in this field.
+        onEndEditing?()
     }
 
     func control(_ control: NSControl, textView: NSTextView,

@@ -37,6 +37,18 @@ protocol PaneController: AnyObject {
     /// is why the default below is what it is.
     func reload(fromOrigin: Bool)
 
+    /// ⌘L — put the keyboard in this pane's address bar with the whole address
+    /// selected, so the next keystroke replaces it and ⌘C copies it.
+    ///
+    /// The same seam as `reload(fromOrigin:)`, and the one place it parts
+    /// company with it: ⌘R is offered on every pane and beeps where it means
+    /// nothing, because a terminal *could* have a sense of "fetch it again".
+    /// An address is not like that — a terminal does not have one at all — so
+    /// this is greyed out in the menu instead, the way "Resize Session to This
+    /// Lane…" is greyed out for a page. A menu item that says why beats a beep
+    /// that does not.
+    func editAddress()
+
     /// Write anything the pane would otherwise lose, without tearing it down.
     ///
     /// Called on quit. A terminal has nothing to save — the session lives in
@@ -79,6 +91,11 @@ extension PaneController {
     /// prompt that started a command, and a key that quietly kept doing that
     /// after being renamed "reload" would be the worst outcome of the rename.
     func reload(fromOrigin: Bool) { NSSound.beep() }
+
+    /// A pane with no address bar does nothing, silently. `canPerform` has
+    /// already greyed the item out, so the only way to arrive here is a key
+    /// pressed at the moment focus moved — and a beep for that is noise.
+    func editAddress() {}
 }
 
 /// The rungs ⌘= and ⌘- climb.

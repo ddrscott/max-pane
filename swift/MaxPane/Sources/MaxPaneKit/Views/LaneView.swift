@@ -29,6 +29,11 @@ final class LaneView: NSView {
     /// One per pane, owned here and updated in `layout`. The stack distributes
     /// by these rather than by `.fillEqually`.
     private var heightConstraints: [String: NSLayoutConstraint] = [:]
+    /// Two per pane, holding it to the lane's width. Kept so a pane leaving the
+    /// stack takes them with it: a view that is removed from the arrangement is
+    /// still a subview for the length of its exit, and a stale pin to a stack it
+    /// has left is an unsatisfiable constraint the instant it is unparented.
+    private var widthConstraints: [String: [NSLayoutConstraint]] = [:]
     /// The seams, one fewer than the number of visible panes. Pooled rather
     /// than rebuilt: a divider that is destroyed and recreated on every layout
     /// pass loses its tracking area, and the cursor stops changing halfway
@@ -296,11 +301,41 @@ final class LaneView: NSView {
             paneViews[paneId] = nil
             heightConstraints[paneId]?.isActive = false
             heightConstraints[paneId] = nil
+            widthConstraints.removeValue(forKey: paneId)?.forEach { $0.isActive = false }
         }
         guard let view else { return }
         paneViews[paneId] = view
         let index = min(position, stack.arrangedSubviews.count)
         stack.insertArrangedSubview(view, at: index)
+
+        // A vertical `NSStackView` aligns its arranged views `.centerX` by
+        // default, which means "as wide as you want to be, in the middle". A
+        // pane view with nothing intrinsic in it happens to come out full
+        // width, so this cost nothing until the browser chrome bar put an
+        // address field in a web pane's container — after which every web pane
+        // was laid out at the *chrome's* fitting width and centred, with the
+        // lane background showing either side of it. Measured: a 420 pt lane
+        // holding a 167 pt page with 126 pt of gutter, and the number moved
+        // with the length of the URL in the bar, because that is what the
+        // fitting size was reading. It looked most like a bug in a dock,
+        // where the page ran out of a column narrow enough to notice.
+        //
+        // Pinned rather than `alignment = .width`, which says the arranged
+        // views match *each other* and leaves what they match the stack at to
+        // the same defaults that caused this.
+        for anchor in [
+            view.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+        ] {
+            // 999 for the reason the height below is: a window mid-resize can
+            // hand the stack a width narrower than the chrome bar's content
+            // will compress to, and bending a point there beats breaking one of
+            // these at random. Still above the 750 that intrinsic content
+            // resists at, so the lane wins the argument that matters.
+            anchor.priority = NSLayoutConstraint.Priority(999)
+            anchor.isActive = true
+            widthConstraints[paneId, default: []].append(anchor)
+        }
 
         // 999, not required. The stack is pinned top and bottom, so these have
         // to add up to the lane exactly — and they do — but a window mid-resize
