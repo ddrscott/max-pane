@@ -37,6 +37,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+    /// A link handed over by another app — Mail, Slack, `open`, anything — when
+    /// Max Pane is the default browser.
+    ///
+    /// It lands where every other URL in this app lands: a lane, revealed. The
+    /// alternative would be a browser that opens links somewhere you have to go
+    /// and find, which is the thing a strip exists not to do.
+    ///
+    /// Declaring the schemes in Info.plist is what makes the app *eligible* to
+    /// be chosen; this is what makes choosing it work. Ship one without the
+    /// other and the app appears in the list and then swallows every link.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.scheme == "http" || url.scheme == "https" {
+            windowController?.openFromOutside(url.absoluteString)
+        }
+    }
+
     /// Layout is already durable — every mutation commits before it animates —
     /// but a web pane's session is only in WebKit's head until it is asked for.
     func applicationWillTerminate(_ notification: Notification) {

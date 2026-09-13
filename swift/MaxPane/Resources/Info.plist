@@ -24,6 +24,24 @@
 	<true/>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
+	<!-- What makes macOS offer this in Settings › Desktop & Dock › Default web
+	     browser. Declaring the schemes is what makes it *eligible*; the user
+	     still chooses. Both schemes are required — an app that claims only
+	     https does not appear in the list at all. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>Web site URL</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>http</string>
+				<string>https</string>
+			</array>
+		</dict>
+	</array>
 	<!-- Web lanes load ordinary sites; WebKit's own TLS handling applies. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>

@@ -183,6 +183,16 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     /// tagged with that terminal's project. A URL from somewhere that is not a
     /// lane — a plain shell, a cron job — goes to the end of the strip rather
     /// than being refused.
+    /// A URL from outside the app — the system handing over a link because Max
+    /// Pane is the default browser. Deliberately the same path as the shim's
+    /// `maxpane open`, so a link from Mail and a link from a terminal cannot
+    /// drift apart in where they land or what they remember.
+    public func openFromOutside(_ url: String) {
+        _ = openFromCLI(url: url, sessionId: "")
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     private func openFromCLI(url: String, sessionId: String) -> OpenServer.Reply {
         let near = sessionId.isEmpty ? nil : strip.lane(forRelaySession: sessionId)
         do {
