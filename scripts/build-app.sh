@@ -52,6 +52,21 @@ cp swift/MaxPane/Resources/Info.plist "$APP/Contents/Info.plist"
 # icon and no error anywhere.
 cp swift/MaxPane/Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
+# A throwaway bundle gets a throwaway bundle id.
+#
+# `UserDefaults` is keyed by bundle identifier, not by profile, so a test
+# instance built to a different path still shares the real app's domain — and
+# the split view's `autosaveName` lives there. A worker that so much as launched
+# could move the divider in the strip someone is working in. --profile isolates
+# the ledger, the sockets and the cookie jars; it does not and cannot isolate
+# this.
+if [ "$APP" != "build/MaxPane.app" ]; then
+  SUFFIX="$(basename "$APP" .app | tr -c 'a-zA-Z0-9' '-' | sed 's/-*$//')"
+  /usr/bin/plutil -replace CFBundleIdentifier -string "com.trifectadb.maxpane.$SUFFIX" \
+    "$APP/Contents/Info.plist"
+  echo "==> bundle id com.trifectadb.maxpane.$SUFFIX (throwaway; keeps UserDefaults separate)"
+fi
+
 # laned-core is linked statically, so nothing to copy — but the dylib would land
 # in Frameworks/ with an @rpath fixup if that ever changes.
 
