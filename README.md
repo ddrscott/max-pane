@@ -399,6 +399,55 @@ Every field of `Config` is a key here. A value of the wrong type is skipped —
 with a line on stderr saying which — rather than taking the rest of the file
 down with it.
 
+### Shortcuts
+
+`keys` moves any of them. The command names are the ones the ⌘/ sheet lists, and
+whatever you do not mention keeps the key it ships with:
+
+```json
+{
+  "keys": {
+    "newTerminalLane": "cmd+n",
+    "openAnything": ["cmd+k", "cmd+t"],
+    "moveLaneLeft": "shift+cmd+left",
+    "closePane": null
+  }
+}
+```
+
+A value is a chord, a list of chords, or `null`. With a list, the first is the
+one the menu shows and the rest are alternates — which is how ⌘O ships with ⌘T
+and ⌘D. `null` unbinds the command outright: it stays in the menu, it stops
+having a key, and a web pane stops having that chord taken off it.
+
+A chord is written either way the keyboard is described: `cmd+shift+d` or the
+`⇧⌘D` the help sheet prints. Modifiers are `cmd`, `ctrl`, `opt` (or `alt`) and
+`shift`; keys with no character of their own have names — `esc`, `tab`, `space`,
+`left`, `right`, `up`, `down`, `return`, `delete`. Copying a chord off ⌘/ and
+pasting it into this file works, because the sheet and the parser are two halves
+of one spelling.
+
+One edit moves all three renderings — the key that fires, the menu item, and
+what ⌘/ prints — because they are one value read three times. The sheet always
+shows your keys, never the shipped ones.
+
+Four things can be wrong with a keymap, and each costs only itself:
+
+| | |
+|---|---|
+| a chord that does not parse | the command keeps its default |
+| a command name that does not exist | the entry is skipped |
+| a chord macOS or the Edit menu owns (⌘Q, ⌘H, ⌘M, ⌘Tab, ⌘space, ⌘X ⌘C ⌘V ⌘A) | refused — it could never have fired |
+| two commands on one chord | one of them gets it |
+
+All four print a line on stderr saying what happened. On the last: a key you set
+beats a key that was only a default, so taking ⌘R for `newTerminalLane` is one
+edit and `reload` yields it — and if two commands you set both want it, the one
+declared first in `Command` keeps it and the other is named in the warning.
+
+The keymap is read once, at launch.
+
+
 ### Profiles
 
 A profile is one instance's whole world: its ledger, its config, its cookie

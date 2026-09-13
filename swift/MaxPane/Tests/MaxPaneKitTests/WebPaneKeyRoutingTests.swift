@@ -99,7 +99,7 @@ struct WebPaneKeyRoutingTests {
     @Test("every ⌘-chord the app declares is one the app claims")
     func theTableAndTheClaimAgree() {
         for command in Command.allCases {
-            for (key, modifiers) in [command.shortcut] + command.alternateShortcuts
+            for (key, modifiers) in command.chords.map(\.pair)
             where modifiers.contains(.command) {
                 // As the event will spell it: shift is the one modifier
                 // `charactersIgnoringModifiers` does not ignore.

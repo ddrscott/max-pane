@@ -42,6 +42,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         config = Config.load()
+        // Before the window and before the menu: both bake in key equivalents
+        // when they are built, so a keymap installed after either of them would
+        // leave the menu advertising one key and the monitor answering another.
+        Keymap.install(Keymap(overrides: config.keys))
 
         do {
             // Clamped here rather than trusted: `laneDefaultPt` is a number in a
@@ -136,11 +140,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let menu = NSMenu(title: section.rawValue)
             menu.autoenablesItems = false
             for command in Command.allCases where command.menu == section {
-                let (key, mods) = command.shortcut
-                // Esc has no menu representation; it lives in the responder chain.
-                guard command != .ungather else { continue }
-                let mi = NSMenuItem(title: command.title, action: #selector(runCommand(_:)), keyEquivalent: key)
-                mi.keyEquivalentModifierMask = mods
+                // A command with no ⌘-chord — unbound, or bound to something
+                // like Esc that the window's key monitor handles — is still an
+                // item. It was previously skipped outright, which is how "Leave
+                // Gather View" came to be an action with no key that listened
+                // and no menu entry to click either.
+                let chord = command.menuChord
+                let mi = NSMenuItem(
+                    title: command.title, action: #selector(runCommand(_:)),
+                    keyEquivalent: chord?.key ?? "")
+                mi.keyEquivalentModifierMask = chord?.modifiers ?? []
                 mi.target = self
                 mi.representedObject = command.rawValue
                 menu.addItem(mi)

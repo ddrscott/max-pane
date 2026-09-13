@@ -41,8 +41,8 @@ struct AddressBarTests {
 
     @Test("⌘L is declared, so the app claims it back from the page")
     func commandLIsClaimed() {
-        #expect(Command.editAddress.shortcut.0 == "l")
-        #expect(Command.editAddress.shortcut.1 == [.command])
+        #expect(Command.editAddress.defaultShortcut.0 == "l")
+        #expect(Command.editAddress.defaultShortcut.1 == [.command])
         // The point of declaring it: `claims` only rescues what this file
         // names, so a ⌘L handled anywhere else would still die in the web view.
         #expect(Command.claims(chord("l")))
@@ -54,7 +54,7 @@ struct AddressBarTests {
     func chordsAreUnique() {
         var seen: [String: Command] = [:]
         for command in Command.allCases {
-            for (key, modifiers) in [command.shortcut] + command.alternateShortcuts {
+            for (key, modifiers) in command.chords.map(\.pair) {
                 let id = "\(modifiers.intersection(.deviceIndependentFlagsMask).rawValue):\(key)"
                 #expect(seen[id] == nil, "\(command.rawValue) and \(seen[id]?.rawValue ?? "?") share a key")
                 seen[id] = command

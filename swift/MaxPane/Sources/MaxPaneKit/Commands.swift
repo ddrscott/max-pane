@@ -5,7 +5,7 @@ import AppKit
 /// PRD §8: "Keyboard-first: every action has a shortcut; the mouse is optional."
 /// Keeping the whole map in one enum is how that stays true — a new action has
 /// to declare its key here or it does not exist.
-public enum Command: String, CaseIterable {
+public enum Command: String, CaseIterable, Sendable {
     case openAnything
     case openPages
     case openSessions
@@ -90,9 +90,15 @@ public enum Command: String, CaseIterable {
         }
     }
 
-    /// (key equivalent, modifier mask). AppKit wants the lowercase character and
-    /// an explicit `.shift` when the binding is shifted.
-    public var shortcut: (String, NSEvent.ModifierFlags) {
+    /// The key this command ships with. AppKit wants the lowercase character
+    /// and an explicit `.shift` when the binding is shifted.
+    ///
+    /// This is the **default**, not necessarily the key that runs it: the
+    /// config file's `keys` object can move any of these, and `Keymap.active`
+    /// is what the menu, the ⌘/ sheet and the key monitor read. The switch
+    /// stays here because it is the thing that makes an action without a key
+    /// impossible to write.
+    public var defaultShortcut: (String, NSEvent.ModifierFlags) {
         switch self {
         // ⌘O is the only door. "Something new goes on the strip" was three keys
         // — ⌘T for a command or a URL, ⌘Y for a page you have been to, ⌘O for a
@@ -196,7 +202,7 @@ public enum Command: String, CaseIterable {
     /// these are matched in the window's key monitor — but they are declared
     /// here, because a shortcut that is not in this file is a shortcut nobody
     /// can find.
-    public var alternateShortcuts: [(String, NSEvent.ModifierFlags)] {
+    public var defaultAlternateShortcuts: [(String, NSEvent.ModifierFlags)] {
         switch self {
         // ⌘T and ⌘D used to open a picker of their own. They now open ⌘O, and
         // they open it identically — same window, same rows, same placement.
@@ -206,6 +212,26 @@ public enum Command: String, CaseIterable {
         case .openAnything: return [("t", [.command]), ("d", [.command])]
         default: return []
         }
+    }
+
+    /// The keys that actually run this command, after the config file has had
+    /// its say. The first is the one a menu item can carry; the rest are
+    /// matched in the window's key monitor. Empty means deliberately unbound.
+    public var chords: [KeyChord] { Keymap.active.chords(for: self) }
+
+    /// The chord a menu item may advertise, or nil when there is nothing for it
+    /// to show.
+    ///
+    /// A menu item's key equivalent is matched by AppKit *before* the responder
+    /// chain, which is exactly what is wanted for a ⌘-chord and exactly what is
+    /// not wanted for anything without one: Esc as a key equivalent would be
+    /// taken from the find field and the address field, which have their own
+    /// uses for it. Those chords are handled in the window's key monitor
+    /// instead, where the first responder can be consulted first — so the item
+    /// is still listed, still clickable, and simply carries no key.
+    public var menuChord: KeyChord? {
+        guard let first = chords.first, first.modifiers.contains(.command) else { return nil }
+        return first
     }
 
     /// Whether the app has claimed this key for itself.
@@ -218,48 +244,19 @@ public enum Command: String, CaseIterable {
     /// were all swallowed there. No browser lets a page bind its chrome keys,
     /// and this is where that is decided.
     ///
-    /// ⌘-chords only. `.ungather` is Esc, which a page has its own uses for —
-    /// leaving a video, closing a modal — and which no menu item carries.
+    /// It reads the *resolved* keymap, so a chord someone chose in the config
+    /// file is rescued the same way a default one is — otherwise every
+    /// configurable key would die inside a web pane, which is most of them.
+    ///
+    /// ⌘-chords only. Esc is a key a page has its own uses for — leaving a
+    /// video, closing a modal — and which no menu item carries.
     public static func claims(_ event: NSEvent) -> Bool {
         guard event.modifierFlags.contains(.command),
               let typed = event.charactersIgnoringModifiers?.lowercased()
         else { return false }
-        let mask = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        return claimed.contains(Chord(key: typed, mask: mask.rawValue))
+        return Keymap.active.claimed.contains(
+            KeyChord(key: typed, modifiers: event.modifierFlags))
     }
-
-    private struct Chord: Hashable {
-        let key: String
-        let mask: NSEvent.ModifierFlags.RawValue
-    }
-
-    /// `charactersIgnoringModifiers` ignores every modifier *except* shift, so
-    /// ⇧⌘[ arrives spelling itself `{`. The table declares the unshifted key the
-    /// way a menu item wants it, so both spellings go in the set — otherwise
-    /// ⇧⌘[ and ⇧⌘] are the two bindings this silently fails to protect, and a
-    /// silent gap in a keyboard map is the thing `Commands.swift` exists to
-    /// prevent. Letters need no entry: `W` lowercases back to `w`.
-    private static let shifted: [String: String] = [
-        "[": "{", "]": "}", "=": "+", "-": "_", "\\": "|", "/": "?",
-        ",": "<", ".": ">", ";": ":", "'": "\"", "`": "~",
-    ]
-
-    /// Built once. This is asked on every keystroke that reaches a web pane.
-    private static let claimed: Set<Chord> = {
-        var out: Set<Chord> = []
-        for command in Command.allCases {
-            for (key, modifiers) in [command.shortcut] + command.alternateShortcuts
-            where modifiers.contains(.command) {
-                let mask = modifiers.intersection(.deviceIndependentFlagsMask).rawValue
-                let lower = key.lowercased()
-                out.insert(Chord(key: lower, mask: mask))
-                if modifiers.contains(.shift), let alt = shifted[lower] {
-                    out.insert(Chord(key: alt, mask: mask))
-                }
-            }
-        }
-        return out
-    }()
 
     /// Which menu this belongs under.
     public var menu: MenuSection {

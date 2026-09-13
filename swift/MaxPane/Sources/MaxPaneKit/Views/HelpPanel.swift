@@ -42,30 +42,23 @@ public final class HelpPanel: NSPanel {
         contentView = content
     }
 
-    /// A `Command`'s shortcut as a human reads it: ⌘⇧T, not `("t", [.command, .shift])`.
+    /// A `Command`'s shortcut as a human reads it: ⇧⌘T, not `("t", [.command, .shift])`.
     ///
     /// A command with a second key shows both — `⌘T ⌘D` — because a shortcut
     /// nobody can see is a shortcut nobody uses.
+    ///
+    /// It reads the **effective** keys, not the shipped ones. A sheet that
+    /// printed the defaults would become a lie the moment anyone edited the
+    /// config file, and the sheet is the only place most of these keys are
+    /// written down. The rendering itself lives in `KeyChord.text`, which is
+    /// also what the chord parser reads back — so a key copied off this sheet
+    /// goes straight into the config file.
     public static func describe(_ command: Command) -> String {
-        ([command.shortcut] + command.alternateShortcuts).map(render).joined(separator: " ")
-    }
-
-    private static func render(_ shortcut: (String, NSEvent.ModifierFlags)) -> String {
-        let (key, mods) = shortcut
-        var out = ""
-        if mods.contains(.control) { out += "⌃" }
-        if mods.contains(.option) { out += "⌥" }
-        if mods.contains(.shift) { out += "⇧" }
-        if mods.contains(.command) { out += "⌘" }
-
-        switch key {
-        case "\u{1b}": out += "esc"
-        case "\u{2190}": out += "←"
-        case "\u{2192}": out += "→"
-        case "\u{21e5}": out += "tab"
-        default: out += key.uppercased()
-        }
-        return out
+        let chords = command.chords
+        // An em dash, not an empty column: "this command has no key" is an
+        // answer, and a blank looks like the sheet failed to render.
+        guard !chords.isEmpty else { return "—" }
+        return chords.map(\.text).joined(separator: " ")
     }
 
     private static func body() -> NSAttributedString {
@@ -96,8 +89,12 @@ public final class HelpPanel: NSPanel {
         out.append(NSAttributedString(
             string: "Terminals and web views as peer panes, in portrait columns.\n",
             attributes: [.foregroundColor: NSColor.labelColor, .font: Theme.mono(12)]))
+        // Interpolated, not written out. This line said "press ⌘R", which was
+        // the key before ⌘O became the only door — a hardcoded chord in the
+        // sheet whose job is to be the truth about the keyboard, and the exact
+        // way that goes stale.
         out.append(NSAttributedString(
-            string: "Nothing on the strip? Press ⌘R and run something.\n\n",
+            string: "Nothing on the strip? Press \(describe(.openAnything)) and run something.\n\n",
             attributes: [.foregroundColor: NSColor.secondaryLabelColor, .font: Theme.mono(12)]))
 
         for section in MenuSection.allCases {

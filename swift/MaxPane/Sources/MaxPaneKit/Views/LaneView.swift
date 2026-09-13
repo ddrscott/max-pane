@@ -1258,10 +1258,9 @@ final class LaneHeaderView: NSView {
         enabled: Bool, state: NSControl.StateValue = .off
     ) {
         let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
-        if let command {
-            let (key, mask) = command.shortcut
-            item.keyEquivalent = key
-            item.keyEquivalentModifierMask = mask
+        if let chord = command?.menuChord {
+            item.keyEquivalent = chord.key
+            item.keyEquivalentModifierMask = chord.modifiers
         }
         item.target = self
         item.isEnabled = enabled

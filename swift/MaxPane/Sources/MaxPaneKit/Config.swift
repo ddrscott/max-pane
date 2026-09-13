@@ -104,6 +104,20 @@ public struct Config: Codable {
     /// enough to read as the strip moving rather than jumping.
     public var snapSeconds: Double = 0.18
 
+    /// Which keys run which commands. Command name → a chord, a list of chords,
+    /// or `null` to unbind it.
+    ///
+    /// Set only what you want to move; everything unmentioned keeps the key it
+    /// ships with. `Keymap` resolves this against `Command`'s defaults, and the
+    /// menu, the ⌘/ sheet and the key monitor all read the result — so one edit
+    /// here moves all three, and the help sheet cannot go on advertising a key
+    /// that no longer fires.
+    ///
+    /// The one nesting the file earns. The keymap is the only setting that is a
+    /// map rather than a number, and flattening it into `keyNewTerminalLane`
+    /// keys would be worse to read and worse to write.
+    public var keys: KeyBindings = KeyBindings()
+
     /// `~/.config/maxpane/profiles/<profile>/config.json`.
     ///
     /// Per profile, so a preference can be exercised at runtime without editing
@@ -162,6 +176,7 @@ public struct Config: Codable {
         searchUrl = read(.searchUrl, d.searchUrl)
         snapToLanes = read(.snapToLanes, d.snapToLanes)
         snapSeconds = read(.snapSeconds, d.snapSeconds)
+        keys = read(.keys, d.keys)
     }
 
     /// The lane width bounds, already ordered, so a config with min > max does

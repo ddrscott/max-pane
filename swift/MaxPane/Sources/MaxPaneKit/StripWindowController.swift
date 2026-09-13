@@ -166,28 +166,54 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         if stripTop.constant != stripInset { stripTop.constant = stripInset }
     }
 
-    /// Keys a command has besides its menu one.
+    /// Every key the menu cannot carry.
     ///
-    /// A menu item carries exactly one key equivalent, and ⌘O, ⌘T and ⌘D are
-    /// one thought — so the other two are matched here, ahead of the responder
-    /// chain, and declared in `Command.alternateShortcuts` so the map in
-    /// `Commands.swift` is still the whole truth about what the keyboard does.
+    /// Two kinds land here. A menu item holds exactly one key equivalent, and
+    /// ⌘O, ⌘T and ⌘D are one thought — so the other two are matched here, ahead
+    /// of the responder chain. And a chord with no ⌘ in it cannot be a key
+    /// equivalent at all without being taken from every text field in the
+    /// window, which is why Esc spent so long declared and unlistened-for:
+    /// `.ungather` named it, the menu skipped it, and nothing else ever looked.
+    ///
+    /// Both come from `Keymap.active`, so a chord chosen in the config file is
+    /// matched exactly like a default one.
     private func installAlternateShortcuts() {
         alternateMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.window?.isKeyWindow == true else { return event }
             // A palette on screen owns the keyboard; ⌘D while typing a command
             // into the picker must not open a second picker.
             guard NSApp.keyWindow === self.window else { return event }
+            let typed = KeyChord(key: event.charactersIgnoringModifiers ?? "",
+                                 modifiers: event.modifierFlags)
             for command in Command.allCases {
-                for (key, mask) in command.alternateShortcuts
-                where event.charactersIgnoringModifiers?.lowercased() == key
-                    && event.modifierFlags.intersection(.deviceIndependentFlagsMask) == mask {
-                    self.perform(command)
-                    return nil
+                // The first chord is the menu's, and AppKit has already had it.
+                // Matching it again here would run the command twice.
+                let mine = command.chords
+                let extras = command.menuChord == nil ? mine : Array(mine.dropFirst())
+                guard extras.contains(typed) else { continue }
+                // A chord with no ⌘ is one a text field may legitimately want —
+                // Esc closes the find bar and cancels an address edit long
+                // before it has any business leaving gather view — and
+                // `canPerform` is what stops a key firing when its command has
+                // nothing to do.
+                if !typed.modifiers.contains(.command) {
+                    guard !self.isEditingText, self.canPerform(command) else { continue }
                 }
+                self.perform(command)
+                return nil
             }
             return event
         }
+    }
+
+    /// Whether the keyboard is in a text field rather than in the strip.
+    ///
+    /// The field editor is the first responder while any `NSTextField` in the
+    /// window is being typed into, so this catches the address bar, the find
+    /// field and the search palette's field with one question.
+    private var isEditingText: Bool {
+        let responder = window?.firstResponder
+        return responder is NSText || responder is NSTextView
     }
 
     /// The two things that talk to the world outside the window: the shim's
