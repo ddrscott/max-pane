@@ -85,12 +85,23 @@ final class WebFindBar: NSView {
         field.currentEditor()?.selectAll(nil)
     }
 
-    /// What WebKit found. `WKWebView.find` reports a boolean and nothing more —
-    /// there is no match count in the API — so this says what is true rather
-    /// than inventing an `n/m` that would be a guess. An empty field says
-    /// nothing at all, because "no match" for a query nobody has typed is noise.
-    func report(found: Bool) {
-        status.stringValue = field.stringValue.isEmpty ? "" : (found ? "" : "no match")
+    /// What WebKit found, and — once the page has been counted — how many.
+    ///
+    /// `WKWebView.find` reports a boolean and nothing more, so the count arrives
+    /// separately and later: this is called twice per search, first with
+    /// `.none` the moment WebKit answers, then again when the page has been
+    /// walked. The first call is what keeps `no match` instant, and the second
+    /// is why `3/17` appears a beat after the highlight rather than holding it
+    /// up. See `FindCount` for what makes the number honest.
+    ///
+    /// An empty field says nothing at all, because "no match" for a query
+    /// nobody has typed is noise.
+    func report(found: Bool, tally: FindCount.Tally = .none) {
+        guard !field.stringValue.isEmpty else {
+            status.stringValue = ""
+            return
+        }
+        status.stringValue = found ? FindCount.label(matchFound: true, tally: tally) : "no match"
         status.textColor = found ? Theme.dimText : WebChromeBar.warning
     }
 

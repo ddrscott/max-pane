@@ -32,6 +32,11 @@ final class WebPaneController: NSObject, PaneController {
     private let chrome = WebChromeBar()
     private let findBar = WebFindBar()
     private var findBarHeight: NSLayoutConstraint!
+    /// Which search the answers coming back belong to. See `countMatches`.
+    private var findGeneration: UInt64 = 0
+
+    private let completions = AddressCompletionList()
+    private var completionsHeight: NSLayoutConstraint!
     let downloadBar = WebDownloadBar()
     var downloadBarHeight: NSLayoutConstraint!
 
@@ -201,6 +206,7 @@ final class WebPaneController: NSObject, PaneController {
             chrome.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             chrome.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
+        installCompletions()
         installDownloadBar()
 
         chrome.onBack = { [weak self] in self?.webView?.goBack() }
@@ -229,7 +235,14 @@ final class WebPaneController: NSObject, PaneController {
         // this the field gives first responder back to the *window*, which
         // looks identical and is deaf — and the ledger still says this pane has
         // the keyboard, so nothing else would ever come and claim it.
-        chrome.onAddressEditingEnded = { [weak self] in self?.applyPendingFocus() }
+        chrome.onAddressEditingEnded = { [weak self] in
+            // Before the focus hand-back, not after. `applyPendingFocus` gives
+            // the keyboard to the page, and a list still on screen over a page
+            // that has the keyboard is a menu nothing can dismiss.
+            self?.completions.hide()
+            self?.layoutCompletions()
+            self?.applyPendingFocus()
+        }
 
         findBar.onSearch = { [weak self] query, forward in self?.find(query, forward: forward) }
         findBar.onClose = { [weak self] in self?.setFindVisible(false) }
@@ -367,6 +380,92 @@ final class WebPaneController: NSObject, PaneController {
             loading: webView.isLoading)
     }
 
+    // MARK: - address completion
+
+    /// The list, above the chrome and in front of everything else.
+    ///
+    /// Added after the chrome so it draws on top, and constrained to the
+    /// chrome's top edge rather than put in the stack of bars: it **overlays**
+    /// the page instead of pushing it. A dropdown that reflowed the document
+    /// under it would relayout the page on every keystroke typed into the
+    /// address bar, which is both a jump to look at and a real cost on a heavy
+    /// page.
+    private func installCompletions() {
+        container.addSubview(completions)
+        completionsHeight = completions.heightAnchor.constraint(equalToConstant: 0)
+        NSLayoutConstraint.activate([
+            completions.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            completions.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            completions.bottomAnchor.constraint(equalTo: chrome.topAnchor),
+            completionsHeight,
+        ])
+
+        chrome.onAddressQueryChanged = { [weak self] text, deleting in
+            self?.updateCompletions(text, deleting: deleting)
+        }
+        chrome.onAddressCompletionKey = { [weak self] key in
+            self?.completionKey(key) ?? false
+        }
+        completions.onHighlight = { [weak self] suggestion in
+            self?.chrome.showHighlightedAddress(suggestion?.url)
+        }
+        completions.onPick = { [weak self] suggestion in
+            guard let self else { return }
+            self.chrome.endEditingAddress()
+            self.navigate(suggestion.url)
+        }
+    }
+
+    /// Ask the ledger what has been typed so far looks like.
+    ///
+    /// Straight across the FFI on every keystroke, with no debounce, and that is
+    /// the measured choice rather than a shortcut. `history.rs` exists to make
+    /// exactly this call cheap — the query goes down and at most `limit` rows
+    /// come back, instead of the corpus coming up to be filtered in Swift — and
+    /// a debounce on a query that already costs a couple of milliseconds buys
+    /// nothing and makes the list lag the typing, which is the one thing an
+    /// address bar's suggestions must never do.
+    private func updateCompletions(_ text: String, deleting: Bool) {
+        let typed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !typed.isEmpty else {
+            completions.hide()
+            layoutCompletions()
+            return
+        }
+        let rows = AddressCompletion.rows(
+            query: typed,
+            from: store.history(typed, limit: AddressCompletion.fetch))
+        completions.show(rows, query: typed)
+        layoutCompletions()
+        if let completion = AddressCompletion.inlineCompletion(
+            for: text, suggestion: rows.first, deleting: deleting) {
+            chrome.completeAddressInline(to: completion)
+        }
+    }
+
+    private func layoutCompletions() {
+        completionsHeight.constant = completions.isShowing ? completions.height : 0
+    }
+
+    /// ↑, ↓ and Escape, answered only while there is a list to answer for.
+    ///
+    /// Returning false is what keeps the field's own behaviour intact when the
+    /// list is closed: ↑ is still "start of line" in a text field, and Escape is
+    /// still "give the keyboard back to the page".
+    private func completionKey(_ key: AddressField.CompletionKey) -> Bool {
+        guard completions.isShowing else { return false }
+        switch key {
+        case .up:
+            completions.move(-1)
+        case .down:
+            completions.move(1)
+        case .dismiss:
+            completions.hide()
+            layoutCompletions()
+        }
+        return true
+    }
+
     // MARK: - find in page
 
     private func toggleFind() { setFindVisible(findBarHeight.constant == 0) }
@@ -387,6 +486,10 @@ final class WebPaneController: NSObject, PaneController {
             // Leaving the highlight up after the bar has gone is how you end up
             // with a yellow word you cannot get rid of.
             webView?.find("", configuration: WKFindConfiguration()) { _ in }
+            // And a count still walking the page belongs to a bar that is no
+            // longer on screen. Retiring the generation is what stops it
+            // reporting into the next search.
+            findGeneration &+= 1
         }
     }
 
@@ -398,8 +501,47 @@ final class WebPaneController: NSObject, PaneController {
         // Case-insensitive, which is what every browser's find bar does and what
         // `WKFindConfiguration` does *not* default to.
         configuration.caseSensitive = false
+        findGeneration &+= 1
+        let generation = findGeneration
         webView.find(query, configuration: configuration) { [weak self] result in
-            Task { @MainActor in self?.findBar.report(found: result.matchFound) }
+            Task { @MainActor in
+                guard let self, generation == self.findGeneration else { return }
+                self.findBar.report(found: result.matchFound)
+                guard result.matchFound else { return }
+                self.countMatches(query, generation: generation)
+            }
+        }
+    }
+
+    /// Put a number next to the highlight WebKit just made.
+    ///
+    /// Runs only after `matchFound` — see `FindCount` for why WebKit stays the
+    /// authority on whether there is a match and this only ever supplies the
+    /// count — and only after the selection exists, because the index is read
+    /// off that selection rather than off a keypress counter.
+    ///
+    /// `.defaultClient`, not the page's world. Counting in the page's own world
+    /// would let a page decide what its find bar says by redefining
+    /// `String.prototype.indexOf`, and this is a readout the user is entitled to
+    /// trust against the page. It also keeps the walk away from anything the
+    /// page has monkey-patched, which is the more common reason it would
+    /// silently return the wrong number.
+    ///
+    /// The generation check is not belt and braces. Find runs on every
+    /// keystroke, so a slow walk on a large document is routinely still in
+    /// flight when the next character arrives — and a count for `ma` landing
+    /// under a query that now reads `maxp` is precisely the disagreement between
+    /// the number and the highlight that this whole piece exists to avoid.
+    private func countMatches(_ query: String, generation: UInt64) {
+        guard let webView else { return }
+        webView.evaluateJavaScript(
+            FindCount.javaScript(for: query), in: nil, in: .defaultClient
+        ) { [weak self] outcome in
+            Task { @MainActor in
+                guard let self, generation == self.findGeneration else { return }
+                guard case let .success(value) = outcome else { return }
+                self.findBar.report(found: true, tally: FindCount.tally(from: value))
+            }
         }
     }
 
@@ -748,7 +890,9 @@ final class WebPaneController: NSObject, PaneController {
         // though — see `BrowserUserAgent` for the measurement and the choice.
         configuration.applicationNameForUserAgent = BrowserUserAgent.applicationName
 
-        let webView = WKWebView(frame: container.bounds, configuration: configuration)
+        // `ChromeWebView`, for the context menu's nouns and nothing else. See
+        // `WebContextMenu` for why the subclass is safe on a popup too.
+        let webView = ChromeWebView(frame: container.bounds, configuration: configuration)
         wire(webView)
         // A panel over the top until the page has something to show. The colour
         // `wire` sets fixes the flash of *white*; it cannot fix the flash of
@@ -1190,7 +1334,10 @@ extension WebPaneController: WKUIDelegate {
             Log.debug("pane \(paneId) popup shares data store \(dataStoreId) (persistent=\(mine.isPersistent))")
         }
 
-        let popup = WKWebView(frame: container.bounds, configuration: configuration)
+        // Built from *WebKit's* configuration, as it must be, but as our own
+        // subclass — the class is not where `window.opener` lives, the
+        // configuration is. This is the view round 2 believed could not be ours.
+        let popup = ChromeWebView(frame: container.bounds, configuration: configuration)
         // Until a pane adopts it, this controller answers for it, so a popup
         // that closes itself before it is ever shown still takes its pane away.
         popup.uiDelegate = self

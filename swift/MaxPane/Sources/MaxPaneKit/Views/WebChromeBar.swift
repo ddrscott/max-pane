@@ -255,6 +255,24 @@ final class WebChromeBar: NSView {
         set { address.onEndEditing = newValue }
     }
 
+    /// The typing changed. `(text, deleting)` — see `AddressField.onQueryChanged`.
+    var onAddressQueryChanged: ((String, Bool) -> Void)? {
+        get { address.onQueryChanged }
+        set { address.onQueryChanged = newValue }
+    }
+
+    /// ↑, ↓ and Escape, offered to the completion list first.
+    var onAddressCompletionKey: ((AddressField.CompletionKey) -> Bool)? {
+        get { address.onCompletionKey }
+        set { address.onCompletionKey = newValue }
+    }
+
+    /// Finish the typing with a suggestion, tail selected.
+    func completeAddressInline(to text: String) { address.completeInline(to: text) }
+
+    /// Put the highlighted row in the field, or nil to restore the typing.
+    func showHighlightedAddress(_ text: String?) { address.showHighlighted(text) }
+
     /// `currentURL`, not what the row is drawing. The drawn form has `https://`
     /// and `www.` taken off it for reading, and an address you copied without
     /// its scheme is an address that does not paste back.
@@ -387,8 +405,34 @@ final class AddressField: NSTextField, NSTextFieldDelegate {
     /// typing there reaches nothing at all.
     var onEndEditing: (() -> Void)?
 
+    /// The line changed. `deleting` is true when this edit made it shorter,
+    /// which is the one fact inline completion cannot work without — see
+    /// `AddressCompletion.inlineCompletion`.
+    var onQueryChanged: ((String, Bool) -> Void)?
+
+    /// A key the completion list may want. Returning true means it took it, and
+    /// the field does nothing further with it.
+    var onCompletionKey: ((CompletionKey) -> Bool)?
+
+    enum CompletionKey { case up, down, dismiss }
+
     private(set) var isEditingAddress = false
     private var display = NSAttributedString()
+
+    /// What the *user* has typed, with no completion written into it.
+    ///
+    /// Held apart from `stringValue` because `stringValue` is routinely not it:
+    /// an inline completion appends to it, and arrowing through the list
+    /// replaces it wholesale. Escape has to give this back, and the next query
+    /// has to be made of this rather than of whatever was suggested last — a
+    /// field that searched its own suggestions would walk further from the
+    /// typing on every keystroke.
+    private(set) var typedText = ""
+
+    /// True while this file is the one writing to the field, so the write does
+    /// not come back through `controlTextDidChange` as though the user had
+    /// typed it. Without it, a completion is a query is a completion.
+    private var isWritingCompletion = false
 
     /// The address in full, scheme and all.
     ///
@@ -473,6 +517,7 @@ final class AddressField: NSTextField, NSTextFieldDelegate {
             return
         }
         isEditingAddress = true
+        typedText = url ?? stringValue
         isEditable = true
         isSelectable = true
         drawsBackground = true
@@ -495,6 +540,46 @@ final class AddressField: NSTextField, NSTextFieldDelegate {
         finishEditing()
     }
 
+    /// Finish the typing with the top row's address, leaving everything past
+    /// what was typed **selected**.
+    ///
+    /// The selection is the whole safety of inline completion: the suggested
+    /// tail is already gone the moment the next character arrives, so the field
+    /// never contains a character the user did not either type or accept by
+    /// pressing Return on it.
+    func completeInline(to text: String) {
+        guard isEditingAddress, text.hasPrefix(typedText), text != stringValue else { return }
+        write(text)
+        // In UTF-16, because that is what a field editor's ranges are counted
+        // in. A URL with an emoji in its path — they exist — would otherwise
+        // select from the wrong place and the completion would read as corrupt.
+        let typedLength = (typedText as NSString).length
+        let fullLength = (text as NSString).length
+        currentEditor()?.selectedRange =
+            NSRange(location: typedLength, length: fullLength - typedLength)
+    }
+
+    /// Put a highlighted row's address in the field, or `nil` to give back what
+    /// was typed.
+    ///
+    /// Return needs no knowledge of the list because of this: whatever is
+    /// highlighted is *in the field*, so committing the field and committing the
+    /// selection are the same act.
+    func showHighlighted(_ text: String?) {
+        guard isEditingAddress else { return }
+        write(text ?? typedText)
+        // The caret at the end, nothing selected. A selection here would be a
+        // lie about editability — this text was chosen, not suggested.
+        let length = ((text ?? typedText) as NSString).length
+        currentEditor()?.selectedRange = NSRange(location: length, length: 0)
+    }
+
+    private func write(_ text: String) {
+        isWritingCompletion = true
+        stringValue = text
+        isWritingCompletion = false
+    }
+
     private func finishEditing() {
         // Re-entrant, and measured: giving the field editor up posts
         // `textDidEndEditing`, which lands back here, so one Escape ran this
@@ -504,6 +589,7 @@ final class AddressField: NSTextField, NSTextFieldDelegate {
         // keyboard back is three `makeFirstResponder` calls racing a teardown.
         guard isEditingAddress else { return }
         isEditingAddress = false
+        typedText = ""
         isEditable = false
         isSelectable = false
         drawsBackground = false
@@ -516,9 +602,27 @@ final class AddressField: NSTextField, NSTextFieldDelegate {
         onEndEditing?()
     }
 
+    /// Every edit, and the one thing about it that matters downstream: whether
+    /// it was a deletion.
+    ///
+    /// Length, not the selector, decides. A deletion arrives as ⌫, as ⌦, as a
+    /// Cut, as typing over a selection with nothing, and as the field editor
+    /// replacing a range — five paths into one notification, and the only thing
+    /// they have in common is the direction the string moved.
+    func controlTextDidChange(_ notification: Notification) {
+        guard !isWritingCompletion else { return }
+        let deleting = stringValue.count < typedText.count
+        typedText = stringValue
+        onQueryChanged?(stringValue, deleting)
+    }
+
     func control(_ control: NSControl, textView: NSTextView,
                  doCommandBy selector: Selector) -> Bool {
         switch selector {
+        case #selector(NSResponder.moveUp(_:)):
+            return onCompletionKey?(.up) ?? false
+        case #selector(NSResponder.moveDown(_:)):
+            return onCompletionKey?(.down) ?? false
         case #selector(NSResponder.insertNewline(_:)):
             let typed = stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             finishEditing()
@@ -533,6 +637,15 @@ final class AddressField: NSTextField, NSTextFieldDelegate {
             Task { @MainActor [onCommit] in onCommit?(typed) }
             return true
         case #selector(NSResponder.cancelOperation(_:)):
+            // Escape peels one layer at a time, which is what Escape means
+            // everywhere on this system. The list first — and with it, the
+            // typing comes back, because dismissing a suggestion you did not
+            // want must not leave the suggestion in the field. Only a second
+            // Escape gives the keyboard back to the page.
+            if onCompletionKey?(.dismiss) == true {
+                showHighlighted(nil)
+                return true
+            }
             finishEditing()
             return true
         default:

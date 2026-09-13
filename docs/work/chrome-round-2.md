@@ -4,12 +4,18 @@ The chrome **passed** its kill criterion five for five — the URL is visible an
 editable, back and reload work, and hovering a link shows where it goes. This is
 what a fresh critic found anyway, ranked as it ranked them.
 
-**Items 1–5 are done.** What is left is three things in "Smaller" that are each
-their own piece of work — address-bar autocomplete, an honest find match count,
-and a context menu that macOS has no public hook for — carried to their own
-queue entry; two more that belong to queue entries that already exist
-(bookmarks, and ⌘[ to the configurable-shortcuts work); and the zoom readout,
-still disputed because settling it needs a human at the keyboard.
+**Items 1–5 are done, and so are the three that round 3 carried.**
+Address-bar autocomplete, an honest find match count and the context menu are
+all merged — see "Smaller" below for each, and note that the context menu's
+stated blocker turned out to be false. What is left of this ticket is two items
+that belong to queue entries that already exist (bookmarks, and ⌘[ to the
+configurable-shortcuts work); and the zoom readout, still disputed because
+settling it needs a human at the keyboard.
+
+**None of round 3 was verified by a live gesture.** The owner's own instance
+held the front throughout — checked, and it was frontmost at the end of the work
+— so synthetic input was aborted rather than risked, as it was for items 3 and 4
+before it. What that leaves unproven is named per item below.
 
 ## 1. A navigation that fails produces no feedback of any kind — **DONE**
 
@@ -139,9 +145,19 @@ fix it.
 ## 6. Smaller
 
 - **No address-bar autocomplete.** `en.wik` offers nothing. ⌘O has the URLs but
-  it is a different surface with a different outcome. — **Left open**, and it is
-  the largest thing remaining in this ticket: a dropdown under a 26 pt bar in a
-  420 pt lane is a surface, not a setting. Carried to its own queue entry.
+  it is a different surface with a different outcome. — **DONE in round 3.**
+  `AddressCompletion` decides what is offered, `AddressCompletionList` is the
+  surface, and it opens **upward**: this app's address bar is at the foot of the
+  pane, so a dropdown would open off the bottom of the lane. Six rows at 20 pt,
+  over the page rather than reflowing it — a list that pushed the document would
+  relayout a heavy page on every keystroke. The ledger is queried per keystroke
+  with no debounce, which is what `history.rs` was built for, and the core's
+  ranking is left alone for the reason that file already gives: two matchers
+  disagreeing about the same typing with no way to know which you are under.
+  Inline completion is **prefix-only and never while deleting** — without the
+  second rule ⌫ is impossible, because the field puts back the character you
+  just removed. Escape peels one layer: the list first, with the typing restored,
+  then the keyboard back to the page. Covered by `AddressCompletionTests`.
 - **Find has no match count.** ⌘F works well — live filtering, Enter advances,
   ↑/↓, Escape dismisses, `no match` in orange — but with matches there is no
   `3/17`, so one hit and forty look the same. Noted in round 1 as deliberate,
@@ -151,7 +167,20 @@ fix it.
   counting in the page ourselves, in JavaScript, over a DOM the page is free to
   be mutating — a second search that can disagree with the one WebKit is
   highlighting. That is a real piece of work with a real way to be wrong, not a
-  line in the find bar. Carried to its own queue entry with the autocomplete.
+  line in the find bar. — **DONE in round 3**, under three rules that keep it
+  from becoming the lie it could have been. **WebKit stays the authority on
+  whether there is a match**: the count only ever appears next to a `matchFound`
+  that is already true, and a count of zero under a visible highlight prints
+  *nothing* rather than `0`. **The index is read off WebKit's own selection**,
+  not off a counter of ↩ presses — that counter is wrong the first time the page
+  scrolls, the user clicks, or the search wraps. **A count that cannot see every
+  frame says so** with a trailing `+`, because `find` searches subframes and
+  script reaches the main frame only. The walk flushes at block boundaries, so
+  `<b>fo</b>o` counts and `<p>fo</p><p>o</p>` does not, and it runs in
+  `.defaultClient` so a page cannot decide what its own find bar says.
+  `FindCountTests` covers the Swift half; the script itself was run in a real JS
+  engine over 17 DOM cases, which is noted in `FindCount` along with why that
+  harness is not in `scripts/test.sh`.
 - **Long URLs clip with no ellipsis**, stopping mid-word. — **DONE.** The cause
   was not a missing setting but an ignored one: the cell's `lineBreakMode` *is*
   `.byTruncatingTail`, and an `NSTextField` ignores it the moment you hand it an
@@ -171,15 +200,34 @@ fix it.
   here would be the third place that decides what ⌘[ means, and that entry
   exists to make it one.
 - **Right-click is the stock WebKit menu**: "Open Link in New Window" is the
-  wrong noun for what happens, and there is no "open right of here". — **Left
-  open, and blocked on API rather than on effort.** macOS `WKWebView` has no
-  public context-menu hook — `contextMenuConfigurationForElement` is iOS only —
-  so the only route is subclassing and overriding `willOpenMenu`, and the one
-  web view this app does *not* construct is the adopted popup, which WebKit
-  instantiates as a plain `WKWebView` from its own configuration. A menu that is
-  right on most panes and stock on OAuth popups is worse than one that is stock
-  everywhere. Note that item 4 has taken the pressure off it: the gesture the
-  menu item existed to reach is now ⌘-click. Carried to its own queue entry.
+  wrong noun for what happens, and there is no "open right of here". — **DONE in
+  round 3, and the blocker was wrong.** The premise above — *"the one web view
+  this app does not construct is the adopted popup"* — does not hold.
+  `WKUIDelegate` never hands over a finished view; it hands over a
+  *configuration* and demands a view built from it, which is the whole reason
+  `PopupHandoff` exists. Both `WKWebView(frame:configuration:)` calls in this
+  target are ours, so both are now `ChromeWebView`, and `window.opener` is
+  untouched because the opener relationship lives in the configuration and not in
+  the class. With that gone, the objection that a menu right on most panes and
+  stock on OAuth popups is worse than one stock everywhere no longer applies.
+
+  The change is **titles only** — actions, order, separators and the keyboard
+  loop stay WebKit's, so the download path is untouched. Four items lose the word
+  *window*, which this app has none of: `Open Link in a Lane to the Right`, and
+  the same for image, video and frame. The direction is in the title because on a
+  fifteen-lane strip "a new lane" without one is a thing you then go looking for.
+
+  Matching is on `NSMenuItem.identifier`. Those strings are **not in the macOS
+  SDK** — `WKMenuItemIdentifier` is the iOS-16 type, and `swiftc -typecheck`
+  against the macOS SDK says *"cannot find 'WKMenuItemIdentifier' in scope"* — so
+  they were read out of this machine's WebKit with `strings` over the dyld shared
+  cache rather than guessed. Because the identifier is not promised,
+  `WebContextMenu.rename` is written to change **nothing** when it recognises
+  nothing: a future WebKit that stops setting it degrades to the stock menu,
+  which is what every build before this one shipped. Matching on the visible
+  title instead would have broken on the first non-English system. Note that item
+  4 had already taken the pressure off this: the gesture the menu item existed to
+  reach is ⌘-click. `WebContextMenuTests`.
 
 ## Disputed, re-checked — **no change made**
 
