@@ -10,7 +10,7 @@
 - [x] Browser chrome round 2: a failed navigation says nothing, ⌘-click loses your place — [detail](chrome-round-2.md) — items 1–5 done: failures speak, public http loads, ⌘-click opens a sibling lane, an untitled page stops wearing the last page's title
 - [x] Browser chrome round 3: address-bar autocomplete, an honest find match count, a context menu macOS has no hook for — [detail](chrome-round-2.md) — all three merged; the menu was never blocked on API, both web views are ours; the zoom readout is still disputed and still needs a human at the keyboard
 - [x] History round 2: search the whole corpus, substring ranking, client-side redirects, real dates — [detail](history-round-2.md) — no caps at all, a trigram index in their place (7 ms a keystroke over 112,840 pages), every redirect hop searchable and no interstitial left as a page, and rows that say `Tue 09:15`
-- [ ] Every shortcut configurable, with the current ones as defaults — [detail](configurable-hotkeys.md)
+- [-] Every shortcut configurable, with the current ones as defaults — [detail](configurable-hotkeys.md)
 - [ ] `maxpane run "a | pipeline"` returns a session id, logs a lane, and produces none
 - [ ] Import history from another browser, with a merge-or-replace wizard — [detail](import-history.md) — unblocked: there is no row cap to raise
 - [ ] History round 3: a view with room in it — day grouping, paging past 60 rows, the full URL, a confirmed delete, and a way to clear it — [detail](history-round-2.md)
