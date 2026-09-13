@@ -15,6 +15,7 @@ pub mod eviction;
 pub mod history;
 pub mod import;
 pub mod ledger;
+pub mod logins;
 pub mod model;
 pub mod ordinal;
 pub mod portable;
@@ -937,6 +938,34 @@ impl Core {
             backup_path,
             elapsed_ms: now_ms() - started,
         })
+    }
+
+    // ---- passwords ---------------------------------------------------------
+
+    /// Every Chromium profile on this Mac that has saved passwords.
+    ///
+    /// Chromium only, and the list is shorter than `history_sources` on
+    /// purpose: Safari's passwords are already Keychain items, so there is
+    /// nothing to import from it, and Firefox's are behind NSS. See
+    /// [`crate::logins`] for why that is a different record rather than two
+    /// more fields on `HistorySource`.
+    pub fn login_sources(&self) -> Vec<logins::LoginSource> {
+        logins::detect()
+    }
+
+    /// Every saved login in `source`, **still encrypted**.
+    ///
+    /// This is the whole of what the platform-agnostic half of the app can do
+    /// with a password: copy the file, read the rows, hand back ciphertext.
+    /// The key is a macOS Keychain item and the decryption happens in the app
+    /// process; nothing here can read one, which is the point.
+    ///
+    /// Not behind the mutex's ledger work for any reason but consistency with
+    /// its neighbours — it writes nothing. The copy it takes is deleted before
+    /// this returns.
+    pub fn browser_logins(&self, source: logins::LoginSource) -> Result<Vec<logins::SourceLogin>> {
+        let inner = self.inner.lock();
+        logins::read(&source, inner.ledger.path())
     }
 
     // ---- bookmarks ---------------------------------------------------------

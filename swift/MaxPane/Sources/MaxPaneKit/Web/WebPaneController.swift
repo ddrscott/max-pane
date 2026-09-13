@@ -29,7 +29,9 @@ final class WebPaneController: NSObject, PaneController {
     /// and that address is how you recognise it on the strip.
     /// Internal: `WebPaneAsks.swift` parents the ask sheet here.
     let contentHost = NSView()
-    private let chrome = WebChromeBar()
+    /// Internal: the password menu in `WebPanePasswords.swift` hangs off this
+    /// row's key button, and a fill's answer is reported on its failure line.
+    let chrome = WebChromeBar()
     private let findBar = WebFindBar()
     private var findBarHeight: NSLayoutConstraint!
     /// Which search the answers coming back belong to. See `countMatches`.
@@ -232,6 +234,7 @@ final class WebPaneController: NSObject, PaneController {
         }
         chrome.onFind = { [weak self] in self?.toggleFind() }
         chrome.onStar = { [weak self] in self?.keepPage() }
+        chrome.onKeyMenu = { [weak self] in self?.passwordMenu() }
         chrome.onZoomReset = { [weak self] in self?.setZoom(1) }
         chrome.onNavigate = { [weak self] typed in self?.navigate(typed) }
         chrome.onBackMenu = { [weak self] in self?.historyMenu(back: true) }
@@ -672,6 +675,7 @@ final class WebPaneController: NSObject, PaneController {
     private func refreshKept() {
         guard let url = currentAddress, !url.isEmpty else { return chrome.setKept(false) }
         chrome.setKept(!store.bookmarks(forURL: url).isEmpty)
+        refreshSavedPassword()
     }
 
     // MARK: - zoom

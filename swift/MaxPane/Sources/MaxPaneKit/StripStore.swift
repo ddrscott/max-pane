@@ -511,6 +511,27 @@ public final class StripStore {
         return outcome
     }
 
+    // MARK: - importing another browser's passwords
+
+    /// Every Chromium profile on this Mac with saved passwords. Stats files;
+    /// opens nothing.
+    func loginSources() -> [LoginSource] { core.loginSources() }
+
+    /// Another browser's saved logins, **still encrypted**.
+    ///
+    /// Off the main thread for the same reason the history import is: it copies
+    /// the profile's `Login Data` — half a megabyte for the owner's Vivaldi,
+    /// but the copy is the same journal-and-WAL dance and the same `fs::copy`
+    /// — and reads every row out of it. The copy is deleted before this
+    /// returns.
+    ///
+    /// What comes back is ciphertext. `laned-core` has no Keychain and so
+    /// cannot read a password; `PasswordImport` does the rest in this process.
+    func browserLogins(_ source: LoginSource) async throws -> [SourceLogin] {
+        let core = self.core
+        return try await Task.detached { try core.browserLogins(source: source) }.value
+    }
+
     // MARK: - focus and scroll
 
     /// Focus, without marshalling the strip. Focus does not change the shape of

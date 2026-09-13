@@ -22,6 +22,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     /// Held only so a second ⌥⌘Y raises the wizard already on screen instead of
     /// stacking another one over it; the wizard keeps itself alive otherwise.
     private var importWizard: ImportHistoryWizard?
+    private var passwordsWizard: ImportPasswordsWizard?
     /// Held for the same reason as the wizard, and with more cause: this one is
     /// expected to stay open beside the strip while the reader works.
     private var historyWindow: HistoryWindow?
@@ -426,10 +427,13 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         case .claimSession:
             // Only meaningful for a terminal pane.
             return store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .pty
-        case .editAddress, .bookmarkPage:
+        case .editAddress, .bookmarkPage, .fillPassword, .savePassword:
             // The mirror of `claimSession`: only a page has an address. Greyed
             // out rather than beeping, because the menu can say which panes it
-            // is for and a beep cannot.
+            // is for and a beep cannot. Fill and save are here for the same
+            // reason and a sharper one — there is no form in a terminal, and a
+            // key that could put a password somewhere unexpected should be
+            // dead everywhere it does not mean anything.
             return store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .web
         case .pairWithNext:
             return pairCandidates() != nil
@@ -475,6 +479,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .bookmarkPage:
                 strip.keepFocusedPage()
+
+            case .fillPassword:
+                strip.fillFocusedPagePassword()
+
+            case .savePassword:
+                strip.saveFocusedPagePassword()
 
             case .newTerminalLane:
                 try newTerminal(near: focusedLane)
@@ -592,6 +602,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .importBrowserHistory:
                 importBrowserHistory()
+
+            case .importBrowserPasswords:
+                importBrowserPasswords()
 
             case .showHistory:
                 showHistory()
@@ -879,6 +892,21 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         }
         let wizard = ImportHistoryWizard(store: store)
         importWizard = wizard
+        wizard.present(over: window)
+    }
+
+    /// ⌃⌥⌘Y — another browser's saved passwords into the macOS Keychain.
+    ///
+    /// A second window rather than a screen in the history wizard, because the
+    /// consent it ends with is macOS's and not ours — see
+    /// `ImportPasswordsWizard`.
+    private func importBrowserPasswords() {
+        if let existing = passwordsWizard, existing.window?.isVisible == true {
+            existing.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        let wizard = ImportPasswordsWizard(store: store)
+        passwordsWizard = wizard
         wizard.present(over: window)
     }
 

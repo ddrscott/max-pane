@@ -687,6 +687,20 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func bookmarksForUrl(url: String) throws  -> [Bookmark]
     
     /**
+     * Every saved login in `source`, **still encrypted**.
+     *
+     * This is the whole of what the platform-agnostic half of the app can do
+     * with a password: copy the file, read the rows, hand back ciphertext.
+     * The key is a macOS Keychain item and the decryption happens in the app
+     * process; nothing here can read one, which is the point.
+     *
+     * Not behind the mutex's ledger work for any reason but consistency with
+     * its neighbours — it writes nothing. The copy it takes is deleted before
+     * this returns.
+     */
+    func browserLogins(source: LoginSource) throws  -> [SourceLogin]
+    
+    /**
      * Forget everything. There is no undo, which is the point of it.
      */
     func clearHistory() throws 
@@ -910,6 +924,17 @@ public protocol CoreProtocol: AnyObject, Sendable {
      * single lane costs rather than what the strip costs.
      */
     func lane(laneId: String) throws  -> Lane
+    
+    /**
+     * Every Chromium profile on this Mac that has saved passwords.
+     *
+     * Chromium only, and the list is shorter than `history_sources` on
+     * purpose: Safari's passwords are already Keychain items, so there is
+     * nothing to import from it, and Firefox's are behind NSS. See
+     * [`crate::logins`] for why that is a different record rather than two
+     * more fields on `HistorySource`.
+     */
+    func loginSources()  -> [LoginSource]
     
     /**
      * The shell has taken a snapshot and destroyed the `WKWebView`.
@@ -1455,6 +1480,28 @@ open func bookmarksForUrl(url: String)throws  -> [Bookmark]  {
 }
     
     /**
+     * Every saved login in `source`, **still encrypted**.
+     *
+     * This is the whole of what the platform-agnostic half of the app can do
+     * with a password: copy the file, read the rows, hand back ciphertext.
+     * The key is a macOS Keychain item and the decryption happens in the app
+     * process; nothing here can read one, which is the point.
+     *
+     * Not behind the mutex's ledger work for any reason but consistency with
+     * its neighbours — it writes nothing. The copy it takes is deleted before
+     * this returns.
+     */
+open func browserLogins(source: LoginSource)throws  -> [SourceLogin]  {
+    return try  FfiConverterSequenceTypeSourceLogin.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_browser_logins(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeLoginSource_lower(source),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * Forget everything. There is no undo, which is the point of it.
      */
 open func clearHistory()throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
@@ -1856,6 +1903,24 @@ open func lane(laneId: String)throws  -> Lane  {
     uniffi_laned_core_fn_method_core_lane(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(laneId),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Every Chromium profile on this Mac that has saved passwords.
+     *
+     * Chromium only, and the list is shorter than `history_sources` on
+     * purpose: Safari's passwords are already Keychain items, so there is
+     * nothing to import from it, and Firefox's are behind NSS. See
+     * [`crate::logins`] for why that is a different record rather than two
+     * more fields on `HistorySource`.
+     */
+open func loginSources() -> [LoginSource]  {
+    return try!  FfiConverterSequenceTypeLoginSource.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_login_sources(
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -3708,6 +3773,139 @@ public func FfiConverterTypeLane_lower(_ value: Lane) -> RustBuffer {
 
 
 /**
+ * One browser profile whose saved passwords we could import.
+ *
+ * Deliberately **not** [`crate::import::HistorySource`] with two more fields
+ * on it. A history source answers "which browsers can I read the past from",
+ * and the answer includes Safari and Firefox; a login source answers "which
+ * browsers keep passwords in a form we can decrypt", and the answer is the
+ * Chromium family alone. Safari's passwords are already Keychain items — there
+ * is nothing to import, reading the Keychain *is* the import — and Firefox's
+ * are behind NSS, which is a different mechanism and not in this round. One
+ * record that meant a different thing depending on which list it came out of
+ * is the shape that would let a Safari row reach this code at all.
+ */
+public struct LoginSource: Equatable, Hashable {
+    /**
+     * "Vivaldi", "Google Chrome" — the name on the user's Dock.
+     */
+    public var name: String
+    /**
+     * The browser's own name for the profile, when it has more than one.
+     */
+    public var profile: String?
+    /**
+     * Absolute path to `Login Data`.
+     */
+    public var path: String
+    /**
+     * The generic-password item holding this browser's AES key, by service
+     * name: "Vivaldi Safe Storage", "Chrome Safe Storage".
+     *
+     * It is here rather than derived in Swift because the service name is not
+     * the name on the Dock — Google Chrome's item says "Chrome Safe Storage"
+     * — and the two mappings (directory, keychain service) belong in the one
+     * table that already knows about this browser family.
+     */
+    public var safeStorageService: String
+    /**
+     * Bytes, for a screen that is about to copy it.
+     */
+    public var sizeBytes: UInt64
+    /**
+     * Why we cannot read it, when we cannot. The row is still offered, with
+     * the sentence that says what to do.
+     */
+    public var blocked: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "Vivaldi", "Google Chrome" — the name on the user's Dock.
+         */name: String, 
+        /**
+         * The browser's own name for the profile, when it has more than one.
+         */profile: String?, 
+        /**
+         * Absolute path to `Login Data`.
+         */path: String, 
+        /**
+         * The generic-password item holding this browser's AES key, by service
+         * name: "Vivaldi Safe Storage", "Chrome Safe Storage".
+         *
+         * It is here rather than derived in Swift because the service name is not
+         * the name on the Dock — Google Chrome's item says "Chrome Safe Storage"
+         * — and the two mappings (directory, keychain service) belong in the one
+         * table that already knows about this browser family.
+         */safeStorageService: String, 
+        /**
+         * Bytes, for a screen that is about to copy it.
+         */sizeBytes: UInt64, 
+        /**
+         * Why we cannot read it, when we cannot. The row is still offered, with
+         * the sentence that says what to do.
+         */blocked: String?) {
+        self.name = name
+        self.profile = profile
+        self.path = path
+        self.safeStorageService = safeStorageService
+        self.sizeBytes = sizeBytes
+        self.blocked = blocked
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension LoginSource: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLoginSource: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LoginSource {
+        return
+            try LoginSource(
+                name: FfiConverterString.read(from: &buf), 
+                profile: FfiConverterOptionString.read(from: &buf), 
+                path: FfiConverterString.read(from: &buf), 
+                safeStorageService: FfiConverterString.read(from: &buf), 
+                sizeBytes: FfiConverterUInt64.read(from: &buf), 
+                blocked: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: LoginSource, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.profile, into: &buf)
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterString.write(value.safeStorageService, into: &buf)
+        FfiConverterUInt64.write(value.sizeBytes, into: &buf)
+        FfiConverterOptionString.write(value.blocked, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLoginSource_lift(_ buf: RustBuffer) throws -> LoginSource {
+    return try FfiConverterTypeLoginSource.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLoginSource_lower(_ value: LoginSource) -> RustBuffer {
+    return FfiConverterTypeLoginSource.lower(value)
+}
+
+
+/**
  * What the shell measured just before asking.
  */
 public struct MemoryReport: Equatable, Hashable {
@@ -4510,6 +4708,124 @@ public func FfiConverterTypeSearchHit_lift(_ buf: RustBuffer) throws -> SearchHi
 #endif
 public func FfiConverterTypeSearchHit_lower(_ value: SearchHit) -> RustBuffer {
     return FfiConverterTypeSearchHit.lower(value)
+}
+
+
+/**
+ * One saved login, with the password still sealed.
+ *
+ * `secret` is the raw `password_value` blob exactly as Chromium wrote it,
+ * `v10` prefix and all. This crate cannot open it; see the module doc.
+ */
+public struct SourceLogin: Equatable, Hashable {
+    /**
+     * The page the form was on: `https://example.com/login`.
+     */
+    public var origin: String
+    /**
+     * Chromium's own key for the site — `https://example.com/` for a form, or
+     * `example.com:443/realm` for an HTTP-auth entry. Kept because it is the
+     * only field that distinguishes those two, and they become different kinds
+     * of Keychain item.
+     */
+    public var signonRealm: String
+    /**
+     * The user name. May be empty: Chromium stores password-only logins.
+     */
+    public var username: String
+    /**
+     * The sealed password. Ciphertext, always.
+     */
+    public var secret: Data
+    /**
+     * Chromium's `scheme` column: 0 is an HTML form, anything else is an
+     * HTTP-auth realm (basic, digest, and the rest).
+     */
+    public var isHtmlForm: Bool
+    public var createdMs: Int64
+    public var lastUsedMs: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The page the form was on: `https://example.com/login`.
+         */origin: String, 
+        /**
+         * Chromium's own key for the site — `https://example.com/` for a form, or
+         * `example.com:443/realm` for an HTTP-auth entry. Kept because it is the
+         * only field that distinguishes those two, and they become different kinds
+         * of Keychain item.
+         */signonRealm: String, 
+        /**
+         * The user name. May be empty: Chromium stores password-only logins.
+         */username: String, 
+        /**
+         * The sealed password. Ciphertext, always.
+         */secret: Data, 
+        /**
+         * Chromium's `scheme` column: 0 is an HTML form, anything else is an
+         * HTTP-auth realm (basic, digest, and the rest).
+         */isHtmlForm: Bool, createdMs: Int64, lastUsedMs: Int64) {
+        self.origin = origin
+        self.signonRealm = signonRealm
+        self.username = username
+        self.secret = secret
+        self.isHtmlForm = isHtmlForm
+        self.createdMs = createdMs
+        self.lastUsedMs = lastUsedMs
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension SourceLogin: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSourceLogin: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SourceLogin {
+        return
+            try SourceLogin(
+                origin: FfiConverterString.read(from: &buf), 
+                signonRealm: FfiConverterString.read(from: &buf), 
+                username: FfiConverterString.read(from: &buf), 
+                secret: FfiConverterData.read(from: &buf), 
+                isHtmlForm: FfiConverterBool.read(from: &buf), 
+                createdMs: FfiConverterInt64.read(from: &buf), 
+                lastUsedMs: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SourceLogin, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.origin, into: &buf)
+        FfiConverterString.write(value.signonRealm, into: &buf)
+        FfiConverterString.write(value.username, into: &buf)
+        FfiConverterData.write(value.secret, into: &buf)
+        FfiConverterBool.write(value.isHtmlForm, into: &buf)
+        FfiConverterInt64.write(value.createdMs, into: &buf)
+        FfiConverterInt64.write(value.lastUsedMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSourceLogin_lift(_ buf: RustBuffer) throws -> SourceLogin {
+    return try FfiConverterTypeSourceLogin.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSourceLogin_lower(_ value: SourceLogin) -> RustBuffer {
+    return FfiConverterTypeSourceLogin.lower(value)
 }
 
 
@@ -6129,6 +6445,31 @@ fileprivate struct FfiConverterSequenceTypeLane: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeLoginSource: FfiConverterRustBuffer {
+    typealias SwiftType = [LoginSource]
+
+    public static func write(_ value: [LoginSource], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeLoginSource.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [LoginSource] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [LoginSource]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeLoginSource.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypePane: FfiConverterRustBuffer {
     typealias SwiftType = [Pane]
 
@@ -6301,6 +6642,31 @@ fileprivate struct FfiConverterSequenceTypeSearchHit: FfiConverterRustBuffer {
     }
 }
 
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSourceLogin: FfiConverterRustBuffer {
+    typealias SwiftType = [SourceLogin]
+
+    public static func write(_ value: [SourceLogin], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSourceLogin.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SourceLogin] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SourceLogin]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSourceLogin.read(from: &buf))
+        }
+        return seq
+    }
+}
+
 private enum InitializationResult {
     case ok
     case contractVersionMismatch
@@ -6332,6 +6698,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_bookmarks_for_url() != 51672) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_browser_logins() != 50038) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_clear_history() != 27909) {
@@ -6398,6 +6767,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_lane() != 31148) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_login_sources() != 32313) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_mark_evicted() != 1882) {

@@ -61,6 +61,12 @@ final class WebChromeBar: NSView {
     /// way — the same thing ⌘D does, because they are one action with two
     /// doors.
     var onStar: (() -> Void)?
+    /// The key. Opens the password menu for this page — fill, or save.
+    ///
+    /// It is a menu and not a one-click fill on purpose: a site can have more
+    /// than one saved account, and a button that filled "the" password would be
+    /// a button that picks one of someone's two logins for them.
+    var onKeyMenu: (() -> NSMenu?)?
     var onZoomReset: (() -> Void)?
     /// A line typed into the address field. Already trimmed; not yet resolved —
     /// the pane decides whether it is an address or a search.
@@ -75,6 +81,12 @@ final class WebChromeBar: NSView {
     private let reload = ChromeButton(glyph: "⟳")
     private let find = ChromeButton(glyph: "⌕")
     private let star = ChromeButton(glyph: "☆")
+    /// `•••` and not a key glyph. U+26BF ⚿ is the obvious choice and is in
+    /// neither JetBrains Mono nor Menlo, so AppKit would substitute a face for
+    /// that one character in a 26 pt mono row — the one place a font fallback
+    /// is impossible not to notice. Three bullets are a password field drawn at
+    /// glyph size, they exist in every font, and they need no legend.
+    private let key = ChromeButton(glyph: "•••")
     private let zoom = ChromeButton(glyph: "100%")
     private let security = NSTextField(labelWithString: "")
     private let address = AddressField()
@@ -112,6 +124,15 @@ final class WebChromeBar: NSView {
         reload.onClick = { [weak self] in self?.onReloadOrStop?() }
         find.onClick = { [weak self] in self?.onFind?() }
         star.onClick = { [weak self] in self?.onStar?() }
+        // A left click opens the same menu a right click would. There is no
+        // primary action to put on the click: every one of them puts a password
+        // somewhere, and each wants naming before it happens.
+        key.onClick = { [weak self] in
+            guard let self, let menu = self.onKeyMenu?() else { return }
+            menu.popUp(positioning: nil,
+                       at: NSPoint(x: 0, y: self.key.bounds.height + 2),
+                       in: self.key)
+        }
         zoom.onClick = { [weak self] in self?.onZoomReset?() }
         back.onMenu = { [weak self] in self?.onBackMenu?() }
         forward.onMenu = { [weak self] in self?.onForwardMenu?() }
@@ -121,13 +142,15 @@ final class WebChromeBar: NSView {
         reload.toolTip = "Reload (⌘R)"
         find.toolTip = "Find in page (⌘F)"
         star.toolTip = "Keep this page (⌘D)"
+        key.toolTip = "Passwords for this site (⌥⌘L fills)"
+        key.isHidden = true
         zoom.toolTip = "Zoom — click for actual size (⌘0)"
         zoom.isHidden = true
 
         // The star sits between the address and find: it is about *this page*,
         // which is what the field to its left says, where find and zoom are
         // about reading whatever is on screen.
-        let row = NSStackView(views: [back, forward, reload, security, address, star, find, zoom])
+        let row = NSStackView(views: [back, forward, reload, security, address, star, key, find, zoom])
         row.orientation = .horizontal
         row.spacing = 2
         row.alignment = .centerY
@@ -232,6 +255,21 @@ final class WebChromeBar: NSView {
     /// the popover follows it when the lane is dragged narrower.
     var starAnchor: NSView { star }
 
+    /// What the fill menu hangs off, and where a fill's answer is anchored.
+    var keyAnchor: NSView { key }
+
+    /// Whether this site has a password saved for it.
+    ///
+    /// Hidden entirely when it has none, rather than shown greyed. A key that
+    /// is always there is a key people stop seeing, and the one fact it carries
+    /// — *there is a sign-in saved for this site* — is only worth a glyph when
+    /// it is true. It goes orange when there is one, which is this app's one
+    /// meaning for the accent: the thing here is live.
+    func setHasSavedPassword(_ saved: Bool) {
+        key.isHidden = !saved
+        key.tint = saved ? Theme.accent : nil
+    }
+
     /// Whether this page is one of the ones kept.
     ///
     /// A filled orange star, not a hollow one gone bright: the difference
@@ -272,7 +310,7 @@ final class WebChromeBar: NSView {
     var isPaneFocused: Bool = false {
         didSet {
             guard isPaneFocused != oldValue else { return }
-            for button in [back, forward, reload, star, find, zoom] { button.isDimmed = !isPaneFocused }
+            for button in [back, forward, reload, star, key, find, zoom] { button.isDimmed = !isPaneFocused }
             renderAddress()
             needsDisplay = true
         }

@@ -210,18 +210,25 @@ impl Epoch {
 // ---- detection -------------------------------------------------------------
 
 /// Chromium forks, by the directory each puts under `~/Library/Application
-/// Support`. They differ in nothing else: same tables, same columns, same
-/// epoch, same exclusive lock.
-const CHROMIUM_FAMILY: &[(&str, &str)] = &[
-    ("Vivaldi", "Vivaldi"),
-    ("Google Chrome", "Google/Chrome"),
-    ("Chrome Beta", "Google/Chrome Beta"),
-    ("Chrome Canary", "Google/Chrome Canary"),
-    ("Brave", "BraveSoftware/Brave-Browser"),
-    ("Microsoft Edge", "Microsoft Edge"),
-    ("Chromium", "Chromium"),
-    ("Arc", "Arc/User Data"),
-    ("Opera", "com.operasoftware.Opera"),
+/// Support`, and by the Keychain item holding its password key. They differ in
+/// nothing else: same tables, same columns, same epoch, same exclusive lock.
+///
+/// The third column is only read by [`crate::logins`], and it is here because
+/// it is the one fact about a fork that is **not** derivable from the other
+/// two: Google Chrome lives in `Google/Chrome`, is called "Google Chrome" on
+/// the Dock, and its key is filed under `Chrome Safe Storage`. Three spellings
+/// of one browser, which is exactly the kind of thing that belongs in one
+/// table rather than in a `match` somewhere else.
+pub(crate) const CHROMIUM_FAMILY: &[(&str, &str, &str)] = &[
+    ("Vivaldi", "Vivaldi", "Vivaldi Safe Storage"),
+    ("Google Chrome", "Google/Chrome", "Chrome Safe Storage"),
+    ("Chrome Beta", "Google/Chrome Beta", "Chrome Safe Storage"),
+    ("Chrome Canary", "Google/Chrome Canary", "Chromium Safe Storage"),
+    ("Brave", "BraveSoftware/Brave-Browser", "Brave Safe Storage"),
+    ("Microsoft Edge", "Microsoft Edge", "Microsoft Edge Safe Storage"),
+    ("Chromium", "Chromium", "Chromium Safe Storage"),
+    ("Arc", "Arc/User Data", "Arc Safe Storage"),
+    ("Opera", "com.operasoftware.Opera", "Opera Safe Storage"),
 ];
 
 /// Every history file on this machine we know how to read.
@@ -239,7 +246,7 @@ pub fn detect_in(home: &Path) -> Vec<HistorySource> {
     let support = home.join("Library/Application Support");
     let mut out = Vec::new();
 
-    for (name, dir) in CHROMIUM_FAMILY {
+    for (name, dir, _safe_storage) in CHROMIUM_FAMILY {
         let root = support.join(dir);
         if !root.is_dir() {
             continue;

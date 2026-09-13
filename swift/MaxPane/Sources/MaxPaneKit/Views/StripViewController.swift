@@ -1341,6 +1341,20 @@ public final class StripViewController: NSViewController {
         paneControllers[paneId]?.keepPage()
     }
 
+    /// ⌥⌘L. The pane that has the keyboard is the pane looking at the form, and
+    /// "the form the user is looking at" is the whole of what makes an explicit
+    /// fill safe — see `PasswordFill`.
+    public func fillFocusedPagePassword() {
+        guard let paneId = store.state.focusedPaneId else { return }
+        paneControllers[paneId]?.fillPassword()
+    }
+
+    /// ⇧⌘L.
+    public func saveFocusedPagePassword() {
+        guard let paneId = store.state.focusedPaneId else { return }
+        paneControllers[paneId]?.savePassword()
+    }
+
     /// Ask every live pane to write down what it would otherwise lose.
     ///
     /// Only web panes have anything to say — their history and scroll live in

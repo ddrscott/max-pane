@@ -54,6 +54,14 @@ protocol PaneController: AnyObject {
     /// has no page to keep.
     func keepPage()
 
+    /// ⌥⌘L — put a saved password into the form on this page, and ⇧⌘L — save
+    /// one for this site. Greyed out for a terminal, and greyed out harder
+    /// than the two above: there is no form in a terminal, so a key that could
+    /// put a credential somewhere unexpected is dead everywhere it does not
+    /// mean anything.
+    func fillPassword()
+    func savePassword()
+
     /// Write anything the pane would otherwise lose, without tearing it down.
     ///
     /// Called on quit. A terminal has nothing to save — the session lives in
@@ -105,6 +113,11 @@ extension PaneController {
     /// As `editAddress`: the menu item is already greyed, so the only way here
     /// is a key pressed as focus moved.
     func keepPage() {}
+
+    /// As `editAddress`, and for the one kind of key where "does nothing,
+    /// silently" is the only acceptable default.
+    func fillPassword() {}
+    func savePassword() {}
 }
 
 /// The rungs ⌘= and ⌘- climb.

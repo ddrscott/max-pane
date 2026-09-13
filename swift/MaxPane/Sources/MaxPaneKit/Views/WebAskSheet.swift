@@ -15,6 +15,17 @@ enum AskPrompt: Equatable {
     /// The server asked for a client certificate; these are the identities the
     /// Keychain can offer.
     case clientCertificate(names: [String])
+    /// **Ours, not the page's.** ⇧⌘L: a user name and a password to put in the
+    /// Keychain for the site in the address bar.
+    ///
+    /// It is drawn by this sheet because it belongs in the pane — modal to
+    /// nothing, over the page it is about, with the origin line above it — and
+    /// those are the same reasons a page's questions are drawn here. The origin
+    /// line matters more for this one than for any of the others: it is the
+    /// only statement of *which site this password is about to be filed under*,
+    /// and it comes from `WKWebView.url` rather than from anything the page
+    /// says.
+    case savePassword
 }
 
 /// What the person said.
@@ -26,7 +37,16 @@ enum AskOutcome: Equatable {
     /// alert's one button, and confirm's true.
     case confirmed
     case text(String)
-    case credential(user: String, password: String)
+    /// A user name and a password, from the sign-in sheet or the save sheet.
+    ///
+    /// `save` is the checkbox, and it is the whole of the difference the
+    /// Keychain decision made to HTTP auth: unticked, the credential answers
+    /// this challenge and lives in memory until the app quits, exactly as it
+    /// did before there was anywhere to put it. Ticked, it is written to the
+    /// Keychain by us — never by handing CFNetwork `.permanent`, which would be
+    /// a second copy under attributes we do not control. It is always false for
+    /// the save sheet, whose whole purpose is the write.
+    case credential(user: String, password: String, save: Bool)
     case certificate(index: Int)
     /// `remember` is the checkbox, and it is honoured for **both** answers — a
     /// remembered *no* is the more valuable half, because a site that asks on
@@ -159,6 +179,9 @@ final class WebAskSheet: NSView {
         case .capture(let what): return "WANTS \(what)"
         case .httpAuth(_, let isProxy): return isProxy ? "PROXY WANTS A SIGN-IN" : "WANTS A SIGN-IN"
         case .clientCertificate: return "WANTS A CERTIFICATE"
+        // No "wants": nothing is asking. This one is the user's own act, and
+        // the header says so rather than borrowing the page's voice.
+        case .savePassword: return "SAVE_PASSWORD"
         }
     }
 
@@ -187,6 +210,10 @@ final class WebAskSheet: NSView {
             return realm.isEmpty ? "A username and password are required." : realm
         case .clientCertificate:
             return "This server asks the browser to identify itself with a certificate."
+        case .savePassword:
+            return "Saved in the macOS Keychain, for this site only. ⌥⌘L fills it. "
+                + "Max Pane never watches what you type into a page, so a password gets "
+                + "here only this way or by importing one."
         }
     }
 
@@ -211,7 +238,7 @@ final class WebAskSheet: NSView {
             style(textField)
             textField.stringValue = initial
             return [textField]
-        case .httpAuth:
+        case .httpAuth, .savePassword:
             style(userField)
             userField.placeholderString = "user"
             style(passwordField)
@@ -249,6 +276,11 @@ final class WebAskSheet: NSView {
         // `WebAuth`), and "remember this alert" is not a thing that means
         // anything.
         if case .capture = prompt { return "remember this answer for this site" }
+        // The checkbox the HTTP-auth work said it did not have. It is
+        // unticked by default and stays that way: "ask me every launch" is a
+        // small cost paid once a day, and a password written somewhere is a
+        // cost paid forever — so the write happens when someone says so.
+        if case .httpAuth = prompt { return "save this password in the macOS Keychain" }
         return nil
     }
 
@@ -299,7 +331,20 @@ final class WebAskSheet: NSView {
                 ("SIGN IN", true, { [weak self] in
                     guard let self else { return .cancelled }
                     return .credential(
-                        user: self.userField.stringValue, password: self.passwordField.stringValue)
+                        user: self.userField.stringValue,
+                        password: self.passwordField.stringValue,
+                        save: self.remember.state == .on)
+                }),
+            ]
+        case .savePassword:
+            return [
+                ("CANCEL", false, { .cancelled }),
+                ("SAVE", true, { [weak self] in
+                    guard let self else { return .cancelled }
+                    return .credential(
+                        user: self.userField.stringValue,
+                        password: self.passwordField.stringValue,
+                        save: false)
                 }),
             ]
         case .clientCertificate(let names):
@@ -341,7 +386,7 @@ final class WebAskSheet: NSView {
     func takeFocus() {
         switch prompt {
         case .prompt: window?.makeFirstResponder(textField)
-        case .httpAuth: window?.makeFirstResponder(userField)
+        case .httpAuth, .savePassword: window?.makeFirstResponder(userField)
         default: window?.makeFirstResponder(self)
         }
     }

@@ -294,6 +294,11 @@ RustBuffer uniffi_laned_core_fn_method_core_bookmarks(uint64_t ptr, RustCallStat
 RustBuffer uniffi_laned_core_fn_method_core_bookmarks_for_url(uint64_t ptr, RustBuffer url, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_BROWSER_LOGINS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_BROWSER_LOGINS
+RustBuffer uniffi_laned_core_fn_method_core_browser_logins(uint64_t ptr, RustBuffer source, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_CLEAR_HISTORY
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_CLEAR_HISTORY
 void uniffi_laned_core_fn_method_core_clear_history(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -402,6 +407,11 @@ RustBuffer uniffi_laned_core_fn_method_core_import_strip(uint64_t ptr, RustBuffe
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_LANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_LANE
 RustBuffer uniffi_laned_core_fn_method_core_lane(uint64_t ptr, RustBuffer lane_id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_LOGIN_SOURCES
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_LOGIN_SOURCES
+RustBuffer uniffi_laned_core_fn_method_core_login_sources(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_MARK_EVICTED
@@ -925,6 +935,12 @@ uint16_t uniffi_laned_core_checksum_method_core_bookmarks_for_url(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_BROWSER_LOGINS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_BROWSER_LOGINS
+uint16_t uniffi_laned_core_checksum_method_core_browser_logins(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_CLEAR_HISTORY
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_CLEAR_HISTORY
 uint16_t uniffi_laned_core_checksum_method_core_clear_history(void
@@ -1054,6 +1070,12 @@ uint16_t uniffi_laned_core_checksum_method_core_import_strip(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_LANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_LANE
 uint16_t uniffi_laned_core_checksum_method_core_lane(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_LOGIN_SOURCES
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_LOGIN_SOURCES
+uint16_t uniffi_laned_core_checksum_method_core_login_sources(void
     
 );
 #endif

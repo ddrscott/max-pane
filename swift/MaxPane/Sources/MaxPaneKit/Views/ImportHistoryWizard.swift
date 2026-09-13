@@ -685,8 +685,12 @@ final class ImportHistoryWizard: NSWindowController, NSWindowDelegate {
 
 /// The panel body: square, filled, outlined on all four sides — never a single
 /// accent edge, which is the house's named anti-pattern.
+///
+/// Internal rather than private because the passwords import is a second window
+/// with the same body, and two copies of a shape whose whole job is to be
+/// recognisably the same shape is how two windows drift apart.
 @MainActor
-private final class ImportWizardPanelView: NSView {
+final class ImportWizardPanelView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         Theme.stripBackground.setFill()
         bounds.fill()
@@ -727,7 +731,7 @@ final class SectionHeader: NSTextField {
 /// One choosable row: a title, a detail line, and a full-perimeter outline when
 /// it is the one selected.
 @MainActor
-private final class WizardRow: NSView {
+final class WizardRow: NSView {
     var onClick: (() -> Void)?
 
     private let isSelected: Bool

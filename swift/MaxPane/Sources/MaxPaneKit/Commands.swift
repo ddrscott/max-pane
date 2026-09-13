@@ -46,6 +46,9 @@ public enum Command: String, CaseIterable, Sendable {
     case importBrowserHistory
     case showHistory
     case bookmarkPage
+    case fillPassword
+    case savePassword
+    case importBrowserPasswords
     case toggleSpan
     case showHelp
 
@@ -91,6 +94,9 @@ public enum Command: String, CaseIterable, Sendable {
         case .importBrowserHistory: return "Import From Another Browser…"
         case .showHistory: return "History"
         case .bookmarkPage: return "Keep This Page…"
+        case .fillPassword: return "Fill Password"
+        case .savePassword: return "Save a Password for This Site…"
+        case .importBrowserPasswords: return "Import Passwords From Another Browser…"
         case .toggleSpan: return "Span Lane (2× Width)"
         case .showHelp: return "Keyboard Shortcuts"
         }
@@ -215,6 +221,21 @@ public enum Command: String, CaseIterable, Sendable {
         // *keep a page*, and a door that already answers to ⌘O and ⌘T did not
         // need a third name as much as this needs its first.
         case .bookmarkPage:    return ("d", [.command])
+        // ⌘L is the address; ⌥⌘L is the other thing at the top of a page you
+        // have to type into. One key, pressed while looking at the form, is
+        // the whole of what makes filling safe — see `PasswordFill` — so it is
+        // deliberately a key and not a thing that happens on load.
+        case .fillPassword:    return ("l", [.command, .option])
+        // ⇧⌘L, beside it, for the other direction. Saving is explicit too:
+        // Max Pane does not watch what you type into password fields, so
+        // nothing offers to save one unless you ask.
+        case .savePassword:    return ("l", [.command, .shift])
+        // With the other import, not with the other passwords: ⌥⌘Y brings a
+        // browser's history and bookmarks, ⌃⌥⌘Y brings its passwords. They are
+        // deliberately not one key — one of them ends with the Keychain asking
+        // the user a question, and a wizard that walks into that on the way to
+        // importing history would be a browser helping itself to passwords.
+        case .importBrowserPasswords: return ("y", [.command, .option, .control])
         case .toggleSpan:      return ("\\", [.command])
         // The one everybody reaches for when they do not know the others.
         case .showHelp:        return ("/", [.command])
@@ -312,6 +333,11 @@ public enum Command: String, CaseIterable, Sendable {
         // are the same thought about the same corpus, and the File menu is
         // where panes are made.
         case .bookmarkPage: return .navigate
+        // Fill and save sit under Navigate with ⌘L and ⌘D: they are things you
+        // do to the page in front of you. The import is a File-menu act, with
+        // the other import.
+        case .fillPassword, .savePassword: return .navigate
+        case .importBrowserPasswords: return .file
         case .toggleSpan: return .view
         }
     }

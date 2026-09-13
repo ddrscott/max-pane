@@ -279,22 +279,40 @@ extension WebPaneController {
                 reply.fire((.useCredential, cached))
                 return
             }
+            // Then the Keychain, for a credential someone saved on purpose.
+            // After the in-memory cache and before the sheet, which is the only
+            // order that is both quiet and honest: the cache is this session's
+            // answer to this exact space, and a saved one should spare the user
+            // the sheet rather than be checked after they have typed.
+            if let saved = KeychainPasswords.credential(for: challenge.protectionSpace) {
+                WebAuth.remember(saved, for: challenge)
+                reply.fire((.useCredential, saved))
+                return
+            }
             ask(.httpAuth(realm: realm, isProxy: isProxy), from: nil,
                 originOverride: AskOrigin.label(
                     scheme: challenge.protectionSpace.protocol,
                     host: challenge.protectionSpace.host,
                     port: challenge.protectionSpace.port),
                 reply: reply) { outcome in
-                guard case .credential(let user, let password) = outcome else {
+                guard case .credential(let user, let password, let save) = outcome else {
                     return (.cancelAuthenticationChallenge, nil)
                 }
-                // `.forSession` and not `.permanent`. `.permanent` hands the
-                // password to CFNetwork to write into the login keychain, which
-                // is a disk write this piece has said it will not do — and one
-                // the user never asked for, from a sheet with no checkbox
-                // offering it.
+                // `.forSession` and not `.permanent`, still, and now for a
+                // second reason. `.permanent` hands the password to CFNetwork
+                // to write into the login keychain under attributes we do not
+                // choose and cannot find again — so the checkbox below does the
+                // write itself, into the same `kSecClassInternetPassword` space
+                // a form login goes into, keyed by the protection space's own
+                // host, port, protocol and realm. Unticked, nothing reaches the
+                // disk and this behaves exactly as it did before the Keychain
+                // decision was made.
                 let credential = URLCredential(user: user, password: password, persistence: .forSession)
                 WebAuth.remember(credential, for: challenge)
+                if save {
+                    KeychainPasswords.save(
+                        credential: user, password: password, for: challenge.protectionSpace)
+                }
                 return (.useCredential, credential)
             }
 
@@ -492,9 +510,10 @@ extension WebPaneController {
     /// it is how a dialog becomes a phishing surface.
     private func ask(_ prompt: AskPrompt,
                      from frame: WKFrameInfo?,
+                     originOverride: String? = nil,
                      answer: @escaping (AskOutcome) -> Void) {
         let reply = OneShotReply<AskOutcome>(fallback: .cancelled, reply: answer)
-        ask(prompt, from: frame, reply: reply) { $0 }
+        ask(prompt, from: frame, originOverride: originOverride, reply: reply) { $0 }
     }
 
     /// The general form: an ask whose reply is some other type, mapped from the
@@ -529,6 +548,30 @@ extension WebPaneController {
         case .capture(let what): return "capture(\(what))"
         case .httpAuth(_, let isProxy): return isProxy ? "proxy-auth" : "http-auth"
         case .clientCertificate(let names): return "client-cert(\(names.count) available)"
+        case .savePassword: return "save-password"
+        }
+    }
+
+    // MARK: - our own ask
+
+    /// ⇧⌘L's sheet: a user name and a password for the site in the address bar.
+    ///
+    /// It goes through the same queue as a page's questions — one sheet at a
+    /// time in a pane, drained when the pane goes away — because it is drawn in
+    /// the same place and has the same abandonment problem. It does not go
+    /// through the same *origin*: `originOverride` is `WKWebView.url`'s origin
+    /// as `PasswordOrigin` computed it, so the line above the fields is the
+    /// site the credential will actually be filed under and not a frame's claim
+    /// about itself.
+    ///
+    /// `then` runs only on a real answer. Cancel, Esc, ✕ and a pane torn down
+    /// under an open sheet all do nothing at all, which for a save is the
+    /// correct nothing.
+    func askToSavePassword(origin: PasswordOrigin, then: @escaping (String, String) -> Void) {
+        ask(.savePassword, from: nil, originOverride: origin.label) { outcome in
+            guard case .credential(let user, let password, _) = outcome, !password.isEmpty
+            else { return }
+            then(user, password)
         }
     }
 

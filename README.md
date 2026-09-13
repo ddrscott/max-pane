@@ -473,6 +473,148 @@ of this app that is deliberately platform-agnostic. The wizard prints
 `bookmarks — not readable from this browser` on that row rather than a `0`,
 because a zero would say Safari has none.
 
+### Passwords
+
+**Max Pane has no password store.** Every credential it can reach lives in the
+macOS Keychain as a `kSecClassInternetPassword` item — the same class and the
+same space Safari uses, with no service attribute of ours fencing them off.
+Nothing goes in the ledger, the config file, a plist, a temporary file or a log
+line.
+
+Sharing Safari's space was a decision with a real alternative, and it won on
+three counts. A password saved in Safari is one you can use here with no import
+at all. Deleting one has an obvious home — System Settings → Passwords, which
+lists what Max Pane wrote next to everything else, with the same delete button —
+so "forget this password" is not a feature this app had to invent. And macOS
+keeps the access control: an item Safari wrote is ACL'd to Safari, so the first
+time Max Pane reads one, the system asks. That panel is the point.
+
+The cost, stated plainly: **the Keychain identifies an app by its code
+signature, so the panel comes back whenever that changes.** On this Mac it
+mostly does not — `build-app.sh` finds a Developer ID and signs with it, which
+is stable across rebuilds — but a build on a machine with no signing identity
+falls back to ad-hoc (`MAXPANE_SIGN_IDENTITY=-` forces it), and an ad-hoc
+signature is a different application to the Keychain every time it is made.
+
+#### What this is not
+
+It is not Safari's autofill, and the difference is the whole design rather than
+a missing feature.
+
+`WKWebView` has no password autofill and no public API that fills a form the way
+Safari does — Password AutoFill with associated domains is for native app
+fields, not for a browser rendering arbitrary sites. So the only mechanism is
+injecting into the page, and a credential injected into a page's JavaScript
+context is a credential handed to every script the page chose to load. That is
+true of Safari's autofill too. What can be controlled is *when* it happens, so:
+
+- **Nothing is ever filled automatically.** Not on load, not on navigation, not
+  on a timer, not at a page's request. There is no script injected at document
+  start and no message handler a page can call. ⌥⌘L fills, or the `•••` in the
+  chrome bar does — both of which mean a person is looking at the form.
+- **The site is WebKit's answer, not the page's.** The match is against
+  `WKWebView.url`, the load WebKit committed, and it is exact in scheme, host
+  and port. `https://example.com` and `http://example.com` are different sites;
+  so are `example.com` and `login.example.com`. A saved credential is never
+  filled into a page that merely says it is your bank.
+- **A cross-origin frame gets nothing, and not because we check.** The fill
+  walks into a subframe only through `contentDocument`, which the same-origin
+  policy makes `null` for a frame from another site — WebKit's refusal, inside
+  WebKit, before any of our logic runs. Same-origin frames are filled, because
+  they provably *are* the page. When the sign-in box is in a frame we cannot see
+  into, the bar says so instead of pretending there was no form.
+
+  Measured against real WebKit rather than assumed, because the first version
+  was wrong: a sign-in form served from a second port on localhost — a genuinely
+  different origin — answers `opaque-frame` and nothing is written, and so does
+  a `sandbox="allow-scripts"` frame. But a `srcdoc` or `about:blank` frame
+  *inherits* its parent's origin and is fully scriptable while still reporting
+  `location.origin === "null"`, so the strict comparison refused the one kind of
+  frame that is unambiguously the page itself. Reachability through
+  `contentDocument` is the proof, and those are now accepted; the top document
+  is still compared exactly, with no inheritance allowed.
+- **The page is re-checked after the Keychain answers.** The macOS panel can sit
+  there for a minute and a page can navigate underneath it, so the origin is
+  read again on the way back and a page that changed gets nothing.
+- **Two password boxes means no fill.** That is a sign-up or a change-password
+  form, and guessing which box the old password goes in is how a manager types a
+  password into a field the site is about to display.
+- **The password is an argument, never source.** `callAsyncJavaScript` binds it
+  as a value, so there is no escaping to get wrong and no script string that
+  could carry it into a log.
+
+The fill runs in an isolated content world, which is worth one sentence: the DOM
+is shared, so filling works, but the JavaScript globals are not — a page that has
+replaced `HTMLInputElement.prototype`'s `value` setter has replaced its own copy
+and not ours, so a plain assignment from here *is* the native setter. Checked
+against a page that does exactly that: the write lands and the page's own
+accessor never sees it. On an ordinary form the fill also dispatches bubbling
+`input` and `change`, which is what a React-style controlled input needs to keep
+the value rather than snap back on its next render.
+
+#### Saving one
+
+⇧⌘L, or `Save a Password for This Site…` in the `•••` menu, opens a sheet in the
+pane — and that is the *only* way a password typed into a web page reaches the
+Keychain. **Max Pane does not watch what you type into password fields.** A
+script that could offer to save what you just typed is a script that reads what
+you just typed, on every site, forever; the convenience it buys is not worth
+having written it. So there is no save prompt on submit, and saving is a
+deliberate act.
+
+The other two doors are the HTTP sign-in sheet, which now carries a *save this
+password in the macOS Keychain* checkbox — unticked by default, and with it
+unticked nothing reaches the disk and the credential lives in memory until the
+app quits, exactly as it did before — and the import below.
+
+The `•••` in the chrome bar appears only when the site in the address bar has a
+password saved for it. One saved account fills on ⌥⌘L; several open a menu,
+because a key that picked one of your two logins for you would be wrong half the
+time and silent about it.
+
+#### Importing from another browser
+
+⌃⌥⌘Y. Chromium only — Vivaldi, Chrome, Brave, Edge, and the rest of the family.
+
+**Safari needs no import**: its passwords are already Keychain items, so reading
+the Keychain *is* the import and there is nothing to run. **Firefox is not
+read** in this version; its `logins.json` is encrypted through NSS, which is a
+different mechanism again.
+
+Chromium keeps each password AES-encrypted in `Login Data` under a single key in
+the login keychain called `<Browser> Safe Storage`. So the import is: copy that
+file — plus its `-journal`, `-wal` and `-shm`, opened read-write so a hot
+journal rolls back, because a running Chromium holds `locking_mode = EXCLUSIVE`
+and `sqlite3 .backup` cannot read it at all — read the rows, delete the copy,
+then ask macOS for the key and open each row.
+
+Two things about that are deliberate:
+
+- **`laned-core` never sees a password.** It has no Keychain, so it cannot have
+  the key; it hands back ciphertext and the app process does the rest. A
+  plaintext password exists for the length of one loop iteration and goes
+  nowhere but the Keychain.
+- **macOS asks the consent question, not us.** The screen before it names the
+  panel that is coming and says Deny stops the import with nothing written,
+  because an unexplained "Max Pane wants to use your confidential information
+  stored in Vivaldi Safe Storage" is a dialog people either deny out of
+  suspicion or accept out of habit.
+
+Rows that are not passwords are dropped before they can become Keychain items: a
+"Never for this site" refusal (35 of the owner's 480), a federated *Sign in with
+Google* entry, an `android://` login synced from a phone. The report is
+counters and never a list — a list of what was imported is a list of the sites
+you have accounts on.
+
+On the encryption itself: on macOS it is AES-128-**CBC** with PKCS#7 and a
+16-space IV, under PBKDF2-HMAC-SHA1(`saltysalt`, 1003 rounds, 16 bytes) — not
+the GCM that Chromium uses on Windows. Measured rather than remembered: all 442
+encrypted rows in the owner's real profile begin `v10` and are block-aligned to
+16 bytes, which GCM's 12-byte nonce and 16-byte tag never are. The distinction
+matters because GCM tells you the key was wrong and CBC hands back plausible
+rubbish, so the check that a decrypted row is valid UTF-8 is what turns a wrong
+key into skipped rows rather than a Keychain full of noise.
+
 ### The session browser, and which pane has the keyboard
 
 Clicking a session in the left-hand browser scrolls to its lane **and gives it
