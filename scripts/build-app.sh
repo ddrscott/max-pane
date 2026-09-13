@@ -47,6 +47,10 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Helpers"
 cp "$BIN" "$APP/Contents/MacOS/MaxPane"
 cp swift/MaxPane/Resources/Info.plist "$APP/Contents/Info.plist"
+# CFBundleIconFile names this without the extension. Dock and Finder read it
+# from the bundle, not from the plist, so a missing file here is a generic
+# icon and no error anywhere.
+cp swift/MaxPane/Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 # laned-core is linked statically, so nothing to copy — but the dylib would land
 # in Frameworks/ with an @rpath fixup if that ever changes.
@@ -56,13 +60,31 @@ cargo build --release -p maxpane-open
 cp "target/release/maxpane-open" "$APP/Contents/Helpers/maxpane-open"
 cp "target/release/maxpane" "$APP/Contents/Helpers/maxpane"
 
+# Sign with the Developer ID when this machine has one, ad-hoc otherwise. The
+# difference matters the moment the bundle leaves the folder it was built in:
+# an ad-hoc signature is valid only on the machine that made it, so a copy in
+# /Applications keeps working while `spctl` refuses to vouch for it.
+#
+# MAXPANE_SIGN_IDENTITY overrides; MAXPANE_SIGN_IDENTITY=- forces ad-hoc.
+IDENTITY="${MAXPANE_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null \
+  | awk -F'"' '/Developer ID Application/ {print $2; exit}')}"
+IDENTITY="${IDENTITY:--}"
+if [ "$IDENTITY" = "-" ]; then
+  echo "==> signing (ad-hoc — no Developer ID on this machine)"
+else
+  echo "==> signing as $IDENTITY"
+fi
+
 # Signing must come last. Adding a file to the bundle afterwards breaks the seal,
 # and the only symptom is `codesign --verify` saying "a sealed resource is
 # missing or invalid" — which nothing checks unless you ask it to. So we ask.
-echo "==> signing (ad-hoc)"
-codesign --force --sign - --timestamp=none "$APP/Contents/Helpers/maxpane-open" >/dev/null
-codesign --force --sign - --timestamp=none "$APP/Contents/Helpers/maxpane" >/dev/null
-codesign --force --sign - --timestamp=none "$APP" >/dev/null
+#
+# No hardened runtime: it is only required for notarisation, and turning it on
+# without the matching entitlements is how WebKit loses its content processes
+# and Ghostty loses its renderer — both of which fail at runtime, not here.
+codesign --force --sign "$IDENTITY" --timestamp=none "$APP/Contents/Helpers/maxpane-open" >/dev/null
+codesign --force --sign "$IDENTITY" --timestamp=none "$APP/Contents/Helpers/maxpane" >/dev/null
+codesign --force --sign "$IDENTITY" --timestamp=none "$APP" >/dev/null
 codesign --verify --deep --strict "$APP"
 
 echo "built $APP"

@@ -22,6 +22,8 @@
 	<string>NSApplication</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<!-- Web lanes load ordinary sites; WebKit's own TLS handling applies. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
