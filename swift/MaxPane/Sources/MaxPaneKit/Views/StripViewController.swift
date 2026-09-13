@@ -103,6 +103,38 @@ public final class StripViewController: NSViewController {
     private let leadingRail = StripEdgeRail(side: .leading)
     private let trailingRail = StripEdgeRail(side: .trailing)
 
+    // MARK: - docks
+
+    /// The lane view held at each edge — **a sibling of the scroll view, never
+    /// inside it.**
+    ///
+    /// This is the whole of the audio guarantee on this side of the FFI. The
+    /// core promises a docked lane's panes are always `Keep`, never `Evict` and
+    /// never `Unparent`; it cannot promise that `Keep` means *parented, in a
+    /// window and visible*. A dock view living inside the scroll view's document
+    /// view would be recycled by `updateMaterialization` the moment its ordinal
+    /// scrolled out of range, or moved by the next layout pass — every test in
+    /// `docking.rs` would still pass and the music would stop.
+    private var dockViews: [DockSide: LaneView] = [:]
+    /// What the docks are doing to the window right now, resolved once per
+    /// layout. See `DockGeometry`: the ledger's widths are what the user asked
+    /// for, this is what the window can afford, and the two never overwrite
+    /// each other.
+    private var dockLayout = DockGeometry.Layout.none
+    /// A dock's width while its inner edge is being dragged, before the ledger
+    /// has it. Same discipline as `laneOverrides` — draw what the pointer says,
+    /// write once on the drop.
+    private var dockWidthDrag: [DockSide: CGFloat] = [:]
+    /// How far into the window each dock has slid, 0…1. Purely visual; the
+    /// dock's place is always the resolved one, so a resize or another snapshot
+    /// mid-slide re-lays it out without knocking the animation off course.
+    private var dockSlide: [DockSide: CGFloat] = [:]
+    /// One per edge, shown only while that dock floats. Built up front and kept
+    /// — there are two of them and they are cheap, and a view created on a mode
+    /// toggle is a view whose first frame lands after the toggle it is
+    /// explaining.
+    private let dockShadows: [DockSide: DockShadowView] = [.left: DockShadowView(), .right: DockShadowView()]
+
     public init(store: StripStore, config: Config) {
         self.store = store
         self.config = config
@@ -126,20 +158,38 @@ public final class StripViewController: NSViewController {
         scrollView.horizontalScrollElasticity = .allowed
         scrollView.verticalScrollElasticity = .none
         scrollView.drawsBackground = false
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        // Frame-positioned, like everything else in this file. It used to be
+        // two Auto Layout constraints whose constants the docks moved, and that
+        // does not work here: a constant changed from inside a layout pass —
+        // which is where `relayout` runs from — schedules no further pass, and
+        // the guard that skips an unchanged constant then makes the omission
+        // permanent. Measured: the constraints read 578 while the scroll view's
+        // frame stayed `(18, 0, 1564, 976)` through a hundred snapshots, so an
+        // inset dock took its width out of nothing at all.
+        scrollView.translatesAutoresizingMaskIntoConstraints = true
+        scrollView.autoresizingMask = []
         scrollView.contentView.postsBoundsChangedNotifications = true
+        // An overlay dock covers the last `overlayWidth` points of the clip
+        // view, and without a matching content inset the document cannot be
+        // scrolled far enough to bring what is under there back out — the last
+        // lane of the strip would be permanently half-hidden behind the dock,
+        // which is exactly the "content you cannot reach" failure `LanePeek`
+        // refuses to create. AppKit is doing nothing else with these; left to
+        // itself it would fit them to the title bar, which this window does not
+        // have.
+        scrollView.automaticallyAdjustsContentInsets = false
 
         view.addSubview(scrollView)
         // The rails take their width from the strip rather than floating over
         // it. An overlay would sit exactly where the sliver of the next lane
         // is — the one piece of the screen this whole piece exists to keep.
+        //
+        // **The docks nest inside the rails**, and that is a decision, not an
+        // accident: `StripEdges.hidden` counts lanes against the strip's
+        // visible window, and a rail *outside* the docks is the only place a
+        // count of what an overlay is covering can be read. A rail under a dock
+        // would be a number nobody can see about lanes nobody can see.
         let rail = config.stripEdgeRails ? StripEdgeRail.width : 0
-        NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: rail),
-            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -rail),
-        ])
 
         if config.stripEdgeRails {
             for railView in [leadingRail, trailingRail] {
@@ -155,6 +205,13 @@ public final class StripViewController: NSViewController {
                 leadingRail.leadingAnchor.constraint(equalTo: view.leadingAnchor),
                 trailingRail.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             ])
+        }
+
+        for (side, shadow) in dockShadows {
+            shadow.edge = side
+            shadow.isHidden = true
+            shadow.translatesAutoresizingMaskIntoConstraints = true
+            view.addSubview(shadow)
         }
 
         emptyState.translatesAutoresizingMaskIntoConstraints = false
@@ -183,13 +240,31 @@ public final class StripViewController: NSViewController {
         // PRD §8: strip scroll position persists across launches.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.scrollView.contentView.scroll(to: NSPoint(x: self.store.state.scrollX, y: 0))
+            // `scrollX` is the strip's *visible* left edge, not the clip view's
+            // bounds origin: an overlay dock inserts a content inset, and a
+            // strip restored into a different dock arrangement from the one it
+            // was saved in would otherwise come back shifted by the dock's
+            // width.
+            self.scrollView.contentView.scroll(
+                to: NSPoint(x: self.clipOrigin(forVisible: self.store.state.scrollX), y: 0))
             self.scrollView.reflectScrolledClipView(self.scrollView.contentView)
             self.updateMaterialization()
             // Launch is over: from here on, a new pane loads immediately.
             // Anything still deferred stays deferred until it is scrolled to.
             self.isColdLaunch = false
         }
+    }
+
+    /// The docks are frame-positioned against `view.bounds`, which Auto Layout
+    /// only settles here.
+    ///
+    /// `clipViewResized` covers a window resize, but not the first pass after
+    /// launch — the view has no size when `loadView` runs, so a dock restored
+    /// from the ledger would be laid out against a zero-width window and sit
+    /// there until something else moved.
+    public override func viewDidLayout() {
+        super.viewDidLayout()
+        layoutDocks()
     }
 
     /// Make a horizontal scroll move the strip, wherever the pointer happens to
@@ -215,13 +290,19 @@ public final class StripViewController: NSViewController {
             // Only over the strip — the sidebar scrolls itself.
             let inStrip = self.view.convert(event.locationInWindow, from: nil)
             guard self.view.bounds.contains(inStrip) else { return event }
+            // ...and not over a dock. A docked lane does not scroll with the
+            // strip, so a sideways gesture on top of one moving the strip
+            // behind it would be the one thing docking exists to stop.
+            guard !self.isOverADock(event.locationInWindow) else { return event }
 
             let clip = self.scrollView.contentView
             // Trackpads report points; a mouse wheel reports lines.
             let step = event.hasPreciseScrollingDeltas ? event.scrollingDeltaX : event.scrollingDeltaX * 16
-            let maxX = max(0, self.content.frame.width - clip.bounds.width)
-            let next = min(max(0, clip.bounds.origin.x - step), maxX)
-            clip.setBoundsOrigin(NSPoint(x: next, y: clip.bounds.origin.y))
+            let strip = self.viewport
+            let maxX = max(0, self.content.frame.width - strip.width)
+            let next = min(max(0, strip.offset - step), maxX)
+            clip.setBoundsOrigin(
+                NSPoint(x: self.clipOrigin(forVisible: next), y: clip.bounds.origin.y))
             self.scrollView.reflectScrolledClipView(clip)
             return nil
         }
@@ -298,24 +379,45 @@ public final class StripViewController: NSViewController {
     private func apply(_ state: StripState) {
         let previous = lastLanes
         lastLanes = state.lanes
-        let diff = StripDiff.between(previous.map(\.id), state.lanes.map(\.id))
+        let previousStrip = previous.filter { $0.dock == nil }
+        let strip = state.lanes.filter { $0.dock == nil }
+        // **The diff is over the lanes the strip lays out, not over the
+        // snapshot.** A docked lane keeps its ordinal and stays in
+        // `state.lanes`, so a diff taken there would see docking as nothing at
+        // all — the column would simply cease to exist between two frames, with
+        // the lanes to its right teleporting left to cover the hole.
+        //
+        // Diffing the laid-out strip instead makes docking a departure and
+        // undocking an arrival, which is both true and exactly the motion they
+        // want: the column closes where it stood while the dock slides in at
+        // the wall, and the reverse. The one thing that must differ from a real
+        // departure is that the view survives it, which is `beginDockDeparture`.
+        let diff = StripDiff.between(previousStrip.map(\.id), strip.map(\.id))
 
         // What arrived, before anything is laid out: a lane whose column is
         // about to open must never take its full slot first, not even for the
         // one frame between here and its first animation tick.
-        beginArrivals(diff.inserted, in: state)
+        beginArrivals(diff.inserted, in: strip)
 
-        // Lanes that went away. A lane whose column is still closing keeps its
-        // view and its slot; one that is not animating goes now.
+        // Lanes that left the row. A lane whose column is still closing keeps
+        // its view and its slot; one that is not animating goes now.
         for departure in diff.removed {
+            let docked = state.lanes.first { $0.id == departure.id }?.dock != nil
             guard let laneView = laneViews[departure.id] else { continue }
-            guard let lane = previous.first(where: { $0.id == departure.id }),
-                  shouldAnimate(laneAt: departure.index, in: previous)
+            guard let lane = previousStrip.first(where: { $0.id == departure.id }),
+                  shouldAnimate(laneAt: departure.index, in: previousStrip)
             else {
-                retire(laneView, laneId: departure.id)
+                // A lane that went to an edge still exists and is about to be
+                // parented at the wall. Retiring it here would clear its pane
+                // views — the exact unparenting the dock is meant to prevent.
+                if !docked { retire(laneView, laneId: departure.id) }
                 continue
             }
-            beginDeparture(lane, at: departure.index, view: laneView)
+            if docked {
+                beginDockDeparture(lane, at: departure.index)
+            } else {
+                beginDeparture(lane, at: departure.index, view: laneView)
+            }
         }
 
         // After the departures are registered: the last lane on the strip is
@@ -330,15 +432,16 @@ public final class StripViewController: NSViewController {
         // column can only start opening once that has run.
         runPendingArrivals()
         // And only once it has started can the strip hand it a scroll to carry.
-        revealArrival(diff.inserted, in: state)
+        revealArrival(diff.inserted, in: strip)
 
         // Lanes that changed place. Measured in points between the two
         // snapshots rather than in indices, because that is the distance the
         // user's eye has to follow.
-        beginMoves(diff.moved, from: previous, to: state.lanes)
+        beginMoves(diff.moved, from: previousStrip, to: strip)
 
         for lane in state.lanes {
             laneViews[lane.id]?.apply(lane)
+            if let laneView = laneViews[lane.id] { applyHandleBounds(laneView, lane: lane) }
             laneViews[lane.id]?.isFocused = state.focusedPaneId.map { id in
                 lane.panes.contains { $0.id == id }
             } ?? false
@@ -374,6 +477,13 @@ public final class StripViewController: NSViewController {
            let controller = paneControllers[wanted] {
             focusedPaneInView = wanted
             controller.takeFocus()
+            // Focus that arrived from somewhere other than a click — ⌥⌘] going
+            // into a dock and back out, ⌘P, the sidebar — owes the user a look
+            // at where it went. `ensureVisible` moves the strip as little as it
+            // can and not at all for a lane already whole on screen, so this is
+            // free in the common case and is the whole answer in the case the
+            // contract names: leaving a dock has to land somewhere visible.
+            if let laneId = store.lane(containing: wanted)?.id { ensureVisible(laneId) }
         }
 
         reapPaneControllers(state)
@@ -478,37 +588,50 @@ public final class StripViewController: NSViewController {
     /// It also means a normal scroll never waits for a lane to be built: M4
     /// measured 0.00% dropped frames with this slack and a peak of 13 live lane
     /// views out of 150.
-    private func materializationWindow(for state: StripState) -> Range<Int> {
-        let visible = visibleLaneRange(in: state.lanes)
+    /// The lanes worth having chrome for, as indices into `stripLanes`.
+    ///
+    /// Docked lanes are deliberately not in this arithmetic at all. The window
+    /// is about lanes scrolling in and out of view, and a docked lane does
+    /// neither — it is materialised because it is docked and retired when it
+    /// undocks, which is `updateDocks`'s business, not this one's.
+    private func materializationWindow(in lanes: [Lane]) -> Range<Int> {
+        let visible = visibleLaneRange(in: lanes)
         let slack = Int(config.releaseDistance)
         let lower = max(0, visible.lowerBound - slack)
-        let upper = min(state.lanes.count, visible.upperBound + slack)
+        let upper = min(lanes.count, visible.upperBound + slack)
         return lower..<max(lower, upper)
     }
 
     private func updateMaterialization() {
-        // Before the empty-strip guard: closing the last lane is exactly when
-        // the rails must stop claiming there are lanes off the left.
-        updateEdgeRails()
         let state = store.state
-        guard !state.lanes.isEmpty else { return }
-        let window = materializationWindow(for: state)
-        let wanted = Set(state.lanes[window].map(\.id))
+        // Docks first, and before the rails: they decide the strip's visible
+        // window, and both the rails' counts and the materialisation window are
+        // measured against it.
+        updateDocks(state)
+        updateEdgeRails()
 
-        for (id, laneView) in laneViews where !wanted.contains(id) && !isDeparting(id) {
+        let strip = store.stripLanes
+        let window = materializationWindow(in: strip)
+        let wanted = Set(strip[window].map(\.id))
+
+        for (id, laneView) in laneViews
+        where !wanted.contains(id) && !isDeparting(id) && !isDocked(id) {
             // Off the window: recycle the chrome, keep the panes alive. A lane
             // whose column is still closing is not off the window — it is not in
             // the snapshot at all, and recycling it mid-collapse would make it
-            // vanish, which is the cut this exists to remove.
+            // vanish, which is the cut this exists to remove. A docked lane is
+            // not off the window either: it is on screen at the edge, and
+            // recycling it is how the acceptance test fails silently.
             retire(laneView, laneId: id)
         }
-        for lane in state.lanes[window] where laneViews[lane.id] == nil {
+        for lane in strip[window] where laneViews[lane.id] == nil {
             materialize(lane)
         }
 
         // Anything deferred that has come close enough gets built now. This is
         // the other half of lazy launch: §13 defers, and scrolling to a lane is
-        // what undefers it.
+        // what undefers it. A docked lane reports distance 0, so a page docked
+        // before it ever loaded loads here.
         for lane in state.lanes where distanceFromViewport(laneId: lane.id) <= config.rehydrateDistance {
             for pane in lane.panes {
                 (paneControllers[pane.id] as? WebPaneController)?.loadIfDeferred()
@@ -521,6 +644,27 @@ public final class StripViewController: NSViewController {
 
     private func materialize(_ lane: Lane) {
         Log.debug("materialize lane \(lane.id) with \(lane.panes.count) pane(s)")
+        let laneView = makeLaneView(for: lane)
+        laneViews[lane.id] = laneView
+        content.addSubview(laneView)
+
+        // A recycled view arrives holding another lane's panes; a fresh one
+        // holds none. Both are just "the stack does not match the snapshot", so
+        // both go through the same reconcile — never animated, because
+        // materialising is what happens when a lane scrolls *back* into range,
+        // and a lane you scrolled to has not appeared, it was always there.
+        reconcilePanes(of: lane, in: laneView, animated: false)
+    }
+
+    /// Build or recycle a lane's chrome and wire up everything it can ask of
+    /// the strip.
+    ///
+    /// Deliberately does not parent it and does not install its panes: the strip
+    /// and the docks disagree about where a lane view goes and about nothing
+    /// else, and a lane that is docked has to be built by exactly the same code
+    /// as a lane that is not, or "a docked lane is still a lane" stops being
+    /// true one callback at a time.
+    private func makeLaneView(for lane: Lane) -> LaneView {
         let laneView: LaneView
         if let reused = recycled.popLast() {
             reused.apply(lane)
@@ -531,6 +675,19 @@ public final class StripViewController: NSViewController {
         laneView.laneId = lane.id
         laneView.onResize = { [weak self] width, isFinal in
             guard let self else { return }
+            // The same gesture on a different number. A docked lane's inner
+            // edge drags the *dock's* width, which is durable and separate, so
+            // undocking gives the lane back at the width it had in the strip.
+            if let side = self.store.lane(lane.id)?.dock?.side {
+                if isFinal {
+                    self.dockWidthDrag[side] = nil
+                    try? self.store.setDockWidth(lane.id, width)
+                } else {
+                    self.dockWidthDrag[side] = CGFloat(width)
+                    self.relayout()
+                }
+                return
+            }
             if isFinal {
                 self.laneOverrides[lane.id] = nil
                 try? self.store.setLaneWidth(lane.id, width)
@@ -561,7 +718,7 @@ public final class StripViewController: NSViewController {
             try? self.store.setPaneHeights(weights)
             for terminal in terminals { terminal.endLiveResize() }
         }
-        laneView.widthBounds = config.widthRange.lowerBound...(config.laneMaxPt * max(lane.span, 1))
+        applyHandleBounds(laneView, lane: lane)
         laneView.onHeaderDrag = { [weak self] x, isFinal in
             self?.handleLaneDrag(laneId: lane.id, toX: x, isFinal: isFinal)
         }
@@ -569,17 +726,204 @@ public final class StripViewController: NSViewController {
             guard let self, let root = self.store.lane(lane.id)?.projectRoot else { return }
             try? self.store.gather(projectRoot: root)
         }
-
-        laneViews[lane.id] = laneView
+        // The ⋯ menu's docking items. They act on the lane under the pointer
+        // rather than the focused one, which is the whole reason the menu
+        // exists beside the keys — and they go through the same toggle the
+        // keys do, so the two cannot come to disagree about what pressing it
+        // twice means.
+        laneView.onDockLeft = { [weak self] in
+            try? self?.store.toggleDock(lane.id, side: .left)
+        }
+        laneView.onDockRight = { [weak self] in
+            try? self?.store.toggleDock(lane.id, side: .right)
+        }
+        laneView.onToggleDockMode = { [weak self] in
+            try? self?.store.toggleDockMode(lane.id)
+        }
+        // The rest of the menu, which has been greyed out since the header was
+        // written because nothing ever connected it. Adding three live items
+        // beside five dead ones would have made the menu look broken in a way
+        // it did not before, and each of these is one call to a command that
+        // already exists. "Set Project Tag…" is the one left out: it needs a
+        // dialog, and a dialog is a design decision, not a wire.
+        laneView.onTogglePin = { [weak self] in
+            guard let self, let lane = self.store.lane(lane.id) else { return }
+            try? self.store.setKeepLive(lane.id, !lane.keepLive)
+        }
+        laneView.onToggleSpan = { [weak self] in
+            guard let self, let lane = self.store.lane(lane.id) else { return }
+            try? self.store.setLaneSpan(lane.id, lane.span == 1 ? 2 : 1)
+        }
+        laneView.onCloseLane = { [weak self] in
+            try? self?.store.closeLane(lane.id)
+        }
         laneView.applyTelemetry(laneTelemetry)
-        content.addSubview(laneView)
+        return laneView
+    }
 
-        // A recycled view arrives holding another lane's panes; a fresh one
-        // holds none. Both are just "the stack does not match the snapshot", so
-        // both go through the same reconcile — never animated, because
-        // materialising is what happens when a lane scrolls *back* into range,
-        // and a lane you scrolled to has not appeared, it was always there.
-        reconcilePanes(of: lane, in: laneView, animated: false)
+    /// What the width handle is allowed to drag this lane to.
+    ///
+    /// A dock is not a reading column: `laneMinPt`'s 420 is 80 monospace
+    /// columns plus chrome (spike M2), which is the wrong floor for a music
+    /// player parked at the edge. The dock bounds are the core's, mirrored in
+    /// `DockGeometry`.
+    private func applyHandleBounds(_ laneView: LaneView, lane: Lane) {
+        laneView.widthBounds = lane.dock == nil
+            ? config.widthRange.lowerBound...(config.laneMaxPt * max(lane.span, 1))
+            : UInt32(DockGeometry.minPt)...UInt32(DockGeometry.maxPt)
+    }
+
+    // MARK: - docks
+
+    private func isDocked(_ laneId: String) -> Bool {
+        dockViews.contains { $0.value.laneId == laneId }
+    }
+
+    /// Whether a point in window coordinates is over a dock.
+    private func isOverADock(_ windowPoint: NSPoint) -> Bool {
+        dockViews.values.contains { $0.bounds.contains($0.convert(windowPoint, from: nil)) }
+    }
+
+    /// Give each edge the lane the snapshot says holds it.
+    ///
+    /// A lane view moves between `content` and `view` rather than being rebuilt
+    /// at either end. `addSubview` on a view that already has a superview *in
+    /// the same window* re-parents it without the window ever going nil, so the
+    /// `WKWebView` inside never sees `IsInWindow` clear — which is the
+    /// difference between docking a music page and reloading it.
+    private func updateDocks(_ state: StripState) {
+        for side in [DockSide.left, .right] {
+            let lane = state.lanes.first { $0.dock?.side == side }
+            guard let lane else {
+                releaseDock(side)
+                continue
+            }
+            if dockViews[side]?.laneId != lane.id {
+                // A different lane took this edge — the incumbent has been
+                // displaced back into the strip and wants its column.
+                releaseDock(side)
+                let laneView = laneViews[lane.id] ?? makeLaneView(for: lane)
+                let isNew = laneViews[lane.id] == nil
+                laneViews[lane.id] = laneView
+                dockViews[side] = laneView
+                // Above the scroll view. An inset dock does not overlap it, but
+                // an overlay must, and one rule is easier to keep than two.
+                view.addSubview(laneView, positioned: .above, relativeTo: nil)
+                if isNew { reconcilePanes(of: lane, in: laneView, animated: false) }
+                beginDockEntrance(side, laneId: lane.id)
+            }
+            applyHandleBounds(dockViews[side]!, lane: lane)
+        }
+    }
+
+    /// Hand an edge back: the view returns to the strip's document, where the
+    /// next materialisation pass will keep it or recycle it like any other.
+    private func releaseDock(_ side: DockSide) {
+        guard let laneView = dockViews.removeValue(forKey: side) else { return }
+        transitions.removeValue(forKey: laneView.laneId)?.cancel()
+        dockSlide[side] = nil
+        dockWidthDrag[side] = nil
+        laneView.floatingEdge = nil
+        laneView.drawnDockMode = nil
+        laneView.resizeEdge = .trailing
+        laneView.alphaValue = 1
+        content.addSubview(laneView)
+    }
+
+    /// The dock slides in from the edge it is going to hold.
+    ///
+    /// The lane's column is collapsing in the strip at the same time (see
+    /// `beginDockDeparture`), so the two halves of the move are on screen
+    /// together: something left the row, something arrived at the wall. A cut
+    /// here is the *"user loses spatial recognition"* case in its most literal
+    /// form — a lane that was in front of you is suddenly somewhere else.
+    private func beginDockEntrance(_ side: DockSide, laneId: String) {
+        guard !isColdLaunch else { return }
+        dockSlide[side] = 0
+        layoutDocks()
+        startTransition(lane: laneId, duration: Motion.lane) { [weak self] t in
+            guard let self else { return }
+            self.dockSlide[side] = Motion.easeOut(t)
+            self.layoutDocks()
+        } completion: { [weak self] in
+            self?.dockSlide[side] = nil
+            self?.layoutDocks()
+        }
+    }
+
+    /// Resolve what the docks take and put them there.
+    ///
+    /// Runs from `relayout`, so every caller that lays the strip out — a
+    /// snapshot, a scroll, a resize, an animation frame — gets the docks with
+    /// it and there is no second clock writing the same geometry.
+    private func layoutDocks() {
+        let rail = config.stripEdgeRails ? StripEdgeRail.width : 0
+        let available = max(0, view.bounds.width - rail * 2)
+
+        func requested(_ side: DockSide) -> Dock? {
+            guard var dock = store.dockedLane(side)?.dock else { return nil }
+            if let dragged = dockWidthDrag[side] { dock.widthPt = UInt32(max(0, dragged)) }
+            return dock
+        }
+
+        dockLayout = DockGeometry.resolve(
+            left: requested(.left), right: requested(.right),
+            viewport: available, laneMinPt: CGFloat(config.laneMinPt))
+
+        // Inset takes its room out of the clip view itself, so every existing
+        // reader of `contentView.bounds` is correct with no edit — contract
+        // position 1, followed. Overlay takes nothing and gets a content inset
+        // instead, so the strip can still be scrolled out from under it.
+        let strip = NSRect(
+            x: rail + dockLayout.insetLeft, y: 0,
+            width: max(0, view.bounds.width - rail * 2 - dockLayout.insetLeft - dockLayout.insetRight),
+            height: view.bounds.height)
+        if scrollView.frame != strip { scrollView.frame = strip }
+        let insets = NSEdgeInsets(
+            top: 0, left: dockLayout.overlayLeft, bottom: 0, right: dockLayout.overlayRight)
+        if scrollView.contentInsets.left != insets.left
+            || scrollView.contentInsets.right != insets.right {
+            scrollView.contentInsets = insets
+        }
+
+        for side in [DockSide.left, .right] {
+            guard let laneView = dockViews[side] else {
+                dockShadows[side]?.isHidden = true
+                continue
+            }
+            guard let placement = side == .left ? dockLayout.left : dockLayout.right else { continue }
+            laneView.floatingEdge = placement.mode == .overlay ? side : nil
+            laneView.drawnDockMode = placement.mode
+            // The inner edge is the grabbable one at both ends: a dock's outer
+            // edge is against the wall and has nothing to give.
+            laneView.resizeEdge = side == .left ? .trailing : .leading
+
+            let slide = dockSlide[side] ?? 1
+            let offScreen = (1 - slide) * placement.width
+            let x = side == .left
+                ? rail - offScreen
+                : view.bounds.width - rail - placement.width + offScreen
+            let frame = NSRect(x: x, y: 0, width: placement.width, height: view.bounds.height)
+            if laneView.frame != frame { laneView.frame = frame }
+            if laneView.alphaValue != slide { laneView.alphaValue = slide }
+
+            // The cast shadow travels with the dock's inner edge, so a dock
+            // sliding in at launch does not leave a gradient sitting on the
+            // strip ahead of it.
+            guard let shadow = dockShadows[side] else { continue }
+            shadow.isHidden = placement.mode != .overlay
+            guard !shadow.isHidden else { continue }
+            let shadowFrame = NSRect(
+                x: side == .left ? frame.maxX : frame.minX - DockShadowView.width,
+                y: 0, width: DockShadowView.width, height: view.bounds.height)
+            if shadow.frame != shadowFrame { shadow.frame = shadowFrame }
+            if shadow.alphaValue != slide { shadow.alphaValue = slide }
+            // Z-order needs no maintenance here: the shadows were added after
+            // the scroll view they fall on and before any dock, and a dock is
+            // parented with `.above` whenever it takes an edge. Re-ordering
+            // subviews from a layout pass that runs on every animation frame
+            // would be sixty tree mutations a second to say the same thing.
+        }
     }
 
     // MARK: - a session that ended
@@ -627,15 +971,20 @@ public final class StripViewController: NSViewController {
 
     /// Keep the keyboard somewhere real when the focused pane is the one going.
     private func focusNeighbourIfNeeded(closing paneId: String) {
+        // `stripLanes`, because "the lane beside it" is a fact about the row.
+        // A docked lane is beside nothing — it is at the wall — and handing the
+        // keyboard to it when a terminal three columns away exits would move
+        // focus across the window for no reason the user can see.
+        let lanes = store.stripLanes
         guard store.state.focusedPaneId == paneId,
               let lane = store.lane(containing: paneId),
-              let index = store.state.lanes.firstIndex(where: { $0.id == lane.id })
+              let index = lanes.firstIndex(where: { $0.id == lane.id })
         else { return }
         // The lane to the right inherits the column the closing one is leaving,
         // so it is the one the eye is already on.
         let neighbours = [index + 1, index - 1].compactMap { i -> Lane? in
-            guard i >= 0, i < store.state.lanes.count else { return nil }
-            let candidate = store.state.lanes[i]
+            guard i >= 0, i < lanes.count else { return nil }
+            let candidate = lanes[i]
             return candidate.id == lane.id ? nil : candidate
         }
         guard let next = neighbours.first, let pane = next.panes.first else { return }
@@ -651,8 +1000,8 @@ public final class StripViewController: NSViewController {
     /// finishes, or the lanes to its right teleport left the instant the write
     /// commits — which is the exact thing the collapse exists to prevent.
     private var laneLayout: [Lane] {
-        guard !departingLanes.isEmpty else { return store.state.lanes }
-        var lanes = store.state.lanes
+        guard !departingLanes.isEmpty else { return store.stripLanes }
+        var lanes = store.stripLanes
         for ghost in departingLanes.sorted(by: { $0.index < $1.index }) {
             lanes.insert(ghost.lane, at: min(ghost.index, lanes.count))
         }
@@ -666,9 +1015,20 @@ public final class StripViewController: NSViewController {
     /// Position every lane. The one place that lays the strip out, so every
     /// caller gets the ghosts and the in-flight offsets for free.
     private func relayout(lanes: [Lane]? = nil) {
+        // Before the strip: an inset dock changes how wide the clip view is,
+        // and a layout pass that ran first would be measured against the old
+        // one for exactly one frame — which is the frame the eye catches.
+        layoutDocks()
         content.layOut(
             lanes: lanes ?? laneLayout,
-            viewFor: { [weak self] lane in self?.laneViews[lane.id] },
+            // A docked lane's view answers to `layoutDocks`, not to the row. It
+            // still appears in `laneLayout` while its column is collapsing —
+            // that ghost slot is what stops the strip teleporting shut — but
+            // the view it belongs to is already at the wall.
+            viewFor: { [weak self] lane in
+                guard let self, !self.isDocked(lane.id) else { return nil }
+                return self.laneViews[lane.id]
+            },
             overrides: laneOverrides,
             xOffsets: xOffsets)
     }
@@ -698,10 +1058,10 @@ public final class StripViewController: NSViewController {
     /// the timer starts later: the view does not exist until materialization has
     /// run, and a single frame at full width before the animation begins is the
     /// cut this is replacing.
-    private func beginArrivals(_ laneIds: [String], in state: StripState) {
+    private func beginArrivals(_ laneIds: [String], in lanes: [Lane]) {
         for id in laneIds {
-            guard let index = state.lanes.firstIndex(where: { $0.id == id }),
-                  shouldAnimate(laneAt: index, in: state.lanes)
+            guard let index = lanes.firstIndex(where: { $0.id == id }),
+                  shouldAnimate(laneAt: index, in: lanes)
             else { continue }
             laneOverrides[id] = LaneOverride(slot: 0, masked: true)
             pendingArrivals.insert(id)
@@ -749,10 +1109,11 @@ public final class StripViewController: NSViewController {
     /// focus is the thing the mutation already decided: a lane the ledger
     /// focused is a lane the user is meant to be looking at, whichever door it
     /// came in by — ⌘O, the shim, an adopted popup, an imported strip.
-    private func revealArrival(_ inserted: [String], in state: StripState) {
-        guard !isColdLaunch, !inserted.isEmpty, let focused = state.focusedPaneId else { return }
+    private func revealArrival(_ inserted: [String], in lanes: [Lane]) {
+        guard !isColdLaunch, !inserted.isEmpty,
+              let focused = store.state.focusedPaneId else { return }
         guard let laneId = inserted.first(where: { id in
-            state.lanes.first { $0.id == id }?.panes.contains { $0.id == focused } ?? false
+            lanes.first { $0.id == id }?.panes.contains { $0.id == focused } ?? false
         }) else { return }
         // A lane that will be whole on screen once its column has opened needs
         // no scroll at all: the column opening in place is the entire story, and
@@ -760,10 +1121,10 @@ public final class StripViewController: NSViewController {
         // narrate something already in front of you. `minimal` is asked against
         // the ledger's widths, so it answers about the *finished* column rather
         // than the zero-width slot it currently occupies.
-        let clip = scrollView.contentView
+        let window = viewport
         if StripReveal.minimal(
-            from: clip.bounds.origin.x, to: laneId,
-            lanes: state.lanes, viewport: clip.bounds.width) == clip.bounds.origin.x { return }
+            from: window.offset, to: laneId,
+            lanes: lanes, viewport: window.width) == window.offset { return }
         reveal(laneId: laneId, flash: false)
     }
 
@@ -771,8 +1132,9 @@ public final class StripViewController: NSViewController {
     private func stepArrivalScroll(_ laneId: String, eased: CGFloat) {
         guard let scroll = arrivalScroll, scroll.laneId == laneId else { return }
         let clip = scrollView.contentView
+        let visible = scroll.from + (scroll.to - scroll.from) * eased
         clip.setBoundsOrigin(
-            NSPoint(x: scroll.from + (scroll.to - scroll.from) * eased, y: clip.bounds.origin.y))
+            NSPoint(x: clipOrigin(forVisible: visible), y: clip.bounds.origin.y))
         scrollView.reflectScrolledClipView(clip)
     }
 
@@ -783,7 +1145,8 @@ public final class StripViewController: NSViewController {
         // final layout ran a line above this, so the target is reachable now
         // whether or not it was on the frame before.
         let clip = scrollView.contentView
-        clip.setBoundsOrigin(NSPoint(x: scroll.to, y: clip.bounds.origin.y))
+        clip.setBoundsOrigin(
+            NSPoint(x: clipOrigin(forVisible: scroll.to), y: clip.bounds.origin.y))
         scrollView.reflectScrolledClipView(clip)
         updateMaterialization()
         if scroll.flash { laneViews[laneId]?.flash() }
@@ -815,6 +1178,36 @@ public final class StripViewController: NSViewController {
             self.reapPaneControllers(self.store.state)
             self.emptyState.isHidden =
                 !self.store.state.lanes.isEmpty || !self.departingLanes.isEmpty
+            self.relayout()
+            self.updateMaterialization()
+        }
+    }
+
+    /// A lane that left the row for an edge: its column closes where it stood,
+    /// exactly as a departure does, and the strip slides over the gap.
+    ///
+    /// The one difference from `beginDeparture` is the whole point of it — no
+    /// view is touched and nothing is retired. The lane view is already on its
+    /// way to the wall (`updateDocks` re-parents it in the same pass), so this
+    /// only holds the *slot* open long enough to close it. Retiring here would
+    /// call `clearPaneViews`, which unparents the `WKWebView` the dock exists to
+    /// keep parented.
+    private func beginDockDeparture(_ lane: Lane, at index: Int) {
+        departingLanes.append((index, lane))
+        let full = CGFloat(lane.widthPt)
+        laneOverrides[lane.id] = LaneOverride(slot: full, masked: true)
+        // Keyed by a name of its own, because the lane's own key is already
+        // carrying the dock's slide-in and the two run at once — one closing a
+        // column, one arriving at the wall.
+        startTransition(lane: "dock-exit:\(lane.id)", duration: Motion.lane) { [weak self] t in
+            guard let self else { return }
+            self.laneOverrides[lane.id] = LaneOverride(
+                slot: max(0, full * (1 - Motion.easeOut(t))), masked: true)
+            self.relayout()
+        } completion: { [weak self] in
+            guard let self else { return }
+            self.laneOverrides[lane.id] = nil
+            self.departingLanes.removeAll { $0.lane.id == lane.id }
             self.relayout()
             self.updateMaterialization()
         }
@@ -966,9 +1359,19 @@ public final class StripViewController: NSViewController {
             // instantiated. Everything else waits as a placeholder until it is
             // scrolled to — which, at M1's 27–95 MB a pane, is the difference
             // between a 150-lane strip opening and a 150-lane strip thrashing.
+            //
+            // **A docked lane is never deferred.** `distanceFromViewport`
+            // already answers 0 for one, which is the general fix; this says it
+            // a second time at the one call site where getting it wrong is
+            // silent and survives every test. The failure it prevents: a music
+            // lane docked at ordinal 0, a strip restored scrolled to lane 40, a
+            // page that never loads, and an acceptance test that fails on the
+            // first launch after a restart in exactly the case the feature
+            // exists for.
             let controller = WebPaneController(
                 pane: pane, lane: lane, store: store, config: config,
-                deferLoad: isColdLaunch && distanceFromViewport(laneId: lane.id) > config.rehydrateDistance)
+                deferLoad: lane.dock == nil && isColdLaunch
+                    && distanceFromViewport(laneId: lane.id) > config.rehydrateDistance)
             // A popup that opens while its opener is scrolled off the strip is
             // created, focused in the ledger, and never brought on screen —
             // which is fine for a machine-to-machine round trip and useless for
@@ -993,16 +1396,19 @@ public final class StripViewController: NSViewController {
     /// **The system never reorders** (§7.2). This runs only from the user's own
     /// gesture, and it is the only thing besides ⌘⇧←/→ that writes an ordinal.
     private func handleLaneDrag(laneId: String, toX x: CGFloat, isFinal: Bool) {
-        let state = store.state
-        guard let target = laneIndex(atX: x, in: state),
-              let from = state.lanes.firstIndex(where: { $0.id == laneId })
+        // A dock's header is not a handle for reordering: it holds an edge, and
+        // the ordinal it is keeping is the one it will go back to.
+        let lanes = store.stripLanes
+        guard store.lane(laneId)?.dock == nil,
+              let target = laneIndex(atX: x, in: lanes),
+              let from = lanes.firstIndex(where: { $0.id == laneId })
         else { return }
 
         guard isFinal else {
             // Live feedback without a write: slide the dragged lane's view to
             // where it would land.
             dragPreview = (laneId, target)
-            relayout(lanes: reordered(state.lanes, from: from, to: target))
+            relayout(lanes: reordered(lanes, from: from, to: target))
             return
         }
 
@@ -1013,7 +1419,7 @@ public final class StripViewController: NSViewController {
             return
         }
 
-        let neighbour = state.lanes[target]
+        let neighbour = lanes[target]
         do {
             if target > from {
                 try store.moveLane(laneId, rightOf: neighbour.id)
@@ -1036,34 +1442,66 @@ public final class StripViewController: NSViewController {
     }
 
     /// Which lane sits under a point in the strip's coordinate space.
-    private func laneIndex(atX x: CGFloat, in state: StripState) -> Int? {
-        guard !state.lanes.isEmpty else { return nil }
+    private func laneIndex(atX x: CGFloat, in lanes: [Lane]) -> Int? {
+        guard !lanes.isEmpty else { return nil }
         var left: CGFloat = 0
-        for (i, lane) in state.lanes.enumerated() {
+        for (i, lane) in lanes.enumerated() {
             let right = left + CGFloat(lane.widthPt)
             if x < right { return i }
             left = right + Theme.borderWidth
         }
-        return state.lanes.count - 1
+        return lanes.count - 1
     }
 
     // MARK: - geometry
 
-    /// Indices of the lanes at least partly on screen.
+    /// The strip's visible window, in the document's own coordinates.
+    ///
+    /// **The only place a dock is subtracted from anything.** An inset dock is
+    /// already gone from `clip.bounds.width` — the clip view was made genuinely
+    /// narrower — and an overlay is taken off here, because the strip keeps its
+    /// room and loses only the view of it. Everything downstream takes an offset
+    /// and a width: `LaneSnap`, `LanePeek`, `StripEdges`, `StripReveal`, the
+    /// materialisation window and the eviction `Viewport` need to know nothing
+    /// about docks, and cannot be the call site that forgot.
+    private var viewport: (offset: CGFloat, width: CGFloat) {
+        let clip = scrollView.contentView
+        return DockGeometry.visible(
+            clipOffset: clip.bounds.origin.x, clipWidth: clip.bounds.width, layout: dockLayout)
+    }
+
+    /// Where the clip view has to sit for the strip's visible window to start
+    /// at `x`. The inverse of `viewport.offset`, and the only other place the
+    /// overlay inset appears.
+    private func clipOrigin(forVisible x: CGFloat) -> CGFloat { x - dockLayout.overlayLeft }
+
     /// How many lanes `laneId` is from the visible range. 0 when on screen,
     /// `.max` when it is not on the strip at all.
+    ///
+    /// A docked lane is 0 wherever its ordinal sits. It is on screen; "how far
+    /// has it scrolled" is not a question that applies to it, and answering it
+    /// with an index is how a music lane docked at ordinal 0 measures forty
+    /// lanes away while the strip is scrolled to lane 40 — and gets deferred,
+    /// unparented, and finally silenced.
     private func distanceFromViewport(laneId: String) -> UInt32 {
-        let state = store.state
-        guard let index = state.lanes.firstIndex(where: { $0.id == laneId }) else { return .max }
-        let visible = visibleLaneRange(in: state.lanes)
+        guard store.lane(laneId)?.dock == nil else { return 0 }
+        let lanes = store.stripLanes
+        guard let index = lanes.firstIndex(where: { $0.id == laneId }) else { return .max }
+        let visible = visibleLaneRange(in: lanes)
         if index < visible.lowerBound { return UInt32(visible.lowerBound - index) }
         if index >= visible.upperBound { return UInt32(index - visible.upperBound + 1) }
         return 0
     }
 
+    /// Indices of the lanes at least partly on screen.
+    ///
+    /// `lanes` is always `stripLanes`. Every index this returns is an index into
+    /// the array the strip actually laid out, which is the invariant the whole
+    /// eviction guarantee rests on — see `StripStore.stripLanes`.
     private func visibleLaneRange(in lanes: [Lane]) -> Range<Int> {
-        let origin = scrollView.contentView.bounds.origin.x
-        let width = scrollView.contentView.bounds.width
+        let window = viewport
+        let origin = window.offset
+        let width = window.width
         guard width > 0 else { return 0..<min(lanes.count, 1) }
 
         var x: CGFloat = 0
@@ -1114,9 +1552,14 @@ public final class StripViewController: NSViewController {
     /// is nothing beside the layout pass that provoked it.
     private func updateEdgeRails() {
         guard config.stripEdgeRails else { return }
-        let clip = scrollView.contentView
+        // The strip's *visible* window, which is why an overlay dock counts as
+        // an edge here without `StripEdges` knowing docks exist. A lane hidden
+        // under an overlay is hidden — saying otherwise is precisely the
+        // "I can't tell if there are more panes to the right or left" failure
+        // the rails were built for, re-introduced by the newer feature.
+        let window = viewport
         let hidden = StripEdges.hidden(
-            lanes: laneLayout, offset: clip.bounds.origin.x, viewport: clip.bounds.width)
+            lanes: laneLayout, offset: window.offset, viewport: window.width)
         leadingRail.update(hidden: hidden.left)
         trailingRail.update(hidden: hidden.right)
     }
@@ -1125,7 +1568,7 @@ public final class StripViewController: NSViewController {
         updateMaterialization()
         // The ledger write is debounced; the strip is not.
         scrollDebounce?.cancel()
-        let x = Double(scrollView.contentView.bounds.origin.x)
+        let x = Double(viewport.offset)
         let work = DispatchWorkItem { [weak self] in self?.store.setScrollX(x) }
         scrollDebounce = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
@@ -1157,26 +1600,27 @@ public final class StripViewController: NSViewController {
     private func snapToNearestLane() {
         guard config.snapToLanes, !isSnapping else { return }
         let clip = scrollView.contentView
-        let viewport = clip.bounds.width
+        let window = viewport
         // Nothing to snap to when the whole strip fits.
-        guard viewport > 0, content.frame.width > viewport else { return }
+        guard window.width > 0, content.frame.width > window.width else { return }
 
         guard let target = LaneSnap.offset(
-            forCentre: clip.bounds.origin.x + viewport / 2,
-            viewport: viewport,
-            lanes: store.state.lanes,
+            forCentre: window.offset + window.width / 2,
+            viewport: window.width,
+            lanes: store.stripLanes,
             minPeek: CGFloat(config.lanePeekPt))
         else { return }
 
         // Within a couple of points is centred; moving anyway would look like a
         // twitch at the end of every scroll.
-        guard abs(target - clip.bounds.origin.x) > 2 else { return }
+        guard abs(target - window.offset) > 2 else { return }
 
         isSnapping = true
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = config.snapSeconds
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            clip.animator().setBoundsOrigin(NSPoint(x: target, y: clip.bounds.origin.y))
+            clip.animator().setBoundsOrigin(
+                NSPoint(x: self.clipOrigin(forVisible: target), y: clip.bounds.origin.y))
         } completionHandler: { [weak self] in
             guard let self else { return }
             self.isSnapping = false
@@ -1195,10 +1639,17 @@ public final class StripViewController: NSViewController {
     /// `content.frame.width`: see that type for why a view's width is the wrong
     /// ruler at exactly the moment this matters most.
     public func reveal(laneId: String, flash: Bool) {
+        // A docked lane is already on screen and cannot be scrolled to. ⌘P and
+        // the sidebar still land on it, so the flash is the whole of the answer
+        // — and without this they would silently do nothing at all.
+        if store.lane(laneId)?.dock != nil {
+            if flash { laneViews[laneId]?.flash() }
+            return
+        }
         guard let target = StripReveal.centred(
             on: laneId,
-            lanes: store.state.lanes,
-            viewport: scrollView.contentView.bounds.width,
+            lanes: store.stripLanes,
+            viewport: viewport.width,
             // The same peek the snap takes. ⌘P lands you somewhere you have
             // never been, which is the moment "is there more that way" matters
             // most, and a reveal that centres perfectly onto a clean edge
@@ -1221,7 +1672,10 @@ public final class StripViewController: NSViewController {
     /// a lane opening and the strip moving to show it.
     private func scroll(to target: CGFloat, revealing laneId: String, flash: Bool) {
         let clip = scrollView.contentView
-        let from = clip.bounds.origin.x
+        // `target` came from `StripReveal`, which works in the strip's visible
+        // window. Everything below is in that space and converts once, at the
+        // line that actually moves the clip view.
+        let from = viewport.offset
         // Reaching past the end of the column's own animation. Set only when the
         // strip is actually going somewhere: a reveal that turns out to be a
         // no-op has decided nothing, and muting the snap for half a second on
@@ -1242,7 +1696,8 @@ public final class StripViewController: NSViewController {
         }
         holdOffTheSnap()
         guard !Motion.isReduced, view.window != nil else {
-            clip.setBoundsOrigin(NSPoint(x: target, y: clip.bounds.origin.y))
+            clip.setBoundsOrigin(
+                NSPoint(x: clipOrigin(forVisible: target), y: clip.bounds.origin.y))
             scrollView.reflectScrolledClipView(clip)
             updateMaterialization()
             if flash { laneViews[laneId]?.flash() }
@@ -1251,7 +1706,8 @@ public final class StripViewController: NSViewController {
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = Motion.lane
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            clip.animator().setBoundsOrigin(NSPoint(x: target, y: clip.bounds.origin.y))
+            clip.animator().setBoundsOrigin(
+                NSPoint(x: self.clipOrigin(forVisible: target), y: clip.bounds.origin.y))
         } completionHandler: { [weak self] in
             guard let self else { return }
             self.scrollView.reflectScrolledClipView(self.scrollView.contentView)
@@ -1266,22 +1722,36 @@ public final class StripViewController: NSViewController {
 
     public func moveFocus(_ direction: FocusDirection) {
         let state = store.state
-        guard let currentPane = state.focusedPaneId,
-              let laneIndex = state.lanes.firstIndex(where: { $0.panes.contains { $0.id == currentPane } })
-        else {
-            if let first = state.lanes.first?.panes.first { focus(first.id) }
+        // ⌘[ / ⌘] walk the strip only. The owner asked for that directly, and
+        // it is right for a reason worth keeping: those keys scroll the strip,
+        // and a docked lane does not scroll — landing on one would be a
+        // keypress with no motion and a focus ring that jumped across the
+        // window and back. ⌥⌘[ / ⌥⌘] are the way into a dock and back out.
+        let lanes = store.stripLanes
+        guard let currentPane = state.focusedPaneId else {
+            if let first = lanes.first?.panes.first { focus(first.id) }
             return
         }
-        let lane = state.lanes[laneIndex]
+        if let dock = store.lane(containing: currentPane), dock.dock != nil {
+            moveFocusInsideDock(dock, from: currentPane, direction: direction, strip: lanes)
+            return
+        }
+        guard let laneIndex = lanes.firstIndex(
+            where: { $0.panes.contains { $0.id == currentPane } })
+        else {
+            if let first = lanes.first?.panes.first { focus(first.id) }
+            return
+        }
+        let lane = lanes[laneIndex]
         let paneIndex = lane.panes.firstIndex { $0.id == currentPane } ?? 0
 
         switch direction {
         case .left where laneIndex > 0:
             // Land on the pane at the same height, or the nearest one.
-            let target = state.lanes[laneIndex - 1]
+            let target = lanes[laneIndex - 1]
             focus(target.panes[min(paneIndex, target.panes.count - 1)].id)
-        case .right where laneIndex + 1 < state.lanes.count:
-            let target = state.lanes[laneIndex + 1]
+        case .right where laneIndex + 1 < lanes.count:
+            let target = lanes[laneIndex + 1]
             focus(target.panes[min(paneIndex, target.panes.count - 1)].id)
         case .up where paneIndex > 0:
             focus(lane.panes[paneIndex - 1].id)
@@ -1289,6 +1759,38 @@ public final class StripViewController: NSViewController {
             focus(lane.panes[paneIndex + 1].id)
         default:
             break
+        }
+    }
+
+    /// The arrow keys with focus inside a dock.
+    ///
+    /// **⇧⌘[ / ⇧⌘] work unchanged**, because a docked lane is still a lane: it
+    /// can hold a stack, ⇧⌘D splits it, and the keys that walk that stack must
+    /// keep working at the wall or docking would quietly take a feature away
+    /// from whatever lane it was used on. The end of the stack is the end of
+    /// it — no wrapping out into the strip, which would be a keypress that
+    /// sometimes moves one pane and sometimes jumps across the window.
+    ///
+    /// ⌘[ / ⌘] go back to the strip instead of doing nothing, and land on the
+    /// lane focused most recently — the one you were last working in, and
+    /// therefore almost certainly still on screen. Never the first lane of the
+    /// strip: on a strip of forty that is a jump to somewhere the user has not
+    /// been in an hour. ⌥⌘[ / ⌥⌘] remain the deliberate way out.
+    private func moveFocusInsideDock(
+        _ lane: Lane, from paneId: String, direction: FocusDirection, strip: [Lane]
+    ) {
+        let index = lane.panes.firstIndex { $0.id == paneId } ?? 0
+        switch direction {
+        case .up where index > 0:
+            focus(lane.panes[index - 1].id)
+        case .down where index + 1 < lane.panes.count:
+            focus(lane.panes[index + 1].id)
+        case .up, .down:
+            break
+        case .left, .right:
+            guard let back = strip.max(by: { $0.lastFocusAt < $1.lastFocusAt })?.panes.first
+            else { return }
+            focus(back.id)
         }
     }
 
@@ -1308,10 +1810,14 @@ public final class StripViewController: NSViewController {
     /// that another one exists is worse than the ambiguity it fixes. The snap
     /// that follows the next scroll picks it up.
     private func ensureVisible(_ laneId: String) {
-        let clip = scrollView.contentView
+        // Focusing a dock moves nothing: it is already at the wall, and
+        // scrolling the strip to "reach" it would move every lane the user was
+        // reading for no reason they could see.
+        guard store.lane(laneId)?.dock == nil else { return }
+        let window = viewport
         guard let target = StripReveal.minimal(
-            from: clip.bounds.origin.x, to: laneId,
-            lanes: store.state.lanes, viewport: clip.bounds.width)
+            from: window.offset, to: laneId,
+            lanes: store.stripLanes, viewport: window.width)
         else { return }
         scroll(to: target, revealing: laneId, flash: false)
     }
@@ -1324,8 +1830,13 @@ public final class StripViewController: NSViewController {
     /// facts only the shell knows — what WebKit actually weighs, and where the
     /// viewport is — are measured here and handed over.
     private func applyEvictionPlan(for state: StripState) {
-        let visible = visibleLaneRange(in: state.lanes)
         guard !state.lanes.isEmpty else { return }
+        // Indices into the array the strip actually laid out. `eviction::plan`
+        // removes docked lanes the same way before it indexes, so the two agree
+        // by construction — send indices into `state.lanes` instead and the
+        // core plans against a strip shifted by one per docked lane, and evicts
+        // the pane the user is looking at.
+        let visible = visibleLaneRange(in: store.stripLanes)
         let viewport = Viewport(
             firstVisible: UInt32(visible.lowerBound),
             lastVisible: UInt32(max(visible.lowerBound, visible.upperBound - 1)))

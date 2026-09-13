@@ -30,6 +30,23 @@ enum Theme {
 
     static let dimText = NSColor.secondaryLabelColor
 
+    /// The rule down an overlay dock's inner edge.
+    ///
+    /// Stronger than `laneBorder` on purpose: a lane boundary separates two
+    /// things at the same depth, and this one separates a thing in front from a
+    /// thing behind. Same hue, more of it — the difference is legible without
+    /// spending a second colour, and Signal Orange stays on focus and BLOCKED
+    /// where a dock that is on screen all day would have drowned it.
+    static let dockEdge = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 0.40, alpha: 1)
+            : NSColor(white: 0.62, alpha: 1)
+    }
+
+    /// 2pt: one point reads as a lane border, which is the one thing this must
+    /// not be mistaken for.
+    static let dockEdgeWidth: CGFloat = 2
+
     /// 1pt, square. Lanes are columns, not cards.
     static let borderWidth: CGFloat = 1
     static let laneHeaderHeight: CGFloat = 28

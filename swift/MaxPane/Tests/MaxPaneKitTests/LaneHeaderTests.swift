@@ -80,13 +80,51 @@ private struct StubLane: LaneHeaderSource {
     var title: String?
     var host: String?
     var projectRoot: String?
-    var pinned = false
+    var keepLive = false
+    var dock: Dock?
     var hasLivePane = false
     var hasRelaySession = false
 }
 
 @Suite("lane header model")
 struct LaneHeaderModelTests {
+    /// The header's one spare column carries both structural facts about a
+    /// lane. They have to stay legible together, and the dock's mode has to be
+    /// readable without a colour — Signal Orange is spent elsewhere.
+    @Test("the markers say which edge, at whose expense, and whether it is kept")
+    func markerGlyphs() {
+        func marker(_ dock: Dock?, keepLive: Bool = false) -> String {
+            LaneHeaderModel(
+                lane: StubLane(keepLive: keepLive, dock: dock), telemetry: nil).markerText
+        }
+        #expect(marker(nil) == "")
+        #expect(marker(nil, keepLive: true) == "▪")
+        // Filled takes room out of the strip; hollow floats over it.
+        #expect(marker(Dock(side: .left, mode: .inset, widthPt: 320)) == "◀")
+        #expect(marker(Dock(side: .left, mode: .overlay, widthPt: 320)) == "◁")
+        #expect(marker(Dock(side: .right, mode: .inset, widthPt: 320)) == "▶")
+        #expect(marker(Dock(side: .right, mode: .overlay, widthPt: 320)) == "▷")
+        // Both facts at once: docking does not set `keepLive` and does not
+        // hide it (ADR-0010 — protection is derived from the dock, never
+        // written beside it).
+        #expect(marker(Dock(side: .right, mode: .inset, widthPt: 320), keepLive: true) == "▶▪")
+    }
+
+    /// A window too narrow for an inset dock floats it instead
+    /// (`DockGeometry`). The header has to follow the screen, not the
+    /// preference — a filled marker beside a dock that is visibly covering a
+    /// lane is the header arguing with the window.
+    @Test("the marker follows the mode the window can afford, not the stored one")
+    func markerFollowsTheDrawnMode() {
+        let model = LaneHeaderModel(
+            lane: StubLane(dock: Dock(side: .left, mode: .inset, widthPt: 560)), telemetry: nil)
+        #expect(model.markerText == "◀")
+        #expect(model.markerText(drawnMode: .overlay) == "◁")
+        // And a lane that is not docked has no marker to degrade.
+        let plain = LaneHeaderModel(lane: StubLane(), telemetry: nil)
+        #expect(plain.markerText(drawnMode: .overlay) == "")
+    }
+
     @Test("the ledger's title wins, then the session's, then the host")
     func titlePrecedence() {
         let session = SessionTelemetry(sessionId: "s", title: "session name")

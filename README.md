@@ -168,10 +168,26 @@ and it goes back to the width you gave it in the strip.
 you were. ⌘[ / ⌘] deliberately skip the docks: those keys scroll the strip, and
 a docked lane does not scroll.
 
+Drag a dock's **inner** edge to resize it — the outer one is against the wall —
+and the lane's ⋯ menu carries the same three actions for the lane under the
+pointer rather than the focused one. The header marks a docked lane at the right
+of its title: **◀ ▶** when the dock takes its own room, **◁ ▷** when it floats
+over the strip.
+
+A window too narrow to hold a dock *and* a readable lane floats the dock instead
+of squeezing the strip — two inset docks need about 900 pt between them, and
+below that they both float until the window grows again. Nothing is written
+down when that happens, so a dock is never permanently narrowed by having once
+been opened on a small screen.
+
 A docked lane keeps its place in the strip's order the whole time, so undocking
 puts it back exactly where it was — even if lanes were created or closed around
 it meanwhile. It is also never evicted and never unparented, whatever memory
 does, which is what keeps a docked page playing.
+
+A docked lane is still a lane: **⇧⌘D** splits it, the seam between its panes
+drags, its header works, and **⇧⌘[** / **⇧⌘]** walk its stack. ⌘[ / ⌘] pressed
+inside a dock return you to the strip lane you were last working in.
 
 **⇧⌘P** is the other half of that: "Keep Lane Loaded" protects a lane's pages
 from eviction *without* giving it an edge of the screen, for the long-running

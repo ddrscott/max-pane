@@ -29,18 +29,60 @@ struct LaneHeaderModel: Equatable {
     /// said that.
     var badge: String = ""
     var badgeIsThroughput: Bool = false
-    var pinned: Bool = false
+    /// ⇧⌘P's flag: this lane's pages are never destroyed to reclaim memory.
+    /// Named for the ledger's field (ADR-0010) rather than for the glyph it
+    /// draws, because the header carries two markers since docking arrived and
+    /// "pinned" could honestly have meant either of them.
+    var keepLive: Bool = false
+    /// Which edge this lane is held at, and what it does to the strip there.
+    /// `nil` for a lane that scrolls with everything else.
+    var dock: Dock?
     var isTerminal: Bool = false
     /// The long form, for the hover tip — the header is the only place the full
     /// path exists, so truncating it must not destroy it.
     var tooltip: String = ""
+
+    /// The markers at the right-hand end of the header, as one string.
+    ///
+    /// Two facts share one column: which edge this lane is held at, and whether
+    /// its pages are protected from eviction. They belong together because both
+    /// are structural — neither says anything about what the lane is *doing* —
+    /// and because a header on a 240 pt dock has one spare column, not two.
+    ///
+    /// The dock glyph is **filled when the dock takes its room out of the strip
+    /// and hollow when it floats over it**, so the shape carries the mode and
+    /// the marker answers "which edge" and "at whose expense" with no word and
+    /// no colour. Signal Orange is spent on focus and BLOCKED; a permanent
+    /// orange mark on a lane that is docked all day would spend it on something
+    /// that is true all the time.
+    var markerText: String { markerText(drawnMode: nil) }
+
+    /// `drawnMode` is the mode the dock is actually being *drawn* in, when the
+    /// window cannot afford the one the ledger holds — an inset dock in an
+    /// 800 pt window floats until the window grows (`DockGeometry`). The header
+    /// reports the screen in front of the user, not the preference behind it:
+    /// a filled marker beside a dock that is visibly covering a lane is the
+    /// header contradicting the window.
+    func markerText(drawnMode: DockMode?) -> String {
+        var text = ""
+        switch (dock?.side, dock.map { drawnMode ?? $0.mode }) {
+        case (.left, .inset):    text += "◀"
+        case (.left, .overlay):  text += "◁"
+        case (.right, .inset):   text += "▶"
+        case (.right, .overlay): text += "▷"
+        default: break
+        }
+        if keepLive { text += "▪" }
+        return text
+    }
 
     init() {}
 
     init(lane: LaneHeaderSource, telemetry: SessionTelemetry?) {
         kind = lane.kind
         isTerminal = lane.kind == .pty
-        pinned = lane.pinned
+        keepLive = lane.keepLive
+        dock = lane.dock
 
         // The ledger's title is the one the user can rename, so it wins; the
         // session's own name is the fallback for a lane that was just attached
@@ -97,7 +139,8 @@ protocol LaneHeaderSource {
     var title: String? { get }
     var host: String? { get }
     var projectRoot: String? { get }
-    var pinned: Bool { get }
+    var keepLive: Bool { get }
+    var dock: Dock? { get }
     var hasLivePane: Bool { get }
     /// True when a pane on this lane names a Relay session, whether or not
     /// Relay still knows about it.
@@ -105,14 +148,6 @@ protocol LaneHeaderSource {
 }
 
 extension Lane: LaneHeaderSource {
-    /// The header's marker still says "pinned" because that is what the *view*
-    /// calls the glyph it draws. The ledger's field is `keepLive` now — the
-    /// word went to docking, where the owner has always meant it to be. The
-    /// two names meet here rather than in the header, which the docking view
-    /// work owns and will rename along with the marker it adds for a docked
-    /// lane.
-    var pinned: Bool { keepLive }
-
     var kind: PaneGlyph {
         switch panes.first?.kind {
         case .pty: return .pty
