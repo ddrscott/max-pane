@@ -664,6 +664,49 @@ impl Core {
         inner.ledger.forget_recent(kind, &value)
     }
 
+    // ---- site permissions ---------------------------------------------------
+
+    /// Has this site, in this cookie jar, already been answered about this
+    /// feature? `None` is "never asked" — the only answer that may raise a
+    /// prompt, so a page cannot make the prompt reappear by asking twice.
+    ///
+    /// Keyed by the data store as well as the origin because that is what the
+    /// site actually sees of the user (ADR-0003): two projects sharded into
+    /// different jars are two different people to `meet.google.com`, and a
+    /// grant made as one of them was never a grant made as the other.
+    pub fn site_permission(
+        &self,
+        data_store_id: String,
+        origin: String,
+        feature: SiteFeature,
+    ) -> Result<Option<bool>> {
+        let inner = self.inner.lock();
+        inner
+            .ledger
+            .site_permission(&data_store_id, &origin, feature)
+    }
+
+    /// Remember an answer. Only ever called with a decision a person made —
+    /// nothing here infers one from a dismissal, because a dialog dismissed by
+    /// Esc is "not now", not "never".
+    pub fn set_site_permission(
+        &self,
+        data_store_id: String,
+        origin: String,
+        feature: SiteFeature,
+        allowed: bool,
+    ) -> Result<()> {
+        let inner = self.inner.lock();
+        inner
+            .ledger
+            .set_site_permission(&data_store_id, &origin, feature, allowed, now_ms())
+    }
+
+    pub fn forget_site_permissions(&self, data_store_id: String, origin: String) -> Result<()> {
+        let inner = self.inner.lock();
+        inner.ledger.forget_site_permissions(&data_store_id, &origin)
+    }
+
     // ---- history -----------------------------------------------------------
 
     /// A web pane settled on a page. One call, from wherever the shell learns a

@@ -314,6 +314,11 @@ RustBuffer uniffi_laned_core_fn_method_core_focus_pane(uint64_t ptr, RustBuffer 
 void uniffi_laned_core_fn_method_core_forget_recent(uint64_t ptr, RustBuffer kind, RustBuffer value, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_FORGET_SITE_PERMISSIONS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_FORGET_SITE_PERMISSIONS
+void uniffi_laned_core_fn_method_core_forget_site_permissions(uint64_t ptr, RustBuffer data_store_id, RustBuffer origin, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_FORGET_VISIT
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_FORGET_VISIT
 void uniffi_laned_core_fn_method_core_forget_visit(uint64_t ptr, RustBuffer url, RustCallStatus *_Nonnull out_status
@@ -517,6 +522,16 @@ void uniffi_laned_core_fn_method_core_set_pane_zoom(uint64_t ptr, RustBuffer pan
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_SCROLL_X
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_SCROLL_X
 void uniffi_laned_core_fn_method_core_set_scroll_x(uint64_t ptr, double scroll_x, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_SITE_PERMISSION
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_SITE_PERMISSION
+void uniffi_laned_core_fn_method_core_set_site_permission(uint64_t ptr, RustBuffer data_store_id, RustBuffer origin, RustBuffer feature, int8_t allowed, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SITE_PERMISSION
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SITE_PERMISSION
+RustBuffer uniffi_laned_core_fn_method_core_site_permission(uint64_t ptr, RustBuffer data_store_id, RustBuffer origin, RustBuffer feature, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_STATE
@@ -859,6 +874,12 @@ uint16_t uniffi_laned_core_checksum_method_core_forget_recent(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_FORGET_SITE_PERMISSIONS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_FORGET_SITE_PERMISSIONS
+uint16_t uniffi_laned_core_checksum_method_core_forget_site_permissions(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_FORGET_VISIT
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_FORGET_VISIT
 uint16_t uniffi_laned_core_checksum_method_core_forget_visit(void
@@ -1102,6 +1123,18 @@ uint16_t uniffi_laned_core_checksum_method_core_set_pane_zoom(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_SCROLL_X
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_SCROLL_X
 uint16_t uniffi_laned_core_checksum_method_core_set_scroll_x(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_SITE_PERMISSION
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_SITE_PERMISSION
+uint16_t uniffi_laned_core_checksum_method_core_set_site_permission(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SITE_PERMISSION
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SITE_PERMISSION
+uint16_t uniffi_laned_core_checksum_method_core_site_permission(void
     
 );
 #endif

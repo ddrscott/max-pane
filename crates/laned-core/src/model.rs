@@ -24,6 +24,19 @@ pub enum ProjectSource {
     Manual,
 }
 
+/// A capability a page can ask a person for, and be remembered about.
+///
+/// One variant per thing WebKit asks separately. `getUserMedia({audio, video})`
+/// arrives as one callback naming both, and it is stored as two rows on
+/// purpose: "yes to the microphone, no to the camera" is a real answer, and a
+/// combined `CameraAndMicrophone` row could not express it — nor could it
+/// answer a later audio-only call without asking again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum SiteFeature {
+    Camera,
+    Microphone,
+}
+
 /// What a remembered entry launches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum RecentKind {

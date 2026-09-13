@@ -42,6 +42,20 @@
 			</array>
 		</dict>
 	</array>
+	<!-- Without these two strings, a page calling `getUserMedia` does not get a
+	     permission prompt: TCC kills the process. There is no error, no log
+	     line and no crash report the user would connect to the video call they
+	     were joining — the window simply disappears. Granting the permission in
+	     the app is necessary and not sufficient; macOS asks the *app* first,
+	     and it will only ask on behalf of a bundle that has said why.
+
+	     The wording names the site rather than the app, because the app is not
+	     the thing that wants the camera and the sheet in the pane has already
+	     said which site is. -->
+	<key>NSCameraUsageDescription</key>
+	<string>A web page in a lane is asking to use the camera. Max Pane asks you about each site before it does.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>A web page in a lane is asking to use the microphone. Max Pane asks you about each site before it does.</string>
 	<!-- Web lanes load ordinary sites; WebKit's own TLS handling applies. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>

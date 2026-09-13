@@ -727,6 +727,8 @@ public protocol CoreProtocol: AnyObject, Sendable {
      */
     func forgetRecent(kind: RecentKind, value: String) throws 
     
+    func forgetSitePermissions(dataStoreId: String, origin: String) throws 
+    
     /**
      * Drop one page, and every redirect that pointed at it. The palette's ⌘⌫.
      */
@@ -1046,6 +1048,25 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func setScrollX(scrollX: Double) throws 
     
     /**
+     * Remember an answer. Only ever called with a decision a person made —
+     * nothing here infers one from a dismissal, because a dialog dismissed by
+     * Esc is "not now", not "never".
+     */
+    func setSitePermission(dataStoreId: String, origin: String, feature: SiteFeature, allowed: Bool) throws 
+    
+    /**
+     * Has this site, in this cookie jar, already been answered about this
+     * feature? `None` is "never asked" — the only answer that may raise a
+     * prompt, so a page cannot make the prompt reappear by asking twice.
+     *
+     * Keyed by the data store as well as the origin because that is what the
+     * site actually sees of the user (ADR-0003): two projects sharded into
+     * different jars are two different people to `meet.google.com`, and a
+     * grant made as one of them was never a grant made as the other.
+     */
+    func sitePermission(dataStoreId: String, origin: String, feature: SiteFeature) throws  -> Bool?
+    
+    /**
      * The current strip. Call this on launch and render whatever comes back.
      */
     func state() throws  -> StripState
@@ -1324,6 +1345,16 @@ open func forgetRecent(kind: RecentKind, value: String)throws   {try rustCallWit
             self.uniffiCloneHandle(),
         FfiConverterTypeRecentKind_lower(kind),
         FfiConverterString.lower(value),uniffiCallStatus
+    )
+}
+}
+    
+open func forgetSitePermissions(dataStoreId: String, origin: String)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_forget_site_permissions(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(dataStoreId),
+        FfiConverterString.lower(origin),uniffiCallStatus
     )
 }
 }
@@ -1982,6 +2013,45 @@ open func setScrollX(scrollX: Double)throws   {try rustCallWithError(FfiConverte
         FfiConverterDouble.lower(scrollX),uniffiCallStatus
     )
 }
+}
+    
+    /**
+     * Remember an answer. Only ever called with a decision a person made —
+     * nothing here infers one from a dismissal, because a dialog dismissed by
+     * Esc is "not now", not "never".
+     */
+open func setSitePermission(dataStoreId: String, origin: String, feature: SiteFeature, allowed: Bool)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_set_site_permission(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(dataStoreId),
+        FfiConverterString.lower(origin),
+        FfiConverterTypeSiteFeature_lower(feature),
+        FfiConverterBool.lower(allowed),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Has this site, in this cookie jar, already been answered about this
+     * feature? `None` is "never asked" — the only answer that may raise a
+     * prompt, so a page cannot make the prompt reappear by asking twice.
+     *
+     * Keyed by the data store as well as the origin because that is what the
+     * site actually sees of the user (ADR-0003): two projects sharded into
+     * different jars are two different people to `meet.google.com`, and a
+     * grant made as one of them was never a grant made as the other.
+     */
+open func sitePermission(dataStoreId: String, origin: String, feature: SiteFeature)throws  -> Bool?  {
+    return try  FfiConverterOptionBool.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_site_permission(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(dataStoreId),
+        FfiConverterString.lower(origin),
+        FfiConverterTypeSiteFeature_lower(feature),uniffiCallStatus
+    )
+})
 }
     
     /**
@@ -4314,6 +4384,81 @@ public func FfiConverterTypeSearchField_lower(_ value: SearchField) -> RustBuffe
 }
 
 
+
+/**
+ * A capability a page can ask a person for, and be remembered about.
+ *
+ * One variant per thing WebKit asks separately. `getUserMedia({audio, video})`
+ * arrives as one callback naming both, and it is stored as two rows on
+ * purpose: "yes to the microphone, no to the camera" is a real answer, and a
+ * combined `CameraAndMicrophone` row could not express it — nor could it
+ * answer a later audio-only call without asking again.
+ */
+
+public enum SiteFeature: Equatable, Hashable {
+    
+    case camera
+    case microphone
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SiteFeature: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSiteFeature: FfiConverterRustBuffer {
+    typealias SwiftType = SiteFeature
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SiteFeature {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .camera
+        
+        case 2: return .microphone
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: SiteFeature, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .camera:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .microphone:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSiteFeature_lift(_ buf: RustBuffer) throws -> SiteFeature {
+    return try FfiConverterTypeSiteFeature.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSiteFeature_lower(_ value: SiteFeature) -> RustBuffer {
+    return FfiConverterTypeSiteFeature.lower(value)
+}
+
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -4357,6 +4502,30 @@ fileprivate struct FfiConverterOptionDouble: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterDouble.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionBool: FfiConverterRustBuffer {
+    typealias SwiftType = Bool?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterBool.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterBool.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -4753,6 +4922,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_forget_recent() != 59469) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_forget_site_permissions() != 2872) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_forget_visit() != 57548) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4874,6 +5046,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_set_scroll_x() != 34624) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_set_site_permission() != 10286) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_site_permission() != 2813) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_state() != 13882) {

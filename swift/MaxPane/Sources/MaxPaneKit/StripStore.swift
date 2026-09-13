@@ -283,6 +283,24 @@ public final class StripStore {
         try? core.paneInteractionState(paneId: paneId)
     }
 
+    // MARK: - site permissions
+
+    /// What the user last said about a site's camera or microphone, or nil if
+    /// they have never been asked. Keyed by the cookie jar as well as the
+    /// origin — see migration 0008 for why.
+    func sitePermission(dataStoreId: String, origin: String, feature: SiteFeature) -> Bool? {
+        (try? core.sitePermission(dataStoreId: dataStoreId, origin: origin, feature: feature)) ?? nil
+    }
+
+    func setSitePermission(dataStoreId: String, origin: String, feature: SiteFeature, allowed: Bool) {
+        try? core.setSitePermission(
+            dataStoreId: dataStoreId, origin: origin, feature: feature, allowed: allowed)
+    }
+
+    func forgetSitePermissions(dataStoreId: String, origin: String) {
+        try? core.forgetSitePermissions(dataStoreId: dataStoreId, origin: origin)
+    }
+
     // MARK: - recents
 
     /// Remember something the user launched, for the new-pane picker.
