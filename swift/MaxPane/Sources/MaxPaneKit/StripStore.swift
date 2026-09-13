@@ -18,6 +18,7 @@ public final class StripStore {
 
     private let core: Core
     private var observers: [UUID: (StripState) -> Void] = [:]
+    private var bookmarkObservers: [UUID: () -> Void] = [:]
 
     /// Where the ledger lives. PRD §6.
     ///
@@ -384,6 +385,82 @@ public final class StripStore {
             cutoffMs: Int64(cutoff.timeIntervalSince1970 * 1000))) ?? 0
     }
 
+    // MARK: - bookmarks
+
+    /// The whole tree, in the order it is drawn.
+    ///
+    /// Read whole on every change, which would be indefensible for history and
+    /// is the obvious thing here: the corpus is the one the user curated by
+    /// hand. See migration 0010.
+    func bookmarks() -> [Bookmark] { (try? core.bookmarks()) ?? [] }
+
+    /// The folders alone — what the editor's "file it under" control offers.
+    func bookmarkFolders() -> [Bookmark] { (try? core.bookmarkFolders()) ?? [] }
+
+    /// Every placement of one address, or empty when the page is not kept.
+    /// The star's question, and a list because a page may be kept twice.
+    func bookmarks(forURL url: String) -> [Bookmark] {
+        (try? core.bookmarksForUrl(url: url)) ?? []
+    }
+
+    var bookmarkCount: UInt32 { (try? core.bookmarkCount()) ?? 0 }
+
+    /// Bookmarks for the one door. Same ranker as history; see
+    /// `Core::search_bookmarks`.
+    func searchBookmarks(_ query: String, limit: UInt32 = 40) -> [BookmarkHit] {
+        (try? core.searchBookmarks(query: query, limit: limit)) ?? []
+    }
+
+    @discardableResult
+    func addBookmark(parent: String?, url: String?, title: String) throws -> Bookmark {
+        let kept = try core.addBookmark(parentId: parent, url: url, title: title)
+        publishBookmarks()
+        return kept
+    }
+
+    func renameBookmark(_ id: String, _ title: String) throws {
+        try core.renameBookmark(id: id, title: title)
+        publishBookmarks()
+    }
+
+    func moveBookmark(_ id: String, to parent: String?) throws {
+        try core.moveBookmark(id: id, parentId: parent)
+        publishBookmarks()
+    }
+
+    func removeBookmark(_ id: String) throws {
+        try core.removeBookmark(id: id)
+        publishBookmarks()
+    }
+
+    /// Watch the tree. Fires immediately, then after every change.
+    ///
+    /// # Why this is not `observe`
+    ///
+    /// `StripState` is the strip: lanes, panes, focus, scroll. Bookmarks are
+    /// none of those, and putting them on it would mean `revision` bumping —
+    /// and 150 lanes diffing — because a page was starred. The two surfaces
+    /// that draw bookmarks watch this instead, and it carries no payload
+    /// because the whole tree is one cheap read away and a copy in the argument
+    /// would be a second answer to go stale.
+    @discardableResult
+    func observeBookmarks(_ body: @escaping () -> Void) -> UUID {
+        let token = UUID()
+        bookmarkObservers[token] = body
+        body()
+        return token
+    }
+
+    func stopObservingBookmarks(_ token: UUID) {
+        bookmarkObservers.removeValue(forKey: token)
+    }
+
+    /// Also called by the import wizard, which writes bookmarks through a path
+    /// that does not go past the four mutations above.
+    func publishBookmarks() {
+        for body in bookmarkObservers.values { body() }
+    }
+
     // MARK: - importing another browser's history
 
     /// Every browser history file on this Mac, found by looking. Cheap: it stats
@@ -418,7 +495,12 @@ public final class StripStore {
     /// redraw `record_visit` is already careful not to cause.
     func importHistory(_ source: HistorySource, _ mode: ImportMode) async throws -> ImportOutcome {
         let core = self.core
-        return try await Task.detached { try core.importHistory(source: source, mode: mode) }.value
+        let outcome = try await Task.detached { try core.importHistory(source: source, mode: mode) }.value
+        // The one write in the app that changes bookmarks without going through
+        // this store's own mutations. Without this the sidebar keeps drawing
+        // the tree from before the import until something else redraws it.
+        publishBookmarks()
+        return outcome
     }
 
     // MARK: - focus and scroll

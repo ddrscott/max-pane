@@ -281,3 +281,50 @@ pub enum Placement {
     /// The far right of the strip. Used for unattributed lanes.
     End,
 }
+
+/// One node of the bookmarks tree — a kept page, or a folder of them.
+///
+/// Flat, in tree order, with the depth already worked out. The tempting shape
+/// is a nested record with `children: Vec<Bookmark>`, and it is the wrong one
+/// here for two reasons. uniffi has no recursive records, so the nesting would
+/// have to be hand-rolled either side of the FFI; and the one consumer is an
+/// `NSTableView` — the sidebar is a flat list by construction (see
+/// `SidebarModel.Row`) — which would immediately flatten it back, sorting the
+/// tree a second time in Swift to do it. The ledger already has to walk the
+/// tree to order it, so it walks it once and says how deep each row was.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct Bookmark {
+    pub id: String,
+    /// `None` for a row on the bar itself. The bar has no row of its own.
+    pub parent_id: Option<String>,
+    pub is_folder: bool,
+    /// Normalized, and `None` exactly when `is_folder`.
+    pub url: Option<String>,
+    /// Never empty: a page with no `<title>` is kept under its address.
+    pub title: String,
+    /// Among its siblings.
+    pub position: u32,
+    pub added_at: i64,
+    /// 0 on the bar, 1 inside a folder, and so on. Derived when the tree is
+    /// read rather than stored, because it is a fact about the row's ancestry
+    /// and a stored copy is one a move would have to rewrite for every
+    /// descendant.
+    pub depth: u32,
+}
+
+/// A bookmark that matched what was typed, for the one door.
+///
+/// Carries the folder it is in rather than only its parent's id: the row it
+/// becomes has to say *which* `notes` this is, and a picker that had to resolve
+/// eight parent ids per keystroke to render eight rows would be doing the tree
+/// walk the ledger just did.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct BookmarkHit {
+    pub bookmark: Bookmark,
+    /// `Documentation/Rust`, or `None` on the bar.
+    pub folder_path: Option<String>,
+    /// Why it survived the query, for the row glyph.
+    pub matched_field: SearchField,
+    /// Higher is better.
+    pub score: i32,
+}

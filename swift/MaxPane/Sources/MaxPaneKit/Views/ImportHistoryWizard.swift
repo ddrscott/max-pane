@@ -96,9 +96,11 @@ struct ImportWizardModel {
         case .merge:
             return """
             Keeps everything already in Max Pane and folds the browser's history \
-            into it. A page both have is one row: the earlier first visit, the \
-            later last visit, and the larger visit count. Nothing is deleted, \
-            and importing the same profile twice changes nothing.
+            and bookmarks into it. A page both have is one row: the earlier first \
+            visit, the later last visit, and the larger visit count. A bookmark \
+            already kept at the same address in the same folder is left alone, \
+            name and all. Nothing is deleted, and importing the same profile \
+            twice changes nothing.
             """
         case .replace:
             // One phrase, not a count and a plural glued together: before the dry
@@ -108,9 +110,10 @@ struct ImportWizardModel {
                 "the \(Self.thousands(p.existingPages)) page\(p.existingPages == 1 ? "" : "s")"
             } ?? "every page"
             return """
-            Throws away \(what) Max Pane has recorded and keeps only the browser's \
-            history. The whole ledger is copied to a file beside it first, and \
-            this screen names that file — it is the only way back.
+            Throws away \(what) Max Pane has recorded — and every bookmark it \
+            keeps — and takes only the browser's. The whole ledger is copied to a \
+            file beside it first, and this screen names that file: it is the only \
+            way back.
             """
         }
     }
@@ -140,6 +143,33 @@ struct ImportWizardModel {
             lines.append(("pages after replace", arrow))
             lines.append(("discarded", Self.thousands(plan.existingPages)))
         }
+        // The second half of the same import, and it is its own block rather
+        // than being interleaved with the pages: the two corpora are different
+        // sizes by three orders of magnitude, and a reader comparing 108 854
+        // with 312 down the same column reads the smaller number as a rounding
+        // error rather than as the bar they use every day.
+        switch plan.sourceBookmarks {
+        case .some(let count):
+            lines.append(("bookmarks in source", Self.thousands(count)))
+            lines.append(("already kept here", Self.thousands(plan.bookmarksAlreadyKnown)))
+            let newKept = count - plan.bookmarksAlreadyKnown
+            switch dry.mode {
+            case .merge:
+                lines.append((
+                    "bookmarks after merge",
+                    "\(Self.thousands(plan.existingBookmarks)) → at least "
+                        + Self.thousands(plan.existingBookmarks + newKept)))
+            case .replace:
+                lines.append((
+                    "bookmarks after replace",
+                    "\(Self.thousands(plan.existingBookmarks)) → at least "
+                        + Self.thousands(newKept)))
+            }
+        case .none:
+            // Not a zero. Safari keeps its bookmarks in a binary property list
+            // this app does not read, and a blank row would say it has none.
+            lines.append(("bookmarks", "not readable from this browser"))
+        }
         return lines
     }
 
@@ -148,7 +178,11 @@ struct ImportWizardModel {
     var confirmTitle: String {
         guard let dry else { return "Import" }
         switch dry.mode {
-        case .merge: return "Merge \(Self.thousands(dry.plan.newPages)) new pages"
+        case .merge:
+            let kept = (dry.plan.sourceBookmarks ?? 0) - dry.plan.bookmarksAlreadyKnown
+            guard kept > 0 else { return "Merge \(Self.thousands(dry.plan.newPages)) new pages" }
+            return "Merge \(Self.thousands(dry.plan.newPages)) pages and "
+                + "\(Self.thousands(kept)) bookmarks"
         case .replace: return "Replace with \(Self.thousands(dry.plan.sourcePages)) pages"
         }
     }
@@ -181,8 +215,10 @@ struct ImportWizardModel {
     var hasSomethingToDo: Bool {
         guard let dry else { return false }
         switch dry.mode {
-        case .merge: return dry.plan.sourcePages > 0
-        case .replace: return dry.plan.sourcePages > 0 || dry.plan.existingPages > 0
+        case .merge: return dry.plan.sourcePages > 0 || (dry.plan.sourceBookmarks ?? 0) > 0
+        case .replace:
+            return dry.plan.sourcePages > 0 || dry.plan.existingPages > 0
+                || (dry.plan.sourceBookmarks ?? 0) > 0 || dry.plan.existingBookmarks > 0
         }
     }
 
@@ -198,6 +234,14 @@ struct ImportWizardModel {
             lines.append(("pages discarded", Self.thousands(outcome.discarded)))
         }
         lines.append(("history now holds", Self.thousands(outcome.plan.resultingPages)))
+        if outcome.bookmarksInserted > 0 {
+            // Rows, folders included, because that is what the sidebar is about
+            // to draw and the number the report promised was "at least".
+            lines.append(("bookmarks added", Self.thousands(outcome.bookmarksInserted)))
+        }
+        if outcome.bookmarksDiscarded > 0 {
+            lines.append(("bookmarks discarded", Self.thousands(outcome.bookmarksDiscarded)))
+        }
         lines.append(("took", Self.seconds(outcome.elapsedMs)))
         if let backup = outcome.backupPath {
             lines.append(("old ledger saved to", Self.abbreviate(backup)))
@@ -208,8 +252,13 @@ struct ImportWizardModel {
     /// The one sentence at the top of the last screen.
     var doneHeadline: String {
         guard let outcome else { return "" }
-        if outcome.inserted == 0 && outcome.updated == 0 && outcome.discarded == 0 {
-            return "Nothing changed — this history was already here."
+        if outcome.inserted == 0 && outcome.updated == 0 && outcome.discarded == 0
+            && outcome.bookmarksInserted == 0 && outcome.bookmarksDiscarded == 0
+        {
+            return "Nothing changed — this browser was already here."
+        }
+        if outcome.bookmarksInserted > 0 {
+            return "⌘O and ⌘Y can find these pages; the bookmarks are in the sidebar."
         }
         return "⌘O and ⌘Y can find these pages now."
     }
@@ -313,7 +362,10 @@ final class ImportHistoryWizard: NSWindowController, NSWindowDelegate {
         buttons.spacing = 8
         buttons.translatesAutoresizingMaskIntoConstraints = false
 
-        let header = SectionHeader(text: "IMPORT_HISTORY")
+        // Not IMPORT_HISTORY any more: one pass over a profile brings its
+        // history and its bookmarks, because "import from Vivaldi" is one
+        // decision and asking it twice would be two wizards over one file.
+        let header = SectionHeader(text: "IMPORT_BROWSER")
         header.translatesAutoresizingMaskIntoConstraints = false
         for v in [header, heading, body, buttons] { frame.addSubview(v) }
         heading.translatesAutoresizingMaskIntoConstraints = false
@@ -491,7 +543,7 @@ final class ImportHistoryWizard: NSWindowController, NSWindowDelegate {
 
     private func renderSource() {
         if model.isEmpty {
-            heading.stringValue = "No browser history found on this Mac."
+            heading.stringValue = "No browser profile found on this Mac."
             addRow(paragraph(
                 "Max Pane looks for Chromium-family profiles, Safari's History.db and "
                 + "Firefox's places.sqlite. None of them is where it would be."))

@@ -116,7 +116,8 @@ mean anything in a release build, which the default run is not. They are gated
 on **`MAXPANE_BENCH`** and `./scripts/test.sh bench` runs them in release, where
 the numbers are worth reading.
 
-Render-sheet tests (`LaneHeaderRenderTests`, `OmniPickerRenderTests`) draw views
+Render-sheet tests (`LaneHeaderRenderTests`, `OmniPickerRenderTests`,
+`SidebarBookmarkRenderTests`) draw views
 into bitmaps and write PNGs. They are gated on **`MAXPANE_SHOTS`**, which names
 the directory to write into — one variable for every sheet, so a new render test
 joins the same command rather than adding a third switch.
@@ -177,7 +178,7 @@ Press **⌘/** for every shortcut. The three that matter:
 
 | | |
 |---|---|
-| **⌘O** (also **⌘T**, **⌘D**) | start anything — a command, a URL, a page you have been to, a session that is already running |
+| **⌘O** (also **⌘T**) | start anything — a command, a URL, a page you have been to or kept, a session that is already running |
 | **⌘[** / **⌘]** | move focus between lanes |
 | **⌃⌘[** / **⌃⌘]** | dock this lane to that edge of the window, or undock it |
 | **⌘P** | find a lane by title, URL or something it printed |
@@ -192,7 +193,13 @@ always the first two rows — so a wrong guess about `localhost:3000` never hide
 the other reading and ⌘O ↩ always does what you said.
 
 **⇥** narrows to pages, commands or sessions; **⌘Y** and **⌥⌘O** open the same
-picker with those scopes already chosen. **⌘⌫** forgets the selected row.
+picker with those scopes already chosen. **⌘⌫** forgets the selected row — or,
+on a page you have kept, stops keeping it.
+
+A bookmark is a page, so it is offered by the key pages are offered by, marked
+**★** and carrying the folder it is in. A page that is both kept and visited is
+one row and it is the bookmark: the title on it is the one you chose, and
+`Work/Rust · notes` is what tells two pages called *Notes* apart.
 
 ⌘P stays separate on purpose: it finds what is *already on the strip* and
 scrolls to it, where every ⌘O row spends something to create a pane.
@@ -308,9 +315,60 @@ by the field the day is read from. The two agree for everything this app records
 and everything an import writes, and part company exactly when the clock moves
 backwards, which is the case `seq` exists for.
 
-### Importing history from another browser
+### Bookmarks
 
-**⌥⌘Y.** ⌘Y opens history; ⌥⌘Y is where it came from. The wizard offers the
+**⌘D** keeps the page in the focused lane, and the **★** in its chrome bar
+lights. ⌘D on a page already kept opens the same little panel on it. The panel
+is where the name and the folder are — nothing on it is a commit button, because
+the page was kept the moment you pressed the key; **Remove** is the undo, and it
+is there because *"I meant ⌘W"* is the other thing that happens a second after
+⌘D.
+
+⌘D cost ⌘O one of its two alternate keys. ⌘T still opens the door.
+
+**The folders are in the sidebar**, above the sessions, as a section you can
+fold away. That is the answer to a gap a critic called the most defensible one
+in this app: the chrome bar used to carry the sentence *"the strip is the
+bookmarks bar and a pinned lane is the star"*, and it was right about the page
+you are looking at and wrong about the eight folders you are not. A docked lane
+keeps one page in front of you by spending a column on it; a bar keeps two
+hundred and costs nothing until you look.
+
+It is the sidebar rather than a window or a fourth palette because the sidebar
+is already open, already vertical — which is the axis a 420 pt column has to
+spare — and already groups things and folds what you are not using. Clicking a
+folder opens it; clicking a page opens it in a lane, right of the one you are
+in, exactly where a ⌘O page lands. The filter box filters bookmarks too, and a
+search opens the folders it matched inside. The **sort** and **scope** controls
+deliberately do not reach them: the order of a bar *is* the thing, and eight
+folders that have been in eight places for years are found by the hand rather
+than read.
+
+One row per placement, so the same page kept in two folders is two bookmarks —
+which is what every browser means by it, and what a table keyed by URL could not
+say. A bookmark's title is yours: nothing the page calls itself later overwrites
+it, and a second import does not either. Bookmarks are not history and survive
+**Clear** — that is the whole reason they are their own table (migration 0010)
+rather than a flag on `visit`, since `clear_history` deletes rows and a flag
+cannot stop a delete.
+
+There is no index under them, and that is the same rule history follows from the
+other end. History pays for a trigram index because its corpus is 112 840 rows
+that are never otherwise in memory; a bookmark corpus is the one you curated by
+hand — the owner's Vivaldi bar is eight folders and a few hundred pages — so the
+whole of it is read and ranked by **the same ranker history uses**. `hop` finds
+`hoppers` and not *Launchd notes*, in both lists, because it is one
+implementation rather than two that agree today.
+
+### Importing history and bookmarks from another browser
+
+**⌥⌘Y.** ⌘Y opens history; ⌥⌘Y is where it came from. One pass over a profile
+brings both halves, because "import from Vivaldi" is one decision — the wizard
+already finds the profiles, already explains merge against replace, and already
+takes the snapshot a Firefox bookmark import needs anyway, its bookmarks being
+inside the `places.sqlite` its history is in.
+
+The wizard offers the
 browsers that are on this Mac, found by looking for the files rather than from a
 list — Chromium's `History` (Vivaldi, Chrome, Brave, Edge, Chromium, Arc, Opera,
 one row per profile), Safari's `History.db`, Firefox's `places.sqlite`.
@@ -376,6 +434,25 @@ known trigram floor and has its own queue item.
 
 The wizard runs both long calls off the main thread — the only place in the app
 that does, because everything else takes microseconds.
+
+**The bookmarks come with it.** Chromium's bar lands on your bar and its other
+roots become folders on it — burying the part used daily one level down to
+preserve a hierarchy nobody looks at would be importing the file rather than the
+bookmarks. Firefox's toolbar does the same. A bookmark is "already here" when
+some row has that address in that folder, which is what makes a second merge
+write nothing without a side table recording what has been imported, and what
+keeps a name you changed from being changed back.
+
+The report says *at least* N bookmarks afterwards, and means it: the folders an
+import has to create are not knowable without creating them, and a guess by
+counting distinct paths is a number that is right until a source has two folders
+of the same name in different places.
+
+**Safari's bookmarks are not imported.** They are a binary property list, and
+the only reader for one on this Mac is `plutil` — a macOS program, in the half
+of this app that is deliberately platform-agnostic. The wizard prints
+`bookmarks — not readable from this browser` on that row rather than a `0`,
+because a zero would say Safari has none.
 
 ### The session browser, and which pane has the keyboard
 
@@ -566,8 +643,8 @@ whatever you do not mention keeps the key it ships with:
 ```
 
 A value is a chord, a list of chords, or `null`. With a list, the first is the
-one the menu shows and the rest are alternates — which is how ⌘O ships with ⌘T
-and ⌘D. `null` unbinds the command outright: it stays in the menu, it stops
+one the menu shows and the rest are alternates — which is how ⌘O ships with ⌘T.
+`null` unbinds the command outright: it stays in the menu, it stops
 having a key, and a web pane stops having that chord taken off it.
 
 A chord is written either way the keyboard is described: `cmd+shift+d` or the

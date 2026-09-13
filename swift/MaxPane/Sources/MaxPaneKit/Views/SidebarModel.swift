@@ -19,6 +19,12 @@ enum SidebarModel {
     /// The high code point sorts it after every real path.
     static let looseWebGroup = "\u{FFFF}web"
 
+    /// The collapse key for the bookmarks section. Not a project path, and in
+    /// the private-use plane for the same reason `looseWebGroup` is: a real
+    /// directory can be called anything, and the one thing it cannot be called
+    /// is this.
+    static let bookmarksGroup = "\u{FFFE}bookmarks"
+
     enum Kind: Equatable {
         /// A RelayTTY session, whether or not a lane is attached to it.
         case session
@@ -87,26 +93,52 @@ enum SidebarModel {
         var blocked: Int
         var total: Int
         var collapsed: Bool
+        /// What the header says instead of the session count. One caller: the
+        /// bookmarks section, whose rows are not sessions and for which
+        /// "0 CLOSED" would be both true and meaningless.
+        var countOverride: String?
 
         /// `~/code/max-pane` → `~/CODE/MAX-PANE`; the loose-web sentinel → `WEB`.
         var header: String {
             // The path as it really is. Upper-casing it was treating a
             // directory as a label, and paths are case-sensitive data — a group
             // called ~/CODE/MAX-PANE names nothing on this disk.
-            path == SidebarModel.looseWebGroup ? "Web" : path
+            if path == SidebarModel.looseWebGroup { return "Web" }
+            if path == SidebarModel.bookmarksGroup { return "Bookmarks" }
+            return path
         }
 
         /// A collapsed group hides its rows, so the header has to carry the one
         /// fact you cannot afford to have hidden.
         var countText: String {
+            if let countOverride { return countOverride }
             if blocked > 0 { return "\(blocked) BLOCKED" }
             return running > 0 ? "\(running) RUNNING" : "\(total) CLOSED"
         }
     }
 
+    /// One node of the bookmarks tree, as a row.
+    ///
+    /// Flat with a depth, because `Bookmark` arrives flat with a depth and the
+    /// table is flat — see the wire type's doc for why the tree is never
+    /// rebuilt on this side.
+    struct BookmarkRow: Equatable {
+        var id: String
+        var title: String
+        /// The host and path for a page; how many things are in it for a
+        /// folder.
+        var detail: String
+        /// `nil` for a folder.
+        var url: String?
+        var depth: Int
+        var isFolder: Bool
+        var collapsed: Bool
+    }
+
     enum Row: Equatable {
         case group(Group)
         case entry(Entry)
+        case bookmark(BookmarkRow)
     }
 
     // MARK: - controls
@@ -165,6 +197,7 @@ enum SidebarModel {
         lanes: [Lane],
         telemetry: [String: SessionTelemetry],
         created: [String: Double] = [:],
+        bookmarks: [Bookmark] = [],
         controls: Controls = Controls(),
         now: Date = Date()
     ) -> [Row] {
@@ -251,7 +284,21 @@ enum SidebarModel {
         // Group order is alphabetical whatever the sort says. The sort control
         // orders sessions *within* a project; a browser whose project headers
         // jump around every time output arrives is not a browser.
-        var out: [Row] = []
+        // The bar, above the sessions.
+        //
+        // # Why the bookmarks live here and not in a window of their own
+        //
+        // Because this is the surface that already groups things, and because
+        // "the strip is the bookmarks bar" was only ever wrong about the part
+        // you are *not* looking at. A bar is eight folders that are always
+        // where you left them; a window you have to open is a folder you have
+        // to remember. The sidebar is already open, already vertical — which is
+        // what a 420 pt column has room for — and already collapses a section
+        // you are not using.
+        //
+        // What it is not is a fourth palette. Typing at a bookmark is ⌘O's job
+        // and always was; this is for the eight targets the hand already knows.
+        var out: [Row] = bookmarkRows(bookmarks, controls)
         for path in grouped.keys.sorted() {
             let kept = grouped[path]!.filter { matches($0, controls) }
             guard !kept.isEmpty else { continue }
@@ -261,11 +308,110 @@ enum SidebarModel {
                 running: kept.filter(\.isRunning).count,
                 blocked: kept.filter(\.needsAttention).count,
                 total: kept.count,
-                collapsed: collapsed)))
+                collapsed: collapsed,
+                countOverride: nil)))
             guard !collapsed else { continue }
             out.append(contentsOf: sorted(kept, controls).map(Row.entry))
         }
         return out
+    }
+
+    /// The bookmarks section: a header, then the tree, folders foldable.
+    ///
+    /// Returns nothing at all when there are no bookmarks. An empty section is
+    /// a row that can only ever say "you have none", every launch, above the
+    /// thing the sidebar is actually for.
+    ///
+    /// The sort and scope controls are deliberately not applied. They are about
+    /// sessions — "running", "waiting on you", newest first — and none of them
+    /// means anything about a kept page; more to the point, the order of a bar
+    /// *is* the thing, and a control that reordered it would be undoing the one
+    /// property that lets a hand find a folder without reading it. The query
+    /// box does apply, because "where did I put that" is the same question here
+    /// as it is over sessions.
+    static func bookmarkRows(_ bookmarks: [Bookmark], _ controls: Controls) -> [Row] {
+        guard !bookmarks.isEmpty else { return [] }
+        let query = controls.query.trimmingCharacters(in: .whitespaces).lowercased()
+
+        // How many things each folder holds, so a collapsed folder still says
+        // how much it is hiding. Counted over the whole subtree rather than the
+        // immediate children: `Work` holding one folder of forty reads as
+        // "1 ITEM" otherwise.
+        var subtree: [String: Int] = [:]
+        var ancestors: [String] = []
+        var depthOf: [String: Int] = [:]
+        for row in bookmarks {
+            let depth = Int(row.depth)
+            ancestors.removeLast(max(0, ancestors.count - depth))
+            for id in ancestors { subtree[id, default: 0] += 1 }
+            if row.isFolder { ancestors.append(row.id); depthOf[row.id] = depth }
+        }
+
+        // A bookmark survives the query on its own; a folder survives on
+        // anything beneath it, which is why this is computed bottom-up before
+        // anything is emitted.
+        var keep: Set<String> = []
+        if !query.isEmpty {
+            var stack: [(id: String, depth: Int)] = []
+            for row in bookmarks {
+                let depth = Int(row.depth)
+                stack.removeLast(max(0, stack.count - depth))
+                let hit = row.title.lowercased().contains(query)
+                    || (row.url?.lowercased().contains(query) ?? false)
+                if hit && !row.isFolder {
+                    keep.insert(row.id)
+                    for up in stack { keep.insert(up.id) }
+                }
+                if row.isFolder { stack.append((row.id, depth)) }
+            }
+            if keep.isEmpty { return [] }
+        }
+
+        let sectionCollapsed = controls.collapsed.contains(bookmarksGroup)
+        let pages = bookmarks.filter { !$0.isFolder && (query.isEmpty || keep.contains($0.id)) }
+        var out: [Row] = [.group(Group(
+            path: bookmarksGroup,
+            running: 0, blocked: 0, total: pages.count,
+            collapsed: sectionCollapsed,
+            countOverride: "\(pages.count) KEPT"))]
+        guard !sectionCollapsed else { return out }
+
+        // The depth at which everything is hidden, because a folder above it is
+        // folded. `Int.max` means nothing is.
+        //
+        // Strictly less than, not less-than-or-equal: folding a folder at depth
+        // 0 hides depth 1 downwards, and a row *at* depth 1 is the first thing
+        // that has to stay hidden. `<=` there reopened the fold on its own
+        // first child, which looked like the triangle doing nothing.
+        var hiddenBelow = Int.max
+        for row in bookmarks {
+            let depth = Int(row.depth)
+            if depth < hiddenBelow { hiddenBelow = Int.max }
+            guard depth < hiddenBelow else { continue }
+            if !query.isEmpty && !keep.contains(row.id) { continue }
+            // A search opens every folder it matched inside. A folded folder
+            // with a hit in it is a search that found nothing, as far as the
+            // screen is concerned.
+            let folded = query.isEmpty && controls.collapsed.contains(row.id)
+            out.append(.bookmark(BookmarkRow(
+                id: row.id,
+                title: row.title,
+                detail: row.isFolder
+                    ? Self.itemCount(subtree[row.id] ?? 0)
+                    : row.url.map(OmniText.handle) ?? "",
+                url: row.url,
+                depth: depth,
+                isFolder: row.isFolder,
+                collapsed: folded)))
+            if row.isFolder && folded { hiddenBelow = depth + 1 }
+        }
+        return out
+    }
+
+    /// `1 ITEM`, `12 ITEMS`. The header above it counts in the singular too,
+    /// and a bar with one thing on it is the state every bar starts in.
+    static func itemCount(_ n: Int) -> String {
+        "\(n) ITEM" + (n == 1 ? "" : "S")
     }
 
     /// The group a lane files under: its project tag, abbreviated the same way a

@@ -22,6 +22,8 @@ final class SidebarViewController: NSViewController {
     private var rows: [SidebarModel.Row] = []
     private var controls = SidebarModel.Controls()
     private var observer: UUID?
+    private var bookmarkObserver: UUID?
+    private var bookmarks: [Bookmark] = []
 
     // Chrome.
     private let header = NSView()
@@ -62,6 +64,10 @@ final class SidebarViewController: NSViewController {
     var onNewSession: (() -> Void)?
     /// Click a session that has no lane → attach it.
     var onAttach: ((String) -> Void)?
+    /// A kept page was clicked. The sidebar does not know where a page should
+    /// go — `StripWindowController.launch` owns that, and it is the same
+    /// decision ⌘O makes.
+    var onOpenBookmark: ((String) -> Void)?
 
     /// Every session Relay knows about, attached or not.
     weak var registryBox: AnyObject?
@@ -340,6 +346,14 @@ final class SidebarViewController: NSViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         observer = store.observe { [weak self] state in self?.rebuild(state) }
+        // Its own subscription, because bookmarks are not the strip: a page
+        // being starred may not bump `revision` and make 150 lanes diff. See
+        // `StripStore.observeBookmarks`.
+        bookmarkObserver = store.observeBookmarks { [weak self] in
+            guard let self else { return }
+            self.bookmarks = self.store.bookmarks()
+            self.rebuild(self.store.state)
+        }
     }
 
     deinit {
@@ -357,6 +371,7 @@ final class SidebarViewController: NSViewController {
             lanes: state.lanes,
             telemetry: telemetry,
             created: createdAt,
+            bookmarks: bookmarks,
             controls: controls)
         updateFooter(state)
         guard next != rows else {
@@ -405,6 +420,11 @@ final class SidebarViewController: NSViewController {
         return e
     }
 
+    private func bookmark(at row: Int) -> SidebarModel.BookmarkRow? {
+        guard row >= 0, row < rows.count, case .bookmark(let b) = rows[row] else { return nil }
+        return b
+    }
+
     private func group(at row: Int) -> SidebarModel.Group? {
         guard row >= 0, row < rows.count, case .group(let g) = rows[row] else { return nil }
         return g
@@ -423,6 +443,21 @@ final class SidebarViewController: NSViewController {
             rebuild(store.state)
             return
         }
+        if let kept = bookmark(at: row) {
+            // A folder opens; a page opens. Same click, and the only two things
+            // a row here can be.
+            if kept.isFolder {
+                if controls.collapsed.contains(kept.id) {
+                    controls.collapsed.remove(kept.id)
+                } else {
+                    controls.collapsed.insert(kept.id)
+                }
+                rebuild(store.state)
+            } else if let url = kept.url {
+                onOpenBookmark?(url)
+            }
+            return
+        }
         guard let entry = entry(at: row) else { return }
         if let laneId = entry.laneId {
             onSelect?(laneId, entry.paneId)
@@ -431,6 +466,37 @@ final class SidebarViewController: NSViewController {
             // on it does the obvious thing rather than selecting nothing.
             onAttach?(sessionId)
         }
+    }
+
+    @objc private func openBookmarkClicked() {
+        guard let url = bookmark(at: table.clickedRow)?.url else { return }
+        onOpenBookmark?(url)
+    }
+
+    @objc private func copyBookmarkAddress() {
+        guard let url = bookmark(at: table.clickedRow)?.url else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url, forType: .string)
+    }
+
+    /// A page goes without asking — ⌘D on the same address puts it back, and
+    /// the confirmation belongs to the delete that cannot be undone. A folder
+    /// asks, because it takes everything inside it and nothing puts that back.
+    @objc private func removeBookmarkClicked() {
+        guard let kept = bookmark(at: table.clickedRow) else { return }
+        if kept.isFolder {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Delete the folder “\(kept.title)”?"
+            alert.informativeText =
+                "\(kept.detail.lowercased()) go with it. There is no undo."
+            // Cancel first, so Return cancels — the rule every destructive
+            // dialog in this app follows.
+            alert.addButton(withTitle: "Cancel")
+            alert.addButton(withTitle: "Delete")
+            guard alert.runModal() == .alertSecondButtonReturn else { return }
+        }
+        try? store.removeBookmark(kept.id)
     }
 
     @objc private func newSession() { onNewSession?() }
@@ -608,6 +674,17 @@ extension SidebarViewController: NSMenuDelegate {
         let add = { (title: String, action: Selector) in
             menu.addItem(withTitle: title, action: action, keyEquivalent: "").target = self
         }
+        if let kept = bookmark(at: table.clickedRow) {
+            if !kept.isFolder {
+                add("Open", #selector(openBookmarkClicked))
+                add("Copy Address", #selector(copyBookmarkAddress))
+                menu.addItem(.separator())
+            }
+            // A folder takes what is in it, which is what the word means and
+            // what the confirmation says out loud.
+            add(kept.isFolder ? "Delete Folder…" : "Stop Keeping", #selector(removeBookmarkClicked))
+            return
+        }
         if group(at: table.clickedRow) != nil {
             add("Collapse All", #selector(collapseAll))
             add("Expand All", #selector(expandAll))
@@ -652,6 +729,7 @@ extension SidebarViewController: NSTableViewDelegate {
         switch rows[row] {
         case .group: return SidebarGroupView.height
         case .entry: return SidebarEntryView.height
+        case .bookmark: return SidebarBookmarkView.height
         }
     }
 
@@ -660,16 +738,17 @@ extension SidebarViewController: NSTableViewDelegate {
         switch rows[row] {
         case .group(let g): return SidebarGroupView(group: g)
         case .entry(let e): return SidebarEntryView(entry: e)
+        case .bookmark(let b): return SidebarBookmarkView(row: b)
         }
     }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
         let view = SidebarRowView()
-        view.isTargetable = entry(at: row) != nil
+        view.isTargetable = entry(at: row) != nil || bookmark(at: row) != nil
         return view
     }
 
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
-        entry(at: row) != nil
+        entry(at: row) != nil || bookmark(at: row) != nil
     }
 }

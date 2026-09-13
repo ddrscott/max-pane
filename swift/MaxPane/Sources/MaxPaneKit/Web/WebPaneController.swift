@@ -87,6 +87,7 @@ final class WebPaneController: NSObject, PaneController {
     /// `canGoBack`, `canGoForward`, `isLoading`, `estimatedProgress`, `url`.
     private var chromeObservations: [NSKeyValueObservation] = []
     private var focusToken: UUID?
+    private var bookmarkToken: UUID?
     private var hoverRelay: ScriptMessageRelay?
     private var keyWindowObserver: (any NSObjectProtocol)?
 
@@ -134,7 +135,7 @@ final class WebPaneController: NSObject, PaneController {
         installChrome()
         // Before any web view exists, so a deferred or evicted pane's chrome is
         // never blank — the ledger already knows the address.
-        chrome.setURL(pane.url)
+        showAddress(pane.url)
         zoom = pane.zoom
         chrome.setZoom(zoom)
 
@@ -230,6 +231,7 @@ final class WebPaneController: NSObject, PaneController {
             }
         }
         chrome.onFind = { [weak self] in self?.toggleFind() }
+        chrome.onStar = { [weak self] in self?.keepPage() }
         chrome.onZoomReset = { [weak self] in self?.setZoom(1) }
         chrome.onNavigate = { [weak self] typed in self?.navigate(typed) }
         chrome.onBackMenu = { [weak self] in self?.historyMenu(back: true) }
@@ -259,6 +261,12 @@ final class WebPaneController: NSObject, PaneController {
             guard let self else { return }
             self.chrome.isPaneFocused = state.focusedPaneId == self.paneId
         }
+
+        // The star is a fact about the tree, not about this pane, and the tree
+        // is edited from three places — this star, the editor it opens, and the
+        // sidebar. Watching it is how the same page open in two lanes lights
+        // both stars, rather than the one that was clicked.
+        bookmarkToken = store.observeBookmarks { [weak self] in self?.refreshKept() }
 
         // The pane's own keys. They are not in `Commands.swift` because they
         // belong to whatever has the keyboard rather than to the app — and
@@ -306,7 +314,7 @@ final class WebPaneController: NSObject, PaneController {
         } else {
             load(url)
         }
-        chrome.setURL(url)
+        showAddress(url)
         takeFocus()
     }
 
@@ -363,7 +371,7 @@ final class WebPaneController: NSObject, PaneController {
             webView.observe(\.url, options: [.new]) { [weak self] view, _ in
                 Task { @MainActor in
                     guard let self, let url = view.url?.absoluteString else { return }
-                    self.chrome.setURL(url)
+                    self.showAddress(url)
                     // A `pushState` never reaches `didFinish`, so the ledger
                     // would keep the address the pane was opened at and a
                     // restart would land you back at the app's front door.
@@ -623,6 +631,49 @@ final class WebPaneController: NSObject, PaneController {
     /// committing one are separate, and only the second navigates.
     func editAddress() { chrome.beginEditingAddress() }
 
+    // MARK: - bookmarks
+
+    /// The address this pane is actually showing.
+    ///
+    /// `webView.url` first: during a load and after anything a single-page app
+    /// does, the ledger's copy is a page behind, and a star that is right about
+    /// the page you were on a second ago is a star that is wrong.
+    private var currentAddress: String? {
+        let live = webView?.url?.absoluteString
+        return (live?.isEmpty == false) ? live : pane.url
+    }
+
+    /// ⌘D, and the star. Keep the page if it is not kept, then open the editor
+    /// on it either way — see `BookmarkEditor` for why the keeping does not
+    /// wait for the panel.
+    func keepPage() {
+        guard let url = currentAddress, !url.isEmpty else { return }
+        let title = webView?.title.flatMap { $0.isEmpty ? nil : $0 }
+            ?? store.lane(containing: paneId)?.title
+            ?? ""
+        let existing = store.bookmarks(forURL: url).first
+        guard let kept = existing
+            ?? (try? store.addBookmark(parent: nil, url: url, title: title))
+        else { return }
+        BookmarkEditor.show(over: chrome.starAnchor, store: store, bookmark: kept) {
+            [weak self] in self?.refreshKept()
+        }
+        refreshKept()
+    }
+
+    /// The address, and the star that goes with it. One call, because they
+    /// are one fact and the four places that set the address had all forgotten
+    /// the second half at least once while this was being written.
+    private func showAddress(_ url: String?) {
+        chrome.setURL(url)
+        refreshKept()
+    }
+
+    private func refreshKept() {
+        guard let url = currentAddress, !url.isEmpty else { return chrome.setKept(false) }
+        chrome.setKept(!store.bookmarks(forURL: url).isEmpty)
+    }
+
     // MARK: - zoom
 
     /// ⌘= / ⌘- / ⌘0 on a page.
@@ -651,7 +702,7 @@ final class WebPaneController: NSObject, PaneController {
         // Only while there is no web view to ask. A live pane's address comes
         // from `webView.url`, which is ahead of the ledger during a load and
         // during anything a single-page app does.
-        if webView == nil { chrome.setURL(pane.url) }
+        if webView == nil { showAddress(pane.url) }
         // A URL change from the ledger (not from navigation) means something
         // outside asked for a different page. Never for a popup: the URL the
         // lane was created with is a description of what `window.open` asked
@@ -739,6 +790,8 @@ final class WebPaneController: NSObject, PaneController {
         chromeObservations = []
         focusToken.map(store.stopObserving)
         focusToken = nil
+        bookmarkToken.map(store.stopObservingBookmarks)
+        bookmarkToken = nil
         keyWindowObserver.map(NotificationCenter.default.removeObserver)
         keyWindowObserver = nil
         webView.map(LinkHoverProbe.remove(from:))

@@ -402,3 +402,123 @@ final class SidebarButton: NSButton {
             ])
     }
 }
+
+/// One bookmark or folder: `▸ ★ Title …… detail`.
+///
+/// Two lines would be wrong here in a way they are not for a session. A session
+/// row earns its 40 points because it carries a state, a chip, a throughput
+/// badge and an age; a bookmark carries a name and an address, and the whole
+/// value of a bar is that eight of them fit on screen at once. At 24 points a
+/// folder of twenty is one glance.
+@MainActor
+final class SidebarBookmarkView: NSTableCellView {
+    private let triangle = NSTextField(labelWithString: "")
+    private let glyph = NSTextField(labelWithString: "")
+    private let title = NSTextField(labelWithString: "")
+    private let detail = NSTextField(labelWithString: "")
+
+    static let height: CGFloat = 24
+    /// How far one level of nesting moves a row. Small on purpose: a sidebar is
+    /// 290 pt and the owner's folders hold folders, so a generous indent spends
+    /// the width on whitespace and truncates the names it is indenting.
+    static let indent: CGFloat = 12
+
+    init(row: SidebarModel.BookmarkRow) {
+        super.init(frame: .zero)
+
+        triangle.stringValue = row.isFolder ? (row.collapsed ? "▶" : "▼") : ""
+        triangle.font = Theme.mono(8)
+        triangle.textColor = Theme.dimText
+        triangle.alignment = .center
+
+        // A kept page is a star — the same glyph the chrome bar lights and the
+        // same one ⌘O prints beside the row. Three surfaces, one mark.
+        //
+        // A folder gets nothing here, only the triangle. It had a `▸` of its
+        // own for one render and the sheet settled it: `▼ ▸ Daily` is two
+        // marks for one fact, and the triangle is the one that also says
+        // whether the folder is open. The column stays so that a folder's name
+        // and a page's name start at the same x.
+        glyph.stringValue = row.isFolder ? "" : "★"
+        glyph.font = Theme.mono(10, weight: .medium)
+        glyph.textColor = Theme.accent
+        glyph.alignment = .center
+
+        title.stringValue = row.title
+        title.font = Theme.mono(11, weight: row.isFolder ? .bold : .regular)
+        title.textColor = .labelColor
+
+        detail.stringValue = row.detail
+        detail.font = Theme.mono(9)
+        detail.textColor = SidebarInk.gone
+        detail.alignment = .right
+
+        for label in [triangle, glyph, title, detail] {
+            label.isBezeled = false
+            label.drawsBackground = false
+            label.usesSingleLineMode = true
+            label.maximumNumberOfLines = 1
+            label.lineBreakMode = .byTruncatingTail
+            label.cell?.truncatesLastVisibleLine = true
+            label.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(label)
+        }
+        // Which half gives when the row is too narrow, and it is not the same
+        // half for the two kinds of row.
+        //
+        // A folder's detail is `3 ITEMS` and its title is a name: the count is
+        // four characters that must not truncate, and the name is what has room
+        // to lose. A page's detail is an address and its title is what the user
+        // called it — there, the name is the thing you are reading and the
+        // address is the context, so the address gives. Dragged to 260 pt with
+        // both set the folder's way, `std` inside `Rust/Standard Library`
+        // disappeared entirely under its own URL. The sheet is how that was
+        // seen.
+        title.setContentCompressionResistancePriority(
+            row.isFolder ? .defaultLow : .required, for: .horizontal)
+        title.setContentHuggingPriority(.init(1), for: .horizontal)
+        detail.setContentCompressionResistancePriority(
+            row.isFolder ? .required : .defaultLow, for: .horizontal)
+        detail.setContentHuggingPriority(.required, for: .horizontal)
+
+        let lead = 10 + Self.indent * CGFloat(row.depth)
+        NSLayoutConstraint.activate([
+            triangle.leadingAnchor.constraint(equalTo: leadingAnchor, constant: lead),
+            triangle.widthAnchor.constraint(equalToConstant: 10),
+            triangle.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            glyph.leadingAnchor.constraint(equalTo: triangle.trailingAnchor, constant: 2),
+            glyph.widthAnchor.constraint(equalToConstant: 12),
+            glyph.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            title.leadingAnchor.constraint(equalTo: glyph.trailingAnchor, constant: 5),
+            title.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            detail.leadingAnchor.constraint(
+                greaterThanOrEqualTo: title.trailingAnchor, constant: 6),
+            detail.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -9),
+            detail.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        if row.isFolder {
+            // Measured rather than intrinsic. `NSTextField`'s single-line
+            // intrinsic width came back a point or two short of what it then
+            // drew, so `1 ITEM` rendered as `1 IT…` in a 290 pt sidebar with
+            // forty points of empty row beside it — while `3 ITEMS`, longer,
+            // fitted. The sheet is how that was seen; `ChromeButton` measures
+            // its own glyph for the same reason.
+            //
+            // Folders only: a page's detail is an address, and pinning that to
+            // its full width is what pushed the title out of the row.
+            detail.widthAnchor.constraint(
+                equalToConstant: ceil(Self.width(of: row.detail)) + 2).isActive = true
+        }
+        toolTip = row.url ?? row.title
+    }
+
+    private static func width(of text: String) -> CGFloat {
+        (text as NSString).size(withAttributes: [.font: Theme.mono(9)]).width
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not a nib") }
+}

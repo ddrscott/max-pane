@@ -86,6 +86,10 @@ fn cost_of_importing_a_real_profile() {
         profile: None,
         kind: kind_of(&path),
         path: path.to_string_lossy().into_owned(),
+        // This measures the history half against a real profile. Pointing it at
+        // the bookmarks beside that profile would fold two numbers into one and
+        // make the one the README quotes unreadable.
+        bookmarks_path: None,
         size_bytes: std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0),
         blocked: None,
     };

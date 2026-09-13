@@ -26,6 +26,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0009_history_index",
         include_str!("../migrations/0009_history_index.sql"),
     ),
+    ("0010_bookmarks", include_str!("../migrations/0010_bookmarks.sql")),
 ];
 
 /// A needle as an FTS5 query: one quoted phrase, nothing else.
@@ -902,6 +903,442 @@ impl Ledger {
     }
 
     // ---- importing another browser's history -------------------------------
+
+    // ---- bookmarks ---------------------------------------------------------
+
+    /// The tree in the order it is drawn: every folder immediately followed by
+    /// what is inside it, siblings by `position`.
+    ///
+    /// One recursive walk rather than a query per folder. The sort key is the
+    /// chain of zero-padded positions from the bar down — `0000000002/0000000000`
+    /// — which is the only ordering that puts a folder's children under the
+    /// folder and nowhere else. Padded because it is compared as text: at ten
+    /// digits, `position` would have to exceed two billion before `10` sorted
+    /// before `9`, and the renumber in `remove_bookmark` keeps it near zero.
+    const TREE_SQL: &'static str =
+        "WITH RECURSIVE tree(id, parent_id, is_folder, url, title, position, added_at, depth, sort) AS (
+           SELECT id, parent_id, is_folder, url, title, position, added_at, 0,
+                  printf('%010d', position)
+             FROM bookmark WHERE parent_id IS NULL
+           UNION ALL
+           SELECT b.id, b.parent_id, b.is_folder, b.url, b.title, b.position, b.added_at,
+                  t.depth + 1, t.sort || '/' || printf('%010d', b.position)
+             FROM bookmark b JOIN tree t ON b.parent_id = t.id
+         )
+         SELECT id, parent_id, is_folder, url, title, position, added_at, depth FROM tree";
+
+    fn row_to_bookmark(r: &Row) -> rusqlite::Result<Bookmark> {
+        Ok(Bookmark {
+            id: r.get(0)?,
+            parent_id: r.get(1)?,
+            is_folder: r.get::<_, i64>(2)? != 0,
+            url: r.get(3)?,
+            title: r.get(4)?,
+            position: r.get::<_, i64>(5)? as u32,
+            added_at: r.get(6)?,
+            depth: r.get::<_, i64>(7)? as u32,
+        })
+    }
+
+    /// Everything, in tree order.
+    pub fn bookmarks(&self) -> Result<Vec<Bookmark>> {
+        let mut stmt = self.conn.prepare(&format!("{} ORDER BY sort", Self::TREE_SQL))?;
+        let rows = stmt
+            .query_map([], Self::row_to_bookmark)?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// The folders alone, in the same order — what a "file this somewhere"
+    /// control offers.
+    pub fn bookmark_folders(&self) -> Result<Vec<Bookmark>> {
+        let mut stmt = self
+            .conn
+            .prepare(&format!("{} WHERE is_folder = 1 ORDER BY sort", Self::TREE_SQL))?;
+        let rows = stmt
+            .query_map([], Self::row_to_bookmark)?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// One row, without walking the tree for it.
+    ///
+    /// `depth` comes back 0 here and it is the one place in this file that says
+    /// something untrue about a row. It is what a single-row lookup can know
+    /// without the recursive walk, the two callers (rename, remove) are about
+    /// the row and not about where it sits, and the alternative is running the
+    /// whole tree to answer a question about one node.
+    pub fn bookmark(&self, id: &str) -> Result<Option<Bookmark>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, parent_id, is_folder, url, title, position, added_at, 0
+               FROM bookmark WHERE id = ?1",
+        )?;
+        Ok(stmt.query_row([id], Self::row_to_bookmark).optional()?)
+    }
+
+    /// Every placement of one address. The star's question, and it is a list
+    /// because the same page may be kept in two folders.
+    pub fn bookmarks_for_url(&self, url: &str) -> Result<Vec<Bookmark>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, parent_id, is_folder, url, title, position, added_at, 0
+               FROM bookmark WHERE url = ?1 ORDER BY added_at",
+        )?;
+        let rows = stmt
+            .query_map([url], Self::row_to_bookmark)?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// `Documentation/Rust`, or `None` for a row on the bar.
+    ///
+    /// Walks upwards from the row rather than downwards from the bar, so the
+    /// cost is the depth of one branch and not the size of the tree.
+    pub fn folder_path(&self, id: &str) -> Result<Option<String>> {
+        let mut names: Vec<String> = Vec::new();
+        let mut cursor: Option<String> = self
+            .conn
+            .query_row("SELECT parent_id FROM bookmark WHERE id = ?1", [id], |r| r.get(0))
+            .optional()?
+            .flatten();
+        // Bounded rather than `while let`: `set_bookmark_parent` refuses to
+        // build a cycle, and this is the read that would hang if one ever got
+        // in anyway. A tree deeper than this is not one anybody is navigating.
+        for _ in 0..64 {
+            let Some(node) = cursor else { break };
+            let row: Option<(String, Option<String>)> = self
+                .conn
+                .query_row("SELECT title, parent_id FROM bookmark WHERE id = ?1", [&node], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })
+                .optional()?;
+            let Some((title, parent)) = row else { break };
+            names.push(title);
+            cursor = parent;
+        }
+        if names.is_empty() {
+            return Ok(None);
+        }
+        names.reverse();
+        Ok(Some(names.join("/")))
+    }
+
+    /// Add a page or a folder at the end of `parent`.
+    ///
+    /// At the end, always. "Newest first" is how history is read and the
+    /// opposite of how a bar is: the folders on it are in the order they have
+    /// been in for years, and an add that pushed everything one place along
+    /// would move eight targets the user aims at by muscle memory.
+    pub fn insert_bookmark(
+        &self,
+        parent_id: Option<&str>,
+        is_folder: bool,
+        url: Option<&str>,
+        title: &str,
+        now_ms: i64,
+    ) -> Result<Bookmark> {
+        if let Some(parent) = parent_id {
+            let is_a_folder: Option<i64> = self
+                .conn
+                .query_row("SELECT is_folder FROM bookmark WHERE id = ?1", [parent], |r| r.get(0))
+                .optional()?;
+            match is_a_folder {
+                Some(1) => {}
+                // Not an error the user can cause through the app, and worth
+                // refusing rather than writing: a row parented to a page is
+                // invisible in the tree — `TREE_SQL` would still emit it, under
+                // a "folder" that renders as a link — and nothing would ever
+                // say why.
+                _ => {
+                    return Err(CoreError::Ledger {
+                        message: format!("bookmark {parent} is not a folder"),
+                    })
+                }
+            }
+        }
+        let position: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM bookmark WHERE parent_id IS ?1",
+            params![parent_id],
+            |r| r.get(0),
+        )?;
+        let id = crate::new_id();
+        self.conn.execute(
+            "INSERT INTO bookmark (id, parent_id, is_folder, url, title, position, added_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![id, parent_id, is_folder as i64, url, title, position, now_ms],
+        )?;
+        Ok(Bookmark {
+            id,
+            parent_id: parent_id.map(str::to_string),
+            is_folder,
+            url: url.map(str::to_string),
+            title: title.to_string(),
+            position: position as u32,
+            added_at: now_ms,
+            depth: 0,
+        })
+    }
+
+    /// Rename one row. A bookmark's title is the user's, not the page's.
+    pub fn rename_bookmark(&self, id: &str, title: &str) -> Result<()> {
+        self.conn
+            .execute("UPDATE bookmark SET title = ?2 WHERE id = ?1", params![id, title])?;
+        Ok(())
+    }
+
+    /// File one row under a different folder, at the end of it.
+    ///
+    /// Refuses to put a folder inside its own subtree. That is the one move
+    /// that detaches a branch from the bar entirely: `TREE_SQL` starts at
+    /// `parent_id IS NULL` and walks down, so a cycle is not an infinite loop
+    /// there — it is a subtree that silently stops existing, with its rows
+    /// still in the table and reachable by nothing.
+    pub fn set_bookmark_parent(&self, id: &str, parent_id: Option<&str>) -> Result<()> {
+        if let Some(parent) = parent_id {
+            if parent == id || self.is_descendant(parent, id)? {
+                return Err(CoreError::Ledger {
+                    message: "a folder cannot be moved inside itself".into(),
+                });
+            }
+        }
+        let position: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM bookmark WHERE parent_id IS ?1",
+            params![parent_id],
+            |r| r.get(0),
+        )?;
+        self.conn.execute(
+            "UPDATE bookmark SET parent_id = ?2, position = ?3 WHERE id = ?1",
+            params![id, parent_id, position],
+        )?;
+        Ok(())
+    }
+
+    fn is_descendant(&self, node: &str, ancestor: &str) -> Result<bool> {
+        let mut cursor = Some(node.to_string());
+        for _ in 0..64 {
+            let Some(current) = cursor else { return Ok(false) };
+            if current == ancestor {
+                return Ok(true);
+            }
+            cursor = self
+                .conn
+                .query_row("SELECT parent_id FROM bookmark WHERE id = ?1", [&current], |r| {
+                    r.get(0)
+                })
+                .optional()?
+                .flatten();
+        }
+        Ok(false)
+    }
+
+    /// Drop one row, and everything under it.
+    ///
+    /// The siblings it leaves behind are renumbered so that `position` stays a
+    /// dense 0..n. Nothing reads the gap a delete would leave — the order is
+    /// the same either way — but a sparse column is one whose next value is not
+    /// obvious to the next person to write against it, and closing it is one
+    /// statement over the tens of rows in a folder.
+    pub fn remove_bookmark(&self, id: &str) -> Result<()> {
+        let parent: Option<Option<String>> = self
+            .conn
+            .query_row("SELECT parent_id FROM bookmark WHERE id = ?1", [id], |r| r.get(0))
+            .optional()?;
+        let Some(parent) = parent else { return Ok(()) };
+        self.conn.execute("DELETE FROM bookmark WHERE id = ?1", [id])?;
+        self.conn.execute(
+            "UPDATE bookmark SET position = (
+                 SELECT COUNT(*) FROM bookmark s
+                  WHERE s.parent_id IS bookmark.parent_id AND s.position < bookmark.position
+             ) WHERE parent_id IS ?1",
+            params![parent],
+        )?;
+        Ok(())
+    }
+
+    /// How many rows the tree holds, folders included.
+    pub fn bookmark_count(&self) -> Result<u32> {
+        Ok(self
+            .conn
+            .query_row("SELECT COUNT(*) FROM bookmark", [], |r| r.get::<_, i64>(0))?
+            as u32)
+    }
+
+    /// Every kept page as `("Work/Rust", "https://…")`.
+    ///
+    /// The identity an import compares on. Not the URL alone: the same page in
+    /// two folders is two bookmarks on purpose (see migration 0010), so a
+    /// source row that names a folder this ledger does not have that page in is
+    /// a row this ledger does not have.
+    ///
+    /// Built by reading the tree and walking it once here rather than asking
+    /// SQLite for a recursive path per row: an import compares every source
+    /// bookmark against it, and one pass over a few thousand rows is cheaper
+    /// than a few thousand queries.
+    pub fn bookmark_placements(&self) -> Result<std::collections::HashSet<(String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, parent_id, title, url FROM bookmark")?;
+        let rows: Vec<(String, Option<String>, String, Option<String>)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        let by_id: std::collections::HashMap<&str, (Option<&str>, &str)> = rows
+            .iter()
+            .map(|(id, parent, title, _)| (id.as_str(), (parent.as_deref(), title.as_str())))
+            .collect();
+        let mut out = std::collections::HashSet::new();
+        for (_, parent, _, url) in &rows {
+            let Some(url) = url else { continue };
+            let mut names = Vec::new();
+            let mut cursor = parent.as_deref();
+            for _ in 0..64 {
+                let Some(node) = cursor else { break };
+                let Some((up, title)) = by_id.get(node) else { break };
+                names.push(*title);
+                cursor = *up;
+            }
+            names.reverse();
+            out.insert((names.join("/"), url.clone()));
+        }
+        Ok(out)
+    }
+
+    /// Write another browser's bookmarks into the tree.
+    ///
+    /// Returns what was written and what `Replace` dropped.
+    ///
+    /// # What "already here" means, and why merging twice is a no-op
+    ///
+    /// The same rule `import::fold` gives for pages, applied to a tree: a
+    /// source bookmark is new when no row here has that address in that folder.
+    /// Importing the same profile a second time therefore writes nothing —
+    /// which is what makes the wizard's `Merge` safe to press twice, and it
+    /// costs no second table recording what has been imported.
+    ///
+    /// What it does *not* do is update a bookmark that is already here. A
+    /// bookmark's title is the user's (see [`Ledger::rename_bookmark`]), and a
+    /// re-import that renamed his rows back to what Vivaldi calls them would be
+    /// undoing the one edit this store exists to keep.
+    pub fn apply_bookmark_import(
+        &mut self,
+        flat: &[crate::import::FlatBookmark],
+        mode: crate::import::ImportMode,
+        now_ms: i64,
+    ) -> Result<(u32, u32)> {
+        let existing = if mode == crate::import::ImportMode::Replace {
+            self.bookmark_count()?
+        } else {
+            0
+        };
+        let known = match mode {
+            crate::import::ImportMode::Merge => self.bookmark_placements()?,
+            crate::import::ImportMode::Replace => std::collections::HashSet::new(),
+        };
+        let mut inserted = 0u32;
+        self.transaction(|tx| {
+            if mode == crate::import::ImportMode::Replace {
+                tx.execute("DELETE FROM bookmark", [])?;
+            }
+            // Folder path -> id, seeded from what is already here so that a
+            // merge files Vivaldi's `Work/Rust` into the `Work/Rust` the user
+            // already has instead of making a second one beside it.
+            let mut folders: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+            if mode == crate::import::ImportMode::Merge {
+                let mut stmt =
+                    tx.prepare("SELECT id, parent_id, title FROM bookmark WHERE is_folder = 1")?;
+                let rows: Vec<(String, Option<String>, String)> = stmt
+                    .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                    .collect::<rusqlite::Result<_>>()?;
+                let by_id: std::collections::HashMap<&str, (Option<&str>, &str)> = rows
+                    .iter()
+                    .map(|(id, p, t)| (id.as_str(), (p.as_deref(), t.as_str())))
+                    .collect();
+                for (id, parent, _) in &rows {
+                    let mut names = Vec::new();
+                    let mut cursor = parent.as_deref();
+                    for _ in 0..64 {
+                        let Some(node) = cursor else { break };
+                        let Some((up, title)) = by_id.get(node) else { break };
+                        names.push(*title);
+                        cursor = *up;
+                    }
+                    names.reverse();
+                    names.push(by_id[id.as_str()].1);
+                    folders.insert(names.join("/"), id.clone());
+                }
+            }
+
+            let mut next_position: std::collections::HashMap<Option<String>, i64> =
+                std::collections::HashMap::new();
+            let mut append = |tx: &rusqlite::Transaction<'_>,
+                              parent: Option<&str>,
+                              is_folder: bool,
+                              url: Option<&str>,
+                              title: &str,
+                              added_at: i64|
+             -> Result<String> {
+                let key = parent.map(str::to_string);
+                let position = match next_position.get(&key) {
+                    Some(n) => *n,
+                    None => tx.query_row(
+                        "SELECT COALESCE(MAX(position), -1) + 1 FROM bookmark WHERE parent_id IS ?1",
+                        params![parent],
+                        |r| r.get::<_, i64>(0),
+                    )?,
+                };
+                next_position.insert(key, position + 1);
+                let id = crate::new_id();
+                tx.execute(
+                    "INSERT INTO bookmark (id, parent_id, is_folder, url, title, position, added_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![id, parent, is_folder as i64, url, title, position, added_at],
+                )?;
+                Ok(id)
+            };
+
+            for item in flat {
+                if known.contains(&(item.folder.join("/"), item.url.clone())) {
+                    continue;
+                }
+                // Every ancestor, in order, so `Work/Rust` under a `Work` this
+                // pass has just created lands inside it rather than beside it.
+                let mut parent: Option<String> = None;
+                let mut path = String::new();
+                for name in &item.folder {
+                    if !path.is_empty() {
+                        path.push('/');
+                    }
+                    path.push_str(name);
+                    parent = Some(match folders.get(&path) {
+                        Some(id) => id.clone(),
+                        None => {
+                            let id =
+                                append(tx, parent.as_deref(), true, None, name, item.added_at)?;
+                            folders.insert(path.clone(), id.clone());
+                            inserted += 1;
+                            id
+                        }
+                    });
+                }
+                let added_at = if item.added_at > 0 { item.added_at } else { now_ms };
+                append(
+                    tx,
+                    parent.as_deref(),
+                    false,
+                    Some(&item.url),
+                    &item.title,
+                    added_at,
+                )?;
+                inserted += 1;
+            }
+            Ok(())
+        })?;
+        Ok((inserted, existing))
+    }
+
+    pub fn clear_bookmarks(&self) -> Result<()> {
+        self.conn.execute("DELETE FROM bookmark", [])?;
+        Ok(())
+    }
 
     /// Copy the whole ledger to `dest`, through SQLite rather than the file
     /// system.

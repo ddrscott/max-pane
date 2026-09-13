@@ -45,6 +45,7 @@ public enum Command: String, CaseIterable, Sendable {
     case importStrip
     case importBrowserHistory
     case showHistory
+    case bookmarkPage
     case toggleSpan
     case showHelp
 
@@ -87,8 +88,9 @@ public enum Command: String, CaseIterable, Sendable {
         case .pairWithNext: return "Pair With Lane to the Right"
         case .exportStrip: return "Export Strip…"
         case .importStrip: return "Import Strip…"
-        case .importBrowserHistory: return "Import Browser History…"
+        case .importBrowserHistory: return "Import From Another Browser…"
         case .showHistory: return "History"
+        case .bookmarkPage: return "Keep This Page…"
         case .toggleSpan: return "Span Lane (2× Width)"
         case .showHelp: return "Keyboard Shortcuts"
         }
@@ -107,8 +109,9 @@ public enum Command: String, CaseIterable, Sendable {
         // ⌘O is the only door. "Something new goes on the strip" was three keys
         // — ⌘T for a command or a URL, ⌘Y for a page you have been to, ⌘O for a
         // session that is already running — and each of them could see a third
-        // of the answer. ⌘T and ⌘D stay as alternates below, because they are
-        // the keys the README taught and they now open the same thing.
+        // of the answer. ⌘T stays as an alternate below, because it is a key
+        // the README taught and it now opens the same thing. ⌘D was the other
+        // such alternate until bookmarks needed it — see `bookmarkPage`.
         //
         // ⌘Y and ⌥⌘O open that same picker with its scope already narrowed, so
         // "pages only" costs one key instead of ⌘O and two presses of ⇥. They
@@ -206,6 +209,12 @@ public enum Command: String, CaseIterable, Sendable {
         // one of them in their fingers should find the other by holding one
         // more key rather than by reading the help sheet.
         case .showHistory:     return ("y", [.command, .shift])
+        // ⌘D, the way it is in every browser, and it cost something: ⌘D was an
+        // alternate for ⌘O. That was defensible while there was nothing else
+        // for the key to mean — it is the key a `⌘D` muscle reaches for to
+        // *keep a page*, and a door that already answers to ⌘O and ⌘T did not
+        // need a third name as much as this needs its first.
+        case .bookmarkPage:    return ("d", [.command])
         case .toggleSpan:      return ("\\", [.command])
         // The one everybody reaches for when they do not know the others.
         case .showHelp:        return ("/", [.command])
@@ -219,12 +228,16 @@ public enum Command: String, CaseIterable, Sendable {
     /// can find.
     public var defaultAlternateShortcuts: [(String, NSEvent.ModifierFlags)] {
         switch self {
-        // ⌘T and ⌘D used to open a picker of their own. They now open ⌘O, and
-        // they open it identically — same window, same rows, same placement.
-        // Keeping them as near-variants was the tempting move and the wrong
-        // one: a second picker that looks like the first and behaves slightly
-        // differently is worse than the three honest ones this replaced.
-        case .openAnything: return [("t", [.command]), ("d", [.command])]
+        // ⌘T used to open a picker of its own. It now opens ⌘O, and it opens
+        // it identically — same window, same rows, same placement. Keeping it
+        // as a near-variant was the tempting move and the wrong one: a second
+        // picker that looks like the first and behaves slightly differently is
+        // worse than the three honest ones this replaced.
+        //
+        // ⌘D was the other such alternate until bookmarks needed it, which is
+        // the first thing that has ever wanted that key here. See
+        // `bookmarkPage` above.
+        case .openAnything: return [("t", [.command])]
         default: return []
         }
     }
@@ -295,6 +308,10 @@ public enum Command: String, CaseIterable, Sendable {
         case .zoomIn, .zoomOut, .zoomReset: return .view
         case .pairWithNext: return .navigate
         case .exportStrip, .importStrip, .importBrowserHistory: return .file
+        // Under Navigate with ⌘Y and ⇧⌘Y: keeping a page and going back to one
+        // are the same thought about the same corpus, and the File menu is
+        // where panes are made.
+        case .bookmarkPage: return .navigate
         case .toggleSpan: return .view
         }
     }

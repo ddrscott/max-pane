@@ -49,6 +49,11 @@ protocol PaneController: AnyObject {
     /// that does not.
     func editAddress()
 
+    /// ⌘D — keep this page, and open the editor on it. Greyed out for a
+    /// terminal for the same reason `editAddress` is: a pane with no address
+    /// has no page to keep.
+    func keepPage()
+
     /// Write anything the pane would otherwise lose, without tearing it down.
     ///
     /// Called on quit. A terminal has nothing to save — the session lives in
@@ -96,6 +101,10 @@ extension PaneController {
     /// already greyed the item out, so the only way to arrive here is a key
     /// pressed at the moment focus moved — and a beep for that is noise.
     func editAddress() {}
+
+    /// As `editAddress`: the menu item is already greyed, so the only way here
+    /// is a key pressed as focus moved.
+    func keepPage() {}
 }
 
 /// The rungs ⌘= and ⌘- climb.

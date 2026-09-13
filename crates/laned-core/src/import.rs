@@ -72,6 +72,16 @@ pub struct HistorySource {
     pub kind: HistorySourceKind,
     /// Absolute path to the history database.
     pub path: String,
+    /// Absolute path to this profile's bookmarks, when we can read the format.
+    ///
+    /// `None` is not "this browser has no bookmarks" — it is "not from here".
+    /// Safari keeps its in a binary property list, and the only reader for one
+    /// on this machine is `plutil`, a macOS program. This crate is the
+    /// platform-agnostic half of the app (see the README's layout) and shelling
+    /// out to a system tool would make it macOS-only for one browser the owner
+    /// does not use. The wizard says so on the row rather than importing half
+    /// of Safari silently.
+    pub bookmarks_path: Option<String>,
     /// Bytes, for a wizard that is about to copy it.
     pub size_bytes: u64,
     /// Why we cannot read it, when we cannot. `Some` here is not an error: the
@@ -116,6 +126,30 @@ pub struct ImportPlan {
     pub existing_pages: u32,
     /// Pages in the ledger afterwards.
     pub resulting_pages: u32,
+    /// Bookmarks the source has, folders not counted.
+    ///
+    /// # Why bookmarks ride in the history wizard rather than getting one of
+    /// their own
+    ///
+    /// Because "import from Vivaldi" is one decision. The wizard already finds
+    /// the profiles on this Mac, already explains merge against replace,
+    /// already refuses to write before a dry run has been read, and already
+    /// takes the snapshot that a Firefox bookmark import needs anyway — its
+    /// bookmarks are in `places.sqlite`, the file the history is in. A second
+    /// wizard would be a second copy of all of that, asking the same question
+    /// about the same browser on the next screen along.
+    ///
+    /// `None` means this source has bookmarks we cannot read — see
+    /// [`HistorySource::bookmarks_path`] — as against `Some(0)`, which means it
+    /// has none.
+    pub source_bookmarks: Option<u32>,
+    /// Source bookmarks already kept here, at the same address in the same
+    /// folder.
+    pub bookmarks_already_known: u32,
+    /// Bookmark rows here before the import, folders counted: it is the number
+    /// the tree draws.
+    pub existing_bookmarks: u32,
+    pub resulting_bookmarks: u32,
 }
 
 /// An import that happened.
@@ -128,6 +162,10 @@ pub struct ImportOutcome {
     pub updated: u32,
     /// Rows `Replace` dropped.
     pub discarded: u32,
+    /// Bookmark rows written, folders included.
+    pub bookmarks_inserted: u32,
+    /// Bookmark rows `Replace` dropped.
+    pub bookmarks_discarded: u32,
     /// Where `Replace` put the old ledger. Named so a wrong choice at the
     /// wizard is one `cp` from being undone, which is the whole reason
     /// `Replace` is allowed to be one click.
@@ -269,11 +307,24 @@ fn describe(name: &str, profile: Option<String>, kind: HistorySourceKind, path: 
         )),
         Err(e) => Some(format!("{}: {e}", path.display())),
     };
+    // Beside the history file, and named by the family. Firefox is the odd one
+    // out only in that its bookmarks are *in* `places.sqlite`, so the path is
+    // the same file twice — which is what lets one snapshot serve both halves
+    // of a Firefox import.
+    let bookmarks = match kind {
+        HistorySourceKind::Chromium => {
+            let f = path.with_file_name("Bookmarks");
+            f.is_file().then(|| f.to_string_lossy().into_owned())
+        }
+        HistorySourceKind::Firefox => Some(path.to_string_lossy().into_owned()),
+        HistorySourceKind::Safari => None,
+    };
     HistorySource {
         name: name.to_string(),
         profile,
         kind,
         path: path.to_string_lossy().into_owned(),
+        bookmarks_path: bookmarks,
         size_bytes,
         blocked,
     }
@@ -335,6 +386,32 @@ impl Snapshot {
             }
         }
         Ok(snap)
+    }
+
+    /// A copy of a file that is not a SQLite database — Chromium's `Bookmarks`,
+    /// which is JSON.
+    ///
+    /// The lock that forced [`Snapshot::take`]'s file copy is SQLite's and does
+    /// not apply here, so this could read the original in place. It does not,
+    /// for the reason the module doc gives for everything else in this file:
+    /// the file belongs to a process we do not control, and Chromium rewrites
+    /// it whole. A rename-into-place means a reader sees the old file or the
+    /// new one — today, in that version of Chromium, on that file system. The
+    /// copy costs a few milliseconds on a file measured in hundreds of
+    /// kilobytes and does not depend on being right about that.
+    pub fn take_plain(source: &Path, ledger: Option<&Path>) -> Result<Self> {
+        let dir = Self::dir_for(ledger);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|e| io_err(&dir, e))?;
+        let db = dir.join("source.db");
+        std::fs::copy(source, &db).map_err(|e| io_err(source, e))?;
+        Ok(Snapshot { dir, db })
+    }
+
+    /// The copy, as a path. Named `db` inside because that is what it is for
+    /// every caller but the one above.
+    pub fn file(&self) -> &Path {
+        &self.db
     }
 
     /// The copy, opened. Read-write on purpose: a hot journal has to be rolled
@@ -550,4 +627,284 @@ fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+// ---- bookmarks -------------------------------------------------------------
+//
+// A second tree in the same profile, and three ways of storing it: Chromium
+// keeps `Bookmarks` as JSON beside `History`, Firefox keeps `moz_bookmarks`
+// inside `places.sqlite` — the file the history is already in — and Safari
+// keeps a binary property list this crate deliberately does not read. See
+// `HistorySource::bookmarks_path`.
+//
+// The tree is read whole and in source order, because order is the thing a
+// bookmarks bar is. The owner's eight folders have been in the same eight
+// places for years, and an import that sorted them by title or by date would
+// arrive looking like somebody else's bar.
+
+/// One node of another browser's bookmarks, in the order that browser draws it.
+///
+/// Recursive, unlike [`crate::model::Bookmark`], and for the opposite reason:
+/// nothing sends this across the FFI. It exists between a reader and the
+/// ledger, where the shape the source actually has is the cheapest one to hold.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceBookmark {
+    pub title: String,
+    /// `None` for a folder.
+    pub url: Option<String>,
+    pub added_at: i64,
+    pub children: Vec<SourceBookmark>,
+}
+
+/// One kept page with the folders above it, which is the form both the
+/// "already known" count and the insert want.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FlatBookmark {
+    /// Folder titles from the bar down. Empty means on the bar.
+    pub folder: Vec<String>,
+    pub title: String,
+    /// Normalized.
+    pub url: String,
+    pub added_at: i64,
+}
+
+/// Depth-first, parents before children — the order the ledger has to write
+/// them in, because a folder must exist before anything can be filed under it.
+///
+/// Folders with nothing importable inside them survive as an empty `folder`
+/// path on nothing, which is to say they vanish. That is deliberate: a folder
+/// is not something the user asked for separately from what is in it, and a bar
+/// that arrives with three empty folders of OAuth redirects in it is worse than
+/// one that arrives without them. A folder the user really did leave empty is
+/// the same case and the same answer.
+pub fn flatten(tree: &[SourceBookmark]) -> Vec<FlatBookmark> {
+    fn walk(nodes: &[SourceBookmark], path: &mut Vec<String>, out: &mut Vec<FlatBookmark>) {
+        for node in nodes {
+            match &node.url {
+                Some(url) => out.push(FlatBookmark {
+                    folder: path.clone(),
+                    title: node.title.clone(),
+                    url: url.clone(),
+                    added_at: node.added_at,
+                }),
+                None => {
+                    path.push(node.title.clone());
+                    walk(&node.children, path, out);
+                    path.pop();
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(tree, &mut Vec::new(), &mut out);
+    out
+}
+
+/// Another browser's bookmarks, as a tree. Empty when we cannot read them.
+pub fn read_bookmarks(source: &HistorySource, ledger: Option<&Path>) -> Result<Vec<SourceBookmark>> {
+    let Some(path) = source.bookmarks_path.as_deref() else { return Ok(Vec::new()) };
+    let path = Path::new(path);
+    match source.kind {
+        HistorySourceKind::Chromium => {
+            let snap = Snapshot::take_plain(path, ledger)?;
+            let text = std::fs::read_to_string(snap.file()).map_err(|e| io_err(path, e))?;
+            read_chromium_bookmarks(&text)
+        }
+        HistorySourceKind::Firefox => {
+            let snap = Snapshot::take(path, ledger)?;
+            let conn = snap.open()?;
+            read_firefox_bookmarks(&conn)
+        }
+        HistorySourceKind::Safari => Ok(Vec::new()),
+    }
+}
+
+/// Chromium's `Bookmarks`: `{"roots": {"bookmark_bar": …, "other": …}}`, each
+/// node `{"type": "url"|"folder", "name", "url", "children", "date_added"}`.
+///
+/// The bar's children land on our bar and the other roots become folders on it,
+/// rather than everything landing under a "Vivaldi" folder. The bar is the part
+/// the owner uses daily and burying it one level down to preserve a hierarchy
+/// nobody looks at would be importing the file rather than the bookmarks.
+/// "Other Bookmarks" is where a browser puts what you saved without choosing,
+/// so it stays a folder — it is often thousands of rows, and on the bar it
+/// would be the bar.
+pub fn read_chromium_bookmarks(text: &str) -> Result<Vec<SourceBookmark>> {
+    let doc: serde_json::Value = serde_json::from_str(text)
+        .map_err(|e| CoreError::Ledger { message: format!("bookmarks: {e}") })?;
+    let Some(roots) = doc.get("roots") else { return Ok(Vec::new()) };
+    let mut out = Vec::new();
+    if let Some(bar) = roots.get("bookmark_bar") {
+        out.extend(chromium_children(bar));
+    }
+    for (key, label) in [("other", "Other Bookmarks"), ("synced", "Mobile Bookmarks")] {
+        let Some(node) = roots.get(key) else { continue };
+        let children = chromium_children(node);
+        if children.is_empty() {
+            continue;
+        }
+        out.push(SourceBookmark {
+            title: label.to_string(),
+            url: None,
+            added_at: chromium_date(node),
+            children,
+        });
+    }
+    Ok(out)
+}
+
+fn chromium_children(node: &serde_json::Value) -> Vec<SourceBookmark> {
+    node.get("children")
+        .and_then(|c| c.as_array())
+        .map(|c| c.iter().filter_map(chromium_node).collect())
+        .unwrap_or_default()
+}
+
+fn chromium_node(node: &serde_json::Value) -> Option<SourceBookmark> {
+    let name = node.get("name").and_then(|n| n.as_str()).unwrap_or("").trim();
+    let added_at = chromium_date(node);
+    match node.get("type").and_then(|t| t.as_str()) {
+        Some("folder") => Some(SourceBookmark {
+            // A folder with no name is one the user cannot aim at, and the
+            // ledger will not store an empty title. `folder_path` then reads
+            // `Work//Rust`, so the placeholder has to be something.
+            title: if name.is_empty() { "Untitled".to_string() } else { name.to_string() },
+            url: None,
+            added_at,
+            children: chromium_children(node),
+        }),
+        Some("url") => {
+            // Same filter history uses: `chrome-extension:` and `javascript:`
+            // bookmarks are not pages this app can open, and a row that cannot
+            // be opened is worse on a bar than in a history list — the bar is
+            // aimed at.
+            let url = normalize_url(node.get("url").and_then(|u| u.as_str()).unwrap_or(""))?;
+            Some(SourceBookmark {
+                title: if name.is_empty() { crate::history::search_handle(&url).to_string() } else { name.to_string() },
+                url: Some(url),
+                added_at,
+                children: Vec::new(),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Chromium writes `date_added` as a *string* of microseconds since 1601 —
+/// JSON has one number type and this one does not fit a double without losing
+/// the last few digits, which is why the file quotes it.
+fn chromium_date(node: &serde_json::Value) -> i64 {
+    node.get("date_added")
+        .and_then(|d| d.as_str())
+        .and_then(|d| d.parse::<f64>().ok())
+        .map(|raw| Epoch::Chromium.to_epoch_ms(raw))
+        .unwrap_or(0)
+}
+
+/// Firefox's `moz_bookmarks`, which is in `places.sqlite` beside the history.
+///
+/// Rows are found by `guid` rather than by the well-known ids 2/3/5, because
+/// the guids are the documented contract and the ids are an implementation
+/// detail that a profile restored from a backup does not necessarily keep.
+pub fn read_firefox_bookmarks(conn: &Connection) -> Result<Vec<SourceBookmark>> {
+    let mut stmt = conn.prepare(
+        "SELECT b.id, b.parent, b.type, COALESCE(b.title, ''), b.dateAdded, p.url, b.guid
+           FROM moz_bookmarks b LEFT JOIN moz_places p ON p.id = b.fk
+          ORDER BY b.parent, b.position",
+    )?;
+    struct Node {
+        kind: i64,
+        title: String,
+        added_at: i64,
+        url: Option<String>,
+    }
+    let mut nodes: std::collections::HashMap<i64, Node> = std::collections::HashMap::new();
+    let mut children: std::collections::HashMap<i64, Vec<i64>> = std::collections::HashMap::new();
+    let mut roots: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut rows = stmt.query([])?;
+    while let Some(r) = rows.next()? {
+        let id: i64 = r.get(0)?;
+        let parent: i64 = r.get(1).unwrap_or(0);
+        let kind: i64 = r.get(2).unwrap_or(0);
+        let title: String = r.get(3).unwrap_or_default();
+        let added_raw: Option<f64> = r.get(4).ok().flatten();
+        let url: Option<String> = r.get(5).ok().flatten();
+        let guid: String = r.get(6).unwrap_or_default();
+        roots.insert(guid, id);
+        nodes.insert(
+            id,
+            Node {
+                kind,
+                title,
+                added_at: added_raw.map(|raw| Epoch::Unix.to_epoch_ms(raw)).unwrap_or(0),
+                url,
+            },
+        );
+        children.entry(parent).or_default().push(id);
+    }
+
+    fn build(
+        id: i64,
+        nodes: &std::collections::HashMap<i64, Node>,
+        children: &std::collections::HashMap<i64, Vec<i64>>,
+        depth: u32,
+    ) -> Option<SourceBookmark> {
+        // Firefox has no cycles, and a corrupt profile that did would otherwise
+        // recurse until the stack ran out — in a call the shell made off the
+        // main thread, where the crash is a dead app and no message.
+        if depth > 64 {
+            return None;
+        }
+        let node = nodes.get(&id)?;
+        match node.kind {
+            // 2 is a folder, 1 is a bookmark, 3 is a separator and is not one.
+            2 => Some(SourceBookmark {
+                title: if node.title.trim().is_empty() { "Untitled".into() } else { node.title.clone() },
+                url: None,
+                added_at: node.added_at,
+                children: children
+                    .get(&id)
+                    .map(|kids| kids.iter().filter_map(|k| build(*k, nodes, children, depth + 1)).collect())
+                    .unwrap_or_default(),
+            }),
+            1 => {
+                let url = normalize_url(node.url.as_deref().unwrap_or(""))?;
+                Some(SourceBookmark {
+                    title: if node.title.trim().is_empty() {
+                        crate::history::search_handle(&url).to_string()
+                    } else {
+                        node.title.clone()
+                    },
+                    url: Some(url),
+                    added_at: node.added_at,
+                    children: Vec::new(),
+                })
+            }
+            _ => None,
+        }
+    }
+
+    let mut out = Vec::new();
+    if let Some(toolbar) = roots.get("toolbar_____") {
+        if let Some(kids) = children.get(toolbar) {
+            out.extend(kids.iter().filter_map(|k| build(*k, &nodes, &children, 1)));
+        }
+    }
+    for (guid, label) in [("menu________", "Bookmarks Menu"), ("unfiled_____", "Other Bookmarks")] {
+        let Some(root) = roots.get(guid) else { continue };
+        let kids: Vec<SourceBookmark> = children
+            .get(root)
+            .map(|kids| kids.iter().filter_map(|k| build(*k, &nodes, &children, 1)).collect())
+            .unwrap_or_default();
+        if kids.is_empty() {
+            continue;
+        }
+        out.push(SourceBookmark {
+            title: label.to_string(),
+            url: None,
+            added_at: nodes.get(root).map(|n| n.added_at).unwrap_or(0),
+            children: kids,
+        });
+    }
+    Ok(out)
 }

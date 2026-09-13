@@ -639,9 +639,52 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 public protocol CoreProtocol: AnyObject, Sendable {
     
     /**
+     * Keep a page, or make a folder. `url` is `None` for a folder.
+     *
+     * The address is normalized by the same function history uses, so that
+     * `example.com/` and `example.com` are the same bookmark and the star over
+     * a page you kept yesterday is lit today.
+     *
+     * An empty title is filled in with the address rather than refused. A page
+     * with no `<title>` is a real thing to want to keep — a JSON endpoint, a
+     * local dev server — and the alternative is a dialog that will not let you
+     * leave until you have named `localhost:3000/api/users` something else.
+     */
+    func addBookmark(parentId: String?, url: String?, title: String) throws  -> Bookmark
+    
+    /**
      * Append a pane to the bottom of an existing lane's stack (⌘D).
      */
     func addPane(laneId: String, kind: PaneKind, relaySessionId: String?, url: String?) throws  -> StripState
+    
+    /**
+     * How many rows the tree holds, folders included.
+     */
+    func bookmarkCount() throws  -> UInt32
+    
+    /**
+     * The folders alone — what a "file this somewhere" control offers.
+     */
+    func bookmarkFolders() throws  -> [Bookmark]
+    
+    /**
+     * The whole tree, in the order it is drawn.
+     *
+     * Everything, in one call, on every change — which would be indefensible
+     * for history and is the obvious thing here. The corpus is what the user
+     * curated by hand: the owner's Vivaldi bar is eight folders, and a
+     * bookmark file an order of magnitude larger than anyone's is still four
+     * figures. Paging it would be a parameter that exists to be passed `0`.
+     */
+    func bookmarks() throws  -> [Bookmark]
+    
+    /**
+     * Every placement of one address, or empty when the page is not kept.
+     *
+     * The star's question. A list because the same page may be kept in two
+     * folders, and the star is lit by there being any.
+     */
+    func bookmarksForUrl(url: String) throws  -> [Bookmark]
     
     /**
      * Forget everything. There is no undo, which is the point of it.
@@ -879,6 +922,12 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func markLive(paneId: String) throws  -> StripState
     
     /**
+     * File a row under a different folder, or on the bar when `parent_id` is
+     * `None`.
+     */
+    func moveBookmark(id: String, parentId: String?) throws 
+    
+    /**
      * Move a lane to a new place in the strip. The only thing that ever writes
      * an ordinal outside of creation — and only ever because the user asked.
      */
@@ -1006,6 +1055,18 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func recordVisit(paneId: String, url: String, title: String?, redirectChain: [String]) throws 
     
     /**
+     * Drop a bookmark, or a folder and everything in it.
+     */
+    func removeBookmark(id: String) throws 
+    
+    /**
+     * A bookmark's title is the user's, not the page's: nothing the page says
+     * later overwrites it. That is the difference between this and
+     * [`Core::name_visit`], which exists so a history row learns its name.
+     */
+    func renameBookmark(id: String, title: String) throws 
+    
+    /**
      * The current revision, without marshalling a snapshot.
      *
      * Spike M3 measured a 300-lane `state()` at 2.4 ms, 88% of it uniffi
@@ -1016,6 +1077,25 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func revision()  -> UInt64
     
     func search(query: String, limit: UInt32) throws  -> [SearchHit]
+    
+    /**
+     * Bookmarks for the one door, best first — or in bar order for an empty
+     * query.
+     *
+     * # Why this ranks in Rust and history's palette also does
+     *
+     * Because it is the same ranker. [`crate::history::Ranking`] takes rows one
+     * at a time from wherever they come from, so the tiers ⌘O already applies
+     * to a page you visited apply unchanged to a page you kept — `hop` finds
+     * `hoppers` and not *Launchd notes*, in both lists, because it is one
+     * implementation and not two that agree today.
+     *
+     * What is not the same is the narrowing. History reaches its 112 840 rows
+     * through the trigram index of migration 0009; this reads the table. See
+     * 0010 for why: a hand-curated corpus is small enough that an index costs
+     * more to keep in step than it saves.
+     */
+    func searchBookmarks(query: String, limit: UInt32) throws  -> [BookmarkHit]
     
     /**
      * How wide a lane is born, in points. The shell's config file, arriving.
@@ -1255,6 +1335,30 @@ public static func openInMemory()throws  -> Core  {
 
     
     /**
+     * Keep a page, or make a folder. `url` is `None` for a folder.
+     *
+     * The address is normalized by the same function history uses, so that
+     * `example.com/` and `example.com` are the same bookmark and the star over
+     * a page you kept yesterday is lit today.
+     *
+     * An empty title is filled in with the address rather than refused. A page
+     * with no `<title>` is a real thing to want to keep — a JSON endpoint, a
+     * local dev server — and the alternative is a dialog that will not let you
+     * leave until you have named `localhost:3000/api/users` something else.
+     */
+open func addBookmark(parentId: String?, url: String?, title: String)throws  -> Bookmark  {
+    return try  FfiConverterTypeBookmark_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_add_bookmark(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionString.lower(parentId),
+        FfiConverterOptionString.lower(url),
+        FfiConverterString.lower(title),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * Append a pane to the bottom of an existing lane's stack (⌘D).
      */
 open func addPane(laneId: String, kind: PaneKind, relaySessionId: String?, url: String?)throws  -> StripState  {
@@ -1266,6 +1370,64 @@ open func addPane(laneId: String, kind: PaneKind, relaySessionId: String?, url: 
         FfiConverterTypePaneKind_lower(kind),
         FfiConverterOptionString.lower(relaySessionId),
         FfiConverterOptionString.lower(url),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * How many rows the tree holds, folders included.
+     */
+open func bookmarkCount()throws  -> UInt32  {
+    return try  FfiConverterUInt32.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_bookmark_count(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The folders alone — what a "file this somewhere" control offers.
+     */
+open func bookmarkFolders()throws  -> [Bookmark]  {
+    return try  FfiConverterSequenceTypeBookmark.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_bookmark_folders(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The whole tree, in the order it is drawn.
+     *
+     * Everything, in one call, on every change — which would be indefensible
+     * for history and is the obvious thing here. The corpus is what the user
+     * curated by hand: the owner's Vivaldi bar is eight folders, and a
+     * bookmark file an order of magnitude larger than anyone's is still four
+     * figures. Paging it would be a parameter that exists to be passed `0`.
+     */
+open func bookmarks()throws  -> [Bookmark]  {
+    return try  FfiConverterSequenceTypeBookmark.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_bookmarks(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Every placement of one address, or empty when the page is not kept.
+     *
+     * The star's question. A list because the same page may be kept in two
+     * folders, and the star is lit by there being any.
+     */
+open func bookmarksForUrl(url: String)throws  -> [Bookmark]  {
+    return try  FfiConverterSequenceTypeBookmark.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_bookmarks_for_url(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(url),uniffiCallStatus
     )
 })
 }
@@ -1705,6 +1867,20 @@ open func markLive(paneId: String)throws  -> StripState  {
 }
     
     /**
+     * File a row under a different folder, or on the bar when `parent_id` is
+     * `None`.
+     */
+open func moveBookmark(id: String, parentId: String?)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_move_bookmark(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(id),
+        FfiConverterOptionString.lower(parentId),uniffiCallStatus
+    )
+}
+}
+    
+    /**
      * Move a lane to a new place in the strip. The only thing that ever writes
      * an ordinal outside of creation — and only ever because the user asked.
      */
@@ -1959,6 +2135,33 @@ open func recordVisit(paneId: String, url: String, title: String?, redirectChain
 }
     
     /**
+     * Drop a bookmark, or a folder and everything in it.
+     */
+open func removeBookmark(id: String)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_remove_bookmark(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(id),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * A bookmark's title is the user's, not the page's: nothing the page says
+     * later overwrites it. That is the difference between this and
+     * [`Core::name_visit`], which exists so a history row learns its name.
+     */
+open func renameBookmark(id: String, title: String)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_rename_bookmark(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(id),
+        FfiConverterString.lower(title),uniffiCallStatus
+    )
+}
+}
+    
+    /**
      * The current revision, without marshalling a snapshot.
      *
      * Spike M3 measured a 300-lane `state()` at 2.4 ms, 88% of it uniffi
@@ -1979,6 +2182,34 @@ open func search(query: String, limit: UInt32)throws  -> [SearchHit]  {
     return try  FfiConverterSequenceTypeSearchHit.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
         uniffiCallStatus in
     uniffi_laned_core_fn_method_core_search(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(query),
+        FfiConverterUInt32.lower(limit),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Bookmarks for the one door, best first — or in bar order for an empty
+     * query.
+     *
+     * # Why this ranks in Rust and history's palette also does
+     *
+     * Because it is the same ranker. [`crate::history::Ranking`] takes rows one
+     * at a time from wherever they come from, so the tiers ⌘O already applies
+     * to a page you visited apply unchanged to a page you kept — `hop` finds
+     * `hoppers` and not *Launchd notes*, in both lists, because it is one
+     * implementation and not two that agree today.
+     *
+     * What is not the same is the narrowing. History reaches its 112 840 rows
+     * through the trigram index of migration 0009; this reads the table. See
+     * 0010 for why: a hand-curated corpus is small enough that an index costs
+     * more to keep in step than it saves.
+     */
+open func searchBookmarks(query: String, limit: UInt32)throws  -> [BookmarkHit]  {
+    return try  FfiConverterSequenceTypeBookmarkHit.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_search_bookmarks(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(query),
         FfiConverterUInt32.lower(limit),uniffiCallStatus
@@ -2367,6 +2598,220 @@ public func FfiConverterTypeCore_lower(_ value: Core) -> UInt64 {
 
 
 /**
+ * One node of the bookmarks tree — a kept page, or a folder of them.
+ *
+ * Flat, in tree order, with the depth already worked out. The tempting shape
+ * is a nested record with `children: Vec<Bookmark>`, and it is the wrong one
+ * here for two reasons. uniffi has no recursive records, so the nesting would
+ * have to be hand-rolled either side of the FFI; and the one consumer is an
+ * `NSTableView` — the sidebar is a flat list by construction (see
+ * `SidebarModel.Row`) — which would immediately flatten it back, sorting the
+ * tree a second time in Swift to do it. The ledger already has to walk the
+ * tree to order it, so it walks it once and says how deep each row was.
+ */
+public struct Bookmark: Equatable, Hashable {
+    public var id: String
+    /**
+     * `None` for a row on the bar itself. The bar has no row of its own.
+     */
+    public var parentId: String?
+    public var isFolder: Bool
+    /**
+     * Normalized, and `None` exactly when `is_folder`.
+     */
+    public var url: String?
+    /**
+     * Never empty: a page with no `<title>` is kept under its address.
+     */
+    public var title: String
+    /**
+     * Among its siblings.
+     */
+    public var position: UInt32
+    public var addedAt: Int64
+    /**
+     * 0 on the bar, 1 inside a folder, and so on. Derived when the tree is
+     * read rather than stored, because it is a fact about the row's ancestry
+     * and a stored copy is one a move would have to rewrite for every
+     * descendant.
+     */
+    public var depth: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: String, 
+        /**
+         * `None` for a row on the bar itself. The bar has no row of its own.
+         */parentId: String?, isFolder: Bool, 
+        /**
+         * Normalized, and `None` exactly when `is_folder`.
+         */url: String?, 
+        /**
+         * Never empty: a page with no `<title>` is kept under its address.
+         */title: String, 
+        /**
+         * Among its siblings.
+         */position: UInt32, addedAt: Int64, 
+        /**
+         * 0 on the bar, 1 inside a folder, and so on. Derived when the tree is
+         * read rather than stored, because it is a fact about the row's ancestry
+         * and a stored copy is one a move would have to rewrite for every
+         * descendant.
+         */depth: UInt32) {
+        self.id = id
+        self.parentId = parentId
+        self.isFolder = isFolder
+        self.url = url
+        self.title = title
+        self.position = position
+        self.addedAt = addedAt
+        self.depth = depth
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension Bookmark: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBookmark: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Bookmark {
+        return
+            try Bookmark(
+                id: FfiConverterString.read(from: &buf), 
+                parentId: FfiConverterOptionString.read(from: &buf), 
+                isFolder: FfiConverterBool.read(from: &buf), 
+                url: FfiConverterOptionString.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf), 
+                position: FfiConverterUInt32.read(from: &buf), 
+                addedAt: FfiConverterInt64.read(from: &buf), 
+                depth: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: Bookmark, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterOptionString.write(value.parentId, into: &buf)
+        FfiConverterBool.write(value.isFolder, into: &buf)
+        FfiConverterOptionString.write(value.url, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterUInt32.write(value.position, into: &buf)
+        FfiConverterInt64.write(value.addedAt, into: &buf)
+        FfiConverterUInt32.write(value.depth, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBookmark_lift(_ buf: RustBuffer) throws -> Bookmark {
+    return try FfiConverterTypeBookmark.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBookmark_lower(_ value: Bookmark) -> RustBuffer {
+    return FfiConverterTypeBookmark.lower(value)
+}
+
+
+/**
+ * A bookmark that matched what was typed, for the one door.
+ *
+ * Carries the folder it is in rather than only its parent's id: the row it
+ * becomes has to say *which* `notes` this is, and a picker that had to resolve
+ * eight parent ids per keystroke to render eight rows would be doing the tree
+ * walk the ledger just did.
+ */
+public struct BookmarkHit: Equatable, Hashable {
+    public var bookmark: Bookmark
+    /**
+     * `Documentation/Rust`, or `None` on the bar.
+     */
+    public var folderPath: String?
+    /**
+     * Why it survived the query, for the row glyph.
+     */
+    public var matchedField: SearchField
+    /**
+     * Higher is better.
+     */
+    public var score: Int32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(bookmark: Bookmark, 
+        /**
+         * `Documentation/Rust`, or `None` on the bar.
+         */folderPath: String?, 
+        /**
+         * Why it survived the query, for the row glyph.
+         */matchedField: SearchField, 
+        /**
+         * Higher is better.
+         */score: Int32) {
+        self.bookmark = bookmark
+        self.folderPath = folderPath
+        self.matchedField = matchedField
+        self.score = score
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension BookmarkHit: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeBookmarkHit: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BookmarkHit {
+        return
+            try BookmarkHit(
+                bookmark: FfiConverterTypeBookmark.read(from: &buf), 
+                folderPath: FfiConverterOptionString.read(from: &buf), 
+                matchedField: FfiConverterTypeSearchField.read(from: &buf), 
+                score: FfiConverterInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: BookmarkHit, into buf: inout [UInt8]) {
+        FfiConverterTypeBookmark.write(value.bookmark, into: &buf)
+        FfiConverterOptionString.write(value.folderPath, into: &buf)
+        FfiConverterTypeSearchField.write(value.matchedField, into: &buf)
+        FfiConverterInt32.write(value.score, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBookmarkHit_lift(_ buf: RustBuffer) throws -> BookmarkHit {
+    return try FfiConverterTypeBookmarkHit.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeBookmarkHit_lower(_ value: BookmarkHit) -> RustBuffer {
+    return FfiConverterTypeBookmarkHit.lower(value)
+}
+
+
+/**
  * Where a docked lane sits, and how wide.
  *
  * `Option<Dock>` on the lane rather than a `docked: bool` beside three fields:
@@ -2588,6 +3033,18 @@ public struct HistorySource: Equatable, Hashable {
      */
     public var path: String
     /**
+     * Absolute path to this profile's bookmarks, when we can read the format.
+     *
+     * `None` is not "this browser has no bookmarks" — it is "not from here".
+     * Safari keeps its in a binary property list, and the only reader for one
+     * on this machine is `plutil`, a macOS program. This crate is the
+     * platform-agnostic half of the app (see the README's layout) and shelling
+     * out to a system tool would make it macOS-only for one browser the owner
+     * does not use. The wizard says so on the row rather than importing half
+     * of Safari silently.
+     */
+    public var bookmarksPath: String?
+    /**
      * Bytes, for a wizard that is about to copy it.
      */
     public var sizeBytes: UInt64
@@ -2610,6 +3067,17 @@ public struct HistorySource: Equatable, Hashable {
          * Absolute path to the history database.
          */path: String, 
         /**
+         * Absolute path to this profile's bookmarks, when we can read the format.
+         *
+         * `None` is not "this browser has no bookmarks" — it is "not from here".
+         * Safari keeps its in a binary property list, and the only reader for one
+         * on this machine is `plutil`, a macOS program. This crate is the
+         * platform-agnostic half of the app (see the README's layout) and shelling
+         * out to a system tool would make it macOS-only for one browser the owner
+         * does not use. The wizard says so on the row rather than importing half
+         * of Safari silently.
+         */bookmarksPath: String?, 
+        /**
          * Bytes, for a wizard that is about to copy it.
          */sizeBytes: UInt64, 
         /**
@@ -2620,6 +3088,7 @@ public struct HistorySource: Equatable, Hashable {
         self.profile = profile
         self.kind = kind
         self.path = path
+        self.bookmarksPath = bookmarksPath
         self.sizeBytes = sizeBytes
         self.blocked = blocked
     }
@@ -2644,6 +3113,7 @@ public struct FfiConverterTypeHistorySource: FfiConverterRustBuffer {
                 profile: FfiConverterOptionString.read(from: &buf), 
                 kind: FfiConverterTypeHistorySourceKind.read(from: &buf), 
                 path: FfiConverterString.read(from: &buf), 
+                bookmarksPath: FfiConverterOptionString.read(from: &buf), 
                 sizeBytes: FfiConverterUInt64.read(from: &buf), 
                 blocked: FfiConverterOptionString.read(from: &buf)
         )
@@ -2654,6 +3124,7 @@ public struct FfiConverterTypeHistorySource: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.profile, into: &buf)
         FfiConverterTypeHistorySourceKind.write(value.kind, into: &buf)
         FfiConverterString.write(value.path, into: &buf)
+        FfiConverterOptionString.write(value.bookmarksPath, into: &buf)
         FfiConverterUInt64.write(value.sizeBytes, into: &buf)
         FfiConverterOptionString.write(value.blocked, into: &buf)
     }
@@ -2693,6 +3164,14 @@ public struct ImportOutcome: Equatable, Hashable {
      */
     public var discarded: UInt32
     /**
+     * Bookmark rows written, folders included.
+     */
+    public var bookmarksInserted: UInt32
+    /**
+     * Bookmark rows `Replace` dropped.
+     */
+    public var bookmarksDiscarded: UInt32
+    /**
      * Where `Replace` put the old ledger. Named so a wrong choice at the
      * wizard is one `cp` from being undone, which is the whole reason
      * `Replace` is allowed to be one click.
@@ -2713,6 +3192,12 @@ public struct ImportOutcome: Equatable, Hashable {
          * Rows `Replace` dropped.
          */discarded: UInt32, 
         /**
+         * Bookmark rows written, folders included.
+         */bookmarksInserted: UInt32, 
+        /**
+         * Bookmark rows `Replace` dropped.
+         */bookmarksDiscarded: UInt32, 
+        /**
          * Where `Replace` put the old ledger. Named so a wrong choice at the
          * wizard is one `cp` from being undone, which is the whole reason
          * `Replace` is allowed to be one click.
@@ -2721,6 +3206,8 @@ public struct ImportOutcome: Equatable, Hashable {
         self.inserted = inserted
         self.updated = updated
         self.discarded = discarded
+        self.bookmarksInserted = bookmarksInserted
+        self.bookmarksDiscarded = bookmarksDiscarded
         self.backupPath = backupPath
         self.elapsedMs = elapsedMs
     }
@@ -2745,6 +3232,8 @@ public struct FfiConverterTypeImportOutcome: FfiConverterRustBuffer {
                 inserted: FfiConverterUInt32.read(from: &buf), 
                 updated: FfiConverterUInt32.read(from: &buf), 
                 discarded: FfiConverterUInt32.read(from: &buf), 
+                bookmarksInserted: FfiConverterUInt32.read(from: &buf), 
+                bookmarksDiscarded: FfiConverterUInt32.read(from: &buf), 
                 backupPath: FfiConverterOptionString.read(from: &buf), 
                 elapsedMs: FfiConverterInt64.read(from: &buf)
         )
@@ -2755,6 +3244,8 @@ public struct FfiConverterTypeImportOutcome: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.inserted, into: &buf)
         FfiConverterUInt32.write(value.updated, into: &buf)
         FfiConverterUInt32.write(value.discarded, into: &buf)
+        FfiConverterUInt32.write(value.bookmarksInserted, into: &buf)
+        FfiConverterUInt32.write(value.bookmarksDiscarded, into: &buf)
         FfiConverterOptionString.write(value.backupPath, into: &buf)
         FfiConverterInt64.write(value.elapsedMs, into: &buf)
     }
@@ -2819,6 +3310,36 @@ public struct ImportPlan: Equatable, Hashable {
      * Pages in the ledger afterwards.
      */
     public var resultingPages: UInt32
+    /**
+     * Bookmarks the source has, folders not counted.
+     *
+     * # Why bookmarks ride in the history wizard rather than getting one of
+     * their own
+     *
+     * Because "import from Vivaldi" is one decision. The wizard already finds
+     * the profiles on this Mac, already explains merge against replace,
+     * already refuses to write before a dry run has been read, and already
+     * takes the snapshot that a Firefox bookmark import needs anyway — its
+     * bookmarks are in `places.sqlite`, the file the history is in. A second
+     * wizard would be a second copy of all of that, asking the same question
+     * about the same browser on the next screen along.
+     *
+     * `None` means this source has bookmarks we cannot read — see
+     * [`HistorySource::bookmarks_path`] — as against `Some(0)`, which means it
+     * has none.
+     */
+    public var sourceBookmarks: UInt32?
+    /**
+     * Source bookmarks already kept here, at the same address in the same
+     * folder.
+     */
+    public var bookmarksAlreadyKnown: UInt32
+    /**
+     * Bookmark rows here before the import, folders counted: it is the number
+     * the tree draws.
+     */
+    public var existingBookmarks: UInt32
+    public var resultingBookmarks: UInt32
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -2851,7 +3372,33 @@ public struct ImportPlan: Equatable, Hashable {
          */existingPages: UInt32, 
         /**
          * Pages in the ledger afterwards.
-         */resultingPages: UInt32) {
+         */resultingPages: UInt32, 
+        /**
+         * Bookmarks the source has, folders not counted.
+         *
+         * # Why bookmarks ride in the history wizard rather than getting one of
+         * their own
+         *
+         * Because "import from Vivaldi" is one decision. The wizard already finds
+         * the profiles on this Mac, already explains merge against replace,
+         * already refuses to write before a dry run has been read, and already
+         * takes the snapshot that a Firefox bookmark import needs anyway — its
+         * bookmarks are in `places.sqlite`, the file the history is in. A second
+         * wizard would be a second copy of all of that, asking the same question
+         * about the same browser on the next screen along.
+         *
+         * `None` means this source has bookmarks we cannot read — see
+         * [`HistorySource::bookmarks_path`] — as against `Some(0)`, which means it
+         * has none.
+         */sourceBookmarks: UInt32?, 
+        /**
+         * Source bookmarks already kept here, at the same address in the same
+         * folder.
+         */bookmarksAlreadyKnown: UInt32, 
+        /**
+         * Bookmark rows here before the import, folders counted: it is the number
+         * the tree draws.
+         */existingBookmarks: UInt32, resultingBookmarks: UInt32) {
         self.sourcePages = sourcePages
         self.skipped = skipped
         self.alreadyKnown = alreadyKnown
@@ -2860,6 +3407,10 @@ public struct ImportPlan: Equatable, Hashable {
         self.latestVisitAt = latestVisitAt
         self.existingPages = existingPages
         self.resultingPages = resultingPages
+        self.sourceBookmarks = sourceBookmarks
+        self.bookmarksAlreadyKnown = bookmarksAlreadyKnown
+        self.existingBookmarks = existingBookmarks
+        self.resultingBookmarks = resultingBookmarks
     }
 
     
@@ -2885,7 +3436,11 @@ public struct FfiConverterTypeImportPlan: FfiConverterRustBuffer {
                 earliestVisitAt: FfiConverterOptionInt64.read(from: &buf), 
                 latestVisitAt: FfiConverterOptionInt64.read(from: &buf), 
                 existingPages: FfiConverterUInt32.read(from: &buf), 
-                resultingPages: FfiConverterUInt32.read(from: &buf)
+                resultingPages: FfiConverterUInt32.read(from: &buf), 
+                sourceBookmarks: FfiConverterOptionUInt32.read(from: &buf), 
+                bookmarksAlreadyKnown: FfiConverterUInt32.read(from: &buf), 
+                existingBookmarks: FfiConverterUInt32.read(from: &buf), 
+                resultingBookmarks: FfiConverterUInt32.read(from: &buf)
         )
     }
 
@@ -2898,6 +3453,10 @@ public struct FfiConverterTypeImportPlan: FfiConverterRustBuffer {
         FfiConverterOptionInt64.write(value.latestVisitAt, into: &buf)
         FfiConverterUInt32.write(value.existingPages, into: &buf)
         FfiConverterUInt32.write(value.resultingPages, into: &buf)
+        FfiConverterOptionUInt32.write(value.sourceBookmarks, into: &buf)
+        FfiConverterUInt32.write(value.bookmarksAlreadyKnown, into: &buf)
+        FfiConverterUInt32.write(value.existingBookmarks, into: &buf)
+        FfiConverterUInt32.write(value.resultingBookmarks, into: &buf)
     }
 }
 
@@ -5392,6 +5951,56 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeBookmark: FfiConverterRustBuffer {
+    typealias SwiftType = [Bookmark]
+
+    public static func write(_ value: [Bookmark], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeBookmark.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Bookmark] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Bookmark]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeBookmark.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeBookmarkHit: FfiConverterRustBuffer {
+    typealias SwiftType = [BookmarkHit]
+
+    public static func write(_ value: [BookmarkHit], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeBookmarkHit.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [BookmarkHit] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [BookmarkHit]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeBookmarkHit.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeHistoryEntry: FfiConverterRustBuffer {
     typealias SwiftType = [HistoryEntry]
 
@@ -5654,7 +6263,22 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_add_bookmark() != 52576) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_add_pane() != 2752) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_bookmark_count() != 36122) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_bookmark_folders() != 61620) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_bookmarks() != 13380) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_bookmarks_for_url() != 51672) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_clear_history() != 27909) {
@@ -5729,6 +6353,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_mark_live() != 10432) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_move_bookmark() != 10075) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_move_lane() != 14936) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -5774,10 +6401,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_record_visit() != 22985) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_remove_bookmark() != 24283) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_rename_bookmark() != 34032) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_revision() != 56367) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_search() != 36861) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_search_bookmarks() != 17823) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_set_default_lane_width() != 59748) {

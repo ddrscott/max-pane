@@ -17,23 +17,29 @@ import Testing
 struct ImportWizardWordingTests {
     private func source(
         _ name: String, profile: String? = nil, bytes: UInt64 = 642_875_392,
-        blocked: String? = nil
+        blocked: String? = nil, keepsBookmarks: Bool = true
     ) -> HistorySource {
-        HistorySource(
+        let dir = NSHomeDirectory() + "/Library/Application Support/\(name)/Default"
+        return HistorySource(
             name: name, profile: profile, kind: .chromium,
-            path: NSHomeDirectory() + "/Library/Application Support/\(name)/Default/History",
+            path: dir + "/History",
+            bookmarksPath: keepsBookmarks ? dir + "/Bookmarks" : nil,
             sizeBytes: bytes, blocked: blocked)
     }
 
     private func plan(
         source: UInt32 = 109_046, skipped: UInt32 = 3_800, known: UInt32 = 12,
         existing: UInt32 = 431, from: Int64? = 1_708_620_457_202, to: Int64? = 1_757_000_000_000,
-        resulting: UInt32? = nil
+        resulting: UInt32? = nil,
+        bookmarks: UInt32? = 312, bookmarksKnown: UInt32 = 0, existingBookmarks: UInt32 = 0
     ) -> ImportPlan {
         ImportPlan(
             sourcePages: source, skipped: skipped, alreadyKnown: known,
             newPages: source - known, earliestVisitAt: from, latestVisitAt: to,
-            existingPages: existing, resultingPages: resulting ?? existing + (source - known))
+            existingPages: existing, resultingPages: resulting ?? existing + (source - known),
+            sourceBookmarks: bookmarks, bookmarksAlreadyKnown: bookmarksKnown,
+            existingBookmarks: existingBookmarks,
+            resultingBookmarks: existingBookmarks + ((bookmarks ?? 0) - bookmarksKnown))
     }
 
     @Test("a browser with one profile is not labelled with one")
@@ -145,8 +151,13 @@ struct ImportWizardWordingTests {
     @Test("the confirm button names the act and the count")
     func confirmTitle() {
         var m = ImportWizardModel(sources: [source("Vivaldi", profile: "Default")])
-        m.dry = .init(mode: .merge, plan: plan())
+        // A profile with nothing new to keep: the button is about the pages.
+        m.dry = .init(mode: .merge, plan: plan(bookmarks: 312, bookmarksKnown: 312))
         #expect(m.confirmTitle == "Merge 109,034 new pages")
+        // And names the other half when there is one — the bar is the part the
+        // owner would notice arriving, however small the number beside it.
+        m.dry = .init(mode: .merge, plan: plan())
+        #expect(m.confirmTitle == "Merge 109,034 pages and 312 bookmarks")
         m.dry = .init(mode: .replace, plan: plan(resulting: 109_046))
         #expect(m.confirmTitle == "Replace with 109,046 pages")
     }
@@ -154,8 +165,16 @@ struct ImportWizardWordingTests {
     @Test("an empty source has nothing to confirm")
     func nothingToDo() {
         var m = ImportWizardModel(sources: [source("Vivaldi", profile: "Default")])
-        m.dry = .init(mode: .merge, plan: plan(source: 0, skipped: 0, known: 0, existing: 0, from: nil, to: nil))
+        m.dry = .init(mode: .merge, plan: plan(
+            source: 0, skipped: 0, known: 0, existing: 0, from: nil, to: nil, bookmarks: 0))
         #expect(!m.hasSomethingToDo)
+        // Empty of pages is not empty: a profile with only bookmarks in it is
+        // still an import, which is why this has to say `bookmarks: 0`.
+        m.dry = .init(mode: .merge, plan: plan(
+            source: 0, skipped: 0, known: 0, existing: 0, from: nil, to: nil, bookmarks: 4))
+        #expect(m.hasSomethingToDo)
+        m.dry = .init(mode: .merge, plan: plan(
+            source: 0, skipped: 0, known: 0, existing: 0, from: nil, to: nil, bookmarks: 0))
         #expect(ImportWizardModel.range(m.dry!.plan) == "—")
     }
 
@@ -165,6 +184,7 @@ struct ImportWizardWordingTests {
         m.mode = .replace
         m.outcome = ImportOutcome(
             plan: plan(), inserted: 109_046, updated: 0, discarded: 431,
+            bookmarksInserted: 318, bookmarksDiscarded: 4,
             backupPath: NSHomeDirectory() + "/Library/Application Support/MaxPane/profiles/default/ledger.db.pre-import-17",
             elapsedMs: 8_412)
         let lines = Dictionary(uniqueKeysWithValues: m.doneLines)
@@ -179,7 +199,8 @@ struct ImportWizardWordingTests {
     func idempotentImportSaysSo() {
         var m = ImportWizardModel(sources: [source("Vivaldi", profile: "Default")])
         m.outcome = ImportOutcome(
-            plan: plan(), inserted: 0, updated: 0, discarded: 0, backupPath: nil, elapsedMs: 120)
+            plan: plan(), inserted: 0, updated: 0, discarded: 0,
+            bookmarksInserted: 0, bookmarksDiscarded: 0, backupPath: nil, elapsedMs: 120)
         #expect(m.doneHeadline.contains("already here"))
         let lines = Dictionary(uniqueKeysWithValues: m.doneLines)
         #expect(lines["old ledger saved to"] == nil, "a merge takes no backup and must not claim one")
@@ -297,6 +318,10 @@ struct ImportDryRunTests {
         #expect(p.terminationStatus == 0)
         return HistorySource(
             name: "Fixture", profile: nil, kind: .chromium, path: path.path,
+            // History only. What this suite proves is that the dry run writes
+            // nothing, and the bookmark readers have their own fixtures in the
+            // Rust suite, where the three file formats are.
+            bookmarksPath: nil,
             sizeBytes: UInt64((try? FileManager.default.attributesOfItem(atPath: path.path)[.size] as? Int) ?? 0),
             blocked: nil)
     }
@@ -379,14 +404,21 @@ struct ImportWizardRenderTests {
             HistorySource(
                 name: "Vivaldi", profile: "Default", kind: .chromium,
                 path: NSHomeDirectory() + "/Library/Application Support/Vivaldi/Default/History",
+                bookmarksPath: NSHomeDirectory()
+                    + "/Library/Application Support/Vivaldi/Default/Bookmarks",
                 sizeBytes: 642_875_392, blocked: nil),
             HistorySource(
                 name: "Vivaldi", profile: "Profile 2", kind: .chromium,
                 path: NSHomeDirectory() + "/Library/Application Support/Vivaldi/Profile 2/History",
+                bookmarksPath: NSHomeDirectory()
+                    + "/Library/Application Support/Vivaldi/Profile 2/Bookmarks",
                 sizeBytes: 8_437_760, blocked: nil),
             HistorySource(
                 name: "Safari", profile: nil, kind: .safari,
                 path: NSHomeDirectory() + "/Library/Safari/History.db",
+                // Safari's bookmarks are a binary property list the core does
+                // not read, so the sheet shows the row that says so.
+                bookmarksPath: nil,
                 sizeBytes: 241_664,
                 blocked: "macOS is withholding Safari's history. Give Max Pane Full Disk Access "
                     + "in System Settings → Privacy & Security, then reopen this window."),
@@ -394,7 +426,9 @@ struct ImportWizardRenderTests {
         let plan = ImportPlan(
             sourcePages: 109_046, skipped: 3_800, alreadyKnown: 12, newPages: 109_034,
             earliestVisitAt: 1_708_620_457_202, latestVisitAt: 1_757_000_000_000,
-            existingPages: 431, resultingPages: 109_465)
+            existingPages: 431, resultingPages: 109_465,
+            sourceBookmarks: 312, bookmarksAlreadyKnown: 9,
+            existingBookmarks: 40, resultingBookmarks: 343)
 
         let screens: [(String, (inout ImportWizardModel) -> Void)] = [
             ("1-source", { $0.step = .source }),
@@ -409,13 +443,18 @@ struct ImportWizardRenderTests {
                         sourcePages: plan.sourcePages, skipped: plan.skipped,
                         alreadyKnown: plan.alreadyKnown, newPages: plan.newPages,
                         earliestVisitAt: plan.earliestVisitAt, latestVisitAt: plan.latestVisitAt,
-                        existingPages: plan.existingPages, resultingPages: plan.sourcePages))
+                        existingPages: plan.existingPages, resultingPages: plan.sourcePages,
+                        sourceBookmarks: plan.sourceBookmarks,
+                        bookmarksAlreadyKnown: plan.bookmarksAlreadyKnown,
+                        existingBookmarks: plan.existingBookmarks,
+                        resultingBookmarks: 303))
                 $0.step = .report
             }),
             ("6-working", { $0.dry = .init(mode: .merge, plan: plan); $0.step = .working(importing: true) }),
             ("7-done", {
                 $0.outcome = ImportOutcome(
                     plan: plan, inserted: 109_034, updated: 12, discarded: 0,
+                    bookmarksInserted: 311, bookmarksDiscarded: 0,
                     backupPath: nil, elapsedMs: 8_412)
                 $0.step = .done
             }),
@@ -432,5 +471,102 @@ struct ImportWizardRenderTests {
             let png = try #require(rep.representation(using: .png, properties: [:]))
             try png.write(to: URL(fileURLWithPath: dir).appendingPathComponent("import-\(name).png"))
         }
+    }
+}
+
+// MARK: - the bookmark half
+
+/// One pass over a profile brings both halves, and the report has to say so
+/// without the smaller number reading as a rounding error on the larger one.
+@Suite("the wizard reports the bookmarks too")
+@MainActor
+struct ImportWizardBookmarkTests {
+    private func source(keepsBookmarks: Bool = true) -> HistorySource {
+        let dir = NSHomeDirectory() + "/Library/Application Support/Vivaldi/Default"
+        return HistorySource(
+            name: "Vivaldi", profile: "Default", kind: .chromium, path: dir + "/History",
+            bookmarksPath: keepsBookmarks ? dir + "/Bookmarks" : nil,
+            sizeBytes: 642_875_392, blocked: nil)
+    }
+
+    private func plan(
+        bookmarks: UInt32?, known: UInt32 = 0, existing: UInt32 = 0
+    ) -> ImportPlan {
+        ImportPlan(
+            sourcePages: 109_046, skipped: 3_800, alreadyKnown: 12, newPages: 109_034,
+            earliestVisitAt: 1_708_620_457_202, latestVisitAt: 1_757_000_000_000,
+            existingPages: 431, resultingPages: 109_465,
+            sourceBookmarks: bookmarks, bookmarksAlreadyKnown: known,
+            existingBookmarks: existing,
+            resultingBookmarks: existing + ((bookmarks ?? 0) - known))
+    }
+
+    @Test("the dry run counts the bookmarks as well as the pages")
+    func reportsBoth() {
+        var m = ImportWizardModel(sources: [source()])
+        m.dry = .init(mode: .merge, plan: plan(bookmarks: 312, known: 9, existing: 40))
+        let lines = Dictionary(uniqueKeysWithValues: m.reportLines)
+        #expect(lines["pages in source"] == "109,046")
+        #expect(lines["bookmarks in source"] == "312")
+        #expect(lines["already kept here"] == "9")
+        // "At least", because the folders the import has to make are not
+        // knowable without making them — see `Core::plan`.
+        #expect(lines["bookmarks after merge"] == "40 → at least 343")
+    }
+
+    /// The difference this exists for: Safari's bookmarks are a binary property
+    /// list the core does not read, and a `0` there would read as "Safari has
+    /// none" rather than "we did not look".
+    @Test("a browser whose bookmarks we cannot read says so instead of saying none")
+    func unreadableSaysSo() {
+        var m = ImportWizardModel(sources: [source(keepsBookmarks: false)])
+        m.dry = .init(mode: .merge, plan: plan(bookmarks: nil))
+        let lines = Dictionary(uniqueKeysWithValues: m.reportLines)
+        #expect(lines["bookmarks"] == "not readable from this browser")
+        #expect(lines["bookmarks in source"] == nil)
+    }
+
+    @Test("the confirm button names both halves when there are both")
+    func confirmNamesBoth() {
+        var m = ImportWizardModel(sources: [source()])
+        m.dry = .init(mode: .merge, plan: plan(bookmarks: 312, known: 9))
+        #expect(m.confirmTitle == "Merge 109,034 pages and 303 bookmarks")
+
+        // And says nothing about them when there is nothing to say, rather than
+        // printing "and 0 bookmarks" on the last screen before a write.
+        m.dry = .init(mode: .merge, plan: plan(bookmarks: 312, known: 312))
+        #expect(m.confirmTitle == "Merge 109,034 new pages")
+    }
+
+    @Test("replace warns that the bookmarks go too")
+    func replaceWarnsAboutBookmarks() {
+        let text = ImportWizardModel.explanation(of: .replace, plan: plan(bookmarks: 312))
+        #expect(text.contains("bookmark"), "a Replace that silently drops the bar is the worst case")
+        #expect(text.contains("only way back"))
+    }
+
+    @Test("an import that only brought bookmarks is still something to do")
+    func bookmarksAloneAreWorthImporting() {
+        var m = ImportWizardModel(sources: [source()])
+        m.dry = .init(
+            mode: .merge,
+            plan: ImportPlan(
+                sourcePages: 0, skipped: 0, alreadyKnown: 0, newPages: 0,
+                earliestVisitAt: nil, latestVisitAt: nil, existingPages: 0, resultingPages: 0,
+                sourceBookmarks: 312, bookmarksAlreadyKnown: 0,
+                existingBookmarks: 0, resultingBookmarks: 312))
+        #expect(m.hasSomethingToDo)
+    }
+
+    @Test("the last screen counts the rows the sidebar is about to draw")
+    func doneCountsBookmarkRows() {
+        var m = ImportWizardModel(sources: [source()])
+        m.outcome = ImportOutcome(
+            plan: plan(bookmarks: 312), inserted: 109_034, updated: 12, discarded: 0,
+            bookmarksInserted: 320, bookmarksDiscarded: 0, backupPath: nil, elapsedMs: 15_400)
+        let lines = Dictionary(uniqueKeysWithValues: m.doneLines)
+        #expect(lines["bookmarks added"] == "320")
+        #expect(lines["bookmarks discarded"] == nil, "a merge discards nothing and must not say it did")
+        #expect(m.doneHeadline.contains("sidebar"))
     }
 }

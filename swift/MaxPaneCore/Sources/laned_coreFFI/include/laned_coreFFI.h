@@ -264,9 +264,34 @@ uint64_t uniffi_laned_core_fn_constructor_core_open_in_memory(RustCallStatus *_N
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_ADD_BOOKMARK
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_ADD_BOOKMARK
+RustBuffer uniffi_laned_core_fn_method_core_add_bookmark(uint64_t ptr, RustBuffer parent_id, RustBuffer url, RustBuffer title, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_ADD_PANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_ADD_PANE
 RustBuffer uniffi_laned_core_fn_method_core_add_pane(uint64_t ptr, RustBuffer lane_id, RustBuffer kind, RustBuffer relay_session_id, RustBuffer url, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_BOOKMARK_COUNT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_BOOKMARK_COUNT
+uint32_t uniffi_laned_core_fn_method_core_bookmark_count(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_BOOKMARK_FOLDERS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_BOOKMARK_FOLDERS
+RustBuffer uniffi_laned_core_fn_method_core_bookmark_folders(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_BOOKMARKS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_BOOKMARKS
+RustBuffer uniffi_laned_core_fn_method_core_bookmarks(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_BOOKMARKS_FOR_URL
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_BOOKMARKS_FOR_URL
+RustBuffer uniffi_laned_core_fn_method_core_bookmarks_for_url(uint64_t ptr, RustBuffer url, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_CLEAR_HISTORY
@@ -389,6 +414,11 @@ RustBuffer uniffi_laned_core_fn_method_core_mark_evicted(uint64_t ptr, RustBuffe
 RustBuffer uniffi_laned_core_fn_method_core_mark_live(uint64_t ptr, RustBuffer pane_id, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_MOVE_BOOKMARK
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_MOVE_BOOKMARK
+void uniffi_laned_core_fn_method_core_move_bookmark(uint64_t ptr, RustBuffer id, RustBuffer parent_id, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_MOVE_LANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_MOVE_LANE
 RustBuffer uniffi_laned_core_fn_method_core_move_lane(uint64_t ptr, RustBuffer lane_id, RustBuffer placement, RustCallStatus *_Nonnull out_status
@@ -464,6 +494,16 @@ RustBuffer uniffi_laned_core_fn_method_core_recents(uint64_t ptr, uint32_t limit
 void uniffi_laned_core_fn_method_core_record_visit(uint64_t ptr, RustBuffer pane_id, RustBuffer url, RustBuffer title, RustBuffer redirect_chain, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_REMOVE_BOOKMARK
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_REMOVE_BOOKMARK
+void uniffi_laned_core_fn_method_core_remove_bookmark(uint64_t ptr, RustBuffer id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RENAME_BOOKMARK
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RENAME_BOOKMARK
+void uniffi_laned_core_fn_method_core_rename_bookmark(uint64_t ptr, RustBuffer id, RustBuffer title, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_REVISION
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_REVISION
 uint64_t uniffi_laned_core_fn_method_core_revision(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -472,6 +512,11 @@ uint64_t uniffi_laned_core_fn_method_core_revision(uint64_t ptr, RustCallStatus 
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SEARCH
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SEARCH
 RustBuffer uniffi_laned_core_fn_method_core_search(uint64_t ptr, RustBuffer query, uint32_t limit, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SEARCH_BOOKMARKS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SEARCH_BOOKMARKS
+RustBuffer uniffi_laned_core_fn_method_core_search_bookmarks(uint64_t ptr, RustBuffer query, uint32_t limit, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_DEFAULT_LANE_WIDTH
@@ -839,9 +884,39 @@ void ffi_laned_core_rust_future_free_void(uint64_t handle
 void ffi_laned_core_rust_future_complete_void(uint64_t handle, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_ADD_BOOKMARK
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_ADD_BOOKMARK
+uint16_t uniffi_laned_core_checksum_method_core_add_bookmark(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_ADD_PANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_ADD_PANE
 uint16_t uniffi_laned_core_checksum_method_core_add_pane(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_BOOKMARK_COUNT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_BOOKMARK_COUNT
+uint16_t uniffi_laned_core_checksum_method_core_bookmark_count(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_BOOKMARK_FOLDERS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_BOOKMARK_FOLDERS
+uint16_t uniffi_laned_core_checksum_method_core_bookmark_folders(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_BOOKMARKS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_BOOKMARKS
+uint16_t uniffi_laned_core_checksum_method_core_bookmarks(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_BOOKMARKS_FOR_URL
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_BOOKMARKS_FOR_URL
+uint16_t uniffi_laned_core_checksum_method_core_bookmarks_for_url(void
     
 );
 #endif
@@ -989,6 +1064,12 @@ uint16_t uniffi_laned_core_checksum_method_core_mark_live(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_MOVE_BOOKMARK
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_MOVE_BOOKMARK
+uint16_t uniffi_laned_core_checksum_method_core_move_bookmark(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_MOVE_LANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_MOVE_LANE
 uint16_t uniffi_laned_core_checksum_method_core_move_lane(void
@@ -1079,6 +1160,18 @@ uint16_t uniffi_laned_core_checksum_method_core_record_visit(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_REMOVE_BOOKMARK
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_REMOVE_BOOKMARK
+uint16_t uniffi_laned_core_checksum_method_core_remove_bookmark(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RENAME_BOOKMARK
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RENAME_BOOKMARK
+uint16_t uniffi_laned_core_checksum_method_core_rename_bookmark(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_REVISION
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_REVISION
 uint16_t uniffi_laned_core_checksum_method_core_revision(void
@@ -1088,6 +1181,12 @@ uint16_t uniffi_laned_core_checksum_method_core_revision(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SEARCH
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SEARCH
 uint16_t uniffi_laned_core_checksum_method_core_search(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SEARCH_BOOKMARKS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SEARCH_BOOKMARKS
+uint16_t uniffi_laned_core_checksum_method_core_search_bookmarks(void
     
 );
 #endif

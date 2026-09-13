@@ -1334,6 +1334,13 @@ public final class StripViewController: NSViewController {
         paneControllers[paneId]?.editAddress()
     }
 
+    /// ⌘D. The editor it opens is anchored to the pane's own star, so it has to
+    /// be the pane that opens it.
+    public func keepFocusedPage() {
+        guard let paneId = store.state.focusedPaneId else { return }
+        paneControllers[paneId]?.keepPage()
+    }
+
     /// Ask every live pane to write down what it would otherwise lose.
     ///
     /// Only web panes have anything to say — their history and scroll live in

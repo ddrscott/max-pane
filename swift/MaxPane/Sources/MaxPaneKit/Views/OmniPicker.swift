@@ -75,7 +75,7 @@ enum OmniScope: CaseIterable, Sendable {
 
 /// One thing ⌘O can start, with everything the ranking and the row need.
 struct OmniCandidate: Equatable {
-    enum Kind: Equatable { case typed, command, page, session }
+    enum Kind: Equatable { case typed, command, page, bookmark, session }
 
     var action: OmniAction
     var kind: Kind
@@ -90,6 +90,10 @@ struct OmniCandidate: Equatable {
     var count: UInt32
     /// Sessions only; carries the chip and the liveness dot.
     var telemetry: SessionTelemetry?
+    /// Bookmarks only. Carried so ⌘⌫ on a kept page can stop keeping it —
+    /// the row's address would find every placement of it, and this one is the
+    /// one on screen.
+    var bookmarkId: String?
 
     var urgent: Bool { telemetry.map { $0.isRunning && $0.needsAttention } ?? false }
 
@@ -196,6 +200,7 @@ enum OmniRanking {
         scope: OmniScope,
         recents: [Recent],
         pages: [HistoryEntry],
+        bookmarks: [BookmarkHit],
         sessions: [SessionTelemetry],
         destination: String
     ) -> [OmniRow] {
@@ -208,11 +213,12 @@ enum OmniRanking {
                 .item(OmniCandidate(
                     action: $0, kind: .typed,
                     headline: trimmed, detail: "",
-                    quality: .typed, chosenAt: 0, count: 0, telemetry: nil))
+                    quality: .typed, chosenAt: 0, count: 0, telemetry: nil, bookmarkId: nil))
             })
         }
 
-        var corpus = candidates(query: trimmed, scope: scope, recents: recents, pages: pages)
+        var corpus = candidates(
+            query: trimmed, scope: scope, recents: recents, pages: pages, bookmarks: bookmarks)
         // Attached sessions are not offered. ⌘O starts things; a session already
         // on the strip has started, and finding it again is ⌘P's question. The
         // footer still counts them, because hiding them *and* miscounting them
@@ -302,9 +308,17 @@ enum OmniRanking {
     /// Pages and commands, scored. Sessions are added separately because they
     /// are the one source with no timestamp of a user's choice.
     private static func candidates(
-        query: String, scope: OmniScope, recents: [Recent], pages: [HistoryEntry]
+        query: String, scope: OmniScope, recents: [Recent], pages: [HistoryEntry],
+        bookmarks: [BookmarkHit]
     ) -> [OmniCandidate] {
         var out: [OmniCandidate] = []
+        // Before the history rows, which is what decides the merge: `dedupe`
+        // keeps the first description of a thing unless a later one has a name
+        // and it does not, so a page that is both kept and visited comes back
+        // as the bookmark — the title the user chose, and the folder it is in.
+        if scope.wantsPages {
+            out += bookmarks.compactMap { bookmark(query, $0) }
+        }
         if scope.wantsPages {
             // Already ranked and cut in Rust; what is recomputed here is only
             // the quality band, so a page can be compared with a command.
@@ -322,7 +336,8 @@ enum OmniRanking {
                     quality: quality,
                     chosenAt: recent.lastUsedAt,
                     count: recent.useCount,
-                    telemetry: nil))
+                    telemetry: nil,
+                    bookmarkId: nil))
             case .url where scope.wantsPages:
                 guard let quality = MatchQuality.of(query, inAny: [OmniText.handle(recent.value)])
                 else { continue }
@@ -334,7 +349,8 @@ enum OmniRanking {
                     quality: quality,
                     chosenAt: recent.lastUsedAt,
                     count: recent.useCount,
-                    telemetry: nil))
+                    telemetry: nil,
+                    bookmarkId: nil))
             default:
                 continue
             }
@@ -356,7 +372,40 @@ enum OmniRanking {
             quality: quality,
             chosenAt: entry.lastVisitAt,
             count: entry.visitCount,
-            telemetry: nil)
+            telemetry: nil,
+            bookmarkId: nil)
+    }
+
+    /// A kept page.
+    ///
+    /// Ranked in Rust by the same ranker history uses, and re-banded here for
+    /// the same reason a history row is: the band is what lets a page be
+    /// compared with a command.
+    ///
+    /// `chosenAt` is when it was kept. That is not when it was last opened, and
+    /// it is the honest number: keeping is the choice this row represents, and
+    /// borrowing the visit's timestamp would put a bookmark you saved in 2023
+    /// and opened this morning above the thing you actually launched — which is
+    /// what `Recent`'s doc comment refused frecency for.
+    private static func bookmark(_ query: String, _ hit: BookmarkHit) -> OmniCandidate? {
+        guard let url = hit.bookmark.url else { return nil }
+        let name = hit.bookmark.title
+        guard query.isEmpty || MatchQuality.of(query, inAny: [name, OmniText.handle(url)]) != nil
+        else { return nil }
+        let quality = MatchQuality.of(query, inAny: [name, OmniText.handle(url)]) ?? .prefix
+        return OmniCandidate(
+            action: .open(url),
+            kind: .bookmark,
+            headline: name,
+            // The folder, then the address. Which `notes` this is is the
+            // question two bookmarks of the same name ask, and it is answered
+            // before the URL because it is the shorter half.
+            detail: hit.folderPath.map { "\($0) · \(url)" } ?? url,
+            quality: quality,
+            chosenAt: hit.bookmark.addedAt,
+            count: 0,
+            telemetry: nil,
+            bookmarkId: hit.bookmark.id)
     }
 
     private static func session(_ query: String, _ t: SessionTelemetry) -> OmniCandidate? {
@@ -373,7 +422,8 @@ enum OmniRanking {
             quality: quality,
             chosenAt: Int64((t.lastActivity?.timeIntervalSince1970 ?? 0) * 1000),
             count: 0,
-            telemetry: t)
+            telemetry: t,
+            bookmarkId: nil)
     }
 
     /// Merge rows that start the same thing, keeping the richer description.
@@ -577,11 +627,16 @@ final class OmniPicker: PaletteController {
         // drops the scattered guesses, so the list has to arrive with enough
         // literal matches in it to survive that.
         let pages = scope.wantsPages ? store.history(query, limit: 80) : []
+        // Read per keystroke, like history and unlike `recents`, because the
+        // ranking is Rust's — and cheap for the reason migration 0010 gives for
+        // there being no index: this is the corpus the user curated by hand.
+        let bookmarks = scope.wantsPages ? store.searchBookmarks(query) : []
         rows = OmniRanking.build(
             query: query,
             scope: scope,
             recents: recents,
             pages: pages,
+            bookmarks: bookmarks,
             sessions: Array(registry.sessions.values),
             destination: destination)
         shortcuts = OmniRanking.shortcuts(for: rows)
@@ -655,6 +710,15 @@ final class OmniPicker: PaletteController {
     private func forgetSelected() {
         let row = table.selectedRow
         guard row >= 0, row < rows.count, let candidate = rows[row].candidate else { return }
+        // A kept page is not a memory of having been somewhere; ⌘⌫ on one
+        // stops keeping it and leaves the visit alone. Without asking, because
+        // unlike forgetting a page this is undone by ⌘D on the same address —
+        // and the confirmation exists for the delete that cannot be.
+        if let id = candidate.bookmarkId {
+            try? store.removeBookmark(id)
+            afterForgetting()
+            return
+        }
         switch candidate.action {
         case .open(let url):
             // It asks first, and it prints the whole address in the asking.
@@ -828,7 +892,7 @@ final class OmniPickerRow: NSTableCellView {
         let age = PaletteStyle.label(
             candidate.chosenAt <= 0
                 ? ""
-                : candidate.kind == .page
+                : (candidate.kind == .page || candidate.kind == .bookmark)
                     ? HistoryClock.stamp(when)
                     : SessionTelemetry.age(since: when),
             Theme.mono(11), Theme.dimText)
@@ -889,6 +953,7 @@ final class OmniPickerRow: NSTableCellView {
     /// `$` runs, `◍` opens, and a session wears the state glyph the sidebar
     /// gives it — so the one row in the list that is already alive looks alive.
     static func glyph(_ candidate: OmniCandidate) -> String {
+        if candidate.kind == .bookmark { return "★" }
         switch candidate.action {
         case .run: return "$"
         case .open: return "◍"
@@ -903,6 +968,12 @@ final class OmniPickerRow: NSTableCellView {
         case (.typed, .run): return "RUN"
         case (.typed, .open): return "OPEN"
         case (_, .attach): return "ATTACH"
+        // A bookmark gets no tag. This column says what Return will *cost* —
+        // a session, a web view, or neither — and opening a page you kept
+        // costs exactly what opening a page you visited costs. The ★ in the
+        // glyph column is what marks it, and at 780 pt a fourth four-letter
+        // tag truncated to `KE…` next to `OP…` was two abbreviations saying
+        // nothing.
         default: return ""
         }
     }

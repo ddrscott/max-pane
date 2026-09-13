@@ -894,7 +894,8 @@ impl Core {
         let inner = self.inner.lock();
         let (pages, skipped) = Self::read_source(&inner.ledger, &source)?;
         let known = inner.ledger.preview_import(&pages)?;
-        Ok(Self::plan(&inner.ledger, &pages, skipped, known, mode)?)
+        let bookmarks = Self::read_source_bookmarks(&inner.ledger, &source)?;
+        Ok(Self::plan(&inner.ledger, &pages, skipped, known, bookmarks.as_ref(), mode)?)
     }
 
     /// Import `source`, for real.
@@ -911,21 +912,201 @@ impl Core {
         let mut inner = self.inner.lock();
         let (pages, skipped) = Self::read_source(&inner.ledger, &source)?;
         let known = inner.ledger.preview_import(&pages)?;
-        let plan = Self::plan(&inner.ledger, &pages, skipped, known, mode)?;
+        let bookmarks = Self::read_source_bookmarks(&inner.ledger, &source)?;
+        let plan = Self::plan(&inner.ledger, &pages, skipped, known, bookmarks.as_ref(), mode)?;
 
+        // Before either half is written, and it covers both: the ledger is one
+        // file, so the way back from a `Replace` that took the wrong browser's
+        // bookmarks is the same file as the way back from its history.
         let backup_path = match mode {
             import::ImportMode::Replace => Self::back_up_ledger(&inner.ledger)?,
             import::ImportMode::Merge => None,
         };
         let (inserted, updated, discarded) = inner.ledger.apply_import(&pages, mode)?;
+        let (bookmarks_inserted, bookmarks_discarded) = match &bookmarks {
+            Some((flat, _)) => inner.ledger.apply_bookmark_import(flat, mode, now_ms())?,
+            None => (0, 0),
+        };
         Ok(import::ImportOutcome {
             plan,
             inserted,
             updated,
             discarded,
+            bookmarks_inserted,
+            bookmarks_discarded,
             backup_path,
             elapsed_ms: now_ms() - started,
         })
+    }
+
+    // ---- bookmarks ---------------------------------------------------------
+
+    /// The whole tree, in the order it is drawn.
+    ///
+    /// Everything, in one call, on every change — which would be indefensible
+    /// for history and is the obvious thing here. The corpus is what the user
+    /// curated by hand: the owner's Vivaldi bar is eight folders, and a
+    /// bookmark file an order of magnitude larger than anyone's is still four
+    /// figures. Paging it would be a parameter that exists to be passed `0`.
+    pub fn bookmarks(&self) -> Result<Vec<Bookmark>> {
+        let inner = self.inner.lock();
+        inner.ledger.bookmarks()
+    }
+
+    /// The folders alone — what a "file this somewhere" control offers.
+    pub fn bookmark_folders(&self) -> Result<Vec<Bookmark>> {
+        let inner = self.inner.lock();
+        inner.ledger.bookmark_folders()
+    }
+
+    /// Every placement of one address, or empty when the page is not kept.
+    ///
+    /// The star's question. A list because the same page may be kept in two
+    /// folders, and the star is lit by there being any.
+    pub fn bookmarks_for_url(&self, url: String) -> Result<Vec<Bookmark>> {
+        let Some(url) = history::normalize_url(&url) else { return Ok(Vec::new()) };
+        let inner = self.inner.lock();
+        inner.ledger.bookmarks_for_url(&url)
+    }
+
+    /// Keep a page, or make a folder. `url` is `None` for a folder.
+    ///
+    /// The address is normalized by the same function history uses, so that
+    /// `example.com/` and `example.com` are the same bookmark and the star over
+    /// a page you kept yesterday is lit today.
+    ///
+    /// An empty title is filled in with the address rather than refused. A page
+    /// with no `<title>` is a real thing to want to keep — a JSON endpoint, a
+    /// local dev server — and the alternative is a dialog that will not let you
+    /// leave until you have named `localhost:3000/api/users` something else.
+    pub fn add_bookmark(
+        &self,
+        parent_id: Option<String>,
+        url: Option<String>,
+        title: String,
+    ) -> Result<Bookmark> {
+        let url = match url {
+            Some(raw) => Some(history::normalize_url(&raw).ok_or_else(|| CoreError::Ledger {
+                message: format!("{raw} is not an address that can be kept"),
+            })?),
+            None => None,
+        };
+        let title = title.trim();
+        let title = if title.is_empty() {
+            url.as_deref().map(history::search_handle).unwrap_or("Folder")
+        } else {
+            title
+        };
+        let inner = self.inner.lock();
+        inner.ledger.insert_bookmark(
+            parent_id.as_deref(),
+            url.is_none(),
+            url.as_deref(),
+            title,
+            now_ms(),
+        )
+    }
+
+    /// A bookmark's title is the user's, not the page's: nothing the page says
+    /// later overwrites it. That is the difference between this and
+    /// [`Core::name_visit`], which exists so a history row learns its name.
+    pub fn rename_bookmark(&self, id: String, title: String) -> Result<()> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Ok(());
+        }
+        let inner = self.inner.lock();
+        inner.ledger.rename_bookmark(&id, title)
+    }
+
+    /// File a row under a different folder, or on the bar when `parent_id` is
+    /// `None`.
+    pub fn move_bookmark(&self, id: String, parent_id: Option<String>) -> Result<()> {
+        let inner = self.inner.lock();
+        inner.ledger.set_bookmark_parent(&id, parent_id.as_deref())
+    }
+
+    /// Drop a bookmark, or a folder and everything in it.
+    pub fn remove_bookmark(&self, id: String) -> Result<()> {
+        let inner = self.inner.lock();
+        inner.ledger.remove_bookmark(&id)
+    }
+
+    /// How many rows the tree holds, folders included.
+    pub fn bookmark_count(&self) -> Result<u32> {
+        let inner = self.inner.lock();
+        inner.ledger.bookmark_count()
+    }
+
+    /// Bookmarks for the one door, best first — or in bar order for an empty
+    /// query.
+    ///
+    /// # Why this ranks in Rust and history's palette also does
+    ///
+    /// Because it is the same ranker. [`crate::history::Ranking`] takes rows one
+    /// at a time from wherever they come from, so the tiers ⌘O already applies
+    /// to a page you visited apply unchanged to a page you kept — `hop` finds
+    /// `hoppers` and not *Launchd notes*, in both lists, because it is one
+    /// implementation and not two that agree today.
+    ///
+    /// What is not the same is the narrowing. History reaches its 112 840 rows
+    /// through the trigram index of migration 0009; this reads the table. See
+    /// 0010 for why: a hand-curated corpus is small enough that an index costs
+    /// more to keep in step than it saves.
+    pub fn search_bookmarks(&self, query: String, limit: u32) -> Result<Vec<BookmarkHit>> {
+        let inner = self.inner.lock();
+        let all = inner.ledger.bookmarks()?;
+        let pages: Vec<Bookmark> = all.into_iter().filter(|b| !b.is_folder).collect();
+        let needle = history::needle(&query);
+
+        let chosen: Vec<(Bookmark, SearchField, i32)> = if needle.is_empty() {
+            // Bar order, and no score: with nothing typed every row matches
+            // equally, which is the same answer `history_newest` gives. The
+            // picker sorts these in among everything else by when they were
+            // kept, so a folder saved two years ago does not push this
+            // morning's browsing off the list.
+            pages
+                .into_iter()
+                .take(limit as usize)
+                .map(|b| (b, SearchField::Url, 0))
+                .collect()
+        } else {
+            // The haystack `Ranking` expects: address without its scheme, then
+            // title, lowercase, newline-separated — exactly what migration 0009
+            // writes for a visit. Built here rather than stored, because the
+            // whole point of not having an index is not keeping a second copy
+            // of the text in step.
+            let hays: Vec<String> = pages
+                .iter()
+                .map(|b| {
+                    format!(
+                        "{}\n{}",
+                        b.url.as_deref().map(history::search_handle).unwrap_or("").to_lowercase(),
+                        b.title.to_lowercase()
+                    )
+                })
+                .collect();
+            let mut ranking = history::Ranking::new(&needle);
+            for (i, hay) in hays.iter().enumerate() {
+                // `seq` is the tie-break, and for a bookmark the closest thing
+                // to it is when it was kept. Position in the bar would be the
+                // other candidate and it is worse: it would make the first
+                // folder's contents win every tie for ever.
+                ranking.offer(i as i64, pages[i].added_at, history::Haystack::new(hay));
+            }
+            ranking
+                .finish(limit as usize)
+                .into_iter()
+                .map(|h| (pages[h.rowid as usize].clone(), h.field, h.score))
+                .collect()
+        };
+
+        let mut out = Vec::with_capacity(chosen.len());
+        for (bookmark, matched_field, score) in chosen {
+            let folder_path = inner.ledger.folder_path(&bookmark.id)?;
+            out.push(BookmarkHit { bookmark, folder_path, matched_field, score });
+        }
+        Ok(out)
     }
 
     /// Remember how far a pane's contents are scaled. No snapshot is
@@ -1202,15 +1383,46 @@ impl Core {
         import::read_pages(&conn, source.kind)
     }
 
+    /// Another browser's bookmarks, flattened, and how many of them are already
+    /// kept here.
+    ///
+    /// `None` for a source whose bookmarks this crate does not read, which is a
+    /// different answer from "none": the wizard prints one as a sentence and
+    /// the other as a zero.
+    fn read_source_bookmarks(
+        ledger: &Ledger,
+        source: &import::HistorySource,
+    ) -> Result<Option<(Vec<import::FlatBookmark>, u32)>> {
+        if source.bookmarks_path.is_none() {
+            return Ok(None);
+        }
+        let tree = import::read_bookmarks(source, ledger.path())?;
+        let flat = import::flatten(&tree);
+        let here = ledger.bookmark_placements()?;
+        let known = flat
+            .iter()
+            .filter(|b| here.contains(&(b.folder.join("/"), b.url.clone())))
+            .count() as u32;
+        Ok(Some((flat, known)))
+    }
+
     fn plan(
         ledger: &Ledger,
         pages: &[import::SourcePage],
         skipped: u32,
         known: u32,
+        bookmarks: Option<&(Vec<import::FlatBookmark>, u32)>,
         mode: import::ImportMode,
     ) -> Result<import::ImportPlan> {
         let existing = ledger.history_count()?;
         let source_pages = pages.len() as u32;
+        let existing_bookmarks = ledger.bookmark_count()?;
+        // Folders are counted in `resulting_bookmarks` and not in
+        // `source_bookmarks`, which is not an inconsistency: the source number
+        // answers "how many pages does Vivaldi keep", and the resulting number
+        // is how many rows the tree will draw. A report that quoted folders in
+        // the first would be answering a question nobody asked about a bar.
+        let new_bookmarks = bookmarks.map(|(flat, known)| flat.len() as u32 - known).unwrap_or(0);
         Ok(import::ImportPlan {
             source_pages,
             skipped,
@@ -1222,6 +1434,19 @@ impl Core {
             resulting_pages: match mode {
                 import::ImportMode::Merge => existing + (source_pages - known),
                 import::ImportMode::Replace => source_pages,
+            },
+            source_bookmarks: bookmarks.map(|(flat, _)| flat.len() as u32),
+            bookmarks_already_known: bookmarks.map(|(_, known)| *known).unwrap_or(0),
+            existing_bookmarks,
+            resulting_bookmarks: match mode {
+                import::ImportMode::Merge => existing_bookmarks + new_bookmarks,
+                // The folders the import is about to make are not knowable
+                // without making them, so this is the floor rather than the
+                // count — and it is labelled "at least" in the wizard for that
+                // reason. Guessing by counting distinct folder paths would be a
+                // number that is right until a source has two folders of the
+                // same name in different places.
+                import::ImportMode::Replace => new_bookmarks,
             },
         })
     }

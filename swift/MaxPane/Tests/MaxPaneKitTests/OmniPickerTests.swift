@@ -111,11 +111,23 @@ struct OmniPickerTests {
 
     private func build(
         _ query: String, scope: OmniScope = .everything,
-        recents: [Recent] = [], pages: [HistoryEntry] = [], sessions: [SessionTelemetry] = []
+        recents: [Recent] = [], pages: [HistoryEntry] = [],
+        bookmarks: [BookmarkHit] = [], sessions: [SessionTelemetry] = []
     ) -> [OmniRow] {
         OmniRanking.build(
             query: query, scope: scope, recents: recents, pages: pages,
-            sessions: sessions, destination: "→ new lane")
+            bookmarks: bookmarks, sessions: sessions, destination: "→ new lane")
+    }
+
+    /// A kept page, as the core hands it over.
+    private func kept(
+        _ url: String, _ title: String, folder: String? = nil, at: Int64 = 0
+    ) -> BookmarkHit {
+        BookmarkHit(
+            bookmark: Bookmark(
+                id: "bm-" + url, parentId: folder, isFolder: false, url: url, title: title,
+                position: 0, addedAt: at, depth: folder == nil ? 0 : 1),
+            folderPath: folder, matchedField: .title, score: 0)
     }
 
     private func actions(_ rows: [OmniRow]) -> [OmniAction] {
@@ -531,6 +543,7 @@ struct OmniStoreTests {
                     query: query, scope: scope,
                     recents: store.recents(limit: 60),
                     pages: scope.wantsPages ? store.history(query, limit: 80) : [],
+                    bookmarks: scope.wantsPages ? store.searchBookmarks(query) : [],
                     sessions: sessions,
                     destination: "→ new lane")
                 #expect(!rows.isEmpty, "“\(query)” in \(scope.title) produced no rows at all")
@@ -586,11 +599,22 @@ struct OmniPickerRenderTests {
                 cwd: NSHomeDirectory() + "/code/max-pane", command: "claude",
                 state: .blocked, bytesPerSecond: 0, lastActivity: Date(timeIntervalSinceNow: -9)),
         ]
+        // A kept page in a folder: the row whose detail line has to carry two
+        // things in a column that fits one.
+        let bookmarks = [
+            BookmarkHit(
+                bookmark: Bookmark(
+                    id: "bm1", parentId: "f1", isFolder: false,
+                    url: "https://doc.rust-lang.org/std/collections/struct.HashMap.html",
+                    title: "HashMap — the one I always reopen",
+                    position: 0, addedAt: nowMs(-3600 * 24 * 90), depth: 1),
+                folderPath: "Rust/Standard Library", matchedField: .title, score: 30_000),
+        ]
 
         for width in [600.0, 780.0] as [CGFloat] {
             let rows = OmniRanking.build(
                 query: "ha", scope: .everything, recents: recents, pages: pages,
-                sessions: sessions, destination: "→ new lane")
+                bookmarks: bookmarks, sessions: sessions, destination: "→ new lane")
             let shortcuts = OmniRanking.shortcuts(for: rows)
             let heights = rows.map { $0.isSelectable ? 42.0 : 26.0 as CGFloat }
             let sheet = NSView(frame: NSRect(
@@ -623,5 +647,91 @@ struct OmniPickerRenderTests {
 
     private func nowMs(_ secondsAgo: Double) -> Int64 {
         Int64((Date().timeIntervalSince1970 + secondsAgo) * 1000)
+    }
+}
+
+
+// MARK: - kept pages in the one door
+
+/// A bookmark is a page, so it is offered by the door pages are offered by —
+/// and it outranks the visit of the same address, because the title on it is
+/// the one the user chose.
+@Suite("⌘O offers what you have kept")
+@MainActor
+struct OmniBookmarkTests {
+    private func kept(_ url: String, _ title: String, folder: String? = nil, at: Int64 = 0)
+        -> BookmarkHit
+    {
+        BookmarkHit(
+            bookmark: Bookmark(
+                id: "bm-" + url, parentId: folder, isFolder: false, url: url, title: title,
+                position: 0, addedAt: at, depth: folder == nil ? 0 : 1),
+            folderPath: folder, matchedField: .title, score: 0)
+    }
+
+    private func page(_ url: String, _ title: String?, at: Int64 = 0) -> HistoryEntry {
+        HistoryEntry(
+            url: url, title: title, firstVisitAt: at, lastVisitAt: at,
+            visitCount: 1, matchedField: .url, score: 0)
+    }
+
+    private func build(
+        _ query: String, scope: OmniScope = .everything,
+        pages: [HistoryEntry] = [], bookmarks: [BookmarkHit] = []
+    ) -> [OmniRow] {
+        OmniRanking.build(
+            query: query, scope: scope, recents: [], pages: pages,
+            bookmarks: bookmarks, sessions: [], destination: "→ new lane")
+    }
+
+    @Test("a kept page is a row, marked as kept")
+    func keptPagesAreOffered() {
+        let rows = build("board", bookmarks: [kept("https://board.example.com/x", "The board")])
+        let hit = rows.compactMap(\.candidate).first { $0.kind == .bookmark }
+        #expect(hit != nil)
+        #expect(hit?.headline == "The board")
+        // The star is the mark. The tag column says what Return costs, and a
+        // kept page costs what any page costs.
+        #expect(OmniPickerRow.glyph(hit!) == "★")
+        #expect(OmniPickerRow.tag(hit!) == "")
+    }
+
+    /// The merge that matters: the same address is in both corpora, and one row
+    /// comes back carrying the name the user gave it.
+    @Test("a page that is both kept and visited is one row, and it is the bookmark")
+    func keptBeatsVisited() {
+        let rows = build(
+            "board",
+            pages: [page("https://board.example.com/x", "board.example.com | Sign in")],
+            bookmarks: [kept("https://board.example.com/x", "The board", folder: "Work")])
+        let hits = rows.compactMap(\.candidate).filter {
+            if case .open(let u) = $0.action { return u.contains("board.example") }
+            return false
+        }
+        #expect(hits.count == 1, "the same address was offered twice")
+        #expect(hits[0].headline == "The board")
+        #expect(hits[0].detail.hasPrefix("Work · "), "which folder it is in is half of the row")
+    }
+
+    /// `notes` twice is exactly the case a bare address cannot answer.
+    @Test("two bookmarks with the same name are told apart by their folder")
+    func folderIsTheDisambiguator() {
+        let rows = build(
+            "notes",
+            bookmarks: [
+                kept("https://a.example/notes", "Notes", folder: "Work/Rust"),
+                kept("https://b.example/notes", "Notes"),
+            ])
+        let details = rows.compactMap(\.candidate).filter { $0.kind == .bookmark }.map(\.detail)
+        #expect(details.contains { $0.hasPrefix("Work/Rust · ") })
+        #expect(details.contains { $0 == "https://b.example/notes" })
+    }
+
+    @Test("the commands scope does not offer pages you have kept")
+    func scopeIsRespected() {
+        let rows = build(
+            "board", scope: .commands,
+            bookmarks: [kept("https://board.example.com/x", "The board")])
+        #expect(!rows.compactMap(\.candidate).contains { $0.kind == .bookmark })
     }
 }

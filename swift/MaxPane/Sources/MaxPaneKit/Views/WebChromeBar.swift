@@ -37,11 +37,18 @@ import AppKit
 /// legible state is its absence) and the zoom readout (only off 100%, where it
 /// is both the readout and the Reset button).
 ///
-/// Never: a bookmark star and a bookmarks bar — the strip is the bookmarks bar
-/// and a pinned lane is the star; and a separate search box — the address field
-/// takes a question as readily as an address, because a portrait column has
-/// room for one field and `OmniText.looksLikeURL` already knows the
-/// difference.
+/// The star is here now, and it used to say here that it never would be: *the
+/// strip is the bookmarks bar and a pinned lane is the star*. That was a real
+/// argument and it holds for one page at a time — a docked lane is a page you
+/// have decided to keep in front of you. What it cannot do is keep a page you
+/// are *not* looking at, and the owner keeps eight folders of those and opens
+/// them daily. So one glyph, in the row that already has five, lit when this
+/// page is kept; the folders live in the sidebar, which is the surface that
+/// already groups things, and not in a sixth band across the top.
+///
+/// Never: a separate search box — the address field takes a question as readily
+/// as an address, because a portrait column has room for one field and
+/// `OmniText.looksLikeURL` already knows the difference.
 @MainActor
 final class WebChromeBar: NSView {
     static let height: CGFloat = 26
@@ -50,6 +57,10 @@ final class WebChromeBar: NSView {
     var onForward: (() -> Void)?
     var onReloadOrStop: (() -> Void)?
     var onFind: (() -> Void)?
+    /// The star. Keep this page if it is not kept, and open the editor either
+    /// way — the same thing ⌘D does, because they are one action with two
+    /// doors.
+    var onStar: (() -> Void)?
     var onZoomReset: (() -> Void)?
     /// A line typed into the address field. Already trimmed; not yet resolved —
     /// the pane decides whether it is an address or a search.
@@ -63,6 +74,7 @@ final class WebChromeBar: NSView {
     private let forward = ChromeButton(glyph: "→")
     private let reload = ChromeButton(glyph: "⟳")
     private let find = ChromeButton(glyph: "⌕")
+    private let star = ChromeButton(glyph: "☆")
     private let zoom = ChromeButton(glyph: "100%")
     private let security = NSTextField(labelWithString: "")
     private let address = AddressField()
@@ -99,6 +111,7 @@ final class WebChromeBar: NSView {
         forward.onClick = { [weak self] in self?.onForward?() }
         reload.onClick = { [weak self] in self?.onReloadOrStop?() }
         find.onClick = { [weak self] in self?.onFind?() }
+        star.onClick = { [weak self] in self?.onStar?() }
         zoom.onClick = { [weak self] in self?.onZoomReset?() }
         back.onMenu = { [weak self] in self?.onBackMenu?() }
         forward.onMenu = { [weak self] in self?.onForwardMenu?() }
@@ -107,10 +120,14 @@ final class WebChromeBar: NSView {
         forward.toolTip = "Forward"
         reload.toolTip = "Reload (⌘R)"
         find.toolTip = "Find in page (⌘F)"
+        star.toolTip = "Keep this page (⌘D)"
         zoom.toolTip = "Zoom — click for actual size (⌘0)"
         zoom.isHidden = true
 
-        let row = NSStackView(views: [back, forward, reload, security, address, find, zoom])
+        // The star sits between the address and find: it is about *this page*,
+        // which is what the field to its left says, where find and zoom are
+        // about reading whatever is on screen.
+        let row = NSStackView(views: [back, forward, reload, security, address, star, find, zoom])
         row.orientation = .horizontal
         row.spacing = 2
         row.alignment = .centerY
@@ -211,6 +228,21 @@ final class WebChromeBar: NSView {
         renderAddress()
     }
 
+    /// What the bookmark editor hangs off. The star is the row's own view, so
+    /// the popover follows it when the lane is dragged narrower.
+    var starAnchor: NSView { star }
+
+    /// Whether this page is one of the ones kept.
+    ///
+    /// A filled orange star, not a hollow one gone bright: the difference
+    /// between the two states has to survive being glanced at in a 420 pt
+    /// column, and `☆`/`★` differ in their middle rather than only in weight.
+    func setKept(_ kept: Bool) {
+        star.glyph = kept ? "★" : "☆"
+        star.tint = kept ? Theme.accent : nil
+        star.toolTip = kept ? "Kept — click to edit or remove (⌘D)" : "Keep this page (⌘D)"
+    }
+
     func setZoom(_ level: Double) {
         let atRest = abs(level - 1) < 0.001
         zoom.glyph = "\(Int((level * 100).rounded()))%"
@@ -240,7 +272,7 @@ final class WebChromeBar: NSView {
     var isPaneFocused: Bool = false {
         didSet {
             guard isPaneFocused != oldValue else { return }
-            for button in [back, forward, reload, find, zoom] { button.isDimmed = !isPaneFocused }
+            for button in [back, forward, reload, star, find, zoom] { button.isDimmed = !isPaneFocused }
             renderAddress()
             needsDisplay = true
         }
@@ -676,6 +708,10 @@ final class ChromeButton: NSView {
 
     var glyph: String { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
     var isEnabled = true { didSet { needsDisplay = true } }
+    /// Overrides the ink when the button is enabled. One caller: the star,
+    /// which is the only control on the row whose colour is a *state* rather
+    /// than an affordance.
+    var tint: NSColor? { didSet { needsDisplay = true } }
     var isDimmed = true { didSet { needsDisplay = true } }
 
     private var isHovered = false { didSet { needsDisplay = true } }
@@ -765,7 +801,7 @@ final class ChromeButton: NSView {
         // you browse, which is worse than a grey arrow.
         let colour: NSColor = !isEnabled
             ? Theme.dimText.withAlphaComponent(0.3)
-            : (isDimmed ? Theme.dimText : .labelColor)
+            : (tint ?? (isDimmed ? Theme.dimText : .labelColor))
         let text = NSAttributedString(string: glyph, attributes: [
             .font: font, .foregroundColor: colour,
         ])

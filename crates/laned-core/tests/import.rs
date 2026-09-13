@@ -150,6 +150,9 @@ fn source(path: &Path, kind: HistorySourceKind) -> import::HistorySource {
         profile: None,
         kind,
         path: path.to_string_lossy().into_owned(),
+        // The fixtures are history files with no bookmarks beside them; the
+        // bookmark readers have their own fixtures in `tests/bookmarks.rs`.
+        bookmarks_path: None,
         size_bytes: std::fs::metadata(path).map(|m| m.len()).unwrap_or(0),
         blocked: None,
     }

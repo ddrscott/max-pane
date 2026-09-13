@@ -134,6 +134,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         sidebar.onAttach = { [weak self] sessionId in
             try? self?.store.attachSessionAtEnd(relaySessionId: sessionId)
         }
+        // Through `launch`, so a kept page lands exactly where a ⌘O page lands:
+        // a new lane, immediately right of the one you are in.
+        sidebar.onOpenBookmark = { [weak self] url in
+            guard let self else { return }
+            self.launch(.open(url), near: self.store.focusedLane)
+        }
         // The window's own delegate, for the two fullscreen transitions. Nothing
         // else wants it, and `NSWindowController` would take it anyway.
         window.delegate = self
@@ -420,7 +426,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         case .claimSession:
             // Only meaningful for a terminal pane.
             return store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .pty
-        case .editAddress:
+        case .editAddress, .bookmarkPage:
             // The mirror of `claimSession`: only a page has an address. Greyed
             // out rather than beeping, because the menu can say which panes it
             // is for and a beep cannot.
@@ -466,6 +472,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .editAddress:
                 strip.editFocusedPaneAddress()
+
+            case .bookmarkPage:
+                strip.keepFocusedPage()
 
             case .newTerminalLane:
                 try newTerminal(near: focusedLane)

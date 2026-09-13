@@ -1,3 +1,4 @@
+import AppKit
 import Testing
 import Foundation
 import LanedCore
@@ -383,5 +384,196 @@ struct SidebarModelTests {
         #expect(SessionTelemetry.age(since: now.addingTimeInterval(-6), now: now) == "6s ago")
         #expect(SessionTelemetry.age(since: now.addingTimeInterval(-120), now: now) == "2m ago")
         #expect(SessionTelemetry.age(since: now.addingTimeInterval(-46_800), now: now) == "13h ago")
+    }
+}
+
+// MARK: - the bar
+
+/// The bookmarks section. What it has to get right is not the pixels: it is
+/// that a folded folder hides exactly its own subtree, that a folded folder
+/// still says how much it is hiding, and that a search opens the folders it
+/// matched inside — because a hit behind a closed triangle is a search that
+/// found nothing as far as the screen is concerned.
+@Suite("the sidebar's bookmarks")
+@MainActor
+struct SidebarBookmarkTests {
+    /// The tree as `Core::bookmarks` hands it over: flat, in draw order, with
+    /// the depth already worked out.
+    private func tree() -> [Bookmark] {
+        func node(_ id: String, _ title: String, _ url: String?, _ depth: UInt32) -> Bookmark {
+            Bookmark(
+                id: id, parentId: nil, isFolder: url == nil, url: url, title: title,
+                position: 0, addedAt: 0, depth: depth)
+        }
+        return [
+            node("work", "Work", nil, 0),
+            node("board", "The board", "https://board.example.com/x", 1),
+            node("rust", "Rust", nil, 1),
+            node("std", "std", "https://doc.rust-lang.org/std/", 2),
+            // Normalized, the way the ledger stores it: `normalize_url`
+            // collapses the bare trailing slash.
+            node("loose", "Loose", "https://loose.example.com", 0),
+        ]
+    }
+
+    private func titles(_ rows: [SidebarModel.Row]) -> [String] {
+        rows.compactMap { if case .bookmark(let b) = $0 { return b.title } else { return nil } }
+    }
+
+    @Test("no bookmarks means no section, rather than a row saying you have none")
+    func emptyIsInvisible() {
+        #expect(SidebarModel.bookmarkRows([], SidebarModel.Controls()).isEmpty)
+    }
+
+    @Test("the header counts the pages, not the folders")
+    func headerCountsPages() {
+        let rows = SidebarModel.bookmarkRows(tree(), SidebarModel.Controls())
+        guard case .group(let header) = rows[0] else { Issue.record("no header"); return }
+        #expect(header.header == "Bookmarks")
+        #expect(header.countText == "3 KEPT")
+    }
+
+    @Test("folding a folder hides its subtree and nothing after it")
+    func foldingHidesTheSubtree() {
+        var controls = SidebarModel.Controls()
+        #expect(titles(SidebarModel.bookmarkRows(tree(), controls))
+            == ["Work", "The board", "Rust", "std", "Loose"])
+
+        controls.collapsed = ["work"]
+        #expect(titles(SidebarModel.bookmarkRows(tree(), controls)) == ["Work", "Loose"])
+
+        // The nested case: folding the inner folder leaves the outer one open.
+        controls.collapsed = ["rust"]
+        #expect(titles(SidebarModel.bookmarkRows(tree(), controls))
+            == ["Work", "The board", "Rust", "Loose"])
+    }
+
+    @Test("a folded folder says how much it is hiding, counting all the way down")
+    func foldedFolderCarriesItsCount() {
+        let rows = SidebarModel.bookmarkRows(tree(), SidebarModel.Controls())
+        let details = Dictionary(uniqueKeysWithValues: rows.compactMap {
+            if case .bookmark(let b) = $0 { return (b.title, b.detail) } else { return nil }
+        })
+        // `Work` holds a page, a folder, and the page inside that folder —
+        // "1 ITEM" would be the immediate-children answer and it is the wrong
+        // one for a row whose whole job is to say what is behind it.
+        #expect(details["Work"] == "3 ITEMS")
+        #expect(details["Rust"] == "1 ITEM")
+        #expect(details["Loose"] == "loose.example.com")
+    }
+
+    @Test("folding the section itself leaves the header and nothing else")
+    func sectionFolds() {
+        var controls = SidebarModel.Controls()
+        controls.collapsed = [SidebarModel.bookmarksGroup]
+        let rows = SidebarModel.bookmarkRows(tree(), controls)
+        #expect(rows.count == 1)
+        guard case .group(let header) = rows[0] else { Issue.record("no header"); return }
+        #expect(header.countText == "3 KEPT", "a folded section still has to say what it holds")
+    }
+
+    @Test("a search keeps the folders above a hit and opens them")
+    func searchOpensWhatItMatched() {
+        var controls = SidebarModel.Controls()
+        controls.query = "rust-lang"
+        // `std` is two folders deep and both of them were folded.
+        controls.collapsed = ["work", "rust"]
+        #expect(titles(SidebarModel.bookmarkRows(tree(), controls)) == ["Work", "Rust", "std"])
+    }
+
+    @Test("a search that matches nothing shows no section at all")
+    func searchWithNoHitsHidesTheSection() {
+        var controls = SidebarModel.Controls()
+        controls.query = "zzqq"
+        #expect(SidebarModel.bookmarkRows(tree(), controls).isEmpty)
+    }
+
+    @Test("the bar is above the sessions")
+    func barComesFirst() {
+        let rows = SidebarModel.rows(lanes: [], telemetry: [:], bookmarks: tree())
+        guard case .group(let first) = rows[0] else { Issue.record("no header"); return }
+        #expect(first.path == SidebarModel.bookmarksGroup)
+    }
+
+    /// The sort control orders sessions within a project. A bar's order *is*
+    /// the thing — eight folders that have been in eight places for years — so
+    /// nothing here may touch it.
+    @Test("the session sort controls do not reorder the bar")
+    func sortDoesNotReachTheBar() {
+        var controls = SidebarModel.Controls()
+        controls.sort = .name
+        controls.descending = false
+        #expect(titles(SidebarModel.bookmarkRows(tree(), controls))
+            == ["Work", "The board", "Rust", "std", "Loose"])
+    }
+}
+
+/// The bar, drawn. A bookmark row is 24 pt in a 290 pt column carrying a
+/// triangle, a mark, a name and a count — whether that is *legible* is not
+/// something an assertion can answer, so this writes the picture and a human
+/// looks at it. Gated on `MAXPANE_SHOTS` like every other sheet.
+///
+///     ./scripts/test.sh shots /tmp/shots
+@Suite("sidebar bookmark rendering")
+@MainActor
+struct SidebarBookmarkRenderTests {
+    @Test("renders the bar at the widths the sidebar is dragged to")
+    func renderSheet() throws {
+        guard let dir = ProcessInfo.processInfo.environment["MAXPANE_SHOTS"] else { return }
+
+        func node(_ id: String, _ title: String, _ url: String?, _ depth: UInt32) -> Bookmark {
+            Bookmark(
+                id: id, parentId: nil, isFolder: url == nil, url: url, title: title,
+                position: 0, addedAt: 0, depth: depth)
+        }
+        // Eight folders, because that is what the owner's bar has, plus the two
+        // rows that have the least to work with: a deep nesting, and a title
+        // long enough to collide with the count on its right.
+        var tree: [Bookmark] = []
+        for (i, name) in ["Daily", "Work", "Rust", "Infra", "Reading", "Shopping", "Music", "Admin"]
+            .enumerated()
+        {
+            tree.append(node("f\(i)", name, nil, 0))
+            tree.append(node("f\(i)-a", "\(name) — the one I always reopen",
+                             "https://\(name.lowercased()).example.com/a/b", 1))
+        }
+        tree.insert(node("deep", "Standard Library", nil, 1), at: 5)
+        tree.insert(
+            node("deep-a", "std", "https://doc.rust-lang.org/std/collections/", 2), at: 6)
+        tree.append(node("loose", "Loose", "https://loose.example.com", 0))
+
+        var controls = SidebarModel.Controls()
+        controls.collapsed = ["f3"]
+        let rows = SidebarModel.bookmarkRows(tree, controls)
+
+        for width in [260.0, 290.0, 420.0] as [CGFloat] {
+            let heights = rows.map { row -> CGFloat in
+                if case .group = row { return SidebarGroupView.height }
+                return SidebarBookmarkView.height
+            }
+            let sheet = NSView(frame: NSRect(
+                x: 0, y: 0, width: width, height: heights.reduce(0, +) + 8))
+            sheet.wantsLayer = true
+            sheet.layer?.backgroundColor = Theme.stripBackground.cgColor
+
+            var y = sheet.bounds.height - 4
+            for (row, height) in zip(rows, heights) {
+                let view: NSView
+                switch row {
+                case .group(let g): view = SidebarGroupView(group: g)
+                case .bookmark(let b): view = SidebarBookmarkView(row: b)
+                case .entry: continue
+                }
+                y -= height
+                view.frame = NSRect(x: 0, y: y, width: width, height: height)
+                sheet.addSubview(view)
+                view.layoutSubtreeIfNeeded()
+            }
+            guard let rep = sheet.bitmapImageRepForCachingDisplay(in: sheet.bounds) else { return }
+            sheet.cacheDisplay(in: sheet.bounds, to: rep)
+            guard let png = rep.representation(using: .png, properties: [:]) else { return }
+            try png.write(
+                to: URL(fileURLWithPath: dir).appendingPathComponent("bookmarks-\(Int(width)).png"))
+        }
     }
 }
