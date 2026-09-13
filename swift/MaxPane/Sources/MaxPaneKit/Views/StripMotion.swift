@@ -300,6 +300,24 @@ enum StripReveal {
         return clamp(x, lanes: lanes, viewport: viewport)
     }
 
+    /// The lane a `near:` write just created — the one immediately right of the
+    /// lane it was placed beside.
+    ///
+    /// `newWebLane(near:)` and `newTerminalLane(near:)` both land at `index + 1`
+    /// and the reconcile has already run by the time either returns, so the new
+    /// lane is found by position rather than by diffing pane ids.
+    ///
+    /// `lanes.last` is the tempting wrong answer and it looks right for months:
+    /// it names the new lane only when the source lane happened to be the
+    /// rightmost one on the strip, and silently reveals somebody else's lane
+    /// otherwise.
+    static func newest(rightOf laneId: String, in lanes: [Lane]) -> String? {
+        guard let index = lanes.firstIndex(where: { $0.id == laneId }),
+              lanes.indices.contains(index + 1)
+        else { return nil }
+        return lanes[index + 1].id
+    }
+
     /// Inside the strip, measured from the lanes rather than from a view.
     private static func clamp(_ x: CGFloat, lanes: [Lane], viewport: CGFloat) -> CGFloat {
         min(max(0, x), max(0, StripEdges.contentWidth(of: lanes) - viewport))

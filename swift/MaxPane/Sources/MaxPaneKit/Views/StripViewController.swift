@@ -87,6 +87,17 @@ public final class StripViewController: NSViewController {
     /// Latest session telemetry, so a lane materialised mid-stream is not blank
     /// until the next poll.
     private var laneTelemetry: [String: SessionTelemetry] = [:]
+    /// Path → the editor session opened on it, so a second ⌘-click on the same
+    /// file goes back to the buffer you already have rather than opening a
+    /// rival copy of it.
+    ///
+    /// In memory, not in the ledger. PRD §5.2 keeps durable state in the core,
+    /// and this is not durable state: it is the other half of a gesture. After
+    /// a relaunch the lane is still there and the session is still running, and
+    /// a ⌘-click opens a second editor — which is the same answer the user
+    /// would get by typing the command twice, and a great deal better than a
+    /// remembered mapping to a pty that no longer exists.
+    private var editorSessions: [String: String] = [:]
     /// The pane whose view currently holds the keyboard, so a snapshot that did
     /// not move focus does not steal it back from whatever the user clicked.
     private var focusedPaneInView: String?
@@ -1465,9 +1476,10 @@ public final class StripViewController: NSViewController {
             // A pty pane without a session id is a lane whose session could not
             // be started. It keeps its ordinal and its tag and shows why
             // (PRD §11, §15.8); it just has nothing to attach to.
-            controller.onRevealLane = { [weak self] laneId in
-                guard let self, let laneId else { return }
-                self.reveal(laneId: laneId, flash: true)
+            // The pane knows the grid and the cwd; the strip knows the store,
+            // the config and how to spawn. `open(_:from:)` is where those meet.
+            controller.onOpenToken = { [weak self] token in
+                self?.open(token, from: pane.id)
             }
             controller.onSessionExit = { [weak self] _ in
                 self?.paneDidExit(pane.id)
@@ -1506,6 +1518,94 @@ public final class StripViewController: NSViewController {
             }
             return controller
         }
+    }
+
+    // MARK: - ⌘-click in a terminal (§7.1)
+
+    /// A ⌘-clicked path or URL, in a new lane immediately right of the terminal
+    /// that mentioned it.
+    ///
+    /// `FileOpen` decides which kind of lane; this does the two things it
+    /// cannot, both of which need the strip: a `newWebLane`/`newTerminalLane`
+    /// write against the store, and a session spawned at the size this view is
+    /// actually tall enough for.
+    private func open(_ token: TerminalToken, from paneId: String) {
+        guard let laneId = store.lane(containing: paneId)?.id else { return }
+        switch FileOpen.plan(for: token, editor: config.editor) {
+        case .web(let url):
+            do {
+                try store.newWebLane(url: url, near: laneId)
+            } catch {
+                Log.warn("⌘-click could not open a web lane for \(url): \(error)")
+                return
+            }
+            revealNewestLane(rightOf: laneId)
+        case .editor(let shellLine):
+            guard case .file(let path, _, _) = token else { return }
+            openInEditor(path: path, shellLine: shellLine, near: laneId, from: paneId)
+        }
+    }
+
+    /// A terminal lane running the editor on `path`, or the one already open on
+    /// it.
+    private func openInEditor(path: String, shellLine: String, near laneId: String, from paneId: String) {
+        if revealExistingEditor(on: path) { return }
+
+        // PRD §7.1: a new session starts in the clicked pane's cwd — the path
+        // is absolute, so this only decides what `:e` and `:Ex` see next.
+        let cwd = cwd(ofPane: paneId) ?? FileManager.default.homeDirectoryForCurrentUser.path
+        let size = TerminalPaneController.newSessionSize(
+            config: config, viewHeight: view.bounds.height)
+        do {
+            let session = try RelaySessionSpawner(config: config)
+                .spawn(cwd: cwd, shellLine: shellLine, cols: size.cols, rows: size.rows)
+            try store.newTerminalLane(relaySessionId: session, near: laneId)
+            editorSessions[path] = session
+        } catch {
+            Log.warn("⌘-click could not open an editor on \(path): \(error)")
+            return
+        }
+        revealNewestLane(rightOf: laneId)
+    }
+
+    /// The lane already editing `path`, focused and scrolled to, if there is
+    /// one.
+    ///
+    /// **Nothing is written to a running editor's pty.** The line number is
+    /// therefore lost on a reuse, and that is the accepted trade: the buffer is
+    /// the user's, it may have unsaved changes, and a `:42\n` typed into
+    /// whatever mode the editor happens to be in is how a ⌘-click corrupts a
+    /// file.
+    ///
+    /// The pane still being on the strip is the whole liveness test. A terminal
+    /// whose process exits takes its lane with it, so "the editor is still
+    /// open" and "the pane is still there" are the same fact — and it is known
+    /// the instant the session ends rather than at the next five-second poll.
+    private func revealExistingEditor(on path: String) -> Bool {
+        guard let session = editorSessions[path],
+              let lane = store.state.lanes.first(where: {
+                  $0.panes.contains { $0.relaySessionId == session }
+              }),
+              let pane = lane.panes.first(where: { $0.relaySessionId == session })
+        else {
+            editorSessions[path] = nil
+            return false
+        }
+        return select(laneId: lane.id, paneId: pane.id)
+    }
+
+    /// Forget every editor whose pane has left the strip.
+    private func pruneEditorSessions() {
+        guard !editorSessions.isEmpty else { return }
+        let onStrip = Set(store.state.lanes.flatMap { $0.panes.compactMap(\.relaySessionId) })
+        editorSessions = editorSessions.filter { onStrip.contains($0.value) }
+    }
+
+    /// The lane the write just created — see `StripReveal.newest` for why this
+    /// is a position rather than `lanes.last`.
+    private func revealNewestLane(rightOf laneId: String) {
+        guard let newest = StripReveal.newest(rightOf: laneId, in: store.state.lanes) else { return }
+        reveal(laneId: newest, flash: true)
     }
 
     // MARK: - drag reorder (§7.2)
@@ -2125,6 +2225,16 @@ public final class StripViewController: NSViewController {
     public func sessionsChanged(_ telemetry: [String: SessionTelemetry]) {
         let live = Set(telemetry.values.filter(\.isRunning).map(\.sessionId))
         laneTelemetry = telemetry
+        // An editor that has quit stops being a place to send the next
+        // ⌘-click. Swept here rather than only on lookup, so a map of paths
+        // does not outlive the sessions it names for the life of the app.
+        //
+        // Against the *strip*, not against `telemetry`: the registry holds only
+        // live sessions, so a dead one is simply absent from it — and so is one
+        // spawned since the last five-second poll. The pane is the signal that
+        // is neither ambiguous nor late, because a terminal whose process exits
+        // takes its lane with it.
+        pruneEditorSessions()
         for (_, laneView) in laneViews {
             laneView.applyTelemetry(telemetry)
         }

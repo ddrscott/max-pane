@@ -54,6 +54,44 @@ final class TerminalPaneController: NSObject, PaneController {
     /// Shared with the controller's config: if the two drift, ⌘-click lands on
     /// the wrong cell by however far they disagree.
     static let terminalPadding = CGPoint(x: 6, y: 4)
+
+    /// The terminal size a *new* session should start at.
+    ///
+    /// ADR-0007 says Max Pane never resizes a session, because the PTY's size is
+    /// shared by every client including Scott's phone. It says nothing about the
+    /// size a session is *born* at — at that instant we are the only client, and
+    /// choosing it is not taking it from anyone.
+    ///
+    /// Getting this wrong is very visible: a session born at 80×40 in a lane
+    /// that can show 60 rows leaves a third of the column black forever, and
+    /// ADR-0007 then forbids us from fixing it.
+    ///
+    /// `viewHeight` is the caller's own, because there are now two callers —
+    /// the window controller's ⌘N and the strip's ⌘-click-to-edit — and two
+    /// copies of this arithmetic would drift the moment one of them was tuned.
+    static func newSessionSize(config: Config, viewHeight: CGFloat) -> (cols: Int, rows: Int) {
+        let font = NSFont(name: config.fontName, size: config.fontSize)
+            ?? NSFont.monospacedSystemFont(ofSize: config.fontSize, weight: .regular)
+
+        // Match SwiftTerm's own cell metric rather than approximating it.
+        // `AppleTerminalView.computeFontDimensions` uses
+        // `ceil(ascent + descent + leading)`; `boundingRectForFont.height` is
+        // several points taller, and guessing high leaves a band of dead black
+        // at the bottom of every terminal lane that ADR-0007 then forbids
+        // fixing.
+        let ctFont = font as CTFont
+        let cellHeight = ceil(CTFontGetAscent(ctFont) + CTFontGetDescent(ctFont) + CTFontGetLeading(ctFont))
+        let advance = Double(font.advancement(forGlyph: font.glyph(withName: "space") ?? 0).width)
+        let cellWidth = advance > 0 ? advance.rounded() : config.fontSize * 0.6
+
+        let laneWidth = Double(config.laneDefaultPt) - 16
+        let usableHeight = Double(viewHeight) - Double(Theme.laneHeaderHeight)
+
+        let cols = max(40, Int(laneWidth / max(cellWidth, 1)))
+        // Fall back to something sane before the strip has been laid out.
+        let rows = usableHeight > 100 ? max(20, Int(usableHeight / max(cellHeight, 1))) : 40
+        return (cols, rows)
+    }
     private let terminal = ClickableTerminalView(frame: .zero)
     private let status = ReconnectingBanner()
 
@@ -82,8 +120,10 @@ final class TerminalPaneController: NSObject, PaneController {
     /// sniffed out of the byte stream by hand.
     private(set) var currentCwd: String?
 
-    /// Set by the strip so a newly opened lane can be scrolled to.
-    var onRevealLane: ((String?) -> Void)?
+    /// A ⌘-click found something worth opening. The strip decides what kind of
+    /// lane it lands in — this pane knows the grid and the cwd and nothing at
+    /// all about editors. See `FileOpen`.
+    var onOpenToken: ((TerminalToken) -> Void)?
     /// The session ended, with this exit status. The strip takes the pane away.
     var onSessionExit: ((Int32) -> Void)?
 
@@ -453,15 +493,19 @@ final class TerminalPaneController: NSObject, PaneController {
         try? store.setLaneTitle(laneId, title)
     }
 
-    /// Open a clicked path or URL in a new lane immediately right of this one.
+    /// Hand a clicked path or URL to the strip, which opens it in a new lane
+    /// immediately right of this one.
     ///
     /// Right of the terminal that mentioned it, not at the end of the strip:
     /// the thing and the thing that referred to it belong side by side, which
     /// is the entire premise of putting web panes on the same strip as shells.
+    ///
+    /// *Which* kind of lane is not this pane's decision. A `.pdf` is a web pane
+    /// and a `.ts` is `$EDITOR` in a terminal, and spawning the second needs a
+    /// size, a cwd and a spawner that live one level up — so the token goes up
+    /// and the strip routes it through `FileOpen`.
     func open(_ token: TerminalToken) {
-        guard let laneId = store.lane(containing: paneId)?.id, let url = token.openURL else { return }
-        try? store.newWebLane(url: url.absoluteString, near: laneId)
-        onRevealLane?(store.state.lanes.last?.id)
+        onOpenToken?(token)
     }
 
     /// ⌘-click: open whatever is under the pointer in the next lane.

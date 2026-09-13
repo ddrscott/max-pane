@@ -83,6 +83,26 @@ public struct Config: Codable {
     public var fontName: String = "JetBrains Mono"
     public var fontSize: Double = 13
 
+    /// The command line a ⌘-clicked file opens in, when it is not something a
+    /// web pane can render.
+    ///
+    /// `%f` is the path, already shell-quoted; `%l` is the line and `%c` the
+    /// column, each **1** when the text carried none — so the template is
+    /// unconditional and never has to grow a "drop the `+` if there is no line"
+    /// branch. Nothing else is substituted, which is what leaves `$VAR`, `${}`
+    /// and every other bit of shell syntax for the login shell to read.
+    ///
+    /// `nil` means `${VISUAL:-${EDITOR:-vi}} +%l -- %f`, which is right for vi,
+    /// vim, neovim, emacs, nano and micro — as long as the variable names the
+    /// program itself, since an alias does not survive the expansion. Editors
+    /// that do not take `+N` are why this key exists:
+    ///
+    /// ```json
+    /// { "editor": "code --goto %f:%l:%c" }
+    /// { "editor": "hx %f:%l:%c" }
+    /// ```
+    public var editor: String?
+
     /// Where a web pane's address bar sends something that is not an address.
     ///
     /// A portrait lane has room for one text field, so the address bar is also
@@ -173,6 +193,7 @@ public struct Config: Codable {
         relayPtyHostPath = read(.relayPtyHostPath, d.relayPtyHostPath)
         fontName = read(.fontName, d.fontName)
         fontSize = read(.fontSize, d.fontSize)
+        editor = read(.editor, d.editor)
         searchUrl = read(.searchUrl, d.searchUrl)
         snapToLanes = read(.snapToLanes, d.snapToLanes)
         snapSeconds = read(.snapSeconds, d.snapSeconds)

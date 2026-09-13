@@ -753,6 +753,47 @@ A terminal whose process exits takes its lane with it, after a beat.
 
 An empty strip says the same thing, so a fresh launch is not a blank rectangle.
 
+### ⌘-clicking a path
+
+**⌘-click a path or a URL in terminal output** and it opens in a lane right of
+the terminal that printed it. Which *kind* of lane depends on what the thing is:
+a URL and anything a web pane can already draw — `pdf png jpg jpeg gif svg webp
+heic bmp tiff ico mp4 mov m4v webm mp3 wav m4a aac flac ogg`, in any case —
+get a web lane. **Everything else gets a terminal lane running your editor**,
+at the line the output named: `src/foo.ts:42:10` opens on line 42.
+
+That includes `.html`, `.md` and `.json`, deliberately. A ⌘-click on a path in a
+stack trace is a request to look at the file, and the one thing a `WKWebView` on
+`file:///…/foo.ts` cannot then do is let you fix the line you were looking at —
+which was the old behaviour: unstyled, un-editable, and the `:42` thrown away on
+the way in. Nothing here is a guess about a bare word, either; a path is only
+clickable if it exists.
+
+The default is `${VISUAL:-${EDITOR:-vi}} +%l -- %f`, read by your login shell —
+so the variables that count are the ones your `.zshrc` exports. **They have to
+name the program, not an alias:** `EDITOR=vim` beside `alias vim=nvim` opens a
+stock `/usr/bin/vim` with none of your neovim config, because an alias is never
+expanded out of a variable. `git commit` has always done the same; set
+`EDITOR=nvim` and both are right. `editor` in the config file replaces the
+default, which is how you spell the editors that do not take `+N`:
+
+```json
+{ "editor": "code --goto %f:%l:%c" }
+{ "editor": "hx %f:%l:%c" }
+```
+
+`%f` is the path, already quoted; `%l` is the line and `%c` the column, each
+**1** when the output carried none, so the template never needs a branch for
+"there was no line". Nothing else is substituted — `$VAR` and `${...}` are left
+for the shell.
+
+**⌘-clicking the same file again goes back to the editor you already have**,
+focusing that lane instead of opening a second one over the same buffer. The
+line number is lost when that happens, and that is on purpose: the buffer is
+yours, it may have unsaved changes, and typing `:42` into whatever mode the
+editor is in is how a click corrupts a file. Once that lane is gone, the next
+⌘-click starts fresh.
+
 ### From a terminal
 
 Both CLI tools live in the bundle at `Contents/Helpers/`:

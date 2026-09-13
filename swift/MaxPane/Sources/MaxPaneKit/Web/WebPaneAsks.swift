@@ -399,14 +399,11 @@ extension WebPaneController {
     }
 
     /// The lane the write just created. `newWebLane` places it immediately
-    /// right of this one, so it is found by position rather than by diffing the
-    /// pane ids — the reconcile has already run by the time the call returns.
+    /// right of this one, so it is found by position — see `StripReveal.newest`,
+    /// which ⌘-clicking a path in a terminal reaches by the same route.
     private func revealNewestLane(rightOf laneId: String) {
-        let lanes = store.state.lanes
-        guard let index = lanes.firstIndex(where: { $0.id == laneId }),
-              lanes.indices.contains(index + 1)
-        else { return }
-        onRevealLane?(lanes[index + 1].id)
+        guard let newest = StripReveal.newest(rightOf: laneId, in: store.state.lanes) else { return }
+        onRevealLane?(newest)
     }
 
     /// A response the pane cannot display, or one the server marked as an

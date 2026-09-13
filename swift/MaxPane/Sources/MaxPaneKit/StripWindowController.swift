@@ -795,38 +795,11 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         controller.present(over: window)
     }
 
-    /// The terminal size a *new* session should start at.
-    ///
-    /// ADR-0007 says Max Pane never resizes a session, because the PTY's size is
-    /// shared by every client including Scott's phone. It says nothing about the
-    /// size a session is *born* at — at that instant we are the only client, and
-    /// choosing it is not taking it from anyone.
-    ///
-    /// Getting this wrong is very visible: a session born at 80×40 in a lane
-    /// that can show 60 rows leaves a third of the column black forever, and
-    /// ADR-0007 then forbids us from fixing it.
+    /// The terminal size a *new* session should start at, measured against the
+    /// strip's own height. See `TerminalPaneController.newSessionSize`.
     private func newSessionSize() -> (cols: Int, rows: Int) {
-        let font = NSFont(name: config.fontName, size: config.fontSize)
-            ?? NSFont.monospacedSystemFont(ofSize: config.fontSize, weight: .regular)
-
-        // Match SwiftTerm's own cell metric rather than approximating it.
-        // `AppleTerminalView.computeFontDimensions` uses
-        // `ceil(ascent + descent + leading)`; `boundingRectForFont.height` is
-        // several points taller, and guessing high leaves a band of dead black
-        // at the bottom of every terminal lane that ADR-0007 then forbids
-        // fixing.
-        let ctFont = font as CTFont
-        let cellHeight = ceil(CTFontGetAscent(ctFont) + CTFontGetDescent(ctFont) + CTFontGetLeading(ctFont))
-        let advance = Double(font.advancement(forGlyph: font.glyph(withName: "space") ?? 0).width)
-        let cellWidth = advance > 0 ? advance.rounded() : config.fontSize * 0.6
-
-        let laneWidth = Double(config.laneDefaultPt) - 16
-        let usableHeight = Double(strip.view.bounds.height) - Double(Theme.laneHeaderHeight)
-
-        let cols = max(40, Int(laneWidth / max(cellWidth, 1)))
-        // Fall back to something sane before the strip has been laid out.
-        let rows = usableHeight > 100 ? max(20, Int(usableHeight / max(cellHeight, 1))) : 40
-        return (cols, rows)
+        TerminalPaneController.newSessionSize(
+            config: config, viewHeight: strip.view.bounds.height)
     }
 
     private func refreshStatus() {
