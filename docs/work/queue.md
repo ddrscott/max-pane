@@ -17,4 +17,5 @@
 - [ ] Bookmarks: a store, a way to add and reach them, then import from other browsers
 - [ ] Passwords: macOS Keychain only, never our own store; explicit fill, then Chromium import — [detail](passwords.md)
 - [ ] History: 1–2 character keystrokes cost ~60ms because trigrams need three — boundary-prefixed trigram queries make short needles indexable; measured fix, left out of round 2 as scope
+- [ ] ⌘O splits a command on whitespace, so `yes | head` runs `yes` with literal args `|` and `head` — the same fault `maxpane run` just had, at a different door, and it produces a lane that spews rather than an error
 - [x] Split down (⇧⌘D) adds a pane that never appears — [detail](split-down-invisible.md) — fixed in a4d414d
