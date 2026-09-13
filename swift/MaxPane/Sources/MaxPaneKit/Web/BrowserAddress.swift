@@ -118,6 +118,83 @@ enum BrowserAddress {
         host == "localhost" || host == "127.0.0.1" || host == "::1" || host.hasSuffix(".local")
     }
 
+    // MARK: - what a lane calls a page with no title
+
+    /// The lane header for a page that never gave itself a `<title>`.
+    ///
+    /// Host and path, because that is the pair that tells six columns of raw
+    /// JSON and dev servers apart: the host alone makes `/api/users` and
+    /// `/api/orders` the same lane, and the full URL spends the header on a
+    /// query string nobody scans by. The port stays for the same reason — two
+    /// dev servers on one machine differ only there.
+    ///
+    /// `www.` goes and the scheme goes: neither is ever the thing being
+    /// distinguished, and the header is 28 pt tall.
+    static func laneLabel(for raw: String) -> String {
+        guard let url = URL(string: raw), let host = url.host, !host.isEmpty else { return raw }
+        var label = host.lowercased().hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        if let port = url.port { label += ":\(port)" }
+        let path = url.path
+        if !path.isEmpty, path != "/" {
+            label += path.hasSuffix("/") ? String(path.dropLast()) : path
+        }
+        return label
+    }
+
+    // MARK: - what a failed navigation says
+
+    /// The line a failed load puts in the address slot, or nil when the
+    /// failure is none of the reader's business.
+    ///
+    /// The nil cases are the whole reason this is a function rather than
+    /// `error.localizedDescription`. A cancel is what *stopping* a load looks
+    /// like from here, and what a second navigation does to the first; a
+    /// `frameLoadInterrupted` is what a download looks like. Reporting either
+    /// would mean the ✕ button and every `<a download>` printed a scary amber
+    /// line for doing exactly what was asked.
+    ///
+    /// The rest are deliberately short and lowercase. This shares a 300 pt
+    /// field with the address, so `NSURLErrorDomain error -1003` and Apple's
+    /// sentence-long strings both wrap into nothing readable.
+    static func failure(domain: String, code: Int, failingURL: String?) -> String? {
+        if domain == "WebKitErrorDomain", code == 102 || code == 204 { return nil }
+        guard let phrase = phrase(domain: domain, code: code) else { return nil }
+        guard let host = failingURL.flatMap({ URL(string: $0)?.host }), !host.isEmpty else {
+            return phrase
+        }
+        return "\(phrase) — \(host)"
+    }
+
+    private static func phrase(domain: String, code: Int) -> String? {
+        guard domain == NSURLErrorDomain else { return "could not load" }
+        switch code {
+        // The two silences. `.cancelled` is the ✕ button and it is also every
+        // navigation that superseded another — typing a second address before
+        // the first resolved fails the first one this way.
+        case NSURLErrorCancelled: return nil
+        case NSURLErrorCannotFindHost: return "server not found"
+        case NSURLErrorCannotConnectToHost: return "could not connect"
+        case NSURLErrorNotConnectedToInternet: return "no internet connection"
+        case NSURLErrorTimedOut: return "timed out"
+        case NSURLErrorNetworkConnectionLost: return "connection lost"
+        case NSURLErrorDNSLookupFailed: return "dns lookup failed"
+        case NSURLErrorUnsupportedURL: return "unsupported address"
+        case NSURLErrorBadURL: return "not a valid address"
+        case NSURLErrorSecureConnectionFailed: return "secure connection failed"
+        case NSURLErrorServerCertificateUntrusted,
+             NSURLErrorServerCertificateHasBadDate,
+             NSURLErrorServerCertificateHasUnknownRoot,
+             NSURLErrorServerCertificateNotYetValid:
+            return "certificate not trusted"
+        // Reachable only if the web-content ATS exception is ever taken back
+        // out of Info.plist, and then it is the single most useful thing this
+        // function can say — it names the setting, not the site.
+        case NSURLErrorAppTransportSecurityRequiresSecureConnection:
+            return "blocked: http is not allowed"
+        default: return "could not load"
+        }
+    }
+
     // MARK: - what Return does
 
     /// Where Return in the address field should go.

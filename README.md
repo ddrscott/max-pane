@@ -184,6 +184,30 @@ picker with those scopes already chosen. **⌘⌫** forgets the selected row.
 ⌘P stays separate on purpose: it finds what is *already on the strip* and
 scrolls to it, where every ⌘O row spends something to create a pane.
 
+### A web lane
+
+The chrome is one 26 pt row at the foot of the pane: back, forward,
+reload/stop, the address, find, and a load hairline. The address field is also
+the search box and also the link-target readout, because a portrait column has
+room for one field — it shows where you are, swaps to where a hovered link goes,
+and says so when a navigation fails.
+
+**⌘-click or middle-click a link** to open it in a lane of its own, right of
+this one, instead of navigating the lane you are reading. ⌃⌘ and ⌥⌘ are left to
+the system, which already uses them for right-click and download-linked-file.
+`target=_blank` has always landed this way; now the gesture does too.
+
+A load that fails says so where the address was — `⚠ server not found —
+example.com`, for five seconds — and takes the hairline down with it. Stopping a
+load with ✕ and starting a download are not failures and say nothing. Plain
+`http://` loads, with an amber **⚠** before the address; the loopback gets no
+warning, because `localhost:3000` twenty times a day is how a warning stops
+being read.
+
+A page with no `<title>` gets its host and path on the lane header rather than
+keeping the last page's title — `localhost:3000/api/users`, which is what tells
+six columns of raw JSON apart.
+
 ### The session browser, and which pane has the keyboard
 
 Clicking a session in the left-hand browser scrolls to its lane **and gives it

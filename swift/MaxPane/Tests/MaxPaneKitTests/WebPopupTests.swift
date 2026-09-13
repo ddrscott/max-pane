@@ -162,3 +162,76 @@ struct DataStoreIdentityTests {
         #expect(DataStorePool.uuid(for: "shard-0") != DataStorePool.uuid(for: "shard-1"))
     }
 }
+
+/// "Keep my place, open a sibling" — which is the gesture, and which is not.
+///
+/// The bug this replaces was the expensive kind: ⌘-click and middle-click both
+/// navigated the lane you were reading, so the one gesture you reach for to
+/// *avoid* losing a page was the one that lost it.
+@Suite("link click")
+struct LinkClickTests {
+    @Test("⌘-click on a link opens a sibling lane")
+    func commandClick() {
+        #expect(LinkClick.outcome(
+            navigationType: .linkActivated, modifiers: [.command], buttonNumber: 0)
+            == .siblingLane)
+    }
+
+    @Test("⇧⌘-click is the same gesture with a shift on it")
+    func shiftCommandClick() {
+        #expect(LinkClick.outcome(
+            navigationType: .linkActivated, modifiers: [.command, .shift], buttonNumber: 0)
+            == .siblingLane)
+    }
+
+    /// The three-button mouse's version, and it needs no modifier.
+    @Test("middle-click opens a sibling lane on its own")
+    func middleClick() {
+        #expect(LinkClick.outcome(
+            navigationType: .linkActivated, modifiers: [], buttonNumber: 2)
+            == .siblingLane)
+    }
+
+    @Test("a plain click still navigates the lane")
+    func plainClick() {
+        #expect(LinkClick.outcome(
+            navigationType: .linkActivated, modifiers: [], buttonNumber: 0)
+            == .inPlace)
+    }
+
+    /// ⌃-click is macOS's right-click and ⌥-click is "download the linked
+    /// file". Claiming either would take a gesture away to add one.
+    @Test("⌃⌘ and ⌥⌘ are left to the system")
+    func systemModifiersAreLeftAlone() {
+        #expect(LinkClick.outcome(
+            navigationType: .linkActivated, modifiers: [.command, .control], buttonNumber: 0)
+            == .inPlace)
+        #expect(LinkClick.outcome(
+            navigationType: .linkActivated, modifiers: [.command, .option], buttonNumber: 0)
+            == .inPlace)
+    }
+
+    /// The one that would be a data-loss bug rather than a layout one: a form
+    /// carries state the server is waiting for, and opening it elsewhere would
+    /// post it twice.
+    @Test("only a link activation is ever a sibling lane")
+    func onlyLinksQualify() {
+        for type in [WKNavigationType.formSubmitted, .formResubmitted,
+                     .backForward, .reload, .other] {
+            #expect(LinkClick.outcome(
+                navigationType: type, modifiers: [.command], buttonNumber: 2) == .inPlace,
+                "\(type.rawValue) should never open a lane")
+        }
+    }
+
+    /// Caps lock and the numeric-pad bit ride along in `modifierFlags` and are
+    /// not modifiers anyone pressed. Masking them off is the difference between
+    /// the gesture working and working most of the time.
+    @Test("a stray device flag does not cancel the gesture")
+    func deviceFlagsAreMaskedOff() {
+        #expect(LinkClick.outcome(
+            navigationType: .linkActivated,
+            modifiers: [.command, .capsLock, .numericPad], buttonNumber: 0)
+            == .siblingLane)
+    }
+}

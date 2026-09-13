@@ -329,11 +329,58 @@ extension WebPaneController {
 
     // MARK: - downloads
 
-    /// `<a download>` and anything else WebKit has already decided is a file.
+    /// `<a download>` and anything else WebKit has already decided is a file —
+    /// and the one gesture that has to be intercepted before the lane moves.
+    ///
+    /// The two live in one method because `WKNavigationDelegate` only has one.
+    /// A second `decidePolicyFor navigationAction` in another extension of this
+    /// class compiles and then silently wins or loses at runtime depending on
+    /// nothing you can see, taking downloads or ⌘-click with it.
     func webView(_ webView: WKWebView,
                        decidePolicyFor navigationAction: WKNavigationAction,
                        decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+        // Before the download check. A ⌘-click on `<a download>` is still a
+        // download — the modifier says *where the page goes*, and that link
+        // does not go to a page.
+        if !navigationAction.shouldPerformDownload,
+           LinkClick.outcome(
+               navigationType: navigationAction.navigationType,
+               modifiers: navigationAction.modifierFlags,
+               buttonNumber: navigationAction.buttonNumber) == .siblingLane,
+           let url = navigationAction.request.url?.absoluteString {
+            openSiblingLane(url)
+            // Cancelled, not allowed: allowing it is what made ⌘-click navigate
+            // in place — the lane opened *and* the page you were reading was
+            // replaced, which is both halves of the bug at once.
+            return decisionHandler(.cancel)
+        }
         decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow)
+    }
+
+    /// A new web lane right of this one, by the same path `target=_blank`
+    /// already takes — `newWebLane(near:)` then reveal, so the lane inherits
+    /// this one's tag and ordinal placement and the strip materialises it.
+    private func openSiblingLane(_ url: String) {
+        guard let laneId = store.lane(containing: paneId)?.id else { return }
+        do {
+            try store.newWebLane(url: url, near: laneId)
+        } catch {
+            Log.warn("pane \(paneId) could not open a sibling lane for \(url): \(error)")
+            return
+        }
+        Log.debug("pane \(paneId) ⌘-click → sibling lane at \(url)")
+        revealNewestLane(rightOf: laneId)
+    }
+
+    /// The lane the write just created. `newWebLane` places it immediately
+    /// right of this one, so it is found by position rather than by diffing the
+    /// pane ids — the reconcile has already run by the time the call returns.
+    private func revealNewestLane(rightOf laneId: String) {
+        let lanes = store.state.lanes
+        guard let index = lanes.firstIndex(where: { $0.id == laneId }),
+              lanes.indices.contains(index + 1)
+        else { return }
+        onRevealLane?(lanes[index + 1].id)
     }
 
     /// A response the pane cannot display, or one the server marked as an

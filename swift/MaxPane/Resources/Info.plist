@@ -56,11 +56,28 @@
 	<string>A web page in a lane is asking to use the camera. Max Pane asks you about each site before it does.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>A web page in a lane is asking to use the microphone. Max Pane asks you about each site before it does.</string>
-	<!-- Web lanes load ordinary sites; WebKit's own TLS handling applies. -->
+	<!-- Web lanes load ordinary sites; WebKit's own TLS handling applies.
+
+	     `NSAllowsArbitraryLoadsInWebContent` is the narrow key and the reason
+	     both are here: it lifts ATS for WKWebView *only*, and everything the app
+	     itself connects to stays under `NSAllowsArbitraryLoads=false`.
+
+	     Without it, plain http to anything off the loopback did not load and
+	     said nothing — `http://example.com/`, which curl fetches with 200 from
+	     this machine, simply did not happen. This is a developer's browser:
+	     old vendor docs, an internal service reached through a tunnel and a LAN
+	     box on port 8731 are all http and all real, and a browser that refuses
+	     them without a word is worse than one that loads them with a warning.
+
+	     The warning is what carries the weight, and it already exists: the amber
+	     ⚠ before the address on any http page that is not the loopback, live
+	     while you are still typing the address. See `BrowserAddress.security`. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<false/>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
 	</dict>
 	<!-- The strip is the interface. Auto-hide the menu bar in fullscreen. -->
 	<key>LSUIPresentationMode</key>

@@ -71,6 +71,9 @@ final class WebChromeBar: NSView {
     private var hovered: String?
     private var progress: Double = 0
     private var isLoading = false
+    /// What the last navigation failed with, while it is still on screen.
+    private var failure: String?
+    private var failureTimer: Timer?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -157,6 +160,9 @@ final class WebChromeBar: NSView {
         forward.isEnabled = canGoForward
         if loading != isLoading {
             isLoading = loading
+            // A load starting is the answer to "did anything happen", so the
+            // previous failure has stopped being the most recent news.
+            if loading { clearFailure() }
             // The same button, because stop and reload are the same intention
             // at two moments and a portrait column has no room for the second
             // one to be a separate target.
@@ -168,6 +174,41 @@ final class WebChromeBar: NSView {
     func setProgress(_ value: Double) {
         progress = value
         needsDisplay = true
+    }
+
+    /// A navigation failed. Say so in the slot the hover target already
+    /// borrows, and take the hairline down.
+    ///
+    /// The hairline is not cosmetic. A failed load parks `estimatedProgress`
+    /// around 0.15 and never moves it again, so the bar drew a green third of a
+    /// line forever — watched for 25 seconds — while `isLoading` had already
+    /// gone false and the ✕ had reverted to ↻. A progress bar for a load that
+    /// is not running, and no way to cancel it.
+    ///
+    /// It outranks the hovered link for the few seconds it shows. The hover
+    /// answer is re-askable by moving the pointer; this one answers a question
+    /// asked a moment ago — "did my keystroke reach anything" — and a failed
+    /// load leaves the *previous* page under the pointer, full of links to
+    /// hover it away with.
+    func showFailure(_ text: String) {
+        setProgress(0)
+        failure = text
+        renderAddress()
+        failureTimer?.invalidate()
+        // Long enough to read a six-word line and glance away; short enough
+        // that the lane goes back to being addressed by its address. The slot's
+        // permanent job is to say where you are.
+        failureTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.clearFailure() }
+        }
+    }
+
+    func clearFailure() {
+        failureTimer?.invalidate()
+        failureTimer = nil
+        guard failure != nil else { return }
+        failure = nil
+        renderAddress()
     }
 
     func setZoom(_ level: Double) {
@@ -231,6 +272,20 @@ final class WebChromeBar: NSView {
 
     private func renderAddress() {
         guard !address.isEditingAddress else { return }
+
+        if let failure {
+            // The amber ⚠ already means "this needs your eye" on this row, and
+            // an error borrowing it is cheaper than a second glyph that appears
+            // twice a week.
+            security.stringValue = "⚠"
+            security.textColor = Self.warning
+            security.isHidden = false
+            address.show(NSAttributedString(string: failure, attributes: [
+                .font: Theme.mono(11, weight: .medium), .foregroundColor: Self.warning,
+            ]), fade: true)
+            address.toolTip = failure
+            return
+        }
 
         if let hovered {
             security.isHidden = true
@@ -365,7 +420,7 @@ final class AddressField: NSTextField, NSTextFieldDelegate {
 
     func show(_ text: NSAttributedString, fade: Bool) {
         guard !isEditingAddress else { return }
-        display = text
+        display = Self.clipped(text)
         if fade, let layer {
             // A crossfade on the layer, not a property animation: the two
             // strings have different colouring in different places and
@@ -375,7 +430,28 @@ final class AddressField: NSTextField, NSTextFieldDelegate {
             transition.duration = 0.12
             layer.add(transition, forKey: "addressSwap")
         }
-        attributedStringValue = text
+        attributedStringValue = display
+    }
+
+    /// The same string with tail truncation written into it.
+    ///
+    /// Not the same as the cell's `lineBreakMode`, which is already
+    /// `.byTruncatingTail` and which an `NSTextField` ignores the moment you
+    /// hand it an `attributedStringValue`: line breaking then comes from the
+    /// string's own paragraph style, and a string with none is laid out as
+    /// clipping. The symptom is a long URL that stops mid-character with no
+    /// ellipsis, so `…/pull/135000/files` and `…/pull/135000/commits` are the
+    /// same address to look at.
+    /// Built per call rather than held in a `static let`: `NSParagraphStyle` is
+    /// a mutable class and not `Sendable`, so a shared one is a Swift 6 error
+    /// for a saving of nothing — this runs a handful of times per navigation.
+    nonisolated static func clipped(_ text: NSAttributedString) -> NSAttributedString {
+        let style = NSMutableParagraphStyle()
+        style.lineBreakMode = .byTruncatingTail
+        let out = NSMutableAttributedString(attributedString: text)
+        out.addAttribute(.paragraphStyle, value: style,
+                         range: NSRange(location: 0, length: out.length))
+        return out
     }
 
     override func mouseDown(with event: NSEvent) {

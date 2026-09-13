@@ -71,6 +71,9 @@ final class WebPaneController: NSObject, PaneController {
     private var isParented = false
     private var scrollObservation: Timer?
     private var titleObservation: NSKeyValueObservation?
+    /// The "this page never gave itself a title" label, waiting to see whether
+    /// a real one turns up first. See `scheduleUntitledFallback`.
+    private var untitledFallback: DispatchWorkItem?
     /// `canGoBack`, `canGoForward`, `isLoading`, `estimatedProgress`, `url`.
     private var chromeObservations: [NSKeyValueObservation] = []
     private var focusToken: UUID?
@@ -582,6 +585,10 @@ final class WebPaneController: NSObject, PaneController {
         scrollObservation = nil
         titleObservation?.invalidate()
         titleObservation = nil
+        // It would fire against a pane with no web view and re-title the lane
+        // from a page that is no longer loaded.
+        untitledFallback?.cancel()
+        untitledFallback = nil
         chromeObservations = []
         focusToken.map(store.stopObserving)
         focusToken = nil
@@ -676,6 +683,11 @@ final class WebPaneController: NSObject, PaneController {
     /// Put the page's title on its lane. A lane with no title falls back to the
     /// URL's host, which is worse to scan a strip by.
     private func adoptTitle(_ title: String) {
+        // A real title beat the fallback to it. Cancelling here rather than at
+        // each call site catches the one that matters — the `<title>` landing a
+        // beat after `didFinish`, which is the common case, not the edge.
+        untitledFallback?.cancel()
+        untitledFallback = nil
         // Before the guards below, which return early once the lane already
         // carries the title and would otherwise swallow it on the way past.
         store.noteVisitTitle(url: webView?.url?.absoluteString, title: title)
@@ -683,6 +695,38 @@ final class WebPaneController: NSObject, PaneController {
         guard store.lane(laneId)?.title != title else { return }
         Log.debug("pane \(paneId) title → \(title)")
         try? store.setLaneTitle(laneId, title)
+    }
+
+    /// Label a lane whose page never gave itself a `<title>`.
+    ///
+    /// `adoptTitle` is only ever called with a non-empty title, so an untitled
+    /// page left the lane carrying the *previous* page's — five navigations
+    /// through pages with no `<title>` and the header still read
+    /// `Computer program – Wikipedia`. On a strip whose lanes hold dev servers,
+    /// raw JSON and text files, the header is the only thing being scanned
+    /// across six columns, and it was lying.
+    ///
+    /// Delayed rather than immediate, and the delay is the whole design.
+    /// `didFinish` is the document being done, not its `<title>` having landed
+    /// — that routinely arrives a beat later, which is why `titleObservation`
+    /// exists at all. Labelling on the spot would put the bare host on every
+    /// titled page for a blink on the way past, twenty times an hour. Nothing
+    /// waits on this that is not already wrong: the header is showing the old
+    /// page's title until it fires.
+    private func scheduleUntitledFallback(url: String?) {
+        untitledFallback?.cancel()
+        untitledFallback = nil
+        guard let url, !url.isEmpty else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, let view = self.webView else { return }
+            // Both checks, and both have bitten: a title that arrived in the
+            // gap, and a *second* navigation that finished in it — which would
+            // otherwise stamp the lane with the address it has already left.
+            guard (view.title ?? "").isEmpty, view.url?.absoluteString == url else { return }
+            self.adoptTitle(BrowserAddress.laneLabel(for: url))
+        }
+        untitledFallback = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
 
     // MARK: - building
@@ -846,6 +890,8 @@ final class WebPaneController: NSObject, PaneController {
         scrollObservation = nil
         titleObservation?.invalidate()
         titleObservation = nil
+        untitledFallback?.cancel()
+        untitledFallback = nil
         chromeObservations = []
         webView.map(LinkHoverProbe.remove(from:))
         hoverRelay = nil
@@ -1024,6 +1070,8 @@ extension WebPaneController: WKNavigationDelegate {
         }
         if let title = webView.title, !title.isEmpty {
             adoptTitle(title)
+        } else {
+            scheduleUntitledFallback(url: webView.url?.absoluteString)
         }
         if let y = pendingScrollRestore {
             pendingScrollRestore = nil
@@ -1046,6 +1094,40 @@ extension WebPaneController: WKNavigationDelegate {
         // what went wrong, and a dark panel over it would hide it until the
         // grace period ran out.
         hideFirstPaintCover()
+        report(error)
+    }
+
+    /// A load that had already committed and then came apart.
+    ///
+    /// Rarer than the provisional case and it was not handled at all, which
+    /// made it the one failure with *no* path to the chrome — the document is
+    /// on screen and half-built, and the hairline would have parked wherever
+    /// the bytes stopped.
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        hideFirstPaintCover()
+        report(error)
+    }
+
+    /// Put a failed navigation where the person who typed it can see it.
+    ///
+    /// Without this the whole event was invisible: `didFailProvisionalNavigation`
+    /// had an empty body, so typing an address that does not resolve left the
+    /// page unchanged and snapped the URL bar back — indistinguishable from the
+    /// app having ignored the keystroke.
+    private func report(_ error: Error) {
+        let error = error as NSError
+        let failing = error.userInfo[NSURLErrorFailingURLStringErrorKey] as? String
+            ?? (error.userInfo[NSURLErrorFailingURLErrorKey] as? URL)?.absoluteString
+        guard let text = BrowserAddress.failure(
+            domain: error.domain, code: error.code, failingURL: failing)
+        else {
+            // A cancel or a download. Nothing to say, but the hairline still
+            // has to come down — `estimatedProgress` stops where it stopped.
+            chrome.setProgress(0)
+            return
+        }
+        Log.debug("pane \(paneId) navigation failed: \(error.domain) \(error.code) — \(text)")
+        chrome.showFailure(text)
     }
 }
 

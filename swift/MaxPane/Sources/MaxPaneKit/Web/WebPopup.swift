@@ -73,6 +73,43 @@ extension PopupIntent {
     }
 }
 
+/// What a click on a link means, once the modifiers are read.
+///
+/// The gesture this exists for is "keep my place, open a sibling". Before it,
+/// ⌘-click and middle-click both navigated the lane you were reading — the
+/// expensive failure, because you reach for it precisely when you do not want
+/// to lose the page. The destination it produces is the one
+/// `createWebViewWith` already produces for `target=_blank`: a lane of its own,
+/// right of this one.
+enum LinkClick {
+    enum Outcome: Equatable {
+        /// The lane navigates, which is what a plain click has always meant.
+        case inPlace
+        /// A new web lane right of this one, revealed.
+        case siblingLane
+    }
+
+    static func outcome(
+        navigationType: WKNavigationType,
+        modifiers: NSEvent.ModifierFlags,
+        buttonNumber: Int
+    ) -> Outcome {
+        // A link, and only a link. A form submission carries state the server
+        // is waiting for and a redirect is not a gesture at all; opening either
+        // somewhere else would post the form twice or strand the redirect.
+        guard navigationType == .linkActivated else { return .inPlace }
+        // Middle-click, with no modifier required — the twenty-year-old gesture,
+        // and the one a three-button mouse has instead of a chord.
+        if buttonNumber == 2 { return .siblingLane }
+        let held = modifiers.intersection(.deviceIndependentFlagsMask)
+        guard held.contains(.command) else { return .inPlace }
+        // ⌃⌘ and ⌥⌘ are left alone on purpose: ⌃-click is macOS's right-click
+        // and ⌥-click is "download the linked file" everywhere on this system.
+        // Claiming either would take a gesture away to add one.
+        return held.isDisjoint(with: [.control, .option]) ? .siblingLane : .inPlace
+    }
+}
+
 /// A popup web view between the moment WebKit hands it over and the moment its
 /// pane exists to hold it.
 ///

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import MaxPaneKit
@@ -288,5 +289,155 @@ struct PaneZoomLadderTests {
         #expect(PaneZoom.next(from: 0.5, up: false) == 0.5)
         #expect(PaneZoom.next(from: 1.0, up: true) == 1.1)
         #expect(PaneZoom.next(from: 1.0, up: false) == 0.9)
+    }
+}
+
+/// What a lane calls a page that never named itself.
+///
+/// Tested rather than looked at because the failure is a *stale* header, not a
+/// blank one: the lane goes on reading `Computer program – Wikipedia` while you
+/// browse five untitled pages, and it looks completely normal the whole time.
+@Suite("untitled lane label")
+struct LaneLabelTests {
+    @Test("host and path, without the scheme or www.")
+    func hostAndPath() {
+        #expect(BrowserAddress.laneLabel(for: "https://www.example.com/data.json")
+            == "example.com/data.json")
+    }
+
+    /// The pair this exists for. Two dev servers and two endpoints are four
+    /// lanes that the host alone would call the same thing.
+    @Test("the port and the path are what tell dev servers apart")
+    func portAndPathSurvive() {
+        #expect(BrowserAddress.laneLabel(for: "http://localhost:3000/api/users")
+            == "localhost:3000/api/users")
+        #expect(BrowserAddress.laneLabel(for: "http://localhost:8080/api/users")
+            == "localhost:8080/api/users")
+    }
+
+    @Test("a bare root is just the host")
+    func rootIsJustTheHost() {
+        #expect(BrowserAddress.laneLabel(for: "https://example.com/") == "example.com")
+        #expect(BrowserAddress.laneLabel(for: "https://example.com") == "example.com")
+    }
+
+    /// A query is noise in a 28 pt header and is never the thing being scanned
+    /// for; the path before it already is.
+    @Test("the query is left off")
+    func queryIsLeftOff() {
+        #expect(BrowserAddress.laneLabel(for: "http://localhost:3000/search?q=actors&page=4")
+            == "localhost:3000/search")
+    }
+
+    @Test("something with no host falls back to the whole string")
+    func noHost() {
+        #expect(BrowserAddress.laneLabel(for: "about:blank") == "about:blank")
+    }
+}
+
+/// The line a failed navigation puts in the address slot.
+///
+/// The interesting half is the silences. Before any of this, a failed load said
+/// nothing at all — but a version that says *everything* is worse, because the
+/// ✕ button and every `<a download>` would print an amber error for doing
+/// exactly what was asked.
+@Suite("navigation failure")
+struct NavigationFailureTests {
+    @Test("a host that does not resolve names itself")
+    func hostNotFound() {
+        #expect(BrowserAddress.failure(
+            domain: NSURLErrorDomain, code: NSURLErrorCannotFindHost,
+            failingURL: "https://no-such-host-zzz9911.example.com/page")
+            == "server not found — no-such-host-zzz9911.example.com")
+    }
+
+    /// Pressing ✕, and every navigation that superseded another. Silence is the
+    /// only correct answer: the user asked for it.
+    @Test("a cancelled load says nothing")
+    func cancelIsSilent() {
+        #expect(BrowserAddress.failure(
+            domain: NSURLErrorDomain, code: NSURLErrorCancelled,
+            failingURL: "https://example.com/") == nil)
+    }
+
+    /// What a download looks like from the navigation delegate.
+    @Test("an interrupted frame load says nothing")
+    func frameLoadInterruptedIsSilent() {
+        #expect(BrowserAddress.failure(
+            domain: "WebKitErrorDomain", code: 102, failingURL: "https://example.com/x.zip") == nil)
+    }
+
+    @Test("an unrecognised code still says something rather than nothing")
+    func unknownCodeStillSpeaks() {
+        let text = BrowserAddress.failure(
+            domain: NSURLErrorDomain, code: -4242, failingURL: "https://example.com/")
+        #expect(text == "could not load — example.com")
+    }
+
+    @Test("a failure with no URL is still a sentence")
+    func noFailingURL() {
+        #expect(BrowserAddress.failure(
+            domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet, failingURL: nil)
+            == "no internet connection")
+    }
+
+    /// Short and lowercase on purpose: this shares a 300 pt field with the
+    /// address, and Apple's own strings are sentences.
+    @Test("every phrase fits the slot")
+    func phrasesAreShort() {
+        let codes = [
+            NSURLErrorCannotFindHost, NSURLErrorCannotConnectToHost,
+            NSURLErrorNotConnectedToInternet, NSURLErrorTimedOut,
+            NSURLErrorNetworkConnectionLost, NSURLErrorDNSLookupFailed,
+            NSURLErrorUnsupportedURL, NSURLErrorBadURL,
+            NSURLErrorSecureConnectionFailed, NSURLErrorServerCertificateUntrusted,
+            NSURLErrorAppTransportSecurityRequiresSecureConnection,
+        ]
+        for code in codes {
+            let text = BrowserAddress.failure(domain: NSURLErrorDomain, code: code, failingURL: nil)
+            #expect(text != nil, "code \(code) says nothing")
+            #expect((text ?? "").count <= 32, "code \(code): \(text ?? "")")
+            #expect(text?.first?.isUppercase != true, "code \(code) is capitalised")
+        }
+    }
+}
+
+
+/// Two settings whose failure mode is silence.
+@Suite("chrome that fails quietly")
+struct QuietChromeTests {
+    /// An `NSTextField` takes its line breaking from the attributed string's
+    /// paragraph style and ignores the cell's `lineBreakMode` — which is set,
+    /// and was doing nothing. The address is drawn as three coloured runs, so
+    /// it goes through that path every time, and a 60-character GitHub URL
+    /// stopped mid-character with no ellipsis.
+    @Test("the address carries its own truncation")
+    func addressTruncates() {
+        let plain = NSAttributedString(string: "github.com/rust-lang/rust/pull/135000/files")
+        let clipped = AddressField.clipped(plain)
+        var range = NSRange()
+        let style = clipped.attribute(.paragraphStyle, at: 0, effectiveRange: &range)
+        #expect((style as? NSParagraphStyle)?.lineBreakMode == .byTruncatingTail)
+        #expect(range.length == clipped.length, "truncation has to cover every run")
+        #expect(clipped.string == plain.string)
+    }
+
+    /// `NSAllowsArbitraryLoads=false` alone meant plain http to anything off the
+    /// loopback did not load and said nothing — `http://example.com/`, which
+    /// curl fetches with 200 from this machine, simply did not happen. The
+    /// narrow key lifts ATS for WKWebView only; the app's own connections stay
+    /// under the strict one, which is why both are asserted here.
+    @Test("web content is exempt from ATS and the app is not")
+    func webContentIsExemptFromATS() throws {
+        let plist = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // MaxPaneKitTests
+            .deletingLastPathComponent()   // Tests
+            .deletingLastPathComponent()   // MaxPane
+            .appendingPathComponent("Resources/Info.plist")
+        let parsed = try PropertyListSerialization.propertyList(
+            from: Data(contentsOf: plist), format: nil) as? [String: Any]
+        let ats = try #require(parsed?["NSAppTransportSecurity"] as? [String: Any])
+        #expect(ats["NSAllowsArbitraryLoadsInWebContent"] as? Bool == true)
+        #expect(ats["NSAllowsArbitraryLoads"] as? Bool == false)
     }
 }
