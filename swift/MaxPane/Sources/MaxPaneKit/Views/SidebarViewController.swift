@@ -287,6 +287,18 @@ final class SidebarViewController: NSViewController {
         table.usesAutomaticRowHeights = false
         table.allowsEmptySelection = true
 
+        // Only bookmarks are draggable, and only within this table. A session
+        // row has no order to change — the sort control owns that — and a
+        // bookmark id on the general pasteboard would mean nothing anywhere
+        // else, so the type is private and the mask is `forLocal:` only.
+        table.registerForDraggedTypes([.maxPaneBookmark])
+        table.setDraggingSourceOperationMask([], forLocal: false)
+        table.setDraggingSourceOperationMask(.move, forLocal: true)
+        // `.gap` opens a space where the row will land. `.regular` draws a line
+        // *and* highlights the row under it, which on a tree reads as "into this
+        // folder" whether or not that is what the drop means.
+        table.draggingDestinationFeedbackStyle = .gap
+
         let column = NSTableColumn(identifier: .init("entry"))
         column.resizingMask = .autoresizingMask
         table.addTableColumn(column)
@@ -499,6 +511,14 @@ final class SidebarViewController: NSViewController {
         try? store.removeBookmark(kept.id)
     }
 
+    @objc private func moveBookmarkUp() { nudgeClickedBookmark(down: false) }
+    @objc private func moveBookmarkDown() { nudgeClickedBookmark(down: true) }
+
+    private func nudgeClickedBookmark(down: Bool) {
+        guard let kept = bookmark(at: table.clickedRow) else { return }
+        try? store.nudgeBookmark(kept.id, down: down)
+    }
+
     @objc private func newSession() { onNewSession?() }
 
     /// Collapse everything, or open everything back up — the bar's second
@@ -680,6 +700,15 @@ extension SidebarViewController: NSMenuDelegate {
                 add("Copy Address", #selector(copyBookmarkAddress))
                 menu.addItem(.separator())
             }
+            // The order of the bar is the thing the bar is for, and a drag is
+            // not always the instrument: eight folders into a deliberate order
+            // is eight small moves, and a menu is where you make those without
+            // aiming. Offered only in the direction there is somewhere to go.
+            if let place = SidebarModel.siblingPlace(rows: rows, id: kept.id) {
+                if place.index > 0 { add("Move Up", #selector(moveBookmarkUp)) }
+                if place.index < place.count - 1 { add("Move Down", #selector(moveBookmarkDown)) }
+                if place.count > 1 { menu.addItem(.separator()) }
+            }
             // A folder takes what is in it, which is what the word means and
             // what the confirmation says out loud.
             add(kept.isFolder ? "Delete Folder…" : "Stop Keeping", #selector(removeBookmarkClicked))
@@ -721,6 +750,67 @@ extension SidebarViewController: NSTextFieldDelegate {
 
 extension SidebarViewController: NSTableViewDataSource {
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        // Not while the query box has something in it. The rows on screen are
+        // then a subset of the tree, and every index this drag would produce
+        // counts the wrong list — a drop would land somewhere the user has no
+        // way of predicting from what they can see.
+        guard controls.query.trimmingCharacters(in: .whitespaces).isEmpty,
+              let kept = bookmark(at: row)
+        else { return nil }
+        let item = NSPasteboardItem()
+        item.setString(kept.id, forType: .maxPaneBookmark)
+        return item
+    }
+
+    func tableView(
+        _ tableView: NSTableView,
+        validateDrop info: NSDraggingInfo,
+        proposedRow row: Int,
+        proposedDropOperation operation: NSTableView.DropOperation
+    ) -> NSDragOperation {
+        guard let id = draggedBookmarkId(info) else { return [] }
+        var operation = operation
+        // A drop *onto* anything but a folder has no meaning here — there is
+        // nothing inside a kept page — so it becomes the gap above that row
+        // rather than being refused, which is what the pointer was nearest to.
+        if operation == .on, bookmark(at: row)?.isFolder != true {
+            operation = .above
+            tableView.setDropRow(row, dropOperation: .above)
+        }
+        guard SidebarModel.dropTarget(
+            rows: rows, dragging: id, row: row, onto: operation == .on) != nil
+        else { return [] }
+        return .move
+    }
+
+    func tableView(
+        _ tableView: NSTableView,
+        acceptDrop info: NSDraggingInfo,
+        row: Int,
+        dropOperation operation: NSTableView.DropOperation
+    ) -> Bool {
+        guard let id = draggedBookmarkId(info),
+              let target = SidebarModel.dropTarget(
+                  rows: rows, dragging: id, row: row, onto: operation == .on)
+        else { return false }
+        try? store.moveBookmark(id, to: target.parentId, at: target.index)
+        return true
+    }
+
+    /// The id being dragged, and only from this table: a bookmark id arriving
+    /// from anywhere else names a row in somebody else's ledger.
+    private func draggedBookmarkId(_ info: NSDraggingInfo) -> String? {
+        guard info.draggingSource as AnyObject? === table else { return nil }
+        return info.draggingPasteboard.string(forType: .maxPaneBookmark)
+    }
+}
+
+extension NSPasteboard.PasteboardType {
+    /// Private to this table. Deliberately not a URL type: dropping a kept page
+    /// on another app should not be a thing that half works.
+    static let maxPaneBookmark = NSPasteboard.PasteboardType("app.maxpane.bookmark-row")
 }
 
 extension SidebarViewController: NSTableViewDelegate {

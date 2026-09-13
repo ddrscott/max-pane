@@ -389,6 +389,18 @@ struct SidebarModelTests {
 
 // MARK: - the bar
 
+/// A row of the tree as `Core::bookmarks` hands it over. `parentId` and `depth`
+/// have to agree: the sidebar reads the depth to indent and the parent to work
+/// out where a drop lands, and a fixture where they disagree is one that proves
+/// a drag correct against a tree that cannot exist.
+private func node(
+    _ id: String, _ parent: String?, _ title: String, _ url: String?, _ depth: UInt32
+) -> Bookmark {
+    Bookmark(
+        id: id, parentId: parent, isFolder: url == nil, url: url, title: title,
+        position: 0, addedAt: 0, depth: depth)
+}
+
 /// The bookmarks section. What it has to get right is not the pixels: it is
 /// that a folded folder hides exactly its own subtree, that a folded folder
 /// still says how much it is hiding, and that a search opens the folders it
@@ -400,19 +412,14 @@ struct SidebarBookmarkTests {
     /// The tree as `Core::bookmarks` hands it over: flat, in draw order, with
     /// the depth already worked out.
     private func tree() -> [Bookmark] {
-        func node(_ id: String, _ title: String, _ url: String?, _ depth: UInt32) -> Bookmark {
-            Bookmark(
-                id: id, parentId: nil, isFolder: url == nil, url: url, title: title,
-                position: 0, addedAt: 0, depth: depth)
-        }
         return [
-            node("work", "Work", nil, 0),
-            node("board", "The board", "https://board.example.com/x", 1),
-            node("rust", "Rust", nil, 1),
-            node("std", "std", "https://doc.rust-lang.org/std/", 2),
+            node("work", nil, "Work", nil, 0),
+            node("board", "work", "The board", "https://board.example.com/x", 1),
+            node("rust", "work", "Rust", nil, 1),
+            node("std", "rust", "std", "https://doc.rust-lang.org/std/", 2),
             // Normalized, the way the ledger stores it: `normalize_url`
             // collapses the bare trailing slash.
-            node("loose", "Loose", "https://loose.example.com", 0),
+            node("loose", nil, "Loose", "https://loose.example.com", 0),
         ]
     }
 
@@ -521,11 +528,6 @@ struct SidebarBookmarkRenderTests {
     func renderSheet() throws {
         guard let dir = ProcessInfo.processInfo.environment["MAXPANE_SHOTS"] else { return }
 
-        func node(_ id: String, _ title: String, _ url: String?, _ depth: UInt32) -> Bookmark {
-            Bookmark(
-                id: id, parentId: nil, isFolder: url == nil, url: url, title: title,
-                position: 0, addedAt: 0, depth: depth)
-        }
         // Eight folders, because that is what the owner's bar has, plus the two
         // rows that have the least to work with: a deep nesting, and a title
         // long enough to collide with the count on its right.
@@ -533,14 +535,14 @@ struct SidebarBookmarkRenderTests {
         for (i, name) in ["Daily", "Work", "Rust", "Infra", "Reading", "Shopping", "Music", "Admin"]
             .enumerated()
         {
-            tree.append(node("f\(i)", name, nil, 0))
-            tree.append(node("f\(i)-a", "\(name) — the one I always reopen",
+            tree.append(node("f\(i)", nil, name, nil, 0))
+            tree.append(node("f\(i)-a", "f\(i)", "\(name) — the one I always reopen",
                              "https://\(name.lowercased()).example.com/a/b", 1))
         }
-        tree.insert(node("deep", "Standard Library", nil, 1), at: 5)
+        tree.insert(node("deep", "f2", "Standard Library", nil, 1), at: 5)
         tree.insert(
-            node("deep-a", "std", "https://doc.rust-lang.org/std/collections/", 2), at: 6)
-        tree.append(node("loose", "Loose", "https://loose.example.com", 0))
+            node("deep-a", "deep", "std", "https://doc.rust-lang.org/std/collections/", 2), at: 6)
+        tree.append(node("loose", nil, "Loose", "https://loose.example.com", 0))
 
         var controls = SidebarModel.Controls()
         controls.collapsed = ["f3"]
@@ -575,5 +577,148 @@ struct SidebarBookmarkRenderTests {
             try png.write(
                 to: URL(fileURLWithPath: dir).appendingPathComponent("bookmarks-\(Int(width)).png"))
         }
+    }
+}
+
+/// Putting the bar in an order. Everything here is the translation between what
+/// an `NSTableView` knows — a row number over a flat list with folders folded
+/// into it — and what the ledger takes, which is a folder and a place among its
+/// children. The drag itself is AppKit's; this is the part that can be wrong.
+///
+/// The case that matters is the owner's: eight folders that arrived from an
+/// import in Vivaldi's order, being put into his. That one is a flat list, and
+/// `everyPlaceOnAFlatBarIsReachable` is the test that says so end to end.
+@Suite("reordering the bar")
+@MainActor
+struct SidebarReorderTests {
+    /// ```
+    /// 0  BOOKMARKS          (the section header)
+    /// 1  Work               bar, 0
+    /// 2    The board        work, 0
+    /// 3    Rust             work, 1
+    /// 4      std            rust, 0
+    /// 5  Loose              bar, 1
+    /// ```
+    private func rows() -> [SidebarModel.Row] {
+        SidebarModel.bookmarkRows([
+            node("work", nil, "Work", nil, 0),
+            node("board", "work", "The board", "https://board.example.com/x", 1),
+            node("rust", "work", "Rust", nil, 1),
+            node("std", "rust", "std", "https://doc.rust-lang.org/std/", 2),
+            node("loose", nil, "Loose", "https://loose.example.com", 0),
+        ], SidebarModel.Controls())
+    }
+
+    @Test("the gap above a row is that row's own place among its own siblings")
+    func aGapBelongsToTheRowBelowIt() {
+        // Above `Rust`, which is Work's second child — so the loose page files
+        // into Work between the board and Rust.
+        let target = SidebarModel.dropTarget(rows: rows(), dragging: "loose", row: 3, onto: false)
+        #expect(target == SidebarModel.DropTarget(parentId: "work", index: 1))
+    }
+
+    @Test("a gap under the last child of a folder resolves outwards, to the shallower level")
+    func theAmbiguousGapResolvesOutwards() {
+        // Row 5 is `Loose`, and the gap above it is drawn just under `std` —
+        // two levels deeper. It means "on the bar, second", because that is the
+        // level a gap is the only way to reach; "last inside Rust" is reachable
+        // by dropping onto Rust.
+        let target = SidebarModel.dropTarget(rows: rows(), dragging: "board", row: 5, onto: false)
+        #expect(target == SidebarModel.DropTarget(parentId: nil, index: 1))
+    }
+
+    @Test("dropping onto a folder puts it inside, at the end")
+    func ontoAFolderAppends() {
+        let target = SidebarModel.dropTarget(rows: rows(), dragging: "loose", row: 1, onto: true)
+        #expect(target == SidebarModel.DropTarget(parentId: "work", index: nil))
+    }
+
+    @Test("dropping onto a kept page is not a drop, because there is nothing inside one")
+    func ontoAPageIsNothing() {
+        #expect(SidebarModel.dropTarget(rows: rows(), dragging: "loose", row: 2, onto: true) == nil)
+    }
+
+    @Test("a folder cannot be dropped into its own subtree, however deep the row is")
+    func aFolderRefusesItsOwnSubtree() {
+        // Onto a folder inside itself, and into a gap inside itself. Both are
+        // the move that leaves a branch in the table and reachable by nothing —
+        // `TREE_SQL` walks down from the bar and would simply stop seeing it.
+        #expect(SidebarModel.dropTarget(rows: rows(), dragging: "work", row: 3, onto: true) == nil)
+        #expect(SidebarModel.dropTarget(rows: rows(), dragging: "work", row: 4, onto: false) == nil)
+    }
+
+    @Test("a drop that would put a row back where it already is is not offered")
+    func aNoOpIsRefused() {
+        // Both gaps either side of `Loose` mean "bar, second", which is where
+        // `Loose` already is. An indicator there would promise a move that
+        // cannot happen.
+        #expect(SidebarModel.dropTarget(rows: rows(), dragging: "loose", row: 5, onto: false) == nil)
+        #expect(SidebarModel.dropTarget(rows: rows(), dragging: "loose", row: 6, onto: false) == nil)
+    }
+
+    @Test("below the last kept row is the end of the bar, and the sessions under it are not a drop")
+    func pastTheEnd() {
+        let end = SidebarModel.dropTarget(rows: rows(), dragging: "board", row: 6, onto: false)
+        // Two rows on the bar, and `board` is not one of them, so the end is 2.
+        #expect(end == SidebarModel.DropTarget(parentId: nil, index: 2))
+        // Row 7 is past the section entirely — in a session group, or nowhere.
+        #expect(SidebarModel.dropTarget(rows: rows(), dragging: "board", row: 7, onto: false) == nil)
+    }
+
+    @Test("a folded folder is still a place to drop into and still has its own siblings")
+    func foldingChangesNothingAboutTheOrder() {
+        var controls = SidebarModel.Controls()
+        controls.collapsed = ["work"]
+        // 0 header, 1 Work (folded), 2 Loose.
+        let folded = SidebarModel.bookmarkRows([
+            node("work", nil, "Work", nil, 0),
+            node("board", "work", "The board", "https://board.example.com/x", 1),
+            node("loose", nil, "Loose", "https://loose.example.com", 0),
+        ], controls)
+        #expect(folded.count == 3)
+        #expect(SidebarModel.dropTarget(rows: folded, dragging: "loose", row: 1, onto: false)
+            == SidebarModel.DropTarget(parentId: nil, index: 0))
+        // Folding hides a folder's subtree, never a row's siblings — so the one
+        // thing a drop must not do is read a different list when a folder above
+        // it happens to be shut.
+        #expect(SidebarModel.dropTarget(rows: folded, dragging: "loose", row: 1, onto: true)
+            == SidebarModel.DropTarget(parentId: "work", index: nil))
+    }
+
+    /// The owner's bar: eight folders, and every one of the eight places has to
+    /// be reachable by dragging. This walks all of them rather than sampling,
+    /// because the interesting failures are at the two ends and in the
+    /// off-by-one that only shows up moving downwards.
+    @Test("every place on a flat bar is reachable by a drag")
+    func everyPlaceOnAFlatBarIsReachable() {
+        let names = ["Daily", "Work", "Rust", "Infra", "Reading", "Shopping", "Music", "Admin"]
+        let tree = names.enumerated().map { node("f\($0.offset)", nil, $0.element, nil, 0) }
+        let rows = SidebarModel.bookmarkRows(tree, SidebarModel.Controls())
+
+        for from in 0..<names.count {
+            // Where the row would end up, for every gap the table can report.
+            var landings: [Int] = []
+            for gap in 1...(names.count + 1) {
+                guard let target = SidebarModel.dropTarget(
+                    rows: rows, dragging: "f\(from)", row: gap, onto: false)
+                else { continue }
+                #expect(target.parentId == nil)
+                landings.append(Int(target.index!))
+            }
+            // Every place except the one it is already in.
+            let wanted = (0..<names.count).filter { $0 != from }
+            #expect(landings.sorted() == wanted, "row \(from) could not reach \(wanted)")
+        }
+    }
+
+    @Test("the menu offers a move only in the direction there is somewhere to go")
+    func siblingPlaceBoundsTheMenu() {
+        let rows = self.rows()
+        // `Work` is first of two on the bar; `Loose` is last of the same two.
+        #expect(SidebarModel.siblingPlace(rows: rows, id: "work")! == (0, 2))
+        #expect(SidebarModel.siblingPlace(rows: rows, id: "loose")! == (1, 2))
+        // `std` is alone inside Rust: no up, no down, and no separator either.
+        #expect(SidebarModel.siblingPlace(rows: rows, id: "std")! == (0, 1))
+        #expect(SidebarModel.siblingPlace(rows: rows, id: "nobody") == nil)
     }
 }

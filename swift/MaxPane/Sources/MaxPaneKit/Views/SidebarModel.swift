@@ -124,6 +124,13 @@ enum SidebarModel {
     /// rebuilt on this side.
     struct BookmarkRow: Equatable {
         var id: String
+        /// The folder it is in, `nil` for a row on the bar itself.
+        ///
+        /// Derivable from `depth` by walking the list, and carried anyway
+        /// because the drop target has to count a row's siblings and a rule that
+        /// says "rebuild the tree first" is one nobody will follow the second
+        /// time.
+        var parentId: String?
         var title: String
         /// The host and path for a page; how many things are in it for a
         /// folder.
@@ -395,6 +402,7 @@ enum SidebarModel {
             let folded = query.isEmpty && controls.collapsed.contains(row.id)
             out.append(.bookmark(BookmarkRow(
                 id: row.id,
+                parentId: row.parentId,
                 title: row.title,
                 detail: row.isFolder
                     ? Self.itemCount(subtree[row.id] ?? 0)
@@ -412,6 +420,124 @@ enum SidebarModel {
     /// and a bar with one thing on it is the state every bar starts in.
     static func itemCount(_ n: Int) -> String {
         "\(n) ITEM" + (n == 1 ? "" : "S")
+    }
+
+    // MARK: - reordering
+
+    /// A row's place among the siblings being drawn, for a menu that has to say
+    /// whether there is anywhere left to move it.
+    static func siblingPlace(rows: [Row], id: String) -> (index: Int, count: Int)? {
+        var kept: [BookmarkRow] = []
+        for row in rows {
+            if case .bookmark(let b) = row { kept.append(b) }
+        }
+        guard let mine = kept.first(where: { $0.id == id }) else { return nil }
+        let siblings = kept.filter { $0.parentId == mine.parentId }
+        guard let at = siblings.firstIndex(where: { $0.id == id }) else { return nil }
+        return (at, siblings.count)
+    }
+
+    /// Where a drag would put the row if it were dropped here.
+    struct DropTarget: Equatable {
+        /// The folder it lands in; `nil` is the bar itself.
+        var parentId: String?
+        /// Where among that folder's children — counted *without* the dragged
+        /// row, which is the convention `Core::move_bookmark` takes. `nil` is
+        /// the end.
+        var index: UInt32?
+    }
+
+    /// Resolve an `NSTableView` drop onto a place in the tree, or `nil` for a
+    /// drop that should not be offered at all.
+    ///
+    /// This is the whole of the drag that is worth testing, and the reason it is
+    /// a function over rows rather than code inside `acceptDrop`: the table
+    /// speaks in row numbers over a *flat* list with folders folded into it, the
+    /// ledger speaks in (parent, index) over siblings, and every interesting
+    /// mistake lives in the translation.
+    ///
+    /// ## The rule for a gap
+    ///
+    /// **The gap above a row belongs to that row's sibling list, at that row's
+    /// place in it.** The alternative — read the row *above* the gap — is what
+    /// makes an outline impossible to drop into: the gap between the last child
+    /// of a folder and the next folder is ambiguous, it means both "last inside"
+    /// and "after the folder", and only one of the two can be a gap. Taking the
+    /// row below resolves every such gap outwards, to the shallower level, which
+    /// is the one there is otherwise no way to reach. "Last inside" is reachable
+    /// the other way, by dropping *onto* the folder, which appends.
+    ///
+    /// Anything below the last kept row is the end of the bar; anything in the
+    /// sessions underneath is not a drop at all.
+    static func dropTarget(
+        rows: [Row], dragging id: String, row target: Int, onto: Bool
+    ) -> DropTarget? {
+        let kept: [(index: Int, row: BookmarkRow)] = rows.enumerated().compactMap {
+            guard case .bookmark(let b) = $0.element else { return nil }
+            return ($0.offset, b)
+        }
+        guard let first = kept.first, let last = kept.last,
+              let dragged = kept.first(where: { $0.row.id == id })?.row
+        else { return nil }
+
+        // Among the rows on screen, which is the same list as among all of them:
+        // folding a folder hides its descendants, never a row's siblings.
+        func siblingIndex(of wanted: BookmarkRow) -> Int {
+            var n = 0
+            for k in kept {
+                if k.row.id == wanted.id { break }
+                if k.row.parentId == wanted.parentId { n += 1 }
+            }
+            return n
+        }
+
+        // A folder dropped inside itself is the one move that detaches a branch
+        // from the bar. The ledger refuses it too — this refuses it a step
+        // earlier, so the drop indicator never appears somewhere the drop would
+        // fail.
+        func insideTheDraggedRow(_ parent: String?) -> Bool {
+            var cursor = parent
+            for _ in 0..<64 {
+                guard let node = cursor else { return false }
+                if node == id { return true }
+                cursor = kept.first(where: { $0.row.id == node })?.row.parentId
+            }
+            return false
+        }
+
+        if onto {
+            guard target >= first.index, target <= last.index,
+                  case .bookmark(let folder) = rows[target],
+                  folder.isFolder, folder.id != id, !insideTheDraggedRow(folder.id)
+            else { return nil }
+            return DropTarget(parentId: folder.id, index: nil)
+        }
+
+        guard target <= last.index + 1 else { return nil }
+        // A gap above the section header is the top of the bar, not a refusal:
+        // it is where the pointer is when you drag the first folder upwards.
+        let at = max(target, first.index)
+
+        var parent: String?
+        var index: Int
+        if at <= last.index, case .bookmark(let below) = rows[at] {
+            parent = below.parentId
+            index = siblingIndex(of: below)
+        } else {
+            parent = nil
+            index = kept.filter { $0.row.parentId == nil }.count
+        }
+        guard !insideTheDraggedRow(parent) else { return nil }
+
+        if dragged.parentId == parent {
+            let from = siblingIndex(of: dragged)
+            // The table counted a list that still has the dragged row in it.
+            if from < index { index -= 1 }
+            // Both gaps either side of a row put it back where it is. Refusing
+            // keeps the indicator off a move that would do nothing.
+            if index == from { return nil }
+        }
+        return DropTarget(parentId: parent, index: UInt32(index))
     }
 
     /// The group a lane files under: its project tag, abbreviated the same way a

@@ -423,8 +423,16 @@ public final class StripStore {
         publishBookmarks()
     }
 
-    func moveBookmark(_ id: String, to parent: String?) throws {
-        try core.moveBookmark(id: id, parentId: parent)
+    /// `index` is where the row ends up among its new siblings, counted without
+    /// itself; `nil` means the end. See `Core::move_bookmark`.
+    func moveBookmark(_ id: String, to parent: String?, at index: UInt32? = nil) throws {
+        try core.moveBookmark(id: id, parentId: parent, index: index)
+        publishBookmarks()
+    }
+
+    /// One place up or down among its siblings, stopping at the ends.
+    func nudgeBookmark(_ id: String, down: Bool) throws {
+        try core.nudgeBookmark(id: id, down: down)
         publishBookmarks()
     }
 

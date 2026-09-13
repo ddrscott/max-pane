@@ -1019,11 +1019,46 @@ impl Core {
         inner.ledger.rename_bookmark(&id, title)
     }
 
-    /// File a row under a different folder, or on the bar when `parent_id` is
-    /// `None`.
-    pub fn move_bookmark(&self, id: String, parent_id: Option<String>) -> Result<()> {
+    /// File a row under a different folder — `None` for the bar — at `index`
+    /// among what is already there, or at the end when `index` is `None`.
+    ///
+    /// `index` counts the siblings **without** this row, so it is where the row
+    /// ends up rather than a gap in the list it is leaving. That matters only
+    /// for a move within one folder, where the two differ by one; the caller
+    /// that has table rows rather than siblings converts before calling.
+    ///
+    /// The drop half of a drag, and the folder popup in the editor, which passes
+    /// no index because a popup has no place in it to point at.
+    pub fn move_bookmark(
+        &self,
+        id: String,
+        parent_id: Option<String>,
+        index: Option<u32>,
+    ) -> Result<()> {
         let inner = self.inner.lock();
-        inner.ledger.set_bookmark_parent(&id, parent_id.as_deref())
+        inner.ledger.move_bookmark_to(&id, parent_id.as_deref(), index)
+    }
+
+    /// Move a row one place up or down among its siblings.
+    ///
+    /// The sidebar's **Move Up** / **Move Down**, and the reason the drag is not
+    /// the only way: the move actually wanted here is "this folder belongs
+    /// second, not eighth", eight times over, and a drag is the wrong instrument
+    /// for a list being ordered deliberately rather than rearranged by eye.
+    ///
+    /// Stops at the ends rather than wrapping, and never changes folder. Both
+    /// of those are the same rule: a nudge that moved a row out of the folder
+    /// you were looking at would be a keystroke whose result is off screen.
+    pub fn nudge_bookmark(&self, id: String, down: bool) -> Result<()> {
+        let inner = self.inner.lock();
+        let Some(row) = inner.ledger.bookmark(&id)? else { return Ok(()) };
+        let siblings = inner.ledger.bookmark_siblings(row.parent_id.as_deref())?;
+        let Some(at) = siblings.iter().position(|s| s == &id) else { return Ok(()) };
+        let to = if down { at + 1 } else { at.checked_sub(1).unwrap_or(at) };
+        if to == at || to >= siblings.len() {
+            return Ok(());
+        }
+        inner.ledger.move_bookmark_to(&id, row.parent_id.as_deref(), Some(to as u32))
     }
 
     /// Drop a bookmark, or a folder and everything in it.

@@ -922,10 +922,18 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func markLive(paneId: String) throws  -> StripState
     
     /**
-     * File a row under a different folder, or on the bar when `parent_id` is
-     * `None`.
+     * File a row under a different folder — `None` for the bar — at `index`
+     * among what is already there, or at the end when `index` is `None`.
+     *
+     * `index` counts the siblings **without** this row, so it is where the row
+     * ends up rather than a gap in the list it is leaving. That matters only
+     * for a move within one folder, where the two differ by one; the caller
+     * that has table rows rather than siblings converts before calling.
+     *
+     * The drop half of a drag, and the folder popup in the editor, which passes
+     * no index because a popup has no place in it to point at.
      */
-    func moveBookmark(id: String, parentId: String?) throws 
+    func moveBookmark(id: String, parentId: String?, index: UInt32?) throws 
     
     /**
      * Move a lane to a new place in the strip. The only thing that ever writes
@@ -954,6 +962,20 @@ public protocol CoreProtocol: AnyObject, Sendable {
      * Remember a launch for the new-pane picker.
      */
     func noteRecent(kind: RecentKind, value: String, cwd: String?) throws 
+    
+    /**
+     * Move a row one place up or down among its siblings.
+     *
+     * The sidebar's **Move Up** / **Move Down**, and the reason the drag is not
+     * the only way: the move actually wanted here is "this folder belongs
+     * second, not eighth", eight times over, and a drag is the wrong instrument
+     * for a list being ordered deliberately rather than rearranged by eye.
+     *
+     * Stops at the ends rather than wrapping, and never changes folder. Both
+     * of those are the same rule: a nudge that moved a row out of the folder
+     * you were looking at would be a keystroke whose result is off screen.
+     */
+    func nudgeBookmark(id: String, down: Bool) throws 
     
     /**
      * Swap a lane with its neighbour (⌘⇧← / ⌘⇧→).
@@ -1867,15 +1889,24 @@ open func markLive(paneId: String)throws  -> StripState  {
 }
     
     /**
-     * File a row under a different folder, or on the bar when `parent_id` is
-     * `None`.
+     * File a row under a different folder — `None` for the bar — at `index`
+     * among what is already there, or at the end when `index` is `None`.
+     *
+     * `index` counts the siblings **without** this row, so it is where the row
+     * ends up rather than a gap in the list it is leaving. That matters only
+     * for a move within one folder, where the two differ by one; the caller
+     * that has table rows rather than siblings converts before calling.
+     *
+     * The drop half of a drag, and the folder popup in the editor, which passes
+     * no index because a popup has no place in it to point at.
      */
-open func moveBookmark(id: String, parentId: String?)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+open func moveBookmark(id: String, parentId: String?, index: UInt32?)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
         uniffiCallStatus in
     uniffi_laned_core_fn_method_core_move_bookmark(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(id),
-        FfiConverterOptionString.lower(parentId),uniffiCallStatus
+        FfiConverterOptionString.lower(parentId),
+        FfiConverterOptionUInt32.lower(index),uniffiCallStatus
     )
 }
 }
@@ -1937,6 +1968,28 @@ open func noteRecent(kind: RecentKind, value: String, cwd: String?)throws   {try
         FfiConverterTypeRecentKind_lower(kind),
         FfiConverterString.lower(value),
         FfiConverterOptionString.lower(cwd),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Move a row one place up or down among its siblings.
+     *
+     * The sidebar's **Move Up** / **Move Down**, and the reason the drag is not
+     * the only way: the move actually wanted here is "this folder belongs
+     * second, not eighth", eight times over, and a drag is the wrong instrument
+     * for a list being ordered deliberately rather than rearranged by eye.
+     *
+     * Stops at the ends rather than wrapping, and never changes folder. Both
+     * of those are the same rule: a nudge that moved a row out of the folder
+     * you were looking at would be a keystroke whose result is off screen.
+     */
+open func nudgeBookmark(id: String, down: Bool)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_nudge_bookmark(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(id),
+        FfiConverterBool.lower(down),uniffiCallStatus
     )
 }
 }
@@ -6353,7 +6406,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_mark_live() != 10432) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_laned_core_checksum_method_core_move_bookmark() != 10075) {
+    if (uniffi_laned_core_checksum_method_core_move_bookmark() != 1350) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_move_lane() != 14936) {
@@ -6366,6 +6419,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_note_recent() != 54080) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_nudge_bookmark() != 28181) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_nudge_lane() != 50960) {

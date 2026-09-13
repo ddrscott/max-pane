@@ -103,20 +103,163 @@ fn a_folder_cannot_be_moved_inside_itself() {
     let work = folder(&core, "Work");
     let rust = core.add_bookmark(Some(work.clone()), None, "Rust".into()).unwrap();
 
-    assert!(core.move_bookmark(work.clone(), Some(rust.id)).is_err());
-    assert!(core.move_bookmark(work.clone(), Some(work)).is_err());
+    assert!(core.move_bookmark(work.clone(), Some(rust.id), None).is_err());
+    assert!(core.move_bookmark(work.clone(), Some(work), None).is_err());
     assert_eq!(shape(&core).len(), 2, "the tree lost a branch");
 }
 
 #[test]
-fn moving_a_bookmark_files_it_at_the_end_of_the_new_folder() {
+fn moving_a_bookmark_with_no_index_files_it_at_the_end_of_the_new_folder() {
+    // What the editor's folder popup does. A popup has no place in it to point
+    // at, so "somewhere in Work" can only mean the end.
     let (_d, core) = core();
     let work = folder(&core, "Work");
     core.add_bookmark(Some(work.clone()), Some("https://a.example".into()), "A".into()).unwrap();
     let loose = core.add_bookmark(None, Some("https://b.example".into()), "B".into()).unwrap();
 
-    core.move_bookmark(loose.id, Some(work)).unwrap();
+    core.move_bookmark(loose.id, Some(work), None).unwrap();
     assert_eq!(shape(&core), vec![("Work".into(), 0), ("A".into(), 1), ("B".into(), 1)]);
+}
+
+// ---- putting them in an order ----------------------------------------------
+
+/// The case the whole section is about: eight folders arriving from an import
+/// in the source's order, which is not the owner's.
+fn bar(core: &Core, titles: &[&str]) -> Vec<String> {
+    titles.iter().map(|t| folder(core, t)).collect()
+}
+
+fn titles(core: &Core) -> Vec<String> {
+    core.bookmarks().unwrap().into_iter().map(|b| b.title).collect()
+}
+
+#[test]
+fn a_folder_moved_to_the_front_of_the_bar_lands_there_and_the_rest_close_up() {
+    let (_d, core) = core();
+    let ids = bar(&core, &["A", "B", "C", "D"]);
+
+    core.move_bookmark(ids[2].clone(), None, Some(0)).unwrap();
+    assert_eq!(titles(&core), ["C", "A", "B", "D"]);
+
+    // Dense, 0..n, with nothing doubled — the property `TREE_SQL`'s zero-padded
+    // sort key rests on, and the one a half-finished move would break.
+    let positions: Vec<u32> = core.bookmarks().unwrap().into_iter().map(|b| b.position).collect();
+    assert_eq!(positions, [0, 1, 2, 3]);
+}
+
+#[test]
+fn an_index_past_the_end_is_the_end_rather_than_an_error() {
+    // The drop below the last row. A table hands back "after row n", and the
+    // caller should not have to know how many siblings there were to ask for it.
+    let (_d, core) = core();
+    let ids = bar(&core, &["A", "B", "C"]);
+
+    core.move_bookmark(ids[0].clone(), None, Some(99)).unwrap();
+    assert_eq!(titles(&core), ["B", "C", "A"]);
+}
+
+#[test]
+fn the_index_is_where_the_row_ends_up_not_a_gap_in_the_list_it_left() {
+    // The off-by-one this is all about, settled once so nobody has to work it
+    // out twice. The index counts the siblings *without* this row, so `2` means
+    // "end up third" from either side. A table hands back the other convention —
+    // a gap in the list as drawn, which still has the dragged row in it — and
+    // converting is `SidebarModel.dropTarget`'s job, where the row indices are.
+    let (_d, core) = core();
+    let ids = bar(&core, &["A", "B", "C", "D"]);
+
+    core.move_bookmark(ids[0].clone(), None, Some(2)).unwrap();
+    assert_eq!(titles(&core), ["B", "C", "A", "D"]);
+
+    // Now from below the same spot, to the same index.
+    core.move_bookmark(ids[3].clone(), None, Some(2)).unwrap();
+    assert_eq!(titles(&core), ["B", "C", "D", "A"]);
+}
+
+#[test]
+fn a_move_into_a_folder_leaves_the_one_it_came_out_of_dense() {
+    let (_d, core) = core();
+    let work = folder(&core, "Work");
+    for t in ["A", "B", "C"] {
+        core.add_bookmark(Some(work.clone()), Some(format!("https://{t}.example")), t.into())
+            .unwrap();
+    }
+    let play = folder(&core, "Play");
+
+    let b = core.bookmarks().unwrap().into_iter().find(|x| x.title == "B").unwrap();
+    core.move_bookmark(b.id, Some(play), Some(0)).unwrap();
+
+    let left: Vec<(String, u32)> = core
+        .bookmarks()
+        .unwrap()
+        .into_iter()
+        .filter(|x| ["A", "C"].contains(&x.title.as_str()))
+        .map(|x| (x.title, x.position))
+        .collect();
+    assert_eq!(left, [("A".to_string(), 0), ("C".to_string(), 1)]);
+}
+
+#[test]
+fn a_nudge_stops_at_the_ends_instead_of_wrapping() {
+    // Wrapping would make the eighth press of ⌘⇧↑ undo the seven before it,
+    // which is the one thing a list you are ordering by hand cannot do.
+    let (_d, core) = core();
+    let ids = bar(&core, &["A", "B", "C"]);
+
+    core.nudge_bookmark(ids[0].clone(), false).unwrap();
+    assert_eq!(titles(&core), ["A", "B", "C"]);
+    core.nudge_bookmark(ids[2].clone(), true).unwrap();
+    assert_eq!(titles(&core), ["A", "B", "C"]);
+
+    core.nudge_bookmark(ids[2].clone(), false).unwrap();
+    assert_eq!(titles(&core), ["A", "C", "B"]);
+}
+
+#[test]
+fn a_nudge_never_changes_folder() {
+    // A row at the bottom of `Work` nudged down does not fall into whatever is
+    // below `Work` on the bar. The result of that keystroke would be off screen
+    // as often as not, and undoing it means knowing where it went.
+    let (_d, core) = core();
+    let work = folder(&core, "Work");
+    let last =
+        core.add_bookmark(Some(work), Some("https://a.example".into()), "A".into()).unwrap();
+    folder(&core, "Play");
+
+    core.nudge_bookmark(last.id.clone(), true).unwrap();
+    let moved = core.bookmarks().unwrap().into_iter().find(|b| b.id == last.id).unwrap();
+    assert!(moved.parent_id.is_some(), "the nudge fell out of the folder");
+    assert_eq!(titles(&core), ["Work", "A", "Play"]);
+}
+
+#[test]
+fn an_order_the_user_chose_survives_a_second_import() {
+    // The import appends what is new and leaves what is here alone — so a bar
+    // the owner has spent a minute arranging must not spring back to Vivaldi's
+    // order the next time he imports.
+    let (_d, core) = core();
+    let ids = bar(&core, &["Work", "Play", "Read"]);
+    core.move_bookmark(ids[2].clone(), None, Some(0)).unwrap();
+    assert_eq!(titles(&core), ["Read", "Work", "Play"]);
+
+    let dir = tempfile::tempdir().unwrap();
+    let source = chromium_profile(dir.path());
+    core.import_history(source, ImportMode::Merge).unwrap();
+
+    let after = titles(&core);
+    let order: Vec<&String> =
+        after.iter().filter(|t| ["Read", "Work", "Play"].contains(&t.as_str())).collect();
+    assert_eq!(order, ["Read", "Work", "Play"], "the import reordered the bar");
+}
+
+#[test]
+fn a_move_of_a_row_that_is_gone_is_not_an_error() {
+    // The sidebar's rows are a snapshot. A drop that lands after the row was
+    // deleted somewhere else should do nothing, not raise at the user.
+    let (_d, core) = core();
+    folder(&core, "A");
+    core.move_bookmark("no-such-row".into(), None, Some(0)).unwrap();
+    assert_eq!(titles(&core), ["A"]);
 }
 
 #[test]

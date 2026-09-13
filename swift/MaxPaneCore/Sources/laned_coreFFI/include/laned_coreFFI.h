@@ -416,7 +416,7 @@ RustBuffer uniffi_laned_core_fn_method_core_mark_live(uint64_t ptr, RustBuffer p
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_MOVE_BOOKMARK
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_MOVE_BOOKMARK
-void uniffi_laned_core_fn_method_core_move_bookmark(uint64_t ptr, RustBuffer id, RustBuffer parent_id, RustCallStatus *_Nonnull out_status
+void uniffi_laned_core_fn_method_core_move_bookmark(uint64_t ptr, RustBuffer id, RustBuffer parent_id, RustBuffer index, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_MOVE_LANE
@@ -437,6 +437,11 @@ void uniffi_laned_core_fn_method_core_note_focus(uint64_t ptr, RustBuffer pane_i
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_NOTE_RECENT
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_NOTE_RECENT
 void uniffi_laned_core_fn_method_core_note_recent(uint64_t ptr, RustBuffer kind, RustBuffer value, RustBuffer cwd, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_NUDGE_BOOKMARK
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_NUDGE_BOOKMARK
+void uniffi_laned_core_fn_method_core_nudge_bookmark(uint64_t ptr, RustBuffer id, int8_t down, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_NUDGE_LANE
@@ -1091,6 +1096,12 @@ uint16_t uniffi_laned_core_checksum_method_core_note_focus(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_NOTE_RECENT
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_NOTE_RECENT
 uint16_t uniffi_laned_core_checksum_method_core_note_recent(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_NUDGE_BOOKMARK
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_NUDGE_BOOKMARK
+uint16_t uniffi_laned_core_checksum_method_core_nudge_bookmark(void
     
 );
 #endif

@@ -344,6 +344,25 @@ deliberately do not reach them: the order of a bar *is* the thing, and eight
 folders that have been in eight places for years are found by the hand rather
 than read.
 
+**And the order is yours to set.** Drag a row between two rows to put it there,
+or onto a folder to file it at the end of that folder. **Move Up** and **Move
+Down** on the right-click menu do it a step at a time, which is the better
+instrument for the case this exists for — eight folders arriving from an import
+in Vivaldi's order and wanted in yours — and the only one that does not need a
+steady hand. A gap belongs to the row *below* it, so the space under a folder's
+last page means "after the folder" rather than "inside it, last"; dropping onto
+the folder is how you say the other one. Dragging is off while the filter box
+has something in it: the rows are a subset then, and a position counted over
+them would land somewhere you had no way of predicting.
+
+`position` stays a plain integer that gets renumbered, rather than the
+fractional ordinal the strip's lanes are ordered by. A drag commits one write on
+drop rather than one a frame, a folder is tens of rows, and renumbering measures
+at 0.28 ms for a folder of 47 and 2.7 ms for one of 1 000 — so the ordinal would
+buy nothing here and would cost the zero-padded sort key the tree is read with.
+An order you set survives the next import, which appends what is new and leaves
+what is already here where it is.
+
 One row per placement, so the same page kept in two folders is two bookmarks —
 which is what every browser means by it, and what a table keyed by URL could not
 say. A bookmark's title is yours: nothing the page calls itself later overwrites
