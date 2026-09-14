@@ -216,7 +216,7 @@ public struct Keymap: Sendable {
     /// Exactly what ships: `Command`'s own declarations, unresolved.
     public static let defaults = Keymap(bindings: Dictionary(
         uniqueKeysWithValues: Command.allCases.map { command in
-            (command, ([command.defaultShortcut] + command.defaultAlternateShortcuts).map(KeyChord.init))
+            (command, ((command.defaultShortcut.map { [$0] } ?? []) + command.defaultAlternateShortcuts).map(KeyChord.init))
         }), complaints: [])
 
     private init(bindings: [Command: [KeyChord]], complaints: [String]) {

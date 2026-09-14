@@ -124,6 +124,9 @@ public final class StripViewController: NSViewController {
     /// Every lane on one screen at once, as live thumbnails. The second layout;
     /// see `GalleryLayout` for the geometry and ADR-0011 for the decisions.
     public private(set) var isGallery = false
+    /// Told after the layout on screen changes — from ⌘G, the toolbar's switch,
+    /// or a launch that restores the gallery — so a control showing it can follow.
+    public var onLayoutChange: ((StripLayout) -> Void)?
     private let gallery = GalleryView()
     /// A double click the click monitor took from a tile, so the mouse-up that
     /// ends it reaches nothing either.
@@ -365,17 +368,32 @@ public final class StripViewController: NSViewController {
             let inStrip = self.view.convert(event.locationInWindow, from: nil)
             guard self.view.bounds.contains(inStrip) else { return event }
             if let paneId = self.pane(at: event.locationInWindow) {
-                // A double click on a tile is taken from whatever is inside it:
-                // a word selection in a thumbnail is not something anyone
-                // wants, and the gesture already means "open this on the
-                // strip". The first click went through and focused the pane.
+                // A double click in the gallery expands a tile in place, over its
+                // own spot — Relay TTY's behaviour, which the owner asked for
+                // instead of a trip to the strip — and a double click on an
+                // expanded tile's header puts it back. Inside an expanded tile's
+                // pane the double click is the program's again: that tile is big
+                // enough to read, so selecting a word in it is something you want.
+                // The first click went through and focused the pane either way.
                 if self.isGallery, event.clickCount >= 2,
                    let laneId = self.store.lane(containing: paneId)?.id {
-                    self.swallowNextMouseUp = true
-                    self.openInLanes(laneId: laneId, paneId: paneId)
-                    return nil
+                    let isExpanded = laneId == self.expandedLaneId
+                    if !isExpanded || !self.isPaneContent(at: event.locationInWindow, laneId: laneId) {
+                        self.swallowNextMouseUp = true
+                        if isExpanded {
+                            self.collapseExpandedTile()
+                        } else {
+                            self.expandTile(laneId: laneId, paneId: paneId)
+                        }
+                        return nil
+                    }
                 }
                 self.focus(paneId)
+            } else if self.isGallery, self.expandedLaneId != nil {
+                // The gallery itself, between the tiles: put the expanded one
+                // back. Relay TTY's rule too, and the only click here that means
+                // nothing else.
+                self.collapseExpandedTile()
             }
             return event
         }
@@ -383,7 +401,14 @@ public final class StripViewController: NSViewController {
 
     /// Which pane is under a point in window coordinates.
     private func pane(at windowPoint: NSPoint) -> String? {
-        for (laneId, laneView) in laneViews {
+        // The expanded tile first: it is drawn over its neighbours, so a point
+        // inside it is also inside whichever lane it covers, and the dictionary
+        // would otherwise pick one of the two at random.
+        var hitOrder = Array(laneViews)
+        if let expanded = expandedLaneId, let index = hitOrder.firstIndex(where: { $0.key == expanded }) {
+            hitOrder.swapAt(0, index)
+        }
+        for (laneId, laneView) in hitOrder {
             let local = laneView.convert(windowPoint, from: nil)
             guard laneView.bounds.contains(local) else { continue }
             guard let lane = store.lane(laneId) else { return nil }
@@ -830,10 +855,6 @@ public final class StripViewController: NSViewController {
         // but a handle that depends on a window-wide monitor to not swallow
         // clicks is a handle that breaks the day the monitor is narrowed.
         laneView.onFocusPane = { [weak self] paneId in self?.focus(paneId) }
-        laneView.onHeaderDoubleClick = { [weak self] in
-            guard let self, let root = self.store.lane(lane.id)?.projectRoot else { return }
-            try? self.store.gather(projectRoot: root)
-        }
         // The ⋯ menu's docking items. They act on the lane under the pointer
         // rather than the focused one, which is the whole reason the menu
         // exists beside the keys — and they go through the same toggle the
@@ -1061,15 +1082,80 @@ public final class StripViewController: NSViewController {
         return true
     }
 
-    /// Double click on a tile or on a session row: the strip, at that lane.
+    /// Double click on a session row: the lane, wherever the layout keeps it.
     ///
-    /// On the strip already, this is exactly the select a click runs — which is
-    /// what the second click of a double click in the sidebar always did.
-    public func openInLanes(laneId: String, paneId: String?) {
+    /// In the gallery that is its tile, expanded in place. On the strip it is
+    /// exactly the select a click runs — which is what the second click of a
+    /// double click in the sidebar always did.
+    public func openLane(laneId: String, paneId: String?) {
         if isGallery {
-            guard setLayout(.lanes) else { return }
+            expandTile(laneId: laneId, paneId: paneId)
+        } else {
+            select(laneId: laneId, paneId: paneId)
         }
-        select(laneId: laneId, paneId: paneId)
+    }
+
+    /// The tile drawn over the grid at its lane's real size, if one is.
+    ///
+    /// In memory, not in the ledger: it is the other half of a double click,
+    /// and a relaunch into the gallery starts with every tile in its place.
+    public private(set) var expandedLaneId: String?
+
+    /// Grow a tile in place and give its pane the keyboard. Expanding another
+    /// tile puts the first one back, because the grid has room for one.
+    func expandTile(laneId: String, paneId: String?) {
+        guard isGallery, let lane = store.lane(laneId) else { return }
+        expandedLaneId = laneId
+        layoutGallery(animated: true)
+        if let pane = paneId ?? lane.panes.first?.id { focus(pane) }
+    }
+
+    func collapseExpandedTile() {
+        guard expandedLaneId != nil else { return }
+        expandedLaneId = nil
+        if isGallery { layoutGallery(animated: true) }
+    }
+
+    /// Ease a tile from where it was drawn to where it now is.
+    ///
+    /// The owner: *"nothing in the UI/UX should just 'jank in' like magic. We
+    /// need the subtle effects to keep the spatial reasoning."* A tile that
+    /// jumped from its thumbnail to the middle of the grid would leave the eye
+    /// to work out which lane it was; one that grows out of its own slot, and
+    /// shrinks back into it, says so. `Motion.lane`'s length and curve, because
+    /// an expanding tile is a column-sized event, and nothing under Reduce Motion.
+    ///
+    /// The layer is animated, not the frame: the frame is already final, so
+    /// clicks land where the tile is going, and the lane inside keeps its own
+    /// size the whole way — no terminal sees a resize for the sake of an effect.
+    /// A collapsing tile stays above its neighbours until it is home, because it
+    /// is only ever lowered by another tile being raised.
+    private func animateTile(_ tile: NSView, from: CGRect) {
+        guard let layer = tile.layer else { return }
+        let to = layer.frame
+        let moved = abs(from.minX - to.minX) > 0.5 || abs(from.minY - to.minY) > 0.5
+            || abs(from.width - to.width) > 0.5 || abs(from.height - to.height) > 0.5
+        guard moved else { return }
+        // Both ends composed with the layer's own transform — see
+        // `GalleryLayout.moveTransforms` for what animating to identity did.
+        let ends = GalleryLayout.moveTransforms(
+            from: from, to: to, position: layer.position, model: layer.transform)
+        let animation = CABasicAnimation(keyPath: "transform")
+        animation.fromValue = NSValue(caTransform3D: ends.start)
+        animation.toValue = NSValue(caTransform3D: ends.end)
+        animation.duration = Motion.lane
+        animation.timingFunction = Motion.easeOutTiming
+        layer.add(animation, forKey: "galleryMove")
+    }
+
+    /// Whether `windowPoint` is inside one of the lane's pane views rather than
+    /// on its header or in a seam.
+    private func isPaneContent(at windowPoint: NSPoint, laneId: String) -> Bool {
+        guard let lane = store.lane(laneId), let laneView = laneViews[laneId] else { return false }
+        return lane.panes.contains { pane in
+            guard let view = laneView.paneView(for: pane.id) else { return false }
+            return view.bounds.contains(view.convert(windowPoint, from: nil))
+        }
     }
 
     /// Put the views where `layout` wants them. Writes nothing.
@@ -1077,8 +1163,10 @@ public final class StripViewController: NSViewController {
         let entering = layout == .gallery
         guard entering != isGallery else { return }
         isGallery = entering
+        onLayoutChange?(layout)
         scrollView.isHidden = entering
         gallery.isHidden = !entering
+        if !entering { expandedLaneId = nil }
 
         if entering {
             leadingRail.isHidden = true
@@ -1128,7 +1216,9 @@ public final class StripViewController: NSViewController {
             laneViews[lane.id] = laneView
             reconcilePanes(of: lane, in: laneView, animated: false)
         }
-        layoutGallery()
+        // Tiles that were already on screen slide to their new places when a lane
+        // arrives or leaves; a tile with nowhere to come from has nothing to animate.
+        layoutGallery(animated: true)
 
         // Deferred pages near the lane you are in load now; the rest wait until
         // one of them is clicked. Twelve web lanes entering the gallery is not
@@ -1144,8 +1234,17 @@ public final class StripViewController: NSViewController {
     /// Place every tile. Recomputed from nothing on every call — a lane coming
     /// or going, a width changing, the window resizing — because the scale has
     /// exactly one right answer for any given strip and window.
-    private func layoutGallery() {
+    private func layoutGallery(animated: Bool = false) {
         if gallery.frame != view.bounds { gallery.frame = view.bounds }
+        // Where every tile is drawn right now, mid-flight included — so a double
+        // click during an expansion reverses from where the eye is, not from
+        // where the last layout put the tile. Empty when nothing should move: a
+        // window being resized follows the pointer, and a trailing tile would lag it.
+        let before: [String: CGRect] = animated && !Motion.isReduced
+            ? Dictionary(uniqueKeysWithValues: gallery.tileIds.compactMap { id in
+                gallery.tile(for: id)?.layer.map { (id, $0.presentation()?.frame ?? $0.frame) }
+            })
+            : [:]
         let lanes = store.state.lanes
         let stripHeight = scrollView.contentView.bounds.height > 0
             ? scrollView.contentView.bounds.height : view.bounds.height
@@ -1156,21 +1255,39 @@ public final class StripViewController: NSViewController {
 
         for (index, lane) in lanes.enumerated() {
             guard let laneView = laneViews[lane.id], placement.scale > 0 else { continue }
+            let size = sizes[index]
+            let slot = placement.rects[index]
+            var frame = CGRect(
+                x: slot.minX, y: slot.minY,
+                width: size.width * placement.scale, height: size.height * placement.scale)
+            // The expanded tile keeps its place in the order and is drawn over
+            // the grid, as near its own slot as the gallery allows.
+            if lane.id == expandedLaneId {
+                frame = GalleryLayout.expanded(tile: frame, laneSize: size, in: view.bounds.size)
+            }
+            let scale = frame.width / size.width
             // Before the lane moves: a terminal has to take hold of its strip
             // size while it still has it, not after the tile has rounded it.
             for pane in lane.panes {
                 (paneControllers[pane.id] as? TerminalPaneController)?
-                    .setThumbnail(scale: placement.scale, backingScale: backing)
+                    .setThumbnail(scale: scale, backingScale: backing)
             }
-            let size = sizes[index]
-            let slot = placement.rects[index]
-            let frame = CGRect(
-                x: slot.minX, y: slot.minY,
-                width: size.width * placement.scale, height: size.height * placement.scale)
             gallery.place(laneView, laneId: lane.id, frame: frame, laneSize: size)
-            laneView.thumbnailScale = placement.scale
+            laneView.thumbnailScale = scale
         }
-        gallery.removeTiles(except: Set(lanes.map(\.id)))
+        if let expanded = expandedLaneId {
+            if lanes.contains(where: { $0.id == expanded }) {
+                gallery.raise(expanded)
+            } else {
+                // Its lane closed while it was up.
+                expandedLaneId = nil
+            }
+        }
+        let shown = Set(lanes.map(\.id))
+        for (id, from) in before where shown.contains(id) {
+            if let tile = gallery.tile(for: id) { animateTile(tile, from: from) }
+        }
+        gallery.removeTiles(except: shown)
     }
 
     /// The size a lane has when it is not a tile — which is the size its tile

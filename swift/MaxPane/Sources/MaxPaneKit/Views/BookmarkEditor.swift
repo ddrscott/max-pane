@@ -39,7 +39,7 @@ final class BookmarkEditor: NSViewController {
     /// be mistaken for the command at the end.
     private var folderIds: [String?] = []
 
-    private weak var popover: NSPopover?
+    fileprivate weak var popup: Popup?
 
     init(store: StripStore, bookmark: Bookmark, onClose: @escaping () -> Void) {
         self.store = store
@@ -51,21 +51,19 @@ final class BookmarkEditor: NSViewController {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not a nib") }
 
-    /// Open on `anchor`'s trailing edge, with the name field selected so the
+    /// Open centred over `anchor`'s window, with the name field selected so the
     /// second thing anyone does after ⌘D — rename it — costs no click.
     static func show(
         over anchor: NSView, store: StripStore, bookmark: Bookmark, onClose: @escaping () -> Void
     ) {
-        let popover = NSPopover()
         let editor = BookmarkEditor(store: store, bookmark: bookmark, onClose: onClose)
-        editor.popover = popover
-        popover.contentViewController = editor
-        popover.behavior = .transient
-        // `.applicationDefined` would mean dismissing it by hand from three
-        // places; transient closes on the click outside that everyone expects,
-        // and nothing here is lost by closing.
-        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
-        editor.view.window?.makeFirstResponder(editor.name)
+        let popup = BookmarkPopup(editor: editor)
+        editor.popup = popup
+        // Centred like every other dialog rather than hung off the ★ — the owner
+        // asked for one frame for all of them. A click away still closes it, the
+        // way the transient popover did, and nothing is lost by closing: the page
+        // was kept the moment ⌘D was pressed.
+        popup.present(over: anchor.window)
     }
 
     override func loadView() {
@@ -73,10 +71,8 @@ final class BookmarkEditor: NSViewController {
 
         let header = SectionHeader(text: "KEPT_PAGE")
 
-        name.font = Theme.mono(12)
+        Theme.squareField(name, font: Theme.mono(12), height: 24)
         name.stringValue = bookmark.title
-        name.focusRingType = .none
-        name.bezelStyle = .squareBezel
         name.target = self
         name.action = #selector(commitName)
         // `NSTextField` only sends its action on ↩ or on focus leaving; the
@@ -90,10 +86,8 @@ final class BookmarkEditor: NSViewController {
         folders.action = #selector(folderChosen)
         rebuildFolderMenu()
 
-        newFolder.font = Theme.mono(11)
+        Theme.squareField(newFolder, font: Theme.mono(11), height: 24)
         newFolder.placeholderString = "Folder name, then ↩"
-        newFolder.focusRingType = .none
-        newFolder.bezelStyle = .squareBezel
         newFolder.target = self
         newFolder.action = #selector(commitNewFolder)
         newFolderRow.orientation = .horizontal
@@ -218,9 +212,49 @@ final class BookmarkEditor: NSViewController {
 
     private func close() {
         commitName()
-        popover?.performClose(nil)
+        popup?.closePopup()
         onClose()
     }
+
+    fileprivate func focusName() { view.window?.makeFirstResponder(name) }
+    fileprivate func closeFromPopup() { close() }
+}
+
+/// The bookmark editor in the shared dialog frame.
+///
+/// Esc or a click away closes it and keeps the rename, which is what the
+/// transient popover did before it.
+@MainActor
+final class BookmarkPopup: Popup {
+    private let editor: BookmarkEditor
+
+    init(editor: BookmarkEditor) {
+        self.editor = editor
+        let body = editor.view
+        body.translatesAutoresizingMaskIntoConstraints = false
+        let content = NSView()
+        content.wantsLayer = true
+        content.layer?.backgroundColor = Theme.laneBackground.cgColor
+        content.layer?.borderColor = Theme.laneBorder.cgColor
+        content.layer?.borderWidth = Theme.borderWidth
+        content.layer?.cornerRadius = 0
+        content.addSubview(body)
+        NSLayoutConstraint.activate([
+            body.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            body.topAnchor.constraint(equalTo: content.topAnchor),
+            body.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            content.widthAnchor.constraint(equalToConstant: 320),
+        ])
+        content.layoutSubtreeIfNeeded()
+        super.init(
+            size: NSSize(width: 320, height: max(150, ceil(content.fittingSize.height))),
+            dismissal: .clickAway)
+        window?.contentView = content
+    }
+
+    override func popupDidPresent() { editor.focusName() }
+    override func popupCancelled() { editor.closeFromPopup() }
 }
 
 extension BookmarkEditor: NSTextFieldDelegate {

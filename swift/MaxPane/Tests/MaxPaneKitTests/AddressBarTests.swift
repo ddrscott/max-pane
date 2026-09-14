@@ -41,8 +41,8 @@ struct AddressBarTests {
 
     @Test("⌘L is declared, so the app claims it back from the page")
     func commandLIsClaimed() {
-        #expect(Command.editAddress.defaultShortcut.0 == "l")
-        #expect(Command.editAddress.defaultShortcut.1 == [.command])
+        #expect(Command.editAddress.defaultShortcut?.0 == "l")
+        #expect(Command.editAddress.defaultShortcut?.1 == [.command])
         // The point of declaring it: `claims` only rescues what this file
         // names, so a ⌘L handled anywhere else would still die in the web view.
         #expect(Command.claims(chord("l")))

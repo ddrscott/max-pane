@@ -230,19 +230,11 @@ final class SidebarViewController: NSViewController {
         filterBar.wantsLayer = true
         filterBar.clipsToBounds = true
 
-        // NSSearchField is a rounded capsule with no square variant, and even a
-        // square-bezelled NSTextField draws system chrome that is lighter than
-        // anything else here. So: no bezel, one hard border, the strip's ground.
-        queryField.isBezeled = false
-        queryField.drawsBackground = true
-        queryField.backgroundColor = Theme.laneBackground
-        queryField.wantsLayer = true
-        queryField.layer?.cornerRadius = 0
-        queryField.layer?.borderWidth = 1
-        queryField.layer?.borderColor = Theme.laneBorder.cgColor
-        queryField.font = Theme.mono(11)
+        // The shared square field — see `Theme.squareField` for why no system
+        // bezel will do — on the lane's ground, which is what sets it apart
+        // from the sidebar's.
+        Theme.squareField(queryField, font: Theme.mono(11), ground: Theme.laneBackground)
         queryField.placeholderString = "filter…"
-        queryField.focusRingType = .none
         queryField.target = self
         queryField.action = #selector(queryChanged)
         queryField.delegate = self
@@ -384,8 +376,10 @@ final class SidebarViewController: NSViewController {
     /// and nearly every one of those ticks changes nothing — reloading the table
     /// anyway would drop the selection and fight the scroller for no reason.
     private func rebuild(_ state: StripState) {
+        // Every lane, not the gathered few: a row reads "not on the strip" off
+        // this list, and a click on such a row attaches the session again.
         let next = SidebarModel.rows(
-            lanes: state.lanes,
+            lanes: store.allLanes,
             telemetry: telemetry,
             created: createdAt,
             bookmarks: bookmarks,
@@ -403,7 +397,7 @@ final class SidebarViewController: NSViewController {
     /// The footer is the one line that is always on screen, however far the list
     /// is scrolled — so it carries the count, and the alarm.
     private func updateFooter(_ state: StripState) {
-        let count = SidebarModel.footerCount(telemetry: telemetry, lanes: state.lanes)
+        let count = SidebarModel.footerCount(telemetry: telemetry, lanes: store.allLanes)
         let blocked = SidebarModel.blockedCount(telemetry)
         let text = NSMutableAttributedString(
             string: count,
@@ -501,19 +495,20 @@ final class SidebarViewController: NSViewController {
     /// asks, because it takes everything inside it and nothing puts that back.
     @objc private func removeBookmarkClicked() {
         guard let kept = bookmark(at: table.clickedRow) else { return }
-        if kept.isFolder {
-            let alert = NSAlert()
-            alert.alertStyle = .warning
-            alert.messageText = "Delete the folder “\(kept.title)”?"
-            alert.informativeText =
-                "\(kept.detail.lowercased()) go with it. There is no undo."
-            // Cancel first, so Return cancels — the rule every destructive
-            // dialog in this app follows.
-            alert.addButton(withTitle: "Cancel")
-            alert.addButton(withTitle: "Delete")
-            guard alert.runModal() == .alertSecondButtonReturn else { return }
+        guard kept.isFolder else {
+            try? store.removeBookmark(kept.id)
+            return
         }
-        try? store.removeBookmark(kept.id)
+        // ↩ is Cancel — the rule every destructive dialog in this app follows.
+        ConfirmPopup.confirm(
+            over: view.window,
+            title: "Delete the folder “\(kept.title)”?",
+            detail: "\(kept.detail.lowercased()) go with it. There is no undo.",
+            action: "Delete", returnConfirms: false
+        ) { [weak self] delete in
+            guard delete else { return }
+            try? self?.store.removeBookmark(kept.id)
+        }
     }
 
     @objc private func moveBookmarkUp() { nudgeClickedBookmark(down: false) }
@@ -636,7 +631,7 @@ final class SidebarViewController: NSViewController {
 
     private func clickedLane() -> Lane? {
         guard let entry = entry(at: table.clickedRow), let laneId = entry.laneId else { return nil }
-        return store.state.lanes.first { $0.id == laneId }
+        return store.allLanes.first { $0.id == laneId }
     }
 
     @objc private func attachClicked() {
@@ -675,18 +670,15 @@ final class SidebarViewController: NSViewController {
 
     @objc private func setTag() {
         guard let lane = clickedLane() else { return }
-        let alert = NSAlert()
-        alert.messageText = "Project tag for this lane"
-        alert.informativeText = "Sticky — the cwd tagger will not overwrite it. Empty clears it."
-        alert.addButton(withTitle: "Set")
-        alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 380, height: 24))
-        field.stringValue = lane.projectRoot ?? ""
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let value = field.stringValue.trimmingCharacters(in: .whitespaces)
-        try? store.setManualTag(lane.id, value.isEmpty ? nil : value)
+        ConfirmPopup.ask(
+            over: view.window,
+            title: "Project tag for this lane",
+            detail: "Sticky — the cwd tagger will not overwrite it. Empty clears it.",
+            text: lane.projectRoot ?? "", action: "Set"
+        ) { [weak self] value in
+            guard let value else { return }
+            try? self?.store.setManualTag(lane.id, value.isEmpty ? nil : value)
+        }
     }
 
     @objc private func closeLane() {

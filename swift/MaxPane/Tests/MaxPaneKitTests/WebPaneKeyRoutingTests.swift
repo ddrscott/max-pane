@@ -113,8 +113,9 @@ struct WebPaneKeyRoutingTests {
 
     @Test("esc, and keys the app never declared, stay with the page")
     func thePageKeepsItsOwn() {
-        // Esc leaves a fullscreen video and closes a modal. `.ungather` uses it
-        // with no ⌘, and taking it from every page would be the worse bug.
+        // Esc leaves a fullscreen video and closes a modal. Nothing in the app
+        // binds it by default, and taking it from every page would be the worse
+        // bug even for someone who binds `ungather` to it.
         #expect(Command.claims(chord("\u{1b}", [])) == false)
         // ⌘C, ⌘V, ⌘A, ⌘Z: editing keys, declared nowhere, so nothing here
         // touches them.

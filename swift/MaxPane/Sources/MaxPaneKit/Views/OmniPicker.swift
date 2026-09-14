@@ -614,7 +614,8 @@ final class OmniPicker: PaletteController {
         // want; the old attach picker watched for that and losing it would be a
         // regression in the half of ⌘O that came from there.
         token = registry.observe { [weak self] _ in
-            guard let self, self.window?.isVisible == true else { return }
+            // Open, not merely visible: a picker fading out has nothing to refresh.
+            guard let self, self.isOpen else { return }
             self.rebuild()
             self.refreshKeepingSelection()
             self.updateFooter()
@@ -755,20 +756,20 @@ final class OmniPicker: PaletteController {
                     visits: UInt32(max(0, candidate.count)),
                     lastVisit: candidate.chosenAt > 0
                         ? Date(timeIntervalSince1970: Double(candidate.chosenAt) / 1000) : nil)
-                let alert = NSAlert()
-                alert.alertStyle = .warning
-                alert.messageText = prompt.message
-                alert.informativeText = prompt.detail
-                // Cancel first, so Return cancels. A ⌘⌫ typed by reflex should
-                // not be confirmable by a ↩ typed by reflex a beat later.
-                alert.addButton(withTitle: "Cancel")
-                alert.addButton(withTitle: "Forget")
-                guard alert.runModal() == .alertSecondButtonReturn else { return }
-                // Both stores, because a page launched from a terminal is in
-                // both and forgetting one of them leaves the row on screen.
-                self.store.forgetVisit(url)
-                self.store.forgetRecent(.url, url)
-                self.afterForgetting()
+                // Cancel on ↩. A ⌘⌫ typed by reflex should not be confirmable by
+                // a ↩ typed by reflex a beat later. Over the picker, so the
+                // picker stays open behind it and gets the keyboard back.
+                ConfirmPopup.confirm(
+                    over: self.window, title: prompt.message, detail: prompt.detail,
+                    action: "Forget", returnConfirms: false
+                ) { [weak self] forget in
+                    guard forget, let self else { return }
+                    // Both stores, because a page launched from a terminal is in
+                    // both and forgetting one of them leaves the row on screen.
+                    self.store.forgetVisit(url)
+                    self.store.forgetRecent(.url, url)
+                    self.afterForgetting()
+                }
             }
             return
         case .run(let line, _):

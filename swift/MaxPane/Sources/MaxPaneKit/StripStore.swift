@@ -204,6 +204,24 @@ public final class StripStore {
     /// user is looking at.
     var stripLanes: [Lane] { state.lanes.filter { $0.dock == nil } }
 
+    /// Every lane, whatever a gather view is showing.
+    ///
+    /// `state.lanes` is already narrowed while a gather is active, and that is
+    /// the wrong list for "is this session on the strip?" — asking it is how the
+    /// sidebar came to attach one session five times: its lane was tagged with
+    /// another project, so every click read it as unattached and added a lane the
+    /// same gather then hid. Free when nothing is gathered, which is nearly
+    /// always, because then the snapshot already is every lane.
+    var allLanes: [Lane] {
+        guard state.gatherFilter != nil else { return state.lanes }
+        return (try? core.allLanes()) ?? state.lanes
+    }
+
+    /// The lane a Relay session is in, gathered out of view or not.
+    func lane(holdingSession sessionId: String) -> Lane? {
+        allLanes.first { $0.panes.contains { $0.relaySessionId == sessionId } }
+    }
+
     /// The lane holding an edge, if any.
     func dockedLane(_ side: DockSide) -> Lane? {
         state.lanes.first { $0.dock?.side == side }

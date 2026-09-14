@@ -30,6 +30,17 @@ enum Motion {
         return 1 - pow(1 - clamped, 3)
     }
 
+    /// `easeOut` for Core Animation: the cubic-bezier that traces `1 − (1 − t)³`.
+    ///
+    /// For motion that really is a layer property — a gallery tile's transform —
+    /// so it runs on the render server rather than on `run`'s timer, and still
+    /// moves on the same curve as everything the timer drives. Computed rather
+    /// than stored, because a static `CAMediaTimingFunction` is shared mutable
+    /// state as far as Swift's concurrency checking is concerned.
+    static var easeOutTiming: CAMediaTimingFunction {
+        CAMediaTimingFunction(controlPoints: 0.215, 0.61, 0.355, 1)
+    }
+
     /// System Settings › Accessibility › Display › Reduce motion.
     ///
     /// Read per transition rather than cached: it is a live preference, and

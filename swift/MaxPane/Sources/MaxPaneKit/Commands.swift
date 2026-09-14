@@ -114,7 +114,7 @@ public enum Command: String, CaseIterable, Sendable {
     /// is what the menu, the ⌘/ sheet and the key monitor read. The switch
     /// stays here because it is the thing that makes an action without a key
     /// impossible to write.
-    public var defaultShortcut: (String, NSEvent.ModifierFlags) {
+    public var defaultShortcut: (String, NSEvent.ModifierFlags)? {
         switch self {
         // ⌘O is the only door. "Something new goes on the strip" was three keys
         // — ⌘T for a command or a URL, ⌘Y for a page you have been to, ⌘O for a
@@ -168,15 +168,17 @@ public enum Command: String, CaseIterable, Sendable {
         case .moveLaneRight:   return ("\u{2192}", [.command, .shift])
         case .toggleSidebar:   return ("b", [.command])
         case .search:          return ("p", [.command])
-        case .gather:          return ("g", [.command])
-        // Esc, which is not a menu key equivalent — handled in the responder chain.
-        case .ungather:        return ("\u{1b}", [])
-        // Lanes ⇄ Gallery. Beside ⌘G because both change what the window is
-        // showing of the strip without changing the strip. **Not Esc**, which
-        // would have been the obvious "leave this view" key: in the gallery Esc
+        // Gather and Leave Gather ship with no key. The owner found gather too
+        // surprising to be one keystroke away — *"Users can add a shortcut for
+        // them if they know what they're doing"* — and a gather view is what let
+        // the sidebar attach one session six times. The View menu keeps them;
+        // `keys` binds them.
+        case .gather, .ungather: return nil
+        // Lanes ⇄ Gallery, both ways on ⌘G. The view he uses every day gets the
+        // key, and ⌥⌘G is Google Drive's. **Not Esc** to leave: in the gallery Esc
         // belongs to the focused tile, because answering an agent's prompt from
         // its thumbnail is what the gallery is for.
-        case .toggleGallery:   return ("g", [.command, .option])
+        case .toggleGallery:   return ("g", [.command])
         // ⇧⌘P kept its key and lost its word. It used to be "Pin Lane", which
         // meant "never evict this lane" — and the owner has since said plainly
         // that pinning is what he calls docking. The key is not the word, and

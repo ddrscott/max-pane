@@ -45,6 +45,17 @@ final class GalleryView: NSView {
         }
     }
 
+    /// Draw one tile over the rest: the expanded one.
+    ///
+    /// Reordered rather than given a `zPosition`, because AppKit hit-tests
+    /// subviews in order and a layer drawn on top would still hand the click to
+    /// the neighbour underneath. Within one window, so the lane inside keeps its
+    /// surface and its page, the same as every other reparenting in here.
+    func raise(_ laneId: String) {
+        guard let tile = tiles[laneId], subviews.last !== tile else { return }
+        addSubview(tile, positioned: .above, relativeTo: nil)
+    }
+
     func tile(for laneId: String) -> GalleryTileView? { tiles[laneId] }
     var tileIds: Set<String> { Set(tiles.keys) }
 }
@@ -61,6 +72,17 @@ final class GalleryView: NSView {
 @MainActor
 final class GalleryTileView: NSView {
     override var isFlipped: Bool { true }
+
+    /// Layer-backed by its own say-so rather than by inheriting it from the
+    /// gallery: its layer is what moves when it expands, and a tile that came
+    /// up without one would change place with no motion at all.
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not a nib") }
 
     func show(_ laneView: LaneView, frame newFrame: CGRect, laneSize: CGSize) {
         CATransaction.begin()

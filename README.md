@@ -181,7 +181,7 @@ Press **⌘/** for every shortcut. The three that matter:
 | **⌘O** (also **⌘T**) | start anything — a command, a URL, a page you have been to or kept, a session that is already running |
 | **⌘[** / **⌘]** | move focus between lanes |
 | **⌃⌘[** / **⌃⌘]** | dock this lane to that edge of the window, or undock it |
-| **⌥⌘G** | Lanes ⇄ Gallery: every lane on one screen, live |
+| **⌘G** | Lanes ⇄ Gallery: every lane on one screen, live; ⌘G again goes back |
 | **⌘P** | find a lane by title, URL or something it printed |
 
 ⌘O is the only door into the strip, because "something goes to the right of
@@ -204,6 +204,10 @@ one row and it is the bookmark: the title on it is the one you chose, and
 
 ⌘P stays separate on purpose: it finds what is *already on the strip* and
 scrolls to it, where every ⌘O row spends something to create a pane.
+
+With nothing typed it is not empty: every lane, most recently used first, the
+gathered-away ones included. The lane you are in is listed and marked focused,
+but the one before it is selected — so ⌘P ↩ goes back, the way ⌘⇥ does.
 
 ### A web lane
 
@@ -658,7 +662,12 @@ the keyboard** — the same two things ⌘P does, and in the same order. It used
 only scroll, and flash the lane's border in the focus colour on the way, so the
 click looked like it had focused the lane and then silently given up; the first
 keystroke went to whatever lane you had left behind. A row for a session that is
-not on the strip still attaches it instead.
+not on the strip still attaches it instead — and only one that is not. A session
+that already has a lane, even a lane a gather view is hiding, is revealed and
+focused rather than attached again, and the core refuses a second lane for a
+session besides. The sidebar used to read "on the strip" off the gathered list,
+so a session tagged with another project looked unattached, every click added a
+lane, and the gather hid each one; one of the owner's sessions reached six.
 
 A row names a *session*, and a lane holds a stack of them, so the click focuses
 the pane whose session you clicked rather than whichever pane is on top.
@@ -761,9 +770,43 @@ A terminal whose process exits takes its lane with it, after a beat.
 
 An empty strip says the same thing, so a fresh launch is not a blank rectangle.
 
+### Dialogs
+
+Every dialog is the same popup: square, centred in the window below its title
+bar with the same margin on every side, arriving with a short fade and a rise
+of a few points and leaving with a quicker one. ⌘P, ⌘O, ⌘/, ⇧⌘Y, the ⌘D
+bookmark editor, and every confirmation, prompt and error close on Esc or a
+click back into the strip. A click away from a confirmation is Cancel, and ↩ on
+anything destructive is still Cancel. ⌘/ pressed again closes it.
+
+Two exceptions, both on purpose. ⇧⌘Y stays open when you ⌘-Tab to another app,
+because a scroll position four hundred rows down is not something to lose to
+reading something else. And the two import wizards look and move like every
+other popup but close only on Esc or their own buttons, so a stray click cannot
+throw away an import half chosen.
+
+The memory dashboard is the one floating panel left, because watching it while
+the strip scrolls is its whole purpose. File choosers and a web page's own
+`alert()` stay the system's, and so does the alert for a ledger that cannot be
+opened at launch — there is no window yet to centre anything on.
+
+### The toolbar
+
+A row above the strip, level with the session browser's header so the two read
+as one band: a **LANES | GALLERY** switch, **find a lane…** (⌘P), and on the right
+the number of running sessions. It is there windowed and full screen alike —
+a first version lived in the full-screen title bar, which drew it over an
+expanded tile's header and hid it everywhere else. Every control is a key you
+already have, so nothing up there is the only way to do anything, and `+ NEW`
+is not repeated because the browser's half of the row already has it.
+
+It costs the strip 34 pt, which is the reason the counts first went in a footer.
+It is the same 34 pt the browser's header already spends beside it, so the lanes
+now start level with the sessions list instead of above it.
+
 ### The gallery
 
-**⌥⌘G puts every lane on one screen**, each one a live thumbnail of itself, and
+**⌘G puts every lane on one screen**, each one a live thumbnail of itself, and
 pressed again puts the strip back. Supervising twelve agents on a strip that
 shows four means scrolling to find the one that stopped to ask for a `y` —
 which is the job the strip exists to make unnecessary. The gallery is the other
@@ -799,14 +842,18 @@ point of the lane gets, because that is what the measurements followed.
 **Click a tile to type into it.** The keyboard goes to the pane under the
 pointer, the orange outline goes around it, and every key without ⌘ — Esc and
 Return above all — goes to that pane. Answering a prompt from its thumbnail is
-the point, which is why Esc does not leave the gallery, and does not leave gather
-view while you are in it either (the View menu still does).
+the point, which is why Esc does not leave the gallery. ⌘G does.
 
-**Double-click a tile to go to it on the strip**, scrolled to and focused, the way
-⌘P lands. The double click is taken from the tile, because a word selection
-inside a thumbnail is not something anyone wants. The session browser follows
-the same two gestures while the gallery is up — click to focus, double-click to
-go — and keeps its usual behaviour on the strip.
+**Double-click a tile to expand it in place**, the way Relay TTY does: it grows
+from its own spot to the lane's real size, over its neighbours, and slides inward
+only as far as the window's edges make it. Nothing is resized — the terminal
+keeps its grid, the page keeps its layout — because a tile was always the lane
+drawn smaller, and expanding only draws it bigger. Double-click its header, or
+click the gallery between tiles, to put it back; expanding another tile puts
+the first one back too. Inside an expanded tile a double click selects a word
+again, since that tile is big enough to read. The session browser follows the
+same gestures while the gallery is up — click to focus, double-click to expand —
+and keeps its usual behaviour on the strip. ⌘G is still the way out.
 
 Tiles do not edit the strip: no width handle, no pane grips, no seams to drag, no
 header to drag into a new position. The ⋯ menu still works.
@@ -815,7 +862,10 @@ A few things behave the way the rest of the strip made them:
 
 - **Docked lanes are ordinary tiles**, at their place in the order, and go back to
   their edge when the gallery closes.
-- **⌘G in the gallery narrows it** to that project, as it narrows the strip.
+- **Gather has no key.** It narrows the strip, and the gallery, to one project,
+  and it was too easy to land in without meaning to — one keystroke, or a double
+  click on a lane header. It is in the View menu, and `keys` will bind it for
+  anyone who wants it back. ⌘G is the gallery's, both ways; ⌥⌘G is Google Drive's.
 - **Pages stay live where memory allows.** Every lane is on screen, so the
   memory policy measures distance from the lane you are working in rather than
   from a scroll position: pages near it are loaded, a page that was evicted shows

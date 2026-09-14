@@ -9,7 +9,7 @@ the owner's and are not re-opened here.
 
 ## Decision
 
-The gallery is a second layout over the same lanes. **⌥⌘G** toggles it; the
+The gallery is a second layout over the same lanes. **⌘G** toggles it; the
 choice is the `strip_layout` key in `app_state`, committed before a view moves,
 and it is the only thing a switch writes.
 
@@ -51,9 +51,15 @@ they go back to the wall when the gallery closes.
 ### Gather narrows the gallery to its tag
 
 The gallery draws `state.lanes`, which a gather filter has already narrowed.
-Docked lanes survive the filter in the core (so ⌘G cannot destroy your music),
-so they stay tiles here too. Leaving gather view has no key in the gallery —
-see Esc below — and is still in the menu.
+Docked lanes survive the filter in the core (so a gather cannot destroy your
+music), so they stay tiles here too.
+
+**Amended 2026-09-13.** Gather and Leave Gather now ship with no key. The
+owner found gather too surprising to be one keystroke — or one double click on a
+header, which also entered it — away, and it was the precondition for the sidebar
+attaching one session five times. ⌘G is the gallery's, both ways, because
+⌥⌘G is where Google Drive lives. Reaching this section now means someone bound
+gather in `keys` on purpose.
 
 ### Memory: distance is measured from the lane you are in
 
@@ -80,7 +86,7 @@ the existing policy rather than a second one:
 ### Esc and Return belong to the tile
 
 In the gallery the window's key monitor matches no chord without ⌘. Answering an
-agent's prompt from its thumbnail is the use, and `ungather` holding Esc would
+agent's prompt from its thumbnail is the use, and `ungather` bound to Esc would
 take exactly the key that answers it.
 
 ### Tiles do not edit the strip
@@ -140,3 +146,16 @@ in the gallery and keeps its behaviour on the strip.
 - A 1× panel at small scales looking worse than the spike's in-process
   `CARenderer` numbers suggest — WindowServer composites, and it may filter
   differently.
+
+### Amended 2026-09-13: double click expands in place
+
+The owner, after using it: *"When expanding a gallery thumbnail it should expand
+in place. not go to lanes view so it behaves like RelayTTY."* A double click on a
+tile — or on its session row while the gallery is up — no longer switches to the
+strip. It expands the tile over its own slot at the lane's real size, clamped
+inside the gallery (`GalleryLayout.expanded`), and raises it so AppKit's hit
+testing hands clicks to it rather than to the neighbour it covers. A double click
+on its header, a click on the gallery between tiles, or expanding another tile
+puts it back; inside an expanded tile's pane a double click is the program's
+again. Which tile is expanded is held in memory only. Because a tile's bounds are
+always the lane's own size, expanding changes a frame and resizes nothing.

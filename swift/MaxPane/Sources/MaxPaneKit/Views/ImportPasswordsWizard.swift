@@ -111,11 +111,10 @@ struct ImportPasswordsModel {
 /// say what is about to be asked, which is not a job any of the history
 /// wizard's screens do.
 @MainActor
-final class ImportPasswordsWizard: NSWindowController, NSWindowDelegate {
+final class ImportPasswordsWizard: Popup {
     /// Internal for the render-sheet test, like its sibling's.
     var model: ImportPasswordsModel
     private let store: StripStore
-    private var whileOpen: ImportPasswordsWizard?
     private var monitor: Any?
 
     private let body = NSStackView()
@@ -125,17 +124,12 @@ final class ImportPasswordsWizard: NSWindowController, NSWindowDelegate {
     init(store: StripStore, sources: [LoginSource]? = nil) {
         self.store = store
         self.model = ImportPasswordsModel(sources: sources ?? store.loginSources())
-        let panel = SquarePanel(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 440),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered, defer: false)
-        panel.isMovableByWindowBackground = true
-        panel.hasShadow = true
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.level = .floating
-        super.init(window: panel)
-        panel.delegate = self
+        // `.explicitOnly`: a stray click on the strip must not throw away an
+        // import half chosen, so this closes on Esc or its own buttons. An
+        // import runs for seconds and the user is entitled to look at the strip
+        // while it does. See `Popup`.
+        super.init(size: NSSize(width: 560, height: 440), dismissal: .explicitOnly)
+        let panel = window!
 
         let frame = ImportWizardPanelView()
         frame.translatesAutoresizingMaskIntoConstraints = false
@@ -176,32 +170,20 @@ final class ImportPasswordsWizard: NSWindowController, NSWindowDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not a nib") }
 
-    func present(over parent: NSWindow?) {
-        guard let panel = window else { return }
-        whileOpen = self
-        if let parent {
-            let f = parent.frame
-            panel.setFrameOrigin(NSPoint(
-                x: f.midX - panel.frame.width / 2,
-                y: f.midY - panel.frame.height / 2 + f.height * 0.1))
-            parent.addChildWindow(panel, ordered: .above)
-        }
-        panel.makeKeyAndOrderFront(nil)
+    /// Its own monitor handles Esc — and declines it while an import is writing.
+    override var handlesEscape: Bool { true }
+
+    override func popupDidPresent() {
         installKeyMonitor()
     }
 
     func dismiss() {
-        guard whileOpen != nil else { return }
+        guard isOpen else { return }
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
-        if let panel = window {
-            panel.parent?.removeChildWindow(panel)
-            panel.orderOut(nil)
-        }
-        whileOpen = nil
+        closePopup()
     }
 
-    func windowDidResignKey(_ notification: Notification) {}
 
     private func installKeyMonitor() {
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in

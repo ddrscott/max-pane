@@ -7,39 +7,66 @@ import AppKit
 /// from it. A keyboard-first app whose keys are undiscoverable is just an app
 /// you cannot use.
 @MainActor
-public final class HelpPanel: NSPanel {
-    public init() {
-        super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 520),
-            styleMask: [.titled, .closable, .utilityWindow, .nonactivatingPanel],
-            backing: .buffered, defer: false)
-        title = "Keyboard Shortcuts"
-        isFloatingPanel = true
+///
+/// A `Popup` since the owner asked for one frame for every dialog: ⌘/ used to be
+/// a titled utility window that stayed up until closed by hand. It now opens
+/// centred, closes on Esc, a click away, or ⌘/ again.
+final class HelpPanel: Popup {
+    init() {
+        super.init(size: NSSize(width: 600, height: 560), dismissal: .clickAway)
 
-        let text = NSTextView()
+        let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 480))
         text.isEditable = false
         text.isSelectable = true
         text.drawsBackground = false
-        text.textContainerInset = NSSize(width: 20, height: 18)
+        text.textContainerInset = NSSize(width: 20, height: 14)
+        // A text view pads every line by a few points of its own, which put the
+        // body a hair right of the `// KEYBOARD_SHORTCUTS` header above it. With
+        // it off, the header and every row start on the same 20 pt line.
+        text.textContainer?.lineFragmentPadding = 0
+        text.isVerticallyResizable = true
+        text.autoresizingMask = [.width]
+        text.textContainer?.widthTracksTextView = true
         text.textStorage?.setAttributedString(Self.body())
-
         let scroll = NSScrollView()
         scroll.documentView = text
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
+        let header = SectionHeader(text: "KEYBOARD_SHORTCUTS")
+        let hint = NSTextField(labelWithString: "esc")
+        hint.font = Theme.mono(10, weight: .medium)
+        hint.textColor = Theme.dimText
+        let rule = NSBox()
+        rule.boxType = .separator
+
         let content = NSView()
         content.wantsLayer = true
         content.layer?.backgroundColor = Theme.laneBackground.cgColor
-        content.addSubview(scroll)
+        content.layer?.borderColor = Theme.laneBorder.cgColor
+        content.layer?.borderWidth = Theme.borderWidth
+        // Square, like every other popup.
+        content.layer?.cornerRadius = 0
+        for view in [header, hint, rule, scroll] as [NSView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            content.addSubview(view)
+        }
+        let edge = Theme.borderWidth
         NSLayoutConstraint.activate([
-            scroll.topAnchor.constraint(equalTo: content.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-            scroll.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            header.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
+            header.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
+            hint.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            hint.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -20),
+            rule.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 12),
+            rule.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            rule.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: rule.bottomAnchor),
+            scroll.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: edge),
+            scroll.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -edge),
+            scroll.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -edge),
         ])
-        contentView = content
+        window?.contentView = content
     }
 
     /// A `Command`'s shortcut as a human reads it: ⇧⌘T, not `("t", [.command, .shift])`.

@@ -11,6 +11,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private let split = NSSplitViewController()
     private let sidebar: SidebarViewController
     private let strip: StripViewController
+    /// The row above the strip, level with the sidebar's header. See `StripToolbar`.
+    private let stripToolbar = StripToolbar()
     private var palette: SearchPaletteController?
     /// Held while it is on screen, like `palette` — for the same reason: the
     /// table's data source is weak.
@@ -67,6 +69,14 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         window.collectionBehavior = [.fullScreenPrimary, .managed]
         super.init(window: window)
 
+        stripToolbar.onLayout = { [weak self] gallery in
+            self?.strip.setLayout(gallery ? .gallery : .lanes)
+        }
+        stripToolbar.onFind = { [weak self] in self?.perform(.search) }
+        strip.onLayoutChange = { [weak self] layout in
+            self?.stripToolbar.setLayout(isGallery: layout == .gallery)
+        }
+
         // Deliberately not `NSSplitViewItem(sidebarWithViewController:)`. That
         // gives the item `.sidebar` behaviour, and the system collapses a
         // sidebar on its own when it decides space is tight — which on a strip
@@ -83,9 +93,11 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         // Remember where the user drags the divider.
         split.splitView.autosaveName = "MaxPaneStripSplit"
         split.addSplitViewItem(sidebarItem)
-        // The strip with a footer under it. A footer rather than a toolbar
-        // because the strip is the interface, and chrome across the top would
-        // eat the lane headers' room.
+        // The strip, with its toolbar above and the footer under it. The footer
+        // was chosen over a toolbar because chrome across the top eats the lane
+        // headers' room; the toolbar came back when the owner asked for the
+        // switch and ⌘P level with the sidebar's header, and it costs the strip
+        // exactly the height the sidebar's header already costs the sidebar.
         let stripSide = NSViewController()
         stripSide.view = NSView()
         // The strip's own ground, because with the sidebar collapsed this view
@@ -97,11 +109,19 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         strip.view.translatesAutoresizingMaskIntoConstraints = false
         statusBar.translatesAutoresizingMaskIntoConstraints = false
         stripSide.addChild(strip)
+        stripSide.view.addSubview(stripToolbar)
         stripSide.view.addSubview(strip.view)
         stripSide.view.addSubview(statusBar)
-        stripTop = strip.view.topAnchor.constraint(equalTo: stripSide.view.topAnchor)
+        stripToolbar.translatesAutoresizingMaskIntoConstraints = false
+        // The toolbar hangs from the top and the strip from the toolbar, so the
+        // one constant `updateTitlebarAvoidance` moves takes both down together.
+        stripTop = stripToolbar.topAnchor.constraint(equalTo: stripSide.view.topAnchor)
         NSLayoutConstraint.activate([
             stripTop,
+            stripToolbar.leadingAnchor.constraint(equalTo: stripSide.view.leadingAnchor),
+            stripToolbar.trailingAnchor.constraint(equalTo: stripSide.view.trailingAnchor),
+            stripToolbar.heightAnchor.constraint(equalToConstant: StripToolbar.height),
+            strip.view.topAnchor.constraint(equalTo: stripToolbar.bottomAnchor),
             strip.view.leadingAnchor.constraint(equalTo: stripSide.view.leadingAnchor),
             strip.view.trailingAnchor.constraint(equalTo: stripSide.view.trailingAnchor),
             strip.view.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
@@ -129,17 +149,19 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         statusBar.onToggleSidebar = { [weak self] in self?.perform(.toggleSidebar) }
         sidebar.registry = sessions
         sidebar.onSelect = { [weak self] laneId, paneId in
-            self?.strip.select(laneId: laneId, paneId: paneId)
+            guard let self else { return }
+            self.leaveGather(ifItHides: laneId)
+            _ = self.strip.select(laneId: laneId, paneId: paneId)
         }
-        // In the gallery a double click leaves for the strip at that lane. On
+        // In the gallery a double click expands that lane's tile in place. On
         // the strip it is the same select a second click always ran.
         sidebar.onOpen = { [weak self] laneId, paneId in
-            self?.strip.openInLanes(laneId: laneId, paneId: paneId)
+            guard let self else { return }
+            self.leaveGather(ifItHides: laneId)
+            self.strip.openLane(laneId: laneId, paneId: paneId)
         }
         sidebar.onNewSession = { [weak self] in self?.perform(.openAnything) }
-        sidebar.onAttach = { [weak self] sessionId in
-            try? self?.store.attachSessionAtEnd(relaySessionId: sessionId)
-        }
+        sidebar.onAttach = { [weak self] sessionId in self?.attach(sessionId: sessionId) }
         // Through `launch`, so a kept page lands exactly where a ⌘O page lands:
         // a new lane, immediately right of the one you are in.
         sidebar.onOpenBookmark = { [weak self] url in
@@ -174,14 +196,14 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         guard let window, stripTop != nil else { return }
         let band = TitlebarAvoidance.band(of: window)
         let buttonsEnd = TitlebarAvoidance.buttonsEnd(of: window)
-        let sidebarItem = split.splitViewItems[0]
-        let stripStartsAt = sidebarItem.isCollapsed ? 0 : sidebar.view.frame.width
-
-        sidebar.titlebarInset = TitlebarAvoidance.inset(
-            band: band, buttonsEndAt: buttonsEnd, contentStartsAt: 0)
-        let stripInset = TitlebarAvoidance.inset(
-            band: band, buttonsEndAt: buttonsEnd, contentStartsAt: stripStartsAt)
-        if stripTop.constant != stripInset { stripTop.constant = stripInset }
+        // One inset for both columns. The strip used to run to the top whenever
+        // the sidebar held the corner; now its toolbar has to sit level with the
+        // sidebar's header, so it drops by exactly what the header drops by —
+        // windowed that is the title bar's band, in full screen nothing.
+        let inset = TitlebarAvoidance.inset(band: band, buttonsEndAt: buttonsEnd, contentStartsAt: 0)
+        sidebar.titlebarInset = inset
+        if stripTop.constant != inset { stripTop.constant = inset }
+        stripToolbar.setLayout(isGallery: strip.isGallery)
     }
 
     /// Every key the menu cannot carry.
@@ -787,10 +809,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 // end. Never beside the focused lane — an attach is not a
                 // consequence of what you were reading, and the old picker put
                 // it at the end for the same reason.
-                try store.attachSessionAtEnd(relaySessionId: sessionId)
-                if let laneId = store.state.lanes.last?.id {
-                    strip.reveal(laneId: laneId, flash: true)
-                }
+                attach(sessionId: sessionId)
             }
         } catch {
             showError(error)
@@ -816,6 +835,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     }
 
     private func refreshStatus() {
+        stripToolbar.setSessions(sessions.sessions.values.filter(\.isRunning).count)
         statusBar.update(
             state: store.state,
             telemetry: sessions.sessions,
@@ -829,8 +849,46 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         sessions.setAttached(attachedSessionIDs())
     }
 
+    /// Every session with a lane, including lanes a gather view is hiding. The
+    /// narrowed list offered a gathered-out session to ⌘O as not yet attached.
     private func attachedSessionIDs() -> Set<String> {
-        Set(store.state.lanes.flatMap(\.panes).compactMap(\.relaySessionId))
+        Set(store.allLanes.flatMap(\.panes).compactMap(\.relaySessionId))
+    }
+
+    /// Put a Relay session in front of the user — its lane if it has one.
+    ///
+    /// The sidebar and ⌘O both come through here, and both used to attach
+    /// unconditionally on the strength of a lookup a gather filter could fool.
+    /// Now a session that already has a lane gets that lane, revealed and
+    /// focused, and the core refuses a second one anyway. A session with no lane
+    /// leaves any gather first: its new lane has no project tag yet, so the
+    /// gather would hide it, and a click that visibly does nothing is the click
+    /// that gets repeated.
+    private func attach(sessionId: String) {
+        if let lane = store.lane(holdingSession: sessionId) {
+            leaveGather(ifItHides: lane.id)
+            let pane = lane.panes.first { $0.relaySessionId == sessionId }
+            _ = strip.select(laneId: lane.id, paneId: pane?.id)
+            return
+        }
+        do {
+            if store.isGathered { try store.ungather() }
+            try store.attachSessionAtEnd(relaySessionId: sessionId)
+            if let laneId = store.state.lanes.last?.id {
+                strip.reveal(laneId: laneId, flash: true)
+            }
+        } catch {
+            showError(error)
+        }
+    }
+
+    /// Leave a gather view when it is what stands between the user and a lane —
+    /// the same way ⌘P already ignores one.
+    private func leaveGather(ifItHides laneId: String) {
+        guard store.isGathered, store.lane(laneId) == nil,
+              store.allLanes.contains(where: { $0.id == laneId })
+        else { return }
+        try? store.ungather()
     }
 
     /// What the user typed, as something `WKWebView` will load. Bare hostnames
@@ -889,7 +947,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     /// its history and should not have to, and "merge or replace" is a decision
     /// a file chooser has nowhere to put.
     private func importBrowserHistory() {
-        if let existing = importWizard, existing.window?.isVisible == true {
+        // Open, not merely visible: one still fading out is on its way out.
+        if let existing = importWizard, existing.isOpen {
             existing.window?.makeKeyAndOrderFront(nil)
             return
         }
@@ -904,7 +963,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     /// consent it ends with is macOS's and not ours — see
     /// `ImportPasswordsWizard`.
     private func importBrowserPasswords() {
-        if let existing = passwordsWizard, existing.window?.isVisible == true {
+        // Open, not merely visible: one still fading out is on its way out.
+        if let existing = passwordsWizard, existing.isOpen {
             existing.window?.makeKeyAndOrderFront(nil)
             return
         }
@@ -920,7 +980,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     /// left open, so the key that opens it is a key someone will press while it
     /// is on screen.
     private func showHistory() {
-        if let existing = historyWindow, existing.window?.isVisible == true {
+        // Open, not merely visible: one still fading out is on its way out.
+        if let existing = historyWindow, existing.isOpen {
             existing.window?.makeKeyAndOrderFront(nil)
             return
         }
@@ -968,17 +1029,17 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     }
 
     /// ⌘/ — every shortcut, generated from `Command`.
+    /// ⌘/ — every shortcut, in the same popup as every other dialog. Pressed
+    /// again while it is open, it closes: the key that asked the question can
+    /// put the answer away.
     private func showHelp() {
-        if let existing = helpPanel {
-            existing.orderFront(nil)
+        if let existing = helpPanel, existing.isOpen {
+            existing.closePopup()
             return
         }
         let panel = HelpPanel()
         helpPanel = panel
-        if let frame = window?.frame {
-            panel.setFrameOrigin(NSPoint(x: frame.midX - 280, y: frame.midY - 260))
-        }
-        panel.orderFront(nil)
+        panel.present(over: window)
     }
 
     /// PRD §13 Phase 2's memory dashboard. Floating, so it can sit beside the
@@ -1001,28 +1062,23 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     /// every time, and names who else it affects.
     private func confirmClaimSession() {
         guard let paneId = store.state.focusedPaneId else { return }
-        let alert = NSAlert()
-        alert.messageText = "Resize this session to fit the lane?"
-        alert.informativeText =
-            "This changes the terminal's size for everyone attached to it, "
-            + "including the Relay web client on your phone, and will redraw "
-            + "whatever is running.\n\n"
-            + "Max Pane otherwise never resizes a session — it sizes the lane "
-            + "to the session instead."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Resize Session")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        strip.claimSession(paneId: paneId)
+        ConfirmPopup.confirm(
+            over: window,
+            title: "Resize this session to fit the lane?",
+            detail: "This changes the terminal's size for everyone attached to it, "
+                + "including the Relay web client on your phone, and will redraw "
+                + "whatever is running.\n\n"
+                + "Max Pane otherwise never resizes a session — it sizes the lane "
+                + "to the session instead.",
+            action: "Resize Session", returnConfirms: true
+        ) { [weak self] resize in
+            guard resize else { return }
+            self?.strip.claimSession(paneId: paneId)
+        }
     }
 
     private func showError(_ error: Error) {
-        let alert = NSAlert()
-        alert.messageText = "That didn't work"
-        alert.informativeText = Self.describe(error)
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+        ConfirmPopup.inform(over: window, title: "That didn't work", detail: Self.describe(error))
     }
 
     /// What to show a human, in an alert or down the CLI's stderr.

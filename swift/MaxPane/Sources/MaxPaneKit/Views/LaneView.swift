@@ -69,7 +69,6 @@ final class LaneView: NSView {
     /// where the pane would land, once more on the drop so the ledger takes one
     /// write per decision.
     var onPaneGrab: ((String, NSPoint, Bool) -> Void)?
-    var onHeaderDoubleClick: (() -> Void)?
     /// Dragging the header reorders the strip (PRD §7.2). `x` is in the strip's
     /// coordinate space; `final` marks the drop.
     var onHeaderDrag: ((_ x: CGFloat, _ final: Bool) -> Void)?
@@ -260,7 +259,6 @@ final class LaneView: NSView {
             self.desiredWidth = CGFloat(next)
             self.onResize?(next, final)
         }
-        header.onDoubleClick = { [weak self] in self?.onHeaderDoubleClick?() }
         header.onDrag = { [weak self] x, final in self?.onHeaderDrag?(x, final) }
         // The header reads the lane's callbacks through this at click time
         // rather than copying them: the strip connects them after `init`, and

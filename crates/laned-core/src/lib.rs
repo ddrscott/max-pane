@@ -205,6 +205,7 @@ impl Core {
         inherit_tag_from_lane: Option<String>,
     ) -> Result<StripState> {
         let mut inner = self.inner.lock();
+        Self::refuse_second_pane(&inner.ledger, &kind, relay_session_id.as_deref())?;
         let ordinal = Self::place(&mut inner.ledger, &placement)?;
 
         let (project_root, project_source) = match inherit_tag_from_lane {
@@ -263,6 +264,7 @@ impl Core {
         url: Option<String>,
     ) -> Result<StripState> {
         let mut inner = self.inner.lock();
+        Self::refuse_second_pane(&inner.ledger, &kind, relay_session_id.as_deref())?;
         let position = inner.ledger.next_position(&lane_id)?;
         let pane = Pane {
             id: new_id(),
@@ -288,6 +290,20 @@ impl Core {
         inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane.id)?;
         Self::bump(&mut inner);
         Self::snapshot(&inner)
+    }
+
+    /// Every lane in the ledger, in ordinal order, **ignoring a gather filter**.
+    ///
+    /// `state()` narrows to the gathered project, which is right for the strip
+    /// and wrong for every question of the form "is this session already on the
+    /// strip?". The sidebar and the ⌘O picker asked it of the narrowed list, so
+    /// under a gather every session tagged elsewhere looked unattached, a click
+    /// attached it again, and the new lane was hidden by the same gather — which
+    /// is how the owner's ledger came to hold five lanes on one session, all
+    /// created inside three seconds.
+    pub fn all_lanes(&self) -> Result<Vec<Lane>> {
+        let inner = self.inner.lock();
+        inner.ledger.lanes()
     }
 
     // ---- removal -----------------------------------------------------------
@@ -1578,6 +1594,29 @@ impl Core {
 // ---- internals (not exported over FFI) -------------------------------------
 
 impl Core {
+    /// A session is on the strip once.
+    ///
+    /// Two panes on one Relay session are the same terminal drawn twice: both
+    /// attached, both closing when it exits, neither one anything the shell
+    /// wants. The shell looks for the lane first and reveals it; this is the
+    /// backstop for a door that forgot to, and it reads the unfiltered ledger
+    /// because a gather filter is precisely what made the doors forget. A pty
+    /// pane with no session — one whose session could not start — holds nothing
+    /// and is not counted.
+    fn refuse_second_pane(ledger: &Ledger, kind: &PaneKind, relay_session_id: Option<&str>) -> Result<()> {
+        let (PaneKind::Pty, Some(id)) = (kind, relay_session_id) else { return Ok(()) };
+        let holder = ledger
+            .lanes()?
+            .into_iter()
+            .find(|l| l.panes.iter().any(|p| p.relay_session_id.as_deref() == Some(id)));
+        match holder {
+            Some(lane) => Err(CoreError::Invalid {
+                message: format!("session {id} is already on the strip, in lane {}", lane.id),
+            }),
+            None => Ok(()),
+        }
+    }
+
     /// Snapshot a source history file and read every page out of it.
     ///
     /// The snapshot's lifetime is this function: it is taken, read and deleted

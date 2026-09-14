@@ -32,6 +32,12 @@ struct KeymapTests {
     func describeRoundTrips() {
         for command in Command.allCases {
             let printed = HelpPanel.describe(command)
+            // An unbound command prints a dash and has nothing to round-trip —
+            // gather and ungather ship that way now.
+            if command.chords.isEmpty {
+                #expect(printed == "—", "\(command.rawValue) has no key but prints \"\(printed)\"")
+                continue
+            }
             let parsed = printed.split(separator: " ").map { KeyChord(String($0)) }
             #expect(
                 parsed.allSatisfy { $0 != nil },
@@ -216,13 +222,32 @@ struct KeymapTests {
     /// Esc was declared by `.ungather` and listened for by nothing: the menu
     /// skipped it because it has no ⌘, and there was no other handler. The
     /// monitor now takes every chord the menu cannot carry, and `menuChord` is
-    /// what divides them.
+    /// what divides them. `.ungather` no longer ships with Esc, so the chord is
+    /// given to it here the way a config file would.
     @Test("a chord with no command key is not the menu's to carry")
     func nonCommandChordsAreNotMenuKeys() {
-        #expect(Command.ungather.chords == [KeyChord(key: "\u{1b}", modifiers: [])])
+        let esc = keymap(["ungather": ["esc"]]).chords(for: .ungather)
+        #expect(esc == [KeyChord(key: "\u{1b}", modifiers: [])])
+        #expect(esc.first?.modifiers.contains(.command) == false)
         #expect(Command.ungather.menuChord == nil)
         #expect(Command.openAnything.menuChord == KeyChord(key: "o", modifiers: [.command]))
         // An unbound command has nothing for a menu item to show either.
         #expect(keymap(["closePane": []]).chords(for: .closePane).isEmpty)
+    }
+
+    /// The owner, on gather: *"It's too surprising. Let's remove the shortcuts
+    /// for the feature so it's not triggered by accident."* It is still a
+    /// command — the View menu lists it and `keys` can bind it — but no default
+    /// chord reaches it, and ⌘G went to the view he uses instead.
+    @Test("gather ships unbound, and ⌘G is the gallery's in both directions")
+    func gatherIsUnboundAndCommandGIsTheGallery() {
+        #expect(Keymap.defaults.chords(for: .gather).isEmpty)
+        #expect(Keymap.defaults.chords(for: .ungather).isEmpty)
+        #expect(Keymap.defaults.chords(for: .toggleGallery) == [KeyChord(key: "g", modifiers: [.command])])
+        // No command waits behind ⌥⌘G any more: it is Google Drive's.
+        let driveChord = KeyChord(key: "g", modifiers: [.command, .option])
+        #expect(Command.allCases.allSatisfy { !Keymap.defaults.chords(for: $0).contains(driveChord) })
+        // Still bindable by someone who wants it.
+        #expect(keymap(["gather": ["cmd+e"]]).chords(for: .gather) == [KeyChord(key: "e", modifiers: [.command])])
     }
 }

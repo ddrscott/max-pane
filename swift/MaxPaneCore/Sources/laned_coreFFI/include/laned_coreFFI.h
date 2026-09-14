@@ -274,6 +274,11 @@ RustBuffer uniffi_laned_core_fn_method_core_add_bookmark(uint64_t ptr, RustBuffe
 RustBuffer uniffi_laned_core_fn_method_core_add_pane(uint64_t ptr, RustBuffer lane_id, RustBuffer kind, RustBuffer relay_session_id, RustBuffer url, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_ALL_LANES
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_ALL_LANES
+RustBuffer uniffi_laned_core_fn_method_core_all_lanes(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_BOOKMARK_COUNT
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_BOOKMARK_COUNT
 uint32_t uniffi_laned_core_fn_method_core_bookmark_count(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -928,6 +933,12 @@ uint16_t uniffi_laned_core_checksum_method_core_add_bookmark(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_ADD_PANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_ADD_PANE
 uint16_t uniffi_laned_core_checksum_method_core_add_pane(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_ALL_LANES
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_ALL_LANES
+uint16_t uniffi_laned_core_checksum_method_core_all_lanes(void
     
 );
 #endif

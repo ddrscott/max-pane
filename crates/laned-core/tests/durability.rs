@@ -95,8 +95,8 @@ fn retagging_never_moves_a_lane() {
 
     let core = Core::open_in_memory().unwrap();
     let mut ids = Vec::new();
-    for _ in 0..5 {
-        let st = core.create_lane(Placement::End, PaneKind::Pty, Some("s".into()), None, None).unwrap();
+    for i in 0..5 {
+        let st = core.create_lane(Placement::End, PaneKind::Pty, Some(format!("s{i}")), None, None).unwrap();
         ids.push(st.lanes.last().unwrap().id.clone());
     }
     let target = ids[2].clone();

@@ -21,7 +21,7 @@ final class SquarePanel: NSPanel {
 /// rows, so the controller knows which rows can be selected and how tall each
 /// one is, and leaves both answers to the subclass.
 @MainActor
-class PaletteController: NSWindowController, NSTextFieldDelegate, NSWindowDelegate {
+class PaletteController: Popup, NSTextFieldDelegate {
     let field = NSTextField()
     let table = NSTableView()
     /// A status line, the way the bar pins `10 sessions` to its toolbar: what
@@ -30,37 +30,12 @@ class PaletteController: NSWindowController, NSTextFieldDelegate, NSWindowDelega
     let footerRight = NSTextField(labelWithString: "")
     private let scroll = NSScrollView()
     private var monitor: Any?
-    /// The palette keeps itself alive while it is on screen.
-    ///
-    /// `NSTextField.delegate` and `NSTableView.dataSource` are weak, and the
-    /// caller is under no obligation to hold a palette it has handed a
-    /// completion to. Without this the controller is released the moment
-    /// `present` returns: the rows that were already built stay on screen, and
-    /// everything that needs the controller afterwards — typing to filter,
-    /// Return to choose, the live throughput tick — silently does nothing. A
-    /// deliberate cycle, broken in `dismiss`.
-    private var whileOpen: PaletteController?
 
     init(placeholder: String, size: NSSize = NSSize(width: 720, height: 420)) {
-        let panel = SquarePanel(
-            contentRect: NSRect(origin: .zero, size: size),
-            // Borderless, because a `.titled` panel gets macOS's rounded window
-            // chrome no matter what its content layer says — and a 10pt rounded
-            // card is precisely the house style's one prohibition. `canBecomeKey`
-            // is overridden below to get back the focus behaviour `.titled`
-            // would have given us for free.
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered, defer: false)
-        panel.isMovableByWindowBackground = true
-        panel.hasShadow = true
-        // A borderless window is transparent by default, so the square edge has
-        // to be painted rather than inherited.
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.level = .floating
-        panel.hidesOnDeactivate = true
-        super.init(window: panel)
-        panel.delegate = self
+        // The panel, its keep-alive, its placement and its entrance are the
+        // shared popup's; see `Popup`.
+        super.init(size: size, dismissal: .clickAway)
+        window?.hidesOnDeactivate = true
 
         field.placeholderString = placeholder
         field.font = Theme.mono(16)
@@ -145,24 +120,17 @@ class PaletteController: NSWindowController, NSTextFieldDelegate, NSWindowDelega
             footerRight.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
         ])
         footerLeft.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        panel.contentView = content
+        window?.contentView = content
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not a nib") }
 
-    func present(over parent: NSWindow?) {
-        guard let panel = window else { return }
-        whileOpen = self
-        if let parent {
-            let frame = parent.frame
-            panel.setFrameOrigin(NSPoint(
-                x: frame.midX - panel.frame.width / 2,
-                y: frame.midY - panel.frame.height / 2 + frame.height * 0.15))
-            parent.addChildWindow(panel, ordered: .above)
-        }
-        panel.makeKeyAndOrderFront(nil)
-        panel.makeFirstResponder(field)
+    /// The palette's own monitor already turns Esc into `cancel`.
+    override var handlesEscape: Bool { true }
+
+    override func popupDidPresent() {
+        window?.makeFirstResponder(field)
         installKeyMonitor()
         reload()
     }
@@ -196,7 +164,7 @@ class PaletteController: NSWindowController, NSTextFieldDelegate, NSWindowDelega
         select(row: next)
     }
 
-    private func select(row: Int) {
+    func select(row: Int) {
         table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         // Scroll the header above a group's first row into view with it,
         // otherwise you lose track of which directory you are in.
@@ -270,17 +238,17 @@ class PaletteController: NSWindowController, NSTextFieldDelegate, NSWindowDelega
     /// Clicking back into the strip, or switching away from the app, closes the
     /// palette — and, just as importantly, lets go of it, so its live
     /// subscription to the registry stops with it.
-    func windowDidResignKey(_ notification: Notification) { cancel() }
+    override func popupCancelled() { cancel() }
 
     func dismiss(selected: Int) {
-        guard whileOpen != nil else { return }
+        guard isOpen else { return }
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
-        window?.parent?.removeChildWindow(window!)
-        window?.orderOut(nil)
+        // Delivered as the fade starts rather than after it: a jump from ⌘P
+        // should not wait for the palette to finish leaving. The popup keeps
+        // itself alive until it has gone, so `deliver` can still use us.
+        closePopup()
         deliver(selected: selected)
-        // Last, because `deliver` is the caller's chance to use us.
-        whileOpen = nil
     }
 
     // MARK: - subclass hooks
@@ -773,10 +741,58 @@ final class SearchPaletteController: PaletteController {
         // The core scores each field separately, so one lane can come back
         // several times with the same text — its title and its project root
         // both matching, say. Identical lines are noise in a list you scan.
-        var seen = Set<String>()
-        hits = store.search(query).filter { seen.insert("\($0.laneId)\u{1}\($0.text)").inserted }
+        //
+        // Nothing typed is a question too — "where was I?" — and it used to get
+        // an empty list. It gets every lane, most recently used first, with the
+        // gather filter ignored the way search ignores it.
+        if query.trimmingCharacters(in: .whitespaces).isEmpty {
+            hits = Self.recentHits(lanes: store.allLanes, focusedPaneId: store.state.focusedPaneId)
+        } else {
+            var seen = Set<String>()
+            hits = store.search(query).filter { seen.insert("\($0.laneId)\u{1}\($0.text)").inserted }
+        }
         super.reload()
+        if query.trimmingCharacters(in: .whitespaces).isEmpty {
+            let row = Self.initialRow(hits: hits, focusedPaneId: store.state.focusedPaneId)
+            if row < hits.count { select(row: row) }
+        }
         updateFooter()
+    }
+
+    /// Every lane with somewhere to go, most recently focused first, as rows the
+    /// search list already knows how to draw.
+    ///
+    /// The owner: *"`cmd-p` should show a list of candidates sorted by most
+    /// recently accessed instead of a blank list."* One row per lane, aimed at
+    /// the pane that has the keyboard when it is in that lane and at the top of
+    /// the stack otherwise. Ties on the clock keep strip order, so a launch that
+    /// stamped several lanes in the same millisecond still lists them left to
+    /// right rather than at the sort's whim.
+    static func recentHits(lanes: [Lane], focusedPaneId: String?) -> [SearchHit] {
+        lanes.enumerated()
+            .sorted { a, b in
+                a.element.lastFocusAt != b.element.lastFocusAt
+                    ? a.element.lastFocusAt > b.element.lastFocusAt
+                    : a.offset < b.offset
+            }
+            .compactMap { _, lane in
+                guard let pane = lane.panes.first(where: { $0.id == focusedPaneId }) ?? lane.panes.first
+                else { return nil }
+                let text = [lane.title, pane.url, lane.projectRoot]
+                    .compactMap { $0 }.first { !$0.isEmpty } ?? "untitled"
+                return SearchHit(laneId: lane.id, paneId: pane.id, text: text, field: .title, score: 0)
+            }
+    }
+
+    /// Which recent row ↩ should mean.
+    ///
+    /// The lane you are already in is the most recent by definition, and jumping
+    /// to it is nothing. So when it is on top the selection starts on the one
+    /// before it — ⌘P ↩ goes back, the way ⌘⇥ does — and the current lane stays
+    /// listed, marked focused, for the one time you wanted it.
+    static func initialRow(hits: [SearchHit], focusedPaneId: String?) -> Int {
+        guard hits.count > 1, let focusedPaneId, hits[0].paneId == focusedPaneId else { return 0 }
+        return 1
     }
 
     override func numberOfRows() -> Int { hits.count }
@@ -821,7 +837,7 @@ final class SearchPaletteController: PaletteController {
 
     private func updateFooter() {
         let summary = query.isEmpty
-            ? "\(store.state.lanes.count) lanes · titles, urls, output"
+            ? "recent · \(hits.count) lanes · type to search titles, urls, output"
             : "\(hits.count) \(hits.count == 1 ? "hit" : "hits") · \(store.state.lanes.count) lanes"
         footerLeft.attributedStringValue = PaletteStyle.caps(summary)
         footerRight.stringValue = "▪ focused    ↩ jump    esc"

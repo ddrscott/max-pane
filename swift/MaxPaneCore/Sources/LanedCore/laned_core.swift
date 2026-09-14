@@ -658,6 +658,19 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func addPane(laneId: String, kind: PaneKind, relaySessionId: String?, url: String?) throws  -> StripState
     
     /**
+     * Every lane in the ledger, in ordinal order, **ignoring a gather filter**.
+     *
+     * `state()` narrows to the gathered project, which is right for the strip
+     * and wrong for every question of the form "is this session already on the
+     * strip?". The sidebar and the ⌘O picker asked it of the narrowed list, so
+     * under a gather every session tagged elsewhere looked unattached, a click
+     * attached it again, and the new lane was hidden by the same gather — which
+     * is how the owner's ledger came to hold five lanes on one session, all
+     * created inside three seconds.
+     */
+    func allLanes() throws  -> [Lane]
+    
+    /**
      * How many rows the tree holds, folders included.
      */
     func bookmarkCount() throws  -> UInt32
@@ -1482,6 +1495,26 @@ open func addPane(laneId: String, kind: PaneKind, relaySessionId: String?, url: 
         FfiConverterTypePaneKind_lower(kind),
         FfiConverterOptionString.lower(relaySessionId),
         FfiConverterOptionString.lower(url),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Every lane in the ledger, in ordinal order, **ignoring a gather filter**.
+     *
+     * `state()` narrows to the gathered project, which is right for the strip
+     * and wrong for every question of the form "is this session already on the
+     * strip?". The sidebar and the ⌘O picker asked it of the narrowed list, so
+     * under a gather every session tagged elsewhere looked unattached, a click
+     * attached it again, and the new lane was hidden by the same gather — which
+     * is how the owner's ledger came to hold five lanes on one session, all
+     * created inside three seconds.
+     */
+open func allLanes()throws  -> [Lane]  {
+    return try  FfiConverterSequenceTypeLane.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_all_lanes(
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -6930,6 +6963,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_add_pane() != 2752) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_all_lanes() != 64277) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_bookmark_count() != 36122) {

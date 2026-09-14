@@ -20,6 +20,60 @@ enum GalleryLayout {
     /// Between tiles, and between the tiles and the edge of the gallery.
     static let gap: CGFloat = 10
 
+    /// Where a tile goes when it is expanded in place.
+    ///
+    /// Relay TTY's rule, which the owner asked for by name: grow from the
+    /// tile's own centre to the lane's real size, then slide inward only as far
+    /// as the gallery's edges demand. The lane is never drawn bigger than it
+    /// is, and a lane taller or wider than the room shrinks to fit with its
+    /// shape kept. Nothing inside is resized either way — a tile's bounds are
+    /// always the lane's size, and only the frame changes.
+    ///
+    /// The height is solved first and the width derived from it, so the common
+    /// cases land on exact numbers: a lane that fits is exactly its size, and a
+    /// lane taller than the room is exactly the room tall.
+    /// The two ends of a tile's move, as values for its layer's `transform`:
+    /// drawn at `from` on the first frame, and exactly as laid out on the last.
+    ///
+    /// The owner: *"nothing in the UI/UX should just 'jank in' like magic."* So a
+    /// tile that changes place is laid out at its destination at once and its
+    /// layer eased there from where the eye last saw it. Only the layer moves:
+    /// the frame is already final, which keeps hit testing honest, and the
+    /// bounds stay the lane's size, so no terminal inside sees a resize.
+    ///
+    /// **Composed with the transform the layer already has.** The first version
+    /// animated from a flip to *identity*, which is only right when the layer's
+    /// own transform is identity — and a tile whose bounds are the lane's size
+    /// and whose frame is a thumbnail is not drawn that way. The owner watched
+    /// what that cost: a collapsing tile started several times too big, and
+    /// finished at the lane's full size before snapping into its slot. Here the
+    /// map from `to` to `from` is built in the superlayer's space, measured from
+    /// the layer's real `position`, and applied *after* the layer's own
+    /// transform, so the last frame is the layer exactly as AppKit left it.
+    static func moveTransforms(
+        from: CGRect, to: CGRect, position: CGPoint, model: CATransform3D
+    ) -> (start: CATransform3D, end: CATransform3D) {
+        guard to.width > 0, to.height > 0 else { return (model, model) }
+        let sx = from.width / to.width
+        let sy = from.height / to.height
+        // A point that is `to`'s origin relative to the layer's position has to
+        // land on `from`'s origin relative to the same position.
+        let tx = (from.minX - position.x) - sx * (to.minX - position.x)
+        let ty = (from.minY - position.y) - sy * (to.minY - position.y)
+        let toFrom = CATransform3DConcat(CATransform3DMakeScale(sx, sy, 1), CATransform3DMakeTranslation(tx, ty, 0))
+        return (CATransform3DConcat(model, toFrom), model)
+    }
+
+    static func expanded(tile: CGRect, laneSize: CGSize, in size: CGSize, gap: CGFloat = gap) -> CGRect {
+        guard laneSize.width > 0, laneSize.height > 0 else { return tile }
+        let room = CGSize(width: max(0, size.width - 2 * gap), height: max(0, size.height - 2 * gap))
+        let height = min(laneSize.height, room.height, room.width * laneSize.height / laneSize.width)
+        let width = height * laneSize.width / laneSize.height
+        let x = min(max(tile.midX - width / 2, gap), size.width - gap - width)
+        let y = min(max(tile.midY - height / 2, gap), size.height - gap - height)
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
     struct Placement: Equatable {
         /// The one scale every tile is drawn at. 1 is the lane's real size.
         var scale: CGFloat

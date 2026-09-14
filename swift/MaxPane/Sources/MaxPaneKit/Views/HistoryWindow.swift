@@ -21,12 +21,13 @@ import LanedCore
 ///   the asking, because the old one deleted one of two identical-looking rows
 ///   instantly with no way to tell which. And there is finally a way to clear.
 ///
-/// It does not hide on deactivate the way a palette does. A palette that loses
-/// focus has lost a query worth one second of typing; this has a scroll position
-/// four hundred rows down, and ⌘-Tab to read something is not a decision to
-/// close it.
+/// It is a `Popup`, so it closes the way every dialog here does — Esc, or a click
+/// back into the strip — because the owner asked for one frame for all of them.
+/// It does not close when the app loses focus, though: a palette that loses focus
+/// has lost a query worth one second of typing; this has a scroll position four
+/// hundred rows down, and ⌘-Tab to read something is not a decision to close it.
 @MainActor
-final class HistoryWindow: NSWindowController, NSWindowDelegate, NSTextFieldDelegate,
+final class HistoryWindow: Popup, NSTextFieldDelegate,
     NSTableViewDataSource, NSTableViewDelegate
 {
     /// Internal so a test can drive the list without a window server.
@@ -52,7 +53,6 @@ final class HistoryWindow: NSWindowController, NSWindowDelegate, NSTextFieldDele
     private var heightCache: [String: CGFloat] = [:]
     private var measuredWidth: CGFloat = 0
 
-    private var whileOpen: HistoryWindow?
     private var monitor: Any?
 
     private enum Layout {
@@ -78,22 +78,12 @@ final class HistoryWindow: NSWindowController, NSWindowDelegate, NSTextFieldDele
     init(store: StripStore, onOpen: @escaping (String) -> Void) {
         self.store = store
         self.onOpen = onOpen
-        let panel = SquarePanel(
-            contentRect: NSRect(x: 0, y: 0, width: 960, height: 640),
-            // Resizable, unlike every other panel here: the one complaint this
-            // window answers is "no room", so how much room it gets is the
-            // reader's call. Borderless for the square edge — see `SquarePanel`.
-            styleMask: [.borderless, .resizable, .nonactivatingPanel],
-            backing: .buffered, defer: false)
-        panel.isMovableByWindowBackground = true
-        panel.hasShadow = true
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.level = .floating
-        panel.minSize = NSSize(width: 560, height: 320)
-        super.init(window: panel)
-        panel.delegate = self
-        panel.contentView = buildContent()
+        // Resizable, unlike every other popup here: the one complaint this window
+        // answers is "no room", so how much room it gets is the reader's call.
+        super.init(
+            size: NSSize(width: 960, height: 640), dismissal: .clickAway,
+            resizable: true, minSize: NSSize(width: 560, height: 320))
+        window?.contentView = buildContent()
     }
 
     @available(*, unavailable)
@@ -197,35 +187,25 @@ final class HistoryWindow: NSWindowController, NSWindowDelegate, NSTextFieldDele
 
     // MARK: - showing and hiding
 
-    func present(over parent: NSWindow?) {
-        guard let panel = window else { return }
-        whileOpen = self
-        if let parent {
-            let f = parent.frame
-            panel.setFrameOrigin(NSPoint(
-                x: f.midX - panel.frame.width / 2,
-                y: f.midY - panel.frame.height / 2 + f.height * 0.06))
-            parent.addChildWindow(panel, ordered: .above)
-        }
-        panel.makeKeyAndOrderFront(nil)
-        panel.makeFirstResponder(field)
+    /// Its own monitor already closes on Esc.
+    override var handlesEscape: Bool { true }
+    /// See the type's note: ⌘-Tab away is reading something else, not closing.
+    override var closesWhenAppDeactivates: Bool { false }
+
+    override func popupDidPresent() {
+        window?.makeFirstResponder(field)
         installKeyMonitor()
         restart()
     }
 
     func dismiss() {
-        guard whileOpen != nil else { return }
+        guard isOpen else { return }
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
-        if let panel = window {
-            panel.parent?.removeChildWindow(panel)
-            panel.orderOut(nil)
-        }
-        whileOpen = nil
+        closePopup()
     }
 
-    /// Losing focus is not closing. See the type's note.
-    func windowDidResignKey(_ notification: Notification) {}
+    override func popupCancelled() { dismiss() }
 
     /// A wider window fits more of an address on a line, so every measured
     /// height is wrong until it is measured again.
@@ -443,15 +423,17 @@ final class HistoryWindow: NSWindowController, NSWindowDelegate, NSTextFieldDele
     }
 
     private func confirmForget(_ entry: HistoryEntry) {
-        guard confirm(HistoryBrowseModel.forgetPrompt(entry), action: "Forget") else { return }
-        store.forgetVisit(entry.url)
-        // Also the recents list, for the reason the palette gives: a page
-        // launched from a terminal is in both, and forgetting one of them leaves
-        // the row on screen.
-        store.forgetRecent(.url, entry.url)
-        model.forget(url: entry.url)
-        dayCounts.removeAll()
-        rebuild()
+        confirm(HistoryBrowseModel.forgetPrompt(entry), action: "Forget") { [weak self] in
+            guard let self else { return }
+            store.forgetVisit(entry.url)
+            // Also the recents list, for the reason the palette gives: a page
+            // launched from a terminal is in both, and forgetting one of them leaves
+            // the row on screen.
+            store.forgetRecent(.url, entry.url)
+            model.forget(url: entry.url)
+            dayCounts.removeAll()
+            rebuild()
+        }
     }
 
     private func offerClear(from anchor: NSView) {
@@ -476,16 +458,14 @@ final class HistoryWindow: NSWindowController, NSWindowDelegate, NSTextFieldDele
         guard pages > 0 else {
             // Saying so beats a confirmation for a no-op, which teaches people
             // to click through confirmations.
-            let alert = NSAlert()
-            alert.messageText = "Nothing to forget in \(range.phrase)."
-            alert.alertStyle = .informational
-            alert.beginSheetModal(for: window!, completionHandler: nil)
+            ConfirmPopup.inform(over: window, title: "Nothing to forget in \(range.phrase).", detail: nil)
             return
         }
-        guard confirm(HistoryBrowseModel.clearPrompt(range, pages: pages), action: "Forget")
-        else { return }
-        store.clearHistory(since: cutoff)
-        restart()
+        confirm(HistoryBrowseModel.clearPrompt(range, pages: pages), action: "Forget") { [weak self] in
+            guard let self else { return }
+            store.clearHistory(since: cutoff)
+            restart()
+        }
     }
 
     /// A destructive confirmation, with Cancel as the default button.
@@ -493,14 +473,16 @@ final class HistoryWindow: NSWindowController, NSWindowDelegate, NSTextFieldDele
     /// Return therefore cancels. That is the right way round for a dialog that
     /// appears on a ⌘⌫ someone may have typed by reflex, and it is the only
     /// place in this app where ↩ does not mean "go ahead".
-    private func confirm(_ prompt: (message: String, detail: String), action: String) -> Bool {
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = prompt.message
-        alert.informativeText = prompt.detail
-        alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: action)
-        return alert.runModal() == .alertSecondButtonReturn
+    ///
+    /// Over this popup rather than over the strip, so answering it leaves history
+    /// open, with the keyboard handed back to it. `then` runs only on a yes.
+    private func confirm(
+        _ prompt: (message: String, detail: String), action: String, then: @escaping () -> Void
+    ) {
+        ConfirmPopup.confirm(
+            over: window, title: prompt.message, detail: prompt.detail,
+            action: action, returnConfirms: false
+        ) { yes in if yes { then() } }
     }
 
     static func thousands(_ n: UInt32) -> String {
