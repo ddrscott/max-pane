@@ -1,5 +1,9 @@
 # Work Queue
 
+- [ ] Follow the system light/dark mode live — chrome, terminals and web pages (`prefers-color-scheme`) — with a system/light/dark override — [detail](system-appearance.md)
+- [ ] Every setting editable in a settings UI, stored as comment-preserving TOML at `$XDG_CONFIG_HOME/maxpane/config.toml` — [detail](settings-ui.md)
+- [ ] One green family instead of Signal Orange: focus mid green, working muted, BLOCKED the brightest green with a slow pulse; no orange anywhere — [detail](green-palette.md)
+- [ ] The LANES | GALLERY switch shows icons (`columns-3`, `layout-grid`), not words — [detail](layout-switch-icons.md)
 - [x] Gallery: every lane on one screen as live thumbnails, a sticky second layout beside Lanes — [detail](gallery-layout.md) — ⌥⌘G, `strip_layout` in `app_state`. A tile is the real `LaneView` under a transform: [spike M5](../spikes/05-gallery-scale.md) measured Ghostty's grid unchanged at every scale from 0.75 to 0.25 with zero resize reports, where a smaller backing re-flowed it at 13 of 14 points and saved no CPU. Its one blind spot was found by the tile test: Auto Layout rounds a pane to the *tile's* pixels (483 → 482.5 pt), so a terminal in a tile holds its strip size against rounding. Eviction measures distance from the focused lane, because "every lane visible" would rehydrate everything on entry and make nothing evictable. Docks are tiles, gather narrows the gallery, Esc and Return reach the tile — [ADR-0011](../decisions/0011-gallery-layout.md). Not yet driven in the running app: no instance was launched
 - [x] Dock a lane to the left or right, overlaying or insetting the strip — [detail](docked-panes.md) — both halves merged, audio proved
 - [x] The five silent web failures: dialogs, file inputs, downloads, camera/mic, HTTP auth — merged in 36be318
