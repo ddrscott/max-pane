@@ -1,6 +1,6 @@
 # Work Queue
 
-- [ ] Follow the system light/dark mode live — chrome, terminals and web pages (`prefers-color-scheme`) — with a system/light/dark override — [detail](system-appearance.md)
+- [-] Follow the system light/dark mode live — chrome, terminals and web pages (`prefers-color-scheme`) — with a system/light/dark override — [detail](system-appearance.md)
 - [ ] Every setting editable in a settings UI, stored as comment-preserving TOML at `$XDG_CONFIG_HOME/maxpane/config.toml` — [detail](settings-ui.md)
 - [ ] One green family instead of Signal Orange: focus mid green, working muted, BLOCKED the brightest green with a slow pulse; no orange anywhere — [detail](green-palette.md)
 - [ ] The LANES | GALLERY switch shows icons (`columns-3`, `layout-grid`), not words — [detail](layout-switch-icons.md)
