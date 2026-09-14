@@ -82,7 +82,6 @@ final class LaneView: NSView {
     /// menu instead of crashing.
     var onTogglePin: (() -> Void)?
     var onSetProjectTag: (() -> Void)?
-    var onToggleSpan: (() -> Void)?
     /// ⌃⌘[ / ⌃⌘] / ⌃⌘\, for the lane under the pointer rather than the focused
     /// one. Toggles, like the keys: the item that docked this lane is the item
     /// that gives the edge back, which is why the menu marks them rather than
@@ -94,8 +93,8 @@ final class LaneView: NSView {
     /// session. Whoever connects this owes the user a confirmation first.
     var onClaimSession: (() -> Void)?
     var onCloseLane: (() -> Void)?
-    /// The header's `s | m | xl` switch. The strip does the work; see
-    /// `StripViewController.applySizePreset`.
+    /// The header's `s | m | xl` switch and the menu's Small / Medium / Extra
+    /// Large. The strip does the work; see `StripViewController.applySizePreset`.
     var onSizePreset: ((LaneSizePreset) -> Void)?
 
     /// The preset this lane is at, lit in the header; nil when it has been
@@ -104,24 +103,27 @@ final class LaneView: NSView {
         didSet { header.sizePreset = sizePreset }
     }
 
-    /// Held for the switch's visibility, which depends on it and on being a tile.
-    private var isDocked = false
-
-    /// The switch is hidden on a dock — its width is a separate number with its
-    /// own bounds, and docking promises not to reflow what it holds — and on a
-    /// gallery tile, which writes nothing but the layout and focus.
+    /// The presets are offered everywhere but a gallery tile, which writes
+    /// nothing but the layout and focus. A docked lane takes them on its dock
+    /// width. Whether the switch has *room* is the header's call at layout.
     private func updateSizeSwitchVisibility() {
-        header.showsSizeSwitch = !isDocked && !isThumbnail
+        header.showsSizeSwitch = !isThumbnail
     }
 
     /// Whether the header offers the switch at all, for tests.
     var showsSizeSwitch: Bool { header.showsSizeSwitch }
 
+    /// Whether the switch is actually on screen, room included, for tests.
+    var sizeSwitchIsVisible: Bool { !header.sizeSwitch.isHidden }
+
+    /// The `⋯` menu as it would open now, for tests.
+    var overflowMenu: NSMenu { header.overflowMenu() }
+
     /// What the drag handle is currently asking for. The parent reads it during
     /// a live resize; the ledger only hears about it on the drop.
     private(set) var desiredWidth: CGFloat = 0
-    /// A spanned lane may be twice as wide (PRD §13 Phase 3), so this is per
-    /// lane rather than a constant.
+    /// An xl lane (span 2) may be twice as wide (PRD §13 Phase 3), so this is
+    /// per lane rather than a constant.
     var widthBounds: ClosedRange<UInt32> = 420...900
 
     /// Which edge the width handle sits on.
@@ -320,7 +322,6 @@ final class LaneView: NSView {
         // its place.
         paneWeights = Dictionary(uniqueKeysWithValues: lane.panes.map { ($0.id, $0.heightWeight) })
         header.apply(lane)
-        isDocked = lane.dock != nil
         updateSizeSwitchVisibility()
         needsLayout = true
     }
@@ -937,7 +938,6 @@ final class LaneView: NSView {
 protocol LaneHeaderActions: AnyObject {
     var onTogglePin: (() -> Void)? { get }
     var onSetProjectTag: (() -> Void)? { get }
-    var onToggleSpan: (() -> Void)? { get }
     var onDockLeft: (() -> Void)? { get }
     var onDockRight: (() -> Void)? { get }
     var onToggleDockMode: (() -> Void)? { get }
@@ -980,7 +980,9 @@ final class LaneHeaderView: NSView {
         set { sizeSwitch.selected = newValue }
     }
 
-    /// False on a dock and on a gallery tile. See `LaneView.updateSizeSwitchVisibility`.
+    /// False on a gallery tile. See `LaneView.updateSizeSwitchVisibility`. The
+    /// menu's size items are enabled on the same condition, and are there
+    /// whether or not the switch has room.
     var showsSizeSwitch = true {
         didSet {
             guard showsSizeSwitch != oldValue else { return }
@@ -1362,7 +1364,7 @@ final class LaneHeaderView: NSView {
             in: overflow)
     }
 
-    private func overflowMenu() -> NSMenu {
+    func overflowMenu() -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
 
@@ -1372,9 +1374,19 @@ final class LaneHeaderView: NSView {
             command: .toggleKeepLive, action: #selector(menuTogglePin), enabled: actions?.onTogglePin != nil)
         add(to: menu, "Set Project Tag…",
             command: nil, action: #selector(menuSetProjectTag), enabled: actions?.onSetProjectTag != nil)
-        add(to: menu, Command.toggleSpan.title,
-            command: .toggleSpan, action: #selector(menuToggleSpan), enabled: actions?.onToggleSpan != nil,
-            state: (lane?.span ?? 1) > 1 ? .on : .off)
+
+        // The size presets, always: the header's switch gives way on a narrow
+        // lane, and a lane is never too narrow for its menu. Ticked like the
+        // docking items below, and none ticked when the lane is off all three.
+        // They replaced Span Lane (2× Width), which xl covers.
+        menu.addItem(.separator())
+        for preset in LaneSizePreset.allCases {
+            let item = add(to: menu, preset.title,
+                command: preset.command, action: #selector(menuSizePreset(_:)),
+                enabled: showsSizeSwitch && actions?.onSizePreset != nil,
+                state: sizePreset == preset ? .on : .off)
+            item.representedObject = preset.rawValue
+        }
 
         menu.addItem(.separator())
         // Checkmarks rather than three verbs. Docking is a toggle on the keys,
@@ -1415,10 +1427,11 @@ final class LaneHeaderView: NSView {
         return menu
     }
 
+    @discardableResult
     private func add(
         to menu: NSMenu, _ title: String, command: Command?, action: Selector,
         enabled: Bool, state: NSControl.StateValue = .off
-    ) {
+    ) -> NSMenuItem {
         let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
         if let chord = command?.menuChord {
             item.keyEquivalent = chord.key
@@ -1431,11 +1444,15 @@ final class LaneHeaderView: NSView {
             .font: Theme.mono(12),
             .foregroundColor: enabled ? NSColor.labelColor : NSColor.tertiaryLabelColor,
         ])
+        return item
     }
 
     @objc private func menuTogglePin() { actions?.onTogglePin?() }
     @objc private func menuSetProjectTag() { actions?.onSetProjectTag?() }
-    @objc private func menuToggleSpan() { actions?.onToggleSpan?() }
+    @objc private func menuSizePreset(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let preset = LaneSizePreset(rawValue: raw) else { return }
+        actions?.onSizePreset?(preset)
+    }
     @objc private func menuDockLeft() { actions?.onDockLeft?() }
     @objc private func menuDockRight() { actions?.onDockRight?() }
     @objc private func menuToggleDockMode() { actions?.onToggleDockMode?() }

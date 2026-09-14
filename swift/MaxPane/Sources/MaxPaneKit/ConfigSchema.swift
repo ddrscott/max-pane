@@ -174,7 +174,7 @@ public struct ConfigField {
             unsigned("laneMinPt", \.laneMinPt, .lanes, 100...4000, step: 10,
                      "The narrowest a lane can be dragged or narrowed to."),
             unsigned("laneMaxPt", \.laneMaxPt, .lanes, 100...4000, step: 10,
-                     "The widest a lane can be dragged or widened to. A spanned lane gets twice this."),
+                     "The widest a lane can be dragged or widened to. An xl lane gets twice this."),
             unsigned("lanePeekPt", \.lanePeekPt, .lanes, 0...200, step: 2,
                      "The sliver of the next lane a settled strip always shows. 0 centres exactly."),
             bool("stripEdgeRails", \.stripEdgeRails, .lanes,

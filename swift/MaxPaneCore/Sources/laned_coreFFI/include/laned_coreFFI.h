@@ -579,11 +579,6 @@ RustBuffer uniffi_laned_core_fn_method_core_set_keep_live(uint64_t ptr, RustBuff
 RustBuffer uniffi_laned_core_fn_method_core_set_lane_size(uint64_t ptr, RustBuffer lane_id, uint32_t width_pt, uint32_t span, RustBuffer zooms, RustCallStatus *_Nonnull out_status
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_LANE_SPAN
-#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_LANE_SPAN
-RustBuffer uniffi_laned_core_fn_method_core_set_lane_span(uint64_t ptr, RustBuffer lane_id, uint32_t span, RustCallStatus *_Nonnull out_status
-);
-#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_LANE_TITLE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_LANE_TITLE
 RustBuffer uniffi_laned_core_fn_method_core_set_lane_title(uint64_t ptr, RustBuffer lane_id, RustBuffer title, RustCallStatus *_Nonnull out_status
@@ -1304,12 +1299,6 @@ uint16_t uniffi_laned_core_checksum_method_core_set_keep_live(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_LANE_SIZE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_LANE_SIZE
 uint16_t uniffi_laned_core_checksum_method_core_set_lane_size(void
-    
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_LANE_SPAN
-#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_LANE_SPAN
-uint16_t uniffi_laned_core_checksum_method_core_set_lane_span(void
     
 );
 #endif

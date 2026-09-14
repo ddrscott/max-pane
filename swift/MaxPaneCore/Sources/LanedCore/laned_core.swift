@@ -1268,19 +1268,18 @@ public protocol CoreProtocol: AnyObject, Sendable {
      * constant. The ceiling is the span's, as in `set_lane_width`. Every zoom is
      * checked before anything is written, so a bad one leaves the lane exactly
      * as it was rather than half-resized.
+     *
+     * This is the only way to set `span`. Span Lane (⌘\, 1800 pt) was a second
+     * way to make a lane wide, at a different width from `xl`; it is gone, and
+     * `span` is now whatever the preset says (1, or 2 for `xl`). A lane stored
+     * at span 2 by the old command keeps its span and its width.
+     *
+     * On a **docked** lane the width is the dock's, clamped into
+     * [`DOCK_MIN_PT`]..=[`DOCK_MAX_PT`], and the lane's own width and span are
+     * left alone, the same as `set_dock_width`: they are what the lane goes back
+     * to in the strip. So `xl` on a dock is 900 pt, not 1312.
      */
     func setLaneSize(laneId: String, widthPt: UInt32, span: UInt32, zooms: [PaneZoomSetting]) throws  -> StripState
-    
-    /**
-     * How many lane-widths a lane may occupy (PRD §13 Phase 3).
-     *
-     * Clamped to 1..=2. §1's invariant is that a lane is a portrait column, and
-     * "2× for the rare landscape site" is the whole of the exception — there is
-     * no span 3. Narrowing back to 1 brings the width back inside the normal
-     * bound at the same time, so a lane cannot be left wider than a lane is
-     * allowed to be.
-     */
-    func setLaneSpan(laneId: String, span: UInt32) throws  -> StripState
     
     func setLaneTitle(laneId: String, title: String?) throws  -> StripState
     
@@ -2620,6 +2619,16 @@ open func setKeepLive(laneId: String, keepLive: Bool)throws  -> StripState  {
      * constant. The ceiling is the span's, as in `set_lane_width`. Every zoom is
      * checked before anything is written, so a bad one leaves the lane exactly
      * as it was rather than half-resized.
+     *
+     * This is the only way to set `span`. Span Lane (⌘\, 1800 pt) was a second
+     * way to make a lane wide, at a different width from `xl`; it is gone, and
+     * `span` is now whatever the preset says (1, or 2 for `xl`). A lane stored
+     * at span 2 by the old command keeps its span and its width.
+     *
+     * On a **docked** lane the width is the dock's, clamped into
+     * [`DOCK_MIN_PT`]..=[`DOCK_MAX_PT`], and the lane's own width and span are
+     * left alone, the same as `set_dock_width`: they are what the lane goes back
+     * to in the strip. So `xl` on a dock is 900 pt, not 1312.
      */
 open func setLaneSize(laneId: String, widthPt: UInt32, span: UInt32, zooms: [PaneZoomSetting])throws  -> StripState  {
     return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
@@ -2630,26 +2639,6 @@ open func setLaneSize(laneId: String, widthPt: UInt32, span: UInt32, zooms: [Pan
         FfiConverterUInt32.lower(widthPt),
         FfiConverterUInt32.lower(span),
         FfiConverterSequenceTypePaneZoomSetting.lower(zooms),uniffiCallStatus
-    )
-})
-}
-    
-    /**
-     * How many lane-widths a lane may occupy (PRD §13 Phase 3).
-     *
-     * Clamped to 1..=2. §1's invariant is that a lane is a portrait column, and
-     * "2× for the rare landscape site" is the whole of the exception — there is
-     * no span 3. Narrowing back to 1 brings the width back inside the normal
-     * bound at the same time, so a lane cannot be left wider than a lane is
-     * allowed to be.
-     */
-open func setLaneSpan(laneId: String, span: UInt32)throws  -> StripState  {
-    return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
-        uniffiCallStatus in
-    uniffi_laned_core_fn_method_core_set_lane_span(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(laneId),
-        FfiConverterUInt32.lower(span),uniffiCallStatus
     )
 })
 }
@@ -7278,10 +7267,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_set_keep_live() != 52968) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_laned_core_checksum_method_core_set_lane_size() != 33609) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_laned_core_checksum_method_core_set_lane_span() != 29040) {
+    if (uniffi_laned_core_checksum_method_core_set_lane_size() != 46201) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_set_lane_title() != 42488) {

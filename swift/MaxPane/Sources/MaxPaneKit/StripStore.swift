@@ -176,14 +176,12 @@ public final class StripStore {
         publish(try core.setLaneTitle(laneId: laneId, title: title))
     }
 
-    /// PRD §13 Phase 3's landscape exception. 1 or 2; the core clamps.
-    func setLaneSpan(_ laneId: String, _ span: UInt32) throws {
-        publish(try core.setLaneSpan(laneId: laneId, span: span))
-    }
-
     /// Put a lane at a size preset: width, span and every listed pane's zoom, as
     /// one revision (`Core::set_lane_size`). The width may go under `laneMinPt`
-    /// — `s` is computed, and the preset is the point. See `LaneSizePreset`.
+    /// — `s` is computed, and the preset is the point. On a docked lane the
+    /// width is the dock's, clamped to the dock's bounds, and the lane's strip
+    /// width and span stay put. The only way to set a span since Span Lane went.
+    /// See `LaneSizePreset`.
     func setLaneSize(
         _ laneId: String, widthPt: UInt32, span: UInt32, zooms: [(paneId: String, zoom: Double)]
     ) throws {

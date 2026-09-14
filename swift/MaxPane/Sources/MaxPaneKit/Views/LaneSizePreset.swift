@@ -18,6 +18,10 @@ import LanedCore
 /// Absolute, not relative to where the lane is now, and never stored: the lit
 /// preset is *derived* from width, span and zoom, which the ledger already
 /// keeps, so there is no second copy to disagree with them.
+///
+/// A docked lane takes the same presets on its *dock* width, clamped into the
+/// dock's bounds (`DockGeometry.minPt`...`maxPt`), so `xl` on a dock is 900 pt.
+/// Its strip width and span are left for when it goes back.
 enum LaneSizePreset: String, CaseIterable, Sendable {
     case s, m, xl
 
@@ -55,7 +59,21 @@ enum LaneSizePreset: String, CaseIterable, Sendable {
         }
     }
 
+    /// ⌘\: s → m → xl → s. A lane off every preset — dragged, zoomed, or left
+    /// at 1800 pt by the Span Lane command this replaced — goes to `m`.
+    static func next(after current: LaneSizePreset?) -> LaneSizePreset {
+        switch current {
+        case .s: return .m
+        case .m: return .xl
+        case .xl: return .s
+        case nil: return .m
+        }
+    }
+
     /// The shape of a lane at this preset.
+    ///
+    /// `docked` clamps the width into the dock's bounds; `span` is then
+    /// meaningless (a dock has none) and is not compared.
     ///
     /// `hasTerminal` decides `s`'s width. A terminal needs its columns to fit
     /// exactly, so a lane with one is as wide as those columns at the smaller
@@ -64,6 +82,21 @@ enum LaneSizePreset: String, CaseIterable, Sendable {
     /// the one it had at `m` — in a split lane beside a terminal too.
     @MainActor
     static func shape(
+        _ preset: LaneSizePreset, hasTerminal: Bool, config: Config, backingScale: CGFloat,
+        docked: Bool = false
+    ) -> Shape {
+        let strip = stripShape(preset, hasTerminal: hasTerminal, config: config, backingScale: backingScale)
+        guard docked else { return strip }
+        let width = min(max(strip.widthPt, UInt32(DockGeometry.minPt)), UInt32(DockGeometry.maxPt))
+        guard width != strip.widthPt else { return strip }
+        // Only `s` scales a page, and its zoom is what keeps m's `innerWidth` in
+        // whatever width the lane really gets.
+        let webZoom = preset == .s ? Double(width) / Double(max(config.laneDefaultPt, 1)) : strip.webZoom
+        return Shape(widthPt: width, span: strip.span, terminalZoom: strip.terminalZoom, webZoom: webZoom)
+    }
+
+    @MainActor
+    private static func stripShape(
         _ preset: LaneSizePreset, hasTerminal: Bool, config: Config, backingScale: CGFloat
     ) -> Shape {
         let base = config.laneDefaultPt
@@ -83,7 +116,7 @@ enum LaneSizePreset: String, CaseIterable, Sendable {
     }
 
     /// The preset a lane is at, or nil when it has been dragged or zoomed off
-    /// every one of them.
+    /// every one of them. A docked lane is asked about its dock's width.
     ///
     /// `zoom` is asked per pane rather than read off the snapshot, because a
     /// pane's zoom is written without publishing one (`StripStore.setPaneZoom`)
@@ -95,10 +128,12 @@ enum LaneSizePreset: String, CaseIterable, Sendable {
     ) -> LaneSizePreset? {
         let panes = lane.panes.filter { $0.kind != .placeholder }
         let hasTerminal = panes.contains { $0.kind == .pty }
+        let dock = lane.dock
         return allCases.first { preset in
-            let shape = shape(preset, hasTerminal: hasTerminal, config: config, backingScale: backingScale)
-            return lane.span == shape.span
-                && lane.widthPt == shape.widthPt
+            let shape = shape(
+                preset, hasTerminal: hasTerminal, config: config, backingScale: backingScale, docked: dock != nil)
+            return (dock != nil || lane.span == shape.span)
+                && (dock?.widthPt ?? lane.widthPt) == shape.widthPt
                 && panes.allSatisfy { abs(zoom($0) - shape.zoom(for: $0.kind)) < 0.005 }
         }
     }

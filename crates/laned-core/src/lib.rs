@@ -574,26 +574,6 @@ impl Core {
         Self::snapshot(&inner)
     }
 
-    /// How many lane-widths a lane may occupy (PRD §13 Phase 3).
-    ///
-    /// Clamped to 1..=2. §1's invariant is that a lane is a portrait column, and
-    /// "2× for the rare landscape site" is the whole of the exception — there is
-    /// no span 3. Narrowing back to 1 brings the width back inside the normal
-    /// bound at the same time, so a lane cannot be left wider than a lane is
-    /// allowed to be.
-    pub fn set_lane_span(&self, lane_id: String, span: u32) -> Result<StripState> {
-        let mut inner = self.inner.lock();
-        let span = span.clamp(1, 2);
-        inner.ledger.set_span(&lane_id, span)?;
-        let current = inner.ledger.lane(&lane_id)?.width_pt;
-        let allowed = LANE_MAX_PT * span;
-        if current > allowed {
-            inner.ledger.update_lane_width(&lane_id, allowed)?;
-        }
-        Self::bump(&mut inner);
-        Self::snapshot(&inner)
-    }
-
     /// Put a lane at a size preset (`s | m | xl`): its width, its span and its
     /// panes' zoom, as **one** revision.
     ///
@@ -606,6 +586,16 @@ impl Core {
     /// constant. The ceiling is the span's, as in `set_lane_width`. Every zoom is
     /// checked before anything is written, so a bad one leaves the lane exactly
     /// as it was rather than half-resized.
+    ///
+    /// This is the only way to set `span`. Span Lane (⌘\, 1800 pt) was a second
+    /// way to make a lane wide, at a different width from `xl`; it is gone, and
+    /// `span` is now whatever the preset says (1, or 2 for `xl`). A lane stored
+    /// at span 2 by the old command keeps its span and its width.
+    ///
+    /// On a **docked** lane the width is the dock's, clamped into
+    /// [`DOCK_MIN_PT`]..=[`DOCK_MAX_PT`], and the lane's own width and span are
+    /// left alone, the same as `set_dock_width`: they are what the lane goes back
+    /// to in the strip. So `xl` on a dock is 900 pt, not 1312.
     pub fn set_lane_size(
         &self,
         lane_id: String,
@@ -614,7 +604,7 @@ impl Core {
         zooms: Vec<PaneZoomSetting>,
     ) -> Result<StripState> {
         let mut inner = self.inner.lock();
-        inner.ledger.lane(&lane_id)?;
+        let lane = inner.ledger.lane(&lane_id)?;
         for z in &zooms {
             if !z.zoom.is_finite() || z.zoom <= 0.0 {
                 return Err(CoreError::Invalid {
@@ -622,9 +612,14 @@ impl Core {
                 });
             }
         }
-        let span = span.clamp(1, 2);
-        inner.ledger.set_span(&lane_id, span)?;
-        inner.ledger.update_lane_width(&lane_id, width_pt.clamp(LANE_PRESET_MIN_PT, LANE_MAX_PT * span))?;
+        if let Some(dock) = lane.dock {
+            let width_pt = width_pt.clamp(DOCK_MIN_PT, DOCK_MAX_PT);
+            inner.ledger.set_dock(&lane_id, Some(Dock { width_pt, ..dock }))?;
+        } else {
+            let span = span.clamp(1, 2);
+            inner.ledger.set_span(&lane_id, span)?;
+            inner.ledger.update_lane_width(&lane_id, width_pt.clamp(LANE_PRESET_MIN_PT, LANE_MAX_PT * span))?;
+        }
         for z in &zooms {
             inner.ledger.update_pane_zoom(&z.pane_id, z.zoom)?;
         }

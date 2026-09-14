@@ -109,7 +109,7 @@ public final class StripViewController: NSViewController {
     /// `beginArrivals`.
     private var pendingArrivals: Set<String> = []
     /// Lane widths as of the last snapshot, so a change from *any* source —
-    /// drag, ⌃⌘=, span, an imported strip — reshapes the terminal.
+    /// drag, ⌃⌘=, a size preset, an imported strip — reshapes the terminal.
     private var lastLaneWidths: [String: UInt32] = [:]
     /// Shown when the strip is empty, because a blank window that says nothing
     /// is indistinguishable from a broken one.
@@ -553,7 +553,7 @@ public final class StripViewController: NSViewController {
         }
 
         // A lane that changed width owes its terminal a new shape, whatever
-        // changed it. Hooking the drag handle alone missed ⌃⌘=, span and import,
+        // changed it. Hooking the drag handle alone missed ⌃⌘=, a preset and import,
         // which is how a keyboard-resized lane kept wrapping at its old column
         // count.
         for lane in state.lanes {
@@ -879,10 +879,6 @@ public final class StripViewController: NSViewController {
         laneView.onTogglePin = { [weak self] in
             guard let self, let lane = self.store.lane(lane.id) else { return }
             try? self.store.setKeepLive(lane.id, !lane.keepLive)
-        }
-        laneView.onToggleSpan = { [weak self] in
-            guard let self, let lane = self.store.lane(lane.id) else { return }
-            try? self.store.setLaneSpan(lane.id, lane.span == 1 ? 2 : 1)
         }
         laneView.onSizePreset = { [weak self] preset in
             self?.applySizePreset(preset, toLane: lane.id)
@@ -1709,6 +1705,11 @@ public final class StripViewController: NSViewController {
     /// How to land a size preset that is still easing, by lane.
     private var sizeTransitionEnds: [String: () -> Void] = [:]
 
+    /// The preset a lane is easing toward. Its panes' zoom lands only at the
+    /// end, so until then the derived preset reads as none, and a second ⌘\
+    /// mid-ease would go to `m` rather than on from where the lane is headed.
+    private var sizeTransitionTargets: [String: LaneSizePreset] = [:]
+
     private var backingScale: CGFloat {
         view.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
     }
@@ -1727,7 +1728,16 @@ public final class StripViewController: NSViewController {
         laneViews[laneId]?.sizePreset = sizePreset(of: lane)
     }
 
-    /// Put a lane at `s`, `m` or `xl` — from the header's switch or the menu.
+    /// ⌘\: the next preset after the one the lane is at, or is headed for. A
+    /// lane off every preset goes to `m`. See `LaneSizePreset.next(after:)`.
+    func cycleSizePreset(ofLane laneId: String) {
+        guard let lane = store.lane(laneId) else { return }
+        let current = sizeTransitionTargets[laneId] ?? sizePreset(of: lane)
+        applySizePreset(LaneSizePreset.next(after: current), toLane: laneId)
+    }
+
+    /// Put a lane at `s`, `m` or `xl` — from the header's switch, its menu, the
+    /// View menu or ⌘\.
     ///
     /// The ledger first, as everywhere: width, span and every pane's zoom in one
     /// write, so there is one snapshot and nothing to animate twice. Then the
@@ -1737,27 +1747,40 @@ public final class StripViewController: NSViewController {
     /// zoom with the width. When the slot arrives, each lands for real: the
     /// terminal reflows once and tells the far end once, if at all.
     ///
-    /// Not on a docked lane and not in the gallery: a dock's width is its own
-    /// number with its own bounds, and the gallery writes nothing but the layout
-    /// and focus. The header hides the switch in both places.
+    /// A docked lane eases its *dock* width the same way, through the width a
+    /// dock drag draws at, and lands clamped into the dock's bounds. Not in the
+    /// gallery, which writes nothing but the layout and focus.
     func applySizePreset(_ preset: LaneSizePreset, toLane laneId: String) {
-        guard !isGallery, let current = store.lane(laneId), current.dock == nil else { return }
+        guard !isGallery, let current = store.lane(laneId) else { return }
         // A second click before the first has landed: start from where the lane
         // is drawn, after landing the first so no pane is left holding.
-        let drawn = laneOverrides[laneId]?.slot
+        let drawn = current.dock.map { dockWidthDrag[$0.side] } ?? laneOverrides[laneId]?.slot
         sizeTransitionEnds.removeValue(forKey: laneId)?()
         guard let lane = store.lane(laneId) else { return }
+        let dockSide = lane.dock?.side
+
+        // Where the lane is drawn while it eases: a strip lane's slot, or a
+        // dock's width. Nil hands it back to the ledger.
+        let draw: @MainActor (CGFloat?) -> Void = { [weak self] width in
+            guard let self else { return }
+            if let dockSide {
+                self.dockWidthDrag[dockSide] = width
+            } else {
+                self.laneOverrides[laneId] = width.map { LaneOverride(slot: $0, masked: false) }
+            }
+        }
 
         let scale = backingScale
         let shape = LaneSizePreset.shape(
-            preset, hasTerminal: lane.panes.contains { $0.kind == .pty }, config: config, backingScale: scale)
+            preset, hasTerminal: lane.panes.contains { $0.kind == .pty }, config: config, backingScale: scale,
+            docked: dockSide != nil)
         let terminals = lane.panes.compactMap { paneControllers[$0.id] as? TerminalPaneController }
         let pages = lane.panes.compactMap { paneControllers[$0.id] as? WebPaneController }
-        let from = drawn ?? CGFloat(lane.widthPt)
+        let from = drawn ?? CGFloat(lane.dock?.widthPt ?? lane.widthPt)
 
         // The slot stays where it is drawn through the publish below; the
         // transition's first frame moves it.
-        laneOverrides[laneId] = LaneOverride(slot: from, masked: false)
+        draw(from)
         for terminal in terminals { terminal.beginSizeTransition(toZoom: shape.terminalZoom, backingScale: scale) }
         for page in pages { page.beginSizeTransition(toZoom: shape.webZoom) }
         do {
@@ -1766,7 +1789,7 @@ public final class StripViewController: NSViewController {
                 zooms: lane.panes.map { (paneId: $0.id, zoom: shape.zoom(for: $0.kind)) })
         } catch {
             // Nothing was written, so every pane goes back to what the ledger says.
-            laneOverrides[laneId] = nil
+            draw(nil)
             relayout()
             for pane in lane.panes {
                 (paneControllers[pane.id] as? TerminalPaneController)?
@@ -1779,13 +1802,15 @@ public final class StripViewController: NSViewController {
         }
         // What the core actually stored, which a config wider than its bounds
         // can make different from what was asked for.
-        let target = CGFloat(store.lane(laneId)?.widthPt ?? shape.widthPt)
+        let target = CGFloat(store.lane(laneId).map { $0.dock?.widthPt ?? $0.widthPt } ?? shape.widthPt)
         let key = "size:\(laneId)"
+        sizeTransitionTargets[laneId] = preset
 
         let land: @MainActor () -> Void = { [weak self] in
             guard let self else { return }
             self.sizeTransitionEnds[laneId] = nil
-            self.laneOverrides[laneId] = nil
+            self.sizeTransitionTargets[laneId] = nil
+            draw(nil)
             self.relayout()
             self.laneViews[laneId]?.layoutSubtreeIfNeeded()
             terminals.forEach { $0.endSizeTransition() }
@@ -1800,7 +1825,7 @@ public final class StripViewController: NSViewController {
         startTransition(lane: key, duration: Motion.lane) { [weak self] t in
             guard let self else { return }
             let eased = Motion.easeOut(t)
-            self.laneOverrides[laneId] = LaneOverride(slot: from + (target - from) * eased, masked: false)
+            draw(from + (target - from) * eased)
             self.relayout()
             self.laneViews[laneId]?.layoutSubtreeIfNeeded()
             terminals.forEach { $0.stepSizeTransition(eased) }

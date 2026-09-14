@@ -97,13 +97,76 @@ struct LaneSizePresetTests {
         #expect(lit(656, [(.pty, 1.1)]) == nil)
         #expect(lit(656, [(.pty, 1), (.web, 0.9)]) == nil)
         #expect(lit(1312, span: 1, [(.pty, 1)]) == nil)
-        #expect(lit(1800, span: 2, [(.pty, 1)]) == nil, "⌘\\'s span is not xl")
+        #expect(lit(1800, span: 2, [(.pty, 1)]) == nil, "the old Span Lane's 1800 pt is not xl")
         #expect(lit(sTerm, [(.pty, 1)]) == nil, "s's width at full size is not s")
+    }
+
+    // MARK: - docked
+
+    /// A dock takes the presets on its own width, inside its own bounds, and
+    /// the tick follows that width. The strip width and span are not asked.
+    @Test("a dock's preset width is clamped into 240...900, and the tick follows the dock width")
+    func dockedShapes() {
+        let config = Config()
+        func docked(_ preset: LaneSizePreset, _ config: Config = Config(), terminal: Bool = true) -> LaneSizePreset.Shape {
+            LaneSizePreset.shape(preset, hasTerminal: terminal, config: config, backingScale: 2, docked: true)
+        }
+        let sTerm = LaneSizePreset.terminalSmallWidth(config: config, backingScale: 2)
+        #expect(docked(.m).widthPt == 656)
+        #expect(docked(.s) == LaneSizePreset.shape(.s, hasTerminal: true, config: config, backingScale: 2))
+        #expect(docked(.xl).widthPt == 900, "xl is wider than a dock may be")
+        #expect(docked(.xl).terminalZoom == 1 && docked(.xl).webZoom == 1)
+
+        // A default narrower than a dock may be: s clamps up to the floor, and a
+        // page's zoom follows the width it really gets.
+        var narrow = Config()
+        narrow.laneDefaultPt = 380
+        let small = docked(.s, narrow, terminal: false)
+        #expect(small.widthPt == 240)
+        #expect(abs(small.webZoom - 240.0 / 380.0) < 1e-9)
+
+        func lit(dock width: UInt32, strip: UInt32 = 700, span: UInt32 = 1, _ panes: [(PaneKind, Double)]) -> LaneSizePreset? {
+            var lane = Self.lane(width: strip, span: span, panes: panes)
+            lane.dock = Dock(side: .left, mode: .overlay, widthPt: width)
+            return LaneSizePreset.current(of: lane, zoom: \.zoom, config: config, backingScale: 2)
+        }
+        #expect(lit(dock: 900, [(.pty, 1)]) == .xl)
+        #expect(lit(dock: 656, [(.pty, 1)]) == .m)
+        #expect(lit(dock: 656, strip: 1800, span: 2, [(.pty, 1)]) == .m, "a dock has no span to compare")
+        #expect(lit(dock: sTerm, [(.pty, 0.6)]) == .s)
+        #expect(lit(dock: 500, strip: 656, [(.pty, 1)]) == nil, "the strip width is not the dock's")
+    }
+
+    /// The store path the menu and switch take, on a docked lane: the dock's
+    /// width, clamped, in one revision, and the strip's width left for later.
+    @Test("a preset on a docked lane writes the dock width and keeps the strip width")
+    func dockedStoreWrite() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("maxpane-dock-preset-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = try StripStore(ledgerPath: dir.appendingPathComponent("ledger.db").path)
+        try store.newTerminalLane(relaySessionId: "dock-preset", near: nil)
+        let before = try #require(store.state.lanes.first)
+        try store.dockLane(before.id, side: .right, mode: .inset)
+        let config = Config()
+
+        let xl = LaneSizePreset.shape(.xl, hasTerminal: true, config: config, backingScale: 2, docked: true)
+        try store.setLaneSize(before.id, widthPt: xl.widthPt, span: xl.span, zooms: [])
+        var after = try #require(store.lane(before.id))
+        #expect(after.dock?.widthPt == 900)
+        #expect(after.widthPt == before.widthPt && after.span == before.span)
+        #expect(LaneSizePreset.current(of: after, zoom: \.zoom, config: config, backingScale: 2) == .xl)
+
+        // Asked for wider than a dock may be, the core clamps too.
+        try store.setLaneSize(before.id, widthPt: 1312, span: 2, zooms: [])
+        after = try #require(store.lane(before.id))
+        #expect(after.dock?.widthPt == 900 && after.span == before.span)
     }
 
     // MARK: - the commands
 
-    @Test("three commands in the View menu, with no keys")
+    @Test("three presets in the View menu with no keys, and ⌘\\ cycles them")
     func commands() {
         let commands: [Command] = [.laneSizeSmall, .laneSizeMedium, .laneSizeLarge]
         #expect(LaneSizePreset.allCases.map(\.command) == commands)
@@ -112,6 +175,101 @@ struct LaneSizePresetTests {
             #expect(Keymap.defaults.chords(for: command).isEmpty, "\(command) ships with a key")
             #expect(command.title.hasPrefix("Lane Size: "))
         }
+        #expect(Command.laneSizeCycle.menu == .view)
+        #expect(Keymap.defaults.chords(for: .laneSizeCycle) == [KeyChord(key: "\\", modifiers: [.command])])
+        // Rebindable like any other: the config names it by its raw value.
+        #expect(Command(rawValue: "laneSizeCycle") == .laneSizeCycle)
+    }
+
+    @Test("Span Lane is gone: no command, no title, and ⌘\\ belongs to the cycle")
+    func spanIsGone() {
+        #expect(Command(rawValue: "toggleSpan") == nil)
+        #expect(!Command.allCases.contains { $0.title.localizedCaseInsensitiveContains("span") })
+        let chord = KeyChord(key: "\\", modifiers: [.command])
+        #expect(Command.allCases.filter { Keymap.defaults.chords(for: $0).contains(chord) } == [.laneSizeCycle])
+    }
+
+    @Test("⌘\\ cycles s → m → xl → s, and a lane off every preset goes to m")
+    func cycleOrder() {
+        #expect(LaneSizePreset.next(after: .s) == .m)
+        #expect(LaneSizePreset.next(after: .m) == .xl)
+        #expect(LaneSizePreset.next(after: .xl) == .s)
+        #expect(LaneSizePreset.next(after: nil) == .m)
+
+        // Three presses from m come back to m.
+        var preset = LaneSizePreset.m
+        for _ in 0..<3 { preset = LaneSizePreset.next(after: preset) }
+        #expect(preset == .m)
+
+        // A lane the old Span Lane left at 1800 pt is off every preset: m first.
+        let old = Self.lane(width: 1800, span: 2, panes: [(.pty, 1)])
+        let current = LaneSizePreset.current(of: old, zoom: \.zoom, config: Config(), backingScale: 2)
+        #expect(current == nil)
+        #expect(LaneSizePreset.next(after: current) == .m)
+    }
+
+    // MARK: - the menu
+
+    /// The acceptance test in the ticket's own terms: three items, always, with
+    /// the tick on the current preset and none off every preset — on a wide
+    /// lane, one too narrow for the switch, and a docked one.
+    @Test("every lane's menu lists Small, Medium and Extra Large: wide, narrow and docked")
+    func menuListsThePresets() {
+        let titles = LaneSizePreset.allCases.map(\.title)
+        func sizeItems(_ view: LaneView) -> [NSMenuItem] {
+            view.overflowMenu.items.filter { titles.contains($0.title) }
+        }
+        func ticked(_ view: LaneView) -> [String] {
+            sizeItems(view).filter { $0.state == .on }.map(\.title)
+        }
+
+        var lane = Self.lane(width: 656, panes: [(.pty, 1)])
+        let view = LaneView(lane: lane, widthBounds: 420...900)
+        var picked: [LaneSizePreset] = []
+        view.onSizePreset = { picked.append($0) }
+        func size(_ width: CGFloat) {
+            view.frame = NSRect(x: 0, y: 0, width: width, height: 300)
+            view.layoutSubtreeIfNeeded()
+        }
+
+        // Wide: the switch shows, and the menu has all three anyway.
+        size(656)
+        view.sizePreset = .m
+        #expect(view.sizeSwitchIsVisible)
+        #expect(sizeItems(view).map(\.title) == titles)
+        #expect(sizeItems(view).allSatisfy { $0.isEnabled })
+        #expect(ticked(view) == ["Medium"])
+        view.sizePreset = nil
+        #expect(sizeItems(view).count == 3 && ticked(view).isEmpty, "off every preset ticks nothing")
+
+        // Narrow: no room for the switch, and the menu does not care.
+        size(260)
+        view.sizePreset = .s
+        #expect(!view.sizeSwitchIsVisible)
+        #expect(sizeItems(view).map(\.title) == titles)
+        #expect(sizeItems(view).allSatisfy { $0.isEnabled })
+        #expect(ticked(view) == ["Small"])
+
+        // Docked: the presets, the tick, and the switch when there is room.
+        lane.dock = Dock(side: .right, mode: .inset, widthPt: 900)
+        view.apply(lane)
+        view.sizePreset = .xl
+        size(900)
+        #expect(view.showsSizeSwitch && view.sizeSwitchIsVisible)
+        #expect(sizeItems(view).map(\.title) == titles)
+        #expect(sizeItems(view).allSatisfy { $0.isEnabled })
+        #expect(ticked(view) == ["Extra Large"])
+
+        // Choosing one goes where the switch goes.
+        for item in sizeItems(view).reversed() {
+            _ = (item.target as? NSObject)?.perform(item.action, with: item)
+        }
+        #expect(picked == [.xl, .m, .s])
+
+        // A gallery tile lists them but greys them out: it writes nothing.
+        view.thumbnailScale = 0.4
+        #expect(sizeItems(view).count == 3)
+        #expect(sizeItems(view).allSatisfy { !$0.isEnabled })
     }
 
     // MARK: - the switch
@@ -146,9 +304,9 @@ struct LaneSizePresetTests {
         #expect(control.buttons.values.allSatisfy { $0.layer?.cornerRadius == 0 })
     }
 
-    /// Hidden, deliberately, where a preset would lie: a dock's width is a
-    /// separate number with its own bounds, and a gallery tile writes nothing.
-    @Test("the header offers the switch on the strip, not on a dock or a tile")
+    /// Offered on the strip and on a dock; hidden on a gallery tile, which
+    /// writes nothing.
+    @Test("the header offers the switch on the strip and on a dock, not on a tile")
     func switchVisibility() {
         var lane = Self.lane(width: 656, panes: [(.pty, 1)])
         let view = LaneView(lane: lane, widthBounds: 420...900)
@@ -161,7 +319,7 @@ struct LaneSizePresetTests {
 
         lane.dock = Dock(side: .right, mode: .inset, widthPt: 400)
         view.apply(lane)
-        #expect(!view.showsSizeSwitch)
+        #expect(view.showsSizeSwitch)
     }
 
     // MARK: - against a real Ghostty surface
@@ -327,11 +485,14 @@ struct LaneSizePresetTests {
 
     /// Gated on `MAXPANE_SHOTS` like every other sheet: the switch in a header at
     /// each preset's width, lit, and a dragged lane with nothing lit.
-    @Test("renders the header switch at each preset")
+    @Test("renders the header switch at each preset, on the strip and on docks")
     func renderSheet() throws {
         guard let dir = ProcessInfo.processInfo.environment["MAXPANE_SHOTS"] else { return }
-        let rows: [(LaneSizePreset?, CGFloat, Bool)] = [
-            (.s, 412, false), (.m, 656, true), (.xl, 1312, false), (nil, 700, false),
+        let rows: [(preset: LaneSizePreset?, width: CGFloat, focused: Bool, dock: DockSide?, title: String)] = [
+            (.s, 412, false, nil, "claude — s"), (.m, 656, true, nil, "claude — m"),
+            (.xl, 1312, false, nil, "claude — xl"), (nil, 700, false, nil, "dragged to 700 pt"),
+            (.s, 372, true, .right, "docked right — s"), (.xl, 900, false, .left, "docked left — xl"),
+            (.m, 656, false, .right, "docked right — m"), (nil, 280, false, .left, "docked, 280 pt: no room"),
         ]
         try AppearanceSheet.render(to: dir, named: "lane-size-switch") {
             let width: CGFloat = 1312
@@ -339,22 +500,99 @@ struct LaneSizePresetTests {
             sheet.wantsLayer = true
             sheet.layerBackgroundColor = Theme.stripBackground
             for (index, row) in rows.enumerated() {
-                let header = LaneHeaderView()
-                header.wantsLayer = true
-                header.layerBackgroundColor = Theme.laneBackground
-                header.frame = NSRect(
-                    x: 0, y: CGFloat(rows.count - index - 1) * 40 + 6, width: row.1, height: Theme.laneHeaderHeight)
-                header.apply(Self.lane(
-                    width: UInt32(row.1), panes: [(.pty, 1)],
-                    title: row.0.map { "claude — \($0.rawValue)" } ?? "dragged to 700 pt"))
-                header.telemetry = SessionTelemetry(
+                // A whole lane rather than a bare header, so the switch's
+                // visibility comes from the same place it does in the app.
+                var lane = Self.lane(width: UInt32(row.width), panes: [(.pty, 1)], title: row.title)
+                lane.dock = row.dock.map { Dock(side: $0, mode: .inset, widthPt: UInt32(row.width)) }
+                let view = LaneView(lane: lane, widthBounds: 240...1800)
+                view.frame = NSRect(
+                    x: 0, y: CGFloat(rows.count - index - 1) * 40 + 6, width: row.width, height: Theme.laneHeaderHeight)
+                view.applyTelemetry(["a": SessionTelemetry(
                     sessionId: "a", cwd: "/Users/spierce/code/max-pane", command: "claude",
-                    state: .working, bytesPerSecond: 1740, lastActivity: Date())
-                header.isFocused = row.2
-                header.sizePreset = row.0
-                sheet.addSubview(header)
-                header.layoutSubtreeIfNeeded()
-                header.layout()
+                    state: .working, bytesPerSecond: 1740, lastActivity: Date())])
+                view.isFocused = row.focused
+                view.sizePreset = row.preset
+                sheet.addSubview(view)
+                view.layoutSubtreeIfNeeded()
+            }
+            return sheet
+        }
+    }
+
+    /// The `⋯` menu's own items, drawn as rows: what the menu holds on a docked
+    /// lane and on one too narrow for the switch. An `NSMenu` draws in its own
+    /// window during tracking and cannot be cached to a bitmap, so this is its
+    /// contents — titles, ticks, keys, enabled state, separators — not the
+    /// system's chrome around them.
+    @Test("renders the lane menu on a docked lane and a narrow one")
+    func renderMenuSheet() throws {
+        guard let dir = ProcessInfo.processInfo.environment["MAXPANE_SHOTS"] else { return }
+        var docked = Self.lane(width: 700, panes: [(.pty, 1)], title: "docked")
+        docked.dock = Dock(side: .right, mode: .inset, widthPt: 372)
+        let narrow = Self.lane(width: 260, panes: [(.web, 1)], title: "narrow")
+        let cases: [(Lane, CGFloat, LaneSizePreset?)] = [(docked, 372, .s), (narrow, 260, nil)]
+
+        try AppearanceSheet.render(to: dir, named: "lane-size-menu") {
+            let columnWidth: CGFloat = 330
+            let rowHeight: CGFloat = 22
+            let menus = cases.map { lane, width, preset -> NSMenu in
+                let view = LaneView(lane: lane, widthBounds: 240...900)
+                view.frame = NSRect(x: 0, y: 0, width: width, height: 300)
+                view.onSizePreset = { _ in }
+                view.onTogglePin = {}
+                view.onDockLeft = {}
+                view.onDockRight = {}
+                view.onToggleDockMode = {}
+                view.onCloseLane = {}
+                view.sizePreset = preset
+                return view.overflowMenu
+            }
+            let tallest = menus.map { CGFloat($0.items.count) * rowHeight }.max() ?? 0
+            let sheet = NSView(frame: NSRect(
+                x: 0, y: 0, width: CGFloat(menus.count) * (columnWidth + 16) + 16, height: tallest + 56))
+            sheet.wantsLayer = true
+            sheet.layerBackgroundColor = Theme.stripBackground
+            for (column, menu) in menus.enumerated() {
+                let x = 16 + CGFloat(column) * (columnWidth + 16)
+                let caption = NSTextField(labelWithString: column == 0 ? "docked right, 372 pt, at s" : "260 pt, off every preset")
+                caption.font = Theme.mono(11)
+                caption.textColor = .secondaryLabelColor
+                caption.frame = NSRect(x: x, y: sheet.bounds.height - 26, width: columnWidth, height: 16)
+                sheet.addSubview(caption)
+                let panel = NSView(frame: NSRect(
+                    x: x, y: sheet.bounds.height - 34 - CGFloat(menu.items.count) * rowHeight,
+                    width: columnWidth, height: CGFloat(menu.items.count) * rowHeight))
+                panel.wantsLayer = true
+                panel.layerBackgroundColor = Theme.laneBackground
+                panel.layerBorderColor = Theme.laneBorder
+                panel.layer?.borderWidth = Theme.borderWidth
+                sheet.addSubview(panel)
+                for (index, item) in menu.items.enumerated() {
+                    let y = panel.bounds.height - CGFloat(index + 1) * rowHeight
+                    if item.isSeparatorItem {
+                        let rule = NSView(frame: NSRect(x: 8, y: y + rowHeight / 2, width: columnWidth - 16, height: 1))
+                        rule.wantsLayer = true
+                        rule.layerBackgroundColor = Theme.laneBorder
+                        panel.addSubview(rule)
+                        continue
+                    }
+                    let colour = item.isEnabled ? NSColor.labelColor : NSColor.tertiaryLabelColor
+                    let tick = NSTextField(labelWithString: item.state == .on ? "✓" : "")
+                    let title = NSTextField(labelWithString: item.title)
+                    let key = NSTextField(labelWithString: item.keyEquivalent.isEmpty ? "" : KeyChord(
+                        key: item.keyEquivalent, modifiers: item.keyEquivalentModifierMask).text)
+                    for (field, frame) in [
+                        (tick, NSRect(x: 6, y: y + 3, width: 16, height: 16)),
+                        (title, NSRect(x: 24, y: y + 3, width: 220, height: 16)),
+                        (key, NSRect(x: 244, y: y + 3, width: columnWidth - 252, height: 16)),
+                    ] {
+                        field.font = Theme.mono(12)
+                        field.textColor = colour
+                        field.frame = frame
+                        panel.addSubview(field)
+                    }
+                    key.alignment = .right
+                }
             }
             return sheet
         }

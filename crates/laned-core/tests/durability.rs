@@ -815,8 +815,8 @@ fn a_spanned_lane_may_be_twice_as_wide_and_no_wider() {
     assert_eq!(st.lanes[0].span, 1);
     assert_eq!(core.set_lane_width(lane.clone(), 99_999).unwrap().lanes[0].width_pt, laned_core::LANE_MAX_PT);
 
-    // Span 2 doubles the ceiling.
-    let st = core.set_lane_span(lane.clone(), 2).unwrap();
+    // Span 2 (the `xl` preset) doubles the ceiling, for a drag too.
+    let st = core.set_lane_size(lane.clone(), 1312, 2, vec![]).unwrap();
     assert_eq!(st.lanes[0].span, 2);
     assert_eq!(
         core.set_lane_width(lane.clone(), 99_999).unwrap().lanes[0].width_pt,
@@ -824,14 +824,48 @@ fn a_spanned_lane_may_be_twice_as_wide_and_no_wider() {
     );
 
     // And no further: "2x for the rare landscape site" is the whole exception.
-    let st = core.set_lane_span(lane.clone(), 5).unwrap();
+    let st = core.set_lane_size(lane.clone(), 1312, 5, vec![]).unwrap();
     assert_eq!(st.lanes[0].span, 2, "span must stay inside 1..=2");
 
-    // Narrowing back to 1 brings the width back with it, so a lane cannot be
-    // left wider than a lane is allowed to be.
-    let st = core.set_lane_span(lane, 1).unwrap();
+    // Back to span 1 brings the width back inside the normal bound with it, so
+    // a lane cannot be left wider than a lane is allowed to be.
+    let st = core.set_lane_size(lane, 99_999, 1, vec![]).unwrap();
     assert_eq!(st.lanes[0].span, 1);
     assert_eq!(st.lanes[0].width_pt, laned_core::LANE_MAX_PT);
+}
+
+/// A preset on a docked lane sizes the dock, inside the dock's bounds, and
+/// leaves the width and span the lane will go back to in the strip alone.
+#[test]
+fn a_size_preset_on_a_dock_sets_the_dock_width_and_clamps_it() {
+    let core = Core::open_in_memory().unwrap();
+    let st = core
+        .create_lane(Placement::End, PaneKind::Web, None, Some("https://music".into()), None)
+        .unwrap();
+    let lane = st.lanes[0].id.clone();
+    let pane = st.lanes[0].panes[0].id.clone();
+    core.set_lane_width(lane.clone(), 700).unwrap();
+    core.dock_lane(lane.clone(), DockSide::Right, DockMode::Inset, Some(500)).unwrap();
+
+    let before = core.revision();
+    let st = core
+        .set_lane_size(lane.clone(), 394, 1, vec![PaneZoomSetting { pane_id: pane.clone(), zoom: 0.6 }])
+        .unwrap();
+    assert_eq!(st.revision, before + 1, "one preset, one revision, docked too");
+    assert_eq!(st.lanes[0].dock.unwrap().width_pt, 394);
+    assert_eq!(st.lanes[0].panes[0].zoom, 0.6);
+    assert_eq!((st.lanes[0].width_pt, st.lanes[0].span), (700, 1), "the strip width is not the dock's");
+
+    // xl is wider than a dock may be: clamped, and the span is still the strip's.
+    let st = core.set_lane_size(lane.clone(), 1312, 2, vec![]).unwrap();
+    assert_eq!(st.lanes[0].dock.unwrap().width_pt, laned_core::DOCK_MAX_PT);
+    assert_eq!((st.lanes[0].width_pt, st.lanes[0].span), (700, 1));
+    let st = core.set_lane_size(lane.clone(), 1, 1, vec![]).unwrap();
+    assert_eq!(st.lanes[0].dock.unwrap().width_pt, laned_core::DOCK_MIN_PT);
+
+    // Undocked, it is back at the width it had in the strip.
+    let st = core.undock_lane(lane).unwrap();
+    assert_eq!(st.lanes[0].width_pt, 700);
 }
 
 #[test]
@@ -844,8 +878,8 @@ fn span_survives_a_restart_and_an_export() {
         let st =
             core.create_lane(Placement::End, PaneKind::Web, None, Some("https://wide".into()), None).unwrap();
         let lane = st.lanes[0].id.clone();
-        core.set_lane_span(lane.clone(), 2).unwrap();
-        core.set_lane_width(lane, 1800).unwrap();
+        // 1800 at span 2: a lane the retired Span Lane command left behind.
+        core.set_lane_size(lane, 1800, 2, vec![]).unwrap();
         core.export_strip().unwrap()
     };
 

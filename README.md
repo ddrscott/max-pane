@@ -802,11 +802,20 @@ press on the grip that never moves is a click, and focuses the pane.
 
 ### Lane sizes
 
-Every lane header on the strip carries a square **`s | m | xl`** switch, the
-current size lit in the accent green. The same three sizes are
-**View › Lane Size: Small / Medium / Extra Large** and in the ⌘/ sheet. They ship
-without keys; bind `laneSizeSmall`, `laneSizeMedium` and `laneSizeLarge` in
-`[keys]` if you want some. The sizes are absolute, the same for every lane:
+Every lane header carries a square **`s | m | xl`** switch, the current size lit
+in the accent green, whenever the header has room for it. Every lane's `⋯` menu
+(right-click on the header opens the same one) **always** lists **Small**,
+**Medium** and **Extra Large**, ticked at the current size and ticked nowhere when
+the lane is off all three. That holds however narrow the lane is and whether or
+not it is docked, so the lanes where the switch gives way still have a way to
+pick. The same three are **View › Lane Size: Small / Medium / Extra Large**.
+
+**⌘\\** cycles the focused lane **s → m → xl → s**. A lane that is off every
+size (dragged, zoomed, or left wide by the old Span Lane) goes to **m** on the
+first press. It is `laneSizeCycle` in `[keys]` and in the ⌘/ sheet. The three
+sizes have no keys of their own; bind `laneSizeSmall`, `laneSizeMedium` and
+`laneSizeLarge` if you want some. The sizes are absolute, the same for every
+lane:
 
 - **m** is `lane_default_pt` (656 pt) at 100%: 80 columns of 13 pt text.
 - **s** keeps **m**'s columns and draws them at 60% text. The width is computed
@@ -831,9 +840,22 @@ new text size, and reflows once when the lane arrives. The session is told the
 new size once, and only if it changed: going **m → s** keeps every column but
 fits more rows into the same height, and **s → m** gives them back.
 
-The switch is hidden on a docked lane, because a dock's width is a separate
-number with its own bounds. It is also hidden on a gallery tile, because the
-gallery changes nothing but the layout and focus.
+**A docked lane** takes the sizes on its dock's width, and eases there the same
+way. A dock is bounded at 240 to 900 pt, so a size outside that is clamped:
+**xl** on a dock is 900 pt at 100%, not 1312. With the default config, **s** and
+**m** fit as they are. The tick follows the width the dock really has. The lane's
+own strip width and span are left alone, so undocking gives it back at the size
+it had on the strip.
+
+On a gallery tile the switch is hidden and the menu's sizes are greyed out,
+because the gallery changes nothing but the layout and focus.
+
+**Span Lane (2× Width) is gone**, from the lane menu, the View menu and the ⌘/
+sheet. It made a lane 1800 pt wide, and **xl** makes it 1312: two ways to make a
+lane wide, at two different widths, and the menu offered both. A lane you spanned
+with it still loads at its width, with no size ticked, and ⌘\\ takes it to **m**.
+A `toggleSpan` line left in `[keys]` is reported as a command that does not
+exist.
 
 ### Docking a lane to an edge
 
@@ -941,7 +963,7 @@ window changes size. There are no size controls because there is exactly one
 right answer. Lanes run in strip order, left to right, wrapping into rows.
 
 **A tile is the lane, drawn smaller — never a smaller terminal.** A split lane
-keeps its panes in their order and their proportions, a spanned lane is a tile
+keeps its panes in their order and their proportions, an xl lane is a tile
 twice as wide, and the `73×53` a session reports does not change when the gallery
 opens. That last one is the whole design: a terminal given fewer pixels works out
 a new grid, and a new grid is a resize on your phone too
@@ -1226,7 +1248,7 @@ have the scroll stop exactly where the gesture put it. `snap_seconds` (default
 
 `lane_default_pt` is the width every new lane is born at. Lanes are uniform on
 purpose — pages on a desk are the same size — so this is one number, not a
-range, and a lane you have dragged or spanned keeps the width you gave it.
+range, and a lane you have dragged or sized keeps the width you gave it.
 `lane_min_pt` and `lane_max_pt` bound both.
 
 Uniform widths have one failure, and the next two settings are about it: when a
