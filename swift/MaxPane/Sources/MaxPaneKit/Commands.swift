@@ -53,6 +53,7 @@ public enum Command: String, CaseIterable, Sendable {
     case importBrowserPasswords
     case toggleSpan
     case showHelp
+    case showSettings
 
     public var title: String {
         switch self {
@@ -103,6 +104,7 @@ public enum Command: String, CaseIterable, Sendable {
         case .importBrowserPasswords: return "Import Passwords From Another Browser…"
         case .toggleSpan: return "Span Lane (2× Width)"
         case .showHelp: return "Keyboard Shortcuts"
+        case .showSettings: return "Settings…"
         }
     }
 
@@ -258,6 +260,8 @@ public enum Command: String, CaseIterable, Sendable {
         case .toggleSpan:      return ("\\", [.command])
         // The one everybody reaches for when they do not know the others.
         case .showHelp:        return ("/", [.command])
+        // ⌘, is Settings in every Mac app, which is the whole argument.
+        case .showSettings:    return (",", [.command])
         }
     }
 
@@ -376,11 +380,16 @@ public enum Command: String, CaseIterable, Sendable {
         case .fillPassword, .savePassword: return .navigate
         case .importBrowserPasswords: return .file
         case .toggleSpan: return .view
+        // In the app menu, under About, where a Mac user reaches for it.
+        case .showSettings: return .app
         }
     }
 }
 
 public enum MenuSection: String, CaseIterable {
+    /// The menu named for the app. Built by hand around About, Hide and Quit;
+    /// only its `Command`s come from here.
+    case app = "Max Pane"
     case file = "File"
     case navigate = "Navigate"
     case view = "View"

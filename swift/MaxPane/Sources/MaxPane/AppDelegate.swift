@@ -20,7 +20,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var config = Config()
     private var store: StripStore!
     private var windowController: StripWindowController!
-    private var configWatch: ConfigWatch?
+    private var configStore: ConfigStore?
+    private var configObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Before anything derives a path. A refused `--profile` stops the
@@ -42,12 +43,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             presentFatal("Could not move the ledger into the default profile", error)
             return
         }
-        config = Config.load()
+        // `config.json` becomes `config.toml` once, for whichever profile this
+        // is, and the JSON stays where it was. Not when `MAXPANE_CONFIG` names
+        // the file: a path someone pointed somewhere is theirs to fill.
+        if !Profile.configIsOverridden {
+            let json = Profile.current.legacyConfigPath
+            do {
+                if try ConfigFile.migrate(json: json, to: Config.path) {
+                    Log.warn("config: copied \(json.path) to \(Config.path.path); the JSON is left in place and no longer read")
+                }
+            } catch {
+                Log.warn("config: could not copy \(json.path) to \(Config.path.path): \(error.localizedDescription)")
+            }
+        }
+        let configStore = ConfigStore(
+            path: Config.path, legacyPath: Profile.configIsOverridden ? nil : Profile.current.legacyConfigPath)
+        self.configStore = configStore
+        config = configStore.config
         // Before any window exists, so nothing is built in one appearance and
         // then faded into the other on launch.
         Appearance.apply(config.theme)
-        // `theme` is the one key that applies the moment the file is saved.
-        configWatch = ConfigWatch { next in Appearance.apply(next.theme) }
+        // `theme` is the one key that applies the moment the file is saved,
+        // from a text editor or from the settings window alike.
+        configObserver = NotificationCenter.default.addObserver(
+            forName: ConfigStore.didChange, object: configStore, queue: .main
+        ) { [weak configStore] _ in
+            MainActor.assumeIsolated {
+                if let configStore { Appearance.apply(configStore.config.theme) }
+            }
+        }
         // Before the window and before the menu: both bake in key equivalents
         // when they are built, so a keymap installed after either of them would
         // leave the menu advertising one key and the monitor answering another.
@@ -65,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         windowController = StripWindowController(store: store, config: config)
+        windowController.configStore = configStore
         buildMenu()
         windowController.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -104,6 +129,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About Max Pane", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
+        for command in Command.allCases where command.menu == .app {
+            appMenu.addItem(menuItem(for: command))
+        }
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hide Max Pane", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(withTitle: "Quit Max Pane", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
@@ -141,24 +170,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editItem.submenu = editMenu
         main.addItem(editItem)
 
-        for section in MenuSection.allCases {
+        for section in MenuSection.allCases where section != .app {
             let item = NSMenuItem()
             let menu = NSMenu(title: section.rawValue)
             menu.autoenablesItems = false
             for command in Command.allCases where command.menu == section {
-                // A command with no ⌘-chord — unbound, or bound to something
-                // like Esc that the window's key monitor handles — is still an
-                // item. It was previously skipped outright, which is how "Leave
-                // Gather View" came to be an action with no key that listened
-                // and no menu entry to click either.
-                let chord = command.menuChord
-                let mi = NSMenuItem(
-                    title: command.title, action: #selector(runCommand(_:)),
-                    keyEquivalent: chord?.key ?? "")
-                mi.keyEquivalentModifierMask = chord?.modifiers ?? []
-                mi.target = self
-                mi.representedObject = command.rawValue
-                menu.addItem(mi)
+                menu.addItem(menuItem(for: command))
             }
             item.submenu = menu
             main.addItem(item)
@@ -169,6 +186,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for section in main.items.dropFirst() {
             section.submenu?.delegate = self
         }
+    }
+
+    /// A command as a menu item, carrying its ⌘-chord if it has one.
+    ///
+    /// A command with no ⌘-chord — unbound, or bound to something like Esc that
+    /// the window's key monitor handles — is still an item. It was previously
+    /// skipped outright, which is how "Leave Gather View" came to be an action
+    /// with no key that listened and no menu entry to click either.
+    private func menuItem(for command: Command) -> NSMenuItem {
+        let chord = command.menuChord
+        let item = NSMenuItem(
+            title: command.title, action: #selector(runCommand(_:)),
+            keyEquivalent: chord?.key ?? "")
+        item.keyEquivalentModifierMask = chord?.modifiers ?? []
+        item.target = self
+        item.representedObject = command.rawValue
+        return item
     }
 
     /// ⌘V, offered to a terminal pane first and to everything else after.

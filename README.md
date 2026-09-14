@@ -897,12 +897,13 @@ so the variables that count are the ones your `.zshrc` exports. **They have to
 name the program, not an alias:** `EDITOR=vim` beside `alias vim=nvim` opens a
 stock `/usr/bin/vim` with none of your neovim config, because an alias is never
 expanded out of a variable. `git commit` has always done the same; set
-`EDITOR=nvim` and both are right. `editor` in the config file replaces the
+`EDITOR=nvim` and both are right. The `editor` [setting](#settings) replaces the
 default, which is how you spell the editors that do not take `+N`:
 
-```json
-{ "editor": "code --goto %f:%l:%c" }
-{ "editor": "hx %f:%l:%c" }
+```toml
+editor = "code --goto %f:%l:%c"
+# or
+editor = "hx %f:%l:%c"
 ```
 
 `%f` is the path, already quoted; `%l` is the line and `%c` the column, each
@@ -1007,9 +1008,10 @@ Motion is on:
 
 Signal Orange is the same in both.
 
-`"theme"` in the config file overrides the system: `"system"` (the default),
-`"light"` or `"dark"`. It is the one key that applies the moment the file is
-saved. Every other key is still read at launch.
+The `theme` [setting](#settings) overrides the system: `system` (the default),
+`light` or `dark`. It is the one key that applies the moment it changes, from
+Settings or from a save in a text editor. Every other key is still read at
+launch.
 
 An evicted web lane's placeholder picture keeps the appearance it was taken in.
 Its frame and caption follow the switch, and the page comes back in the current
@@ -1019,39 +1021,72 @@ For anyone adding a view: paint layers with `layerBackgroundColor` /
 `layerBorderColor`, not `layer.backgroundColor = x.cgColor`. A `CGColor` is a
 snapshot of one appearance. A test fails the build on a hand conversion.
 
-### Preferences
+### Settings
 
-`~/.config/maxpane/config.json`. Set only what you want to change; everything
-else keeps its default.
+**⌘,** (or Max Pane › Settings…, or the gear at the foot of the sidebar) opens
+every setting and every key in one window. Each change is written to the config
+file the moment you make it, and a save to that file from a text editor shows up
+in the window, so neither one is a copy of the other. The file is plain TOML:
 
-```json
-{
-  "theme": "system",
-  "snapToLanes": true,
-  "laneDefaultPt": 656,
-  "lanePeekPt": 28,
-  "stripEdgeRails": true,
-  "fontName": "JetBrains Mono",
-  "fontSize": 13
-}
+| profile | file |
+|---|---|
+| default | `$XDG_CONFIG_HOME/maxpane/config.toml`, or `~/.config/maxpane/config.toml` when that is unset |
+| any other | `…/maxpane/profiles/<name>/config.toml` |
+
+`MAXPANE_CONFIG` names a different file outright. An app opened from the Dock
+does not see the `XDG_CONFIG_HOME` your shell exports, so there it is `~/.config`
+unless launchd has it set too.
+
+Set only what you want to change. A key the file does not mention keeps its
+default, and **default** in the window takes the key out of the file rather than
+writing today's value into it, so it goes on following the default.
+
+```toml
+# comments are yours, and stay where you put them
+theme = "system"
+snap_to_lanes = true
+lane_default_pt = 656
+lane_peek_pt = 28
+strip_edge_rails = true
+font_name = "JetBrains Mono"
+font_size = 13
 ```
+
+The window writes one value at a time, in place: your comments, the order of
+your keys and keys it does not know all survive
+([ADR-0012](docs/decisions/0012-in-house-toml-line-editor.md)). **reveal in
+finder** shows the file, and **open in editor** opens it in a terminal lane with
+your `editor` setting, the same way ⌘-clicking a path does.
+
+`theme` applies at once. Every other key, the keyboard included, applies on the
+next launch, and the window marks a changed one `$ relaunch to apply` until then.
+
+A value of the wrong type is skipped and its default used. The window shows
+which key was skipped and why, on that key's row. A line it cannot read at all,
+or a key that is not a setting (the old JSON spelling `laneDefaultPt`, say), is
+listed under the file's path and left exactly as it is.
+
+**Coming from `config.json`:** the first launch that finds no `config.toml`
+copies the old file's settings into one and leaves the JSON where it was. It is
+not read after that, and the window says so. A value the JSON could not use
+either comes across as a comment.
 
 `theme` is `system`, `light` or `dark`. See [Light and dark](#light-and-dark).
 
-`searchUrl` is where a web pane's address bar sends something that is not an
+`search_url` is where a web pane's address bar sends something that is not an
 address — `%s` is the query. A portrait lane has room for one text field, so the
 address bar is also the search box; `example.com` navigates, `swift actors`
 searches, and the rule for telling them apart is the same one ⌘T uses.
 
-`snapToLanes` settles a horizontal scroll with the nearest lane centred, rather
+`snap_to_lanes` settles a horizontal scroll with the nearest lane centred, rather
 than leaving two lanes half-readable. It is on by default; set it to `false` to
-have the scroll stop exactly where the gesture put it. `snapSeconds` (default
+have the scroll stop exactly where the gesture put it. `snap_seconds` (default
 `0.18`) is how long that takes.
 
-`laneDefaultPt` is the width every new lane is born at. Lanes are uniform on
+`lane_default_pt` is the width every new lane is born at. Lanes are uniform on
 purpose — pages on a desk are the same size — so this is one number, not a
 range, and a lane you have dragged or spanned keeps the width you gave it.
-`laneMinPt` and `laneMaxPt` bound both.
+`lane_min_pt` and `lane_max_pt` bound both.
 
 Uniform widths have one failure, and the next two settings are about it: when a
 whole number of lanes happens to fit the window, the strip comes to rest flush
@@ -1059,43 +1094,44 @@ with a lane boundary, nothing shows at either edge, and there is no evidence
 left on screen that the strip continues at all — a strip of twenty lanes looks
 exactly like a strip of three.
 
-`lanePeekPt` is the smallest sliver of the next lane the strip will settle
+`lane_peek_pt` is the smallest sliver of the next lane the strip will settle
 with. When centring a lane would leave an edge flush while lanes continue past
 it, the settle lands up to this many points off centre instead, so a corner of
 the next lane always shows. It never moves further than that, and at the two
 ends of the strip it does not move at all — the end of the strip is a fact
 worth seeing. `0` turns it off and gives you exactly centred snapping.
 
-`stripEdgeRails` is the other half: an 18 pt column at each end of the strip
+`strip_edge_rails` is the other half: an 18 pt column at each end of the strip
 with a count of the lanes hidden that way (`◀ 7`, `5 ▶`), and a plain wall when
 there are none. A sliver says *there is more, this way*; it cannot say how many,
 and at the ends of the strip there is nothing to show a sliver of. `false`
 removes both rails and gives their 36 points back to the lanes.
 
-Every field of `Config` is a key here. A value of the wrong type is skipped —
-with a line on stderr saying which — rather than taking the rest of the file
-down with it.
+Every field of `Config` is a key here, and every key is a row in the window. A
+skipped value also prints a line on stderr.
 
 ### Shortcuts
 
-`keys` moves any of them. The command names are the ones the ⌘/ sheet lists, and
-whatever you do not mention keeps the key it ships with:
+The **Keyboard** section of Settings lists every command, the keys that run it
+and the key it ships with. **rec** takes the next chord you press (esc cancels),
+**none** unbinds, and **default** gives the shipped key back. You can also type
+chords into the field, space-separated.
 
-```json
-{
-  "keys": {
-    "newTerminalLane": "cmd+n",
-    "openAnything": ["cmd+k", "cmd+t"],
-    "moveLaneLeft": "shift+cmd+left",
-    "closePane": null
-  }
-}
+In the file this is the `[keys]` table, by command name. Whatever you do not
+mention keeps the key it ships with:
+
+```toml
+[keys]
+newTerminalLane = "cmd+n"
+openAnything = ["cmd+k", "cmd+t"]
+moveLaneLeft = "shift+cmd+left"
+closePane = []
 ```
 
-A value is a chord, a list of chords, or `null`. With a list, the first is the
-one the menu shows and the rest are alternates — which is how ⌘O ships with ⌘T.
-`null` unbinds the command outright: it stays in the menu, it stops
-having a key, and a web pane stops having that chord taken off it.
+A value is a chord, a list of chords, or `[]`. With a list, the first is the one
+the menu shows and the rest are alternates, which is how ⌘O ships with ⌘T. `[]`
+(or `"none"`) unbinds the command outright: it stays in the menu, it stops having
+a key, and a web pane stops having that chord taken off it.
 
 A chord is written either way the keyboard is described: `cmd+shift+d` or the
 `⇧⌘D` the help sheet prints. Modifiers are `cmd`, `ctrl`, `opt` (or `alt`) and
@@ -1117,12 +1153,13 @@ Four things can be wrong with a keymap, and each costs only itself:
 | a chord macOS or the Edit menu owns (⌘Q, ⌘H, ⌘M, ⌘Tab, ⌘space, ⌘X ⌘C ⌘V ⌘A) | refused — it could never have fired |
 | two commands on one chord | one of them gets it |
 
-All four print a line on stderr saying what happened. On the last: a key you set
+All four show on that command's row in Settings, and print a line on stderr. On the last: a key you set
 beats a key that was only a default, so taking ⌘R for `newTerminalLane` is one
 edit and `reload` yields it — and if two commands you set both want it, the one
 declared first in `Command` keeps it and the other is named in the warning.
 
-The keymap is read once, at launch.
+The keymap is read once, at launch, which is why a changed key says
+`$ relaunch to apply`.
 
 
 ### Profiles
@@ -1146,7 +1183,7 @@ Everything lives under the name, the default profile included:
 | | |
 |---|---|
 | ledger, socket, snapshots | `~/Library/Application Support/MaxPane/profiles/<name>/` |
-| config | `~/.config/maxpane/profiles/<name>/config.json` |
+| config | `…/maxpane/profiles/<name>/config.toml`, except the default profile's `…/maxpane/config.toml` — see [Settings](#settings) |
 | cookie jars | `WKWebsiteDataStore` UUIDs salted with the name |
 
 The default profile's cookie salt is **empty**, and has to stay that way: WebKit

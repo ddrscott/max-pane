@@ -72,6 +72,47 @@ public struct KeyChord: Hashable, Sendable {
         return out
     }
 
+    /// The chord as a config file spells it: `cmd+shift+d`, `cmd+left`, `esc`.
+    ///
+    /// What the settings window writes. `text` would parse back just as well,
+    /// but `⇧⌘D` is not something anyone can type into a file from a keyboard,
+    /// and a file the UI writes should read like one a person wrote.
+    public var configText: String {
+        var parts: [String] = []
+        let mods = modifiers
+        if mods.contains(.command) { parts.append("cmd") }
+        if mods.contains(.control) { parts.append("ctrl") }
+        if mods.contains(.option) { parts.append("opt") }
+        if mods.contains(.shift) { parts.append("shift") }
+        parts.append(Self.named.first(where: { $0.key == key })?.word ?? key)
+        return parts.joined(separator: "+")
+    }
+
+    /// The chord a key press is, for the settings window's recorder — or nil
+    /// for a key with nothing a chord can name.
+    ///
+    /// Named keys go by key code, because their characters are private-use
+    /// function-key points (`NSUpArrowFunctionKey`) that nothing else here
+    /// spells. Shifted punctuation is turned back into the unshifted key the
+    /// map stores: ⇧⌘[ arrives as `{`.
+    public init?(event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        let byCode: [UInt16: String] = [
+            53: "\u{1b}", 123: "\u{2190}", 124: "\u{2192}", 125: "\u{2193}", 126: "\u{2191}",
+            48: "\u{21e5}", 49: " ", 36: "\r", 76: "\r", 51: "\u{8}",
+        ]
+        if let key = byCode[event.keyCode] {
+            self.init(key: key, modifiers: modifiers)
+            return
+        }
+        guard let typed = event.charactersIgnoringModifiers, typed.count == 1,
+              let scalar = typed.unicodeScalars.first, !(0xF700...0xF8FF).contains(scalar.value),
+              scalar.value >= 0x20
+        else { return nil }
+        let unshifted = Keymap.shifted.first(where: { $0.value == typed })?.key ?? typed
+        self.init(key: unshifted, modifiers: modifiers)
+    }
+
     // MARK: - parsing
 
     private static let modifierWords: [(String, NSEvent.ModifierFlags)] = [
@@ -233,6 +274,7 @@ public struct Keymap: Sendable {
     /// thread for the rest of the process. There is no reload-on-change — the
     /// menu's key equivalents are baked in at `buildMenu`, so a second install
     /// would leave the menu saying one thing and the monitor doing another.
+    /// That is why the settings window marks a changed key "relaunch to apply".
     nonisolated(unsafe) public private(set) static var active = Keymap.defaults
 
     public static func install(_ keymap: Keymap) {
@@ -345,7 +387,7 @@ public struct Keymap: Sendable {
     /// ⇧⌘[ and ⇧⌘] are the two bindings this silently fails to protect, and a
     /// silent gap in a keyboard map is the thing this file exists to prevent.
     /// Letters need no entry: `W` lowercases back to `w`.
-    private static let shifted: [String: String] = [
+    static let shifted: [String: String] = [
         "[": "{", "]": "}", "=": "+", "-": "_", "\\": "|", "/": "?",
         ",": "<", ".": ">", ";": ":", "'": "\"", "`": "~",
     ]

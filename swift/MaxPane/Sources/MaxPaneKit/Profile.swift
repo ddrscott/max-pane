@@ -118,19 +118,62 @@ public struct Profile: Sendable, Equatable {
             .appendingPathComponent(name, isDirectory: true)
     }
 
-    /// `~/.config/maxpane/profiles/<name>`.
+    /// `$XDG_CONFIG_HOME/maxpane` for the default profile, and
+    /// `…/maxpane/profiles/<name>` for any other.
     ///
-    /// Under `~/.config` rather than Application Support because a person edits
-    /// what is in it, and under `profiles/` for the same reason the state is.
-    public var configDirectory: URL {
-        Profile.configRoot
+    /// Under the config directory rather than Application Support because a
+    /// person edits what is in it. The default profile's file is at the top,
+    /// where anyone looking for a Unix program's config looks first; the
+    /// others are under `profiles/`, so a test instance still cannot read or
+    /// write the one someone is working with.
+    public var configDirectory: URL { configDirectory(root: Profile.configRoot) }
+
+    func configDirectory(root: URL) -> URL {
+        guard !isDefault else { return root }
+        return root
             .appendingPathComponent("profiles", isDirectory: true)
             .appendingPathComponent(name, isDirectory: true)
     }
 
     static var configRoot: URL {
+        configRoot(environment: ProcessInfo.processInfo.environment, home: FileManager.default.homeDirectoryForCurrentUser)
+    }
+
+    /// `$XDG_CONFIG_HOME/maxpane`, or `~/.config/maxpane` when it is unset.
+    ///
+    /// The XDG spec says a relative `XDG_CONFIG_HOME` is invalid and is to be
+    /// ignored, so an empty or relative one falls back like an unset one. An app
+    /// opened from the Dock inherits launchd's environment rather than a shell's,
+    /// so there it is usually unset, and the fallback is the answer.
+    static func configRoot(environment: [String: String], home: URL) -> URL {
+        if let xdg = environment["XDG_CONFIG_HOME"].map({ ($0 as NSString).expandingTildeInPath }),
+           xdg.hasPrefix("/") {
+            return URL(fileURLWithPath: xdg, isDirectory: true).appendingPathComponent("maxpane", isDirectory: true)
+        }
+        return home.appendingPathComponent(".config/maxpane", isDirectory: true)
+    }
+
+    /// Where `config.json` was always written: `~/.config`, whatever
+    /// `XDG_CONFIG_HOME` says, because the code that wrote it never asked.
+    static var legacyConfigRoot: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/maxpane", isDirectory: true)
+    }
+
+    /// This profile's old `config.json`, which `ConfigFile.migrate` copies from
+    /// and leaves in place.
+    public var legacyConfigPath: URL { legacyConfigPath(root: Profile.legacyConfigRoot) }
+
+    func legacyConfigPath(root: URL) -> URL {
+        root.appendingPathComponent("profiles", isDirectory: true)
+            .appendingPathComponent(name, isDirectory: true)
+            .appendingPathComponent("config.json")
+    }
+
+    /// True when `MAXPANE_CONFIG` names the file, and nothing is to be migrated
+    /// into it: a path someone pointed somewhere is theirs.
+    public static var configIsOverridden: Bool {
+        ProcessInfo.processInfo.environment["MAXPANE_CONFIG"] != nil
     }
 
     public var snapshotsDirectory: URL {
@@ -167,7 +210,7 @@ public struct Profile: Sendable, Equatable {
         if let override = ProcessInfo.processInfo.environment["MAXPANE_CONFIG"] {
             return URL(fileURLWithPath: (override as NSString).expandingTildeInPath)
         }
-        return configDirectory.appendingPathComponent("config.json")
+        return configDirectory.appendingPathComponent("config.toml")
     }
 
     /// What `DataStorePool` mixes into a shard's UUID so two profiles cannot
@@ -265,7 +308,9 @@ public struct Profile: Sendable, Equatable {
     /// disagreement the copy is deleted and the original is left exactly where
     /// it was, so the recovery is to launch an older build.
     public static func migrateLegacyLayout() throws {
-        try migrate(support: applicationSupport, configRoot: configRoot)
+        // The legacy root, not `configRoot`: this moves a `config.json` that was
+        // only ever written under `~/.config`.
+        try migrate(support: applicationSupport, configRoot: legacyConfigRoot)
     }
 
     /// The two roots are parameters so this can be proved against a directory

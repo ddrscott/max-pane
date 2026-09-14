@@ -4,10 +4,15 @@ import Foundation
 /// this is deliberately a flat list of the numbers the PRD leaves configurable
 /// and nothing else — no theme engine, no plugins.
 ///
-/// Lives at `~/.config/maxpane/config.json`. Missing file, missing key and
-/// unparseable value all fall back to the default, because a typo in a config
-/// file should not stop the app from opening.
-public struct Config: Codable {
+/// Lives at `$XDG_CONFIG_HOME/maxpane/config.toml` — see `Profile.configPath` —
+/// and is read by `ConfigFile`, keyed by `ConfigField`'s snake_case names.
+/// Missing file, missing key and unparseable value all fall back to the
+/// default, because a typo in a config file should not stop the app from
+/// opening.
+///
+/// Still `Codable`: `config.json` is what `ConfigFile.migrate` reads from, and
+/// this decoder is the definition of what that file meant.
+public struct Config: Codable, Equatable {
     public init() {}
 
     /// PRD §8.
@@ -97,9 +102,9 @@ public struct Config: Codable {
     /// program itself, since an alias does not survive the expansion. Editors
     /// that do not take `+N` are why this key exists:
     ///
-    /// ```json
-    /// { "editor": "code --goto %f:%l:%c" }
-    /// { "editor": "hx %f:%l:%c" }
+    /// ```toml
+    /// editor = "code --goto %f:%l:%c"
+    /// editor = "hx %f:%l:%c"
     /// ```
     public var editor: String?
 
@@ -117,7 +122,7 @@ public struct Config: Codable {
     ///
     /// A strip is a row of columns, and a scroll that stops between two of them
     /// leaves both half-readable — you then nudge it by hand, every time. On by
-    /// default; `"snapToLanes": false` in the config file leaves the scroll
+    /// default; `snap_to_lanes = false` in the config file leaves the scroll
     /// exactly where the gesture put it.
     public var snapToLanes: Bool = true
     /// How long that settle takes. Short enough not to feel like a delay, long
@@ -146,7 +151,8 @@ public struct Config: Codable {
     /// says why it is only this one, for now.
     public var theme: ThemeChoice = .system
 
-    /// `~/.config/maxpane/profiles/<profile>/config.json`.
+    /// `$XDG_CONFIG_HOME/maxpane/config.toml` for the default profile,
+    /// `…/maxpane/profiles/<profile>/config.toml` for any other.
     ///
     /// Per profile, so a preference can be exercised at runtime without editing
     /// the config of whoever is using the app — which is why the lane-rail and
@@ -154,18 +160,14 @@ public struct Config: Codable {
     /// tried in a running instance.
     public static var path: URL { Profile.current.configPath }
 
+    /// The TOML file at `path`, each bad value skipped with a line on stderr.
     public static func load(from path: URL = Config.path) -> Config {
-        guard let data = try? Data(contentsOf: path) else { return Config() }
-        do {
-            return try JSONDecoder().decode(Config.self, from: data)
-        } catch {
-            FileHandle.standardError.write(
-                Data("maxpane: ignoring \(path.path): \(error)\n".utf8))
-            return Config()
-        }
+        let (config, problems, _) = ConfigFile.load(from: path)
+        for problem in problems { Log.warn("config: \(problem.text)") }
+        return config
     }
 
-    /// Decoded key by key, each one falling back to its default.
+    /// `config.json`, decoded key by key, each one falling back to its default.
     ///
     /// Swift's synthesised decoder does not do this: a default value on a
     /// property is used when you construct one in code and ignored when

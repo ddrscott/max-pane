@@ -1,0 +1,423 @@
+import Foundation
+
+/// Where a setting is listed in the settings window.
+public enum ConfigGroup: String, CaseIterable, Sendable {
+    case lanes = "Lanes"
+    case galleryMotion = "Gallery & motion"
+    case web = "Web & memory"
+    case terminals = "Terminals & sessions"
+    case editorSearch = "Editor & search"
+    case appearance = "Appearance"
+    case keyboard = "Keyboard"
+
+    /// `// GALLERY_AND_MOTION`.
+    var header: String {
+        rawValue.uppercased()
+            .replacingOccurrences(of: " & ", with: "_AND_")
+            .replacingOccurrences(of: " ", with: "_")
+    }
+}
+
+/// What kind of control a setting gets.
+public enum ConfigControl: Sendable {
+    /// A whole number. The range bounds what the settings window will write;
+    /// the file itself is held only to the type, so a number a hand edit put
+    /// there before this window existed still means what it meant.
+    case integer(ClosedRange<Int64>, step: Int64)
+    case number(ClosedRange<Double>, step: Double)
+    case toggle
+    /// `placeholder` says what an empty field means.
+    case text(placeholder: String)
+    case choice([String])
+}
+
+/// One key of `config.toml`: its name, where it is listed, what it does, and
+/// how to read it into a `Config`.
+///
+/// **The one place a TOML name meets a Swift property.** `key` is derived from
+/// `name` by `ConfigField.snake`, so `laneDefaultPt` is `lane_default_pt` and
+/// there is no second table of spellings to drift; a test holds `all` to
+/// `Config`'s stored properties, so a new setting cannot ship without a row.
+public struct ConfigField {
+    /// The Swift property, and the key the old `config.json` used.
+    public let name: String
+    public let group: ConfigGroup
+    public let control: ConfigControl
+    /// One line, from the property's documentation.
+    public let summary: String
+    /// True only where the running app re-reads the value when the file
+    /// changes. Everything else is read at launch, and the window says so.
+    public let appliesLive: Bool
+    /// The value in `config`, or nil for an optional that is unset.
+    public let read: (Config) -> TomlValue?
+    /// Put `value` into `config`, or say why it cannot go there.
+    let apply: (inout Config, TomlValue) -> String?
+
+    public var key: String { Self.snake(name) }
+
+    /// The shipped value, as the file would spell it.
+    public var defaultValue: TomlValue? { read(Config()) }
+
+    /// `laneDefaultPt` → `lane_default_pt`.
+    static func snake(_ name: String) -> String {
+        var out = ""
+        for c in name {
+            if c.isUppercase {
+                out += "_" + c.lowercased()
+            } else {
+                out.append(c)
+            }
+        }
+        return out
+    }
+
+    // MARK: - builders
+
+    private static func unsigned(
+        _ name: String, _ path: WritableKeyPath<Config, UInt32>, _ group: ConfigGroup,
+        _ range: ClosedRange<Int64>, step: Int64 = 1, _ summary: String
+    ) -> ConfigField {
+        ConfigField(
+            name: name, group: group, control: .integer(range, step: step), summary: summary, appliesLive: false,
+            read: { .integer(Int64($0[keyPath: path])) },
+            apply: { config, value in
+                guard case .integer(let n) = value else { return "expected a whole number, got \(value.kind)" }
+                guard let v = UInt32(exactly: n) else { return "expected a whole number from 0 to \(UInt32.max)" }
+                config[keyPath: path] = v
+                return nil
+            })
+    }
+
+    private static func signed(
+        _ name: String, _ path: WritableKeyPath<Config, Int>, _ group: ConfigGroup,
+        _ range: ClosedRange<Int64>, _ summary: String
+    ) -> ConfigField {
+        ConfigField(
+            name: name, group: group, control: .integer(range, step: 1), summary: summary, appliesLive: false,
+            read: { .integer(Int64($0[keyPath: path])) },
+            apply: { config, value in
+                guard case .integer(let n) = value else { return "expected a whole number, got \(value.kind)" }
+                guard let v = Int(exactly: n) else { return "\(n) is too large" }
+                config[keyPath: path] = v
+                return nil
+            })
+    }
+
+    private static func double(
+        _ name: String, _ path: WritableKeyPath<Config, Double>, _ group: ConfigGroup,
+        _ range: ClosedRange<Double>, step: Double, _ summary: String
+    ) -> ConfigField {
+        ConfigField(
+            name: name, group: group, control: .number(range, step: step), summary: summary, appliesLive: false,
+            read: { .float($0[keyPath: path]) },
+            apply: { config, value in
+                // A whole number is a number: `font_size = 13` is what anyone
+                // would write, and `config.json` took it too.
+                switch value {
+                case .float(let d): config[keyPath: path] = d
+                case .integer(let n): config[keyPath: path] = Double(n)
+                default: return "expected a number, got \(value.kind)"
+                }
+                return nil
+            })
+    }
+
+    private static func bool(
+        _ name: String, _ path: WritableKeyPath<Config, Bool>, _ group: ConfigGroup, _ summary: String
+    ) -> ConfigField {
+        ConfigField(
+            name: name, group: group, control: .toggle, summary: summary, appliesLive: false,
+            read: { .bool($0[keyPath: path]) },
+            apply: { config, value in
+                guard case .bool(let b) = value else { return "expected true or false, got \(value.kind)" }
+                config[keyPath: path] = b
+                return nil
+            })
+    }
+
+    private static func string(
+        _ name: String, _ path: WritableKeyPath<Config, String>, _ group: ConfigGroup, _ summary: String
+    ) -> ConfigField {
+        ConfigField(
+            name: name, group: group, control: .text(placeholder: Config()[keyPath: path]), summary: summary,
+            appliesLive: false,
+            read: { .string($0[keyPath: path]) },
+            apply: { config, value in
+                guard case .string(let s) = value else { return "expected a string, got \(value.kind)" }
+                config[keyPath: path] = s
+                return nil
+            })
+    }
+
+    private static func optionalString(
+        _ name: String, _ path: WritableKeyPath<Config, String?>, _ group: ConfigGroup,
+        unset: String, _ summary: String
+    ) -> ConfigField {
+        ConfigField(
+            name: name, group: group, control: .text(placeholder: unset), summary: summary, appliesLive: false,
+            read: { $0[keyPath: path].map(TomlValue.string) },
+            apply: { config, value in
+                guard case .string(let s) = value else { return "expected a string, got \(value.kind)" }
+                config[keyPath: path] = s
+                return nil
+            })
+    }
+
+    // MARK: - every key
+
+    /// Every setting except `keys`, which is a table of its own and is listed
+    /// from `Command`. In the order the window lists them.
+    public static var all: [ConfigField] {
+        [
+            unsigned("laneDefaultPt", \.laneDefaultPt, .lanes, 200...4000, step: 8,
+                     "The width every new lane is born at. 656 fits 80 columns of 13 pt text."),
+            unsigned("laneMinPt", \.laneMinPt, .lanes, 100...4000, step: 10,
+                     "The narrowest a lane can be dragged or narrowed to."),
+            unsigned("laneMaxPt", \.laneMaxPt, .lanes, 100...4000, step: 10,
+                     "The widest a lane can be dragged or widened to. A spanned lane gets twice this."),
+            unsigned("lanePeekPt", \.lanePeekPt, .lanes, 0...200, step: 2,
+                     "The sliver of the next lane a settled strip always shows. 0 centres exactly."),
+            bool("stripEdgeRails", \.stripEdgeRails, .lanes,
+                 "The rails at either edge that count the lanes off screen."),
+            bool("snapToLanes", \.snapToLanes, .galleryMotion,
+                 "Settle a sideways scroll with the nearest lane centred."),
+            double("snapSeconds", \.snapSeconds, .galleryMotion, 0...2, step: 0.02,
+                   "How long that settle takes."),
+            unsigned("releaseDistance", \.releaseDistance, .web, 0...100,
+                     "Lanes off screen before a web page is taken out of the window."),
+            unsigned("rehydrateDistance", \.rehydrateDistance, .web, 0...100,
+                     "Lanes away before an evicted page is loaded again."),
+            signed("dataStoreCount", \.dataStoreCount, .web, 1...32,
+                   "How many separate cookie jars projects are spread across."),
+            double("webMemorySoftFraction", \.webMemorySoftFraction, .web, 0.01...1, step: 0.01,
+                   "Share of RAM web pages may hold for long before eviction starts."),
+            double("webMemoryHardFraction", \.webMemoryHardFraction, .web, 0.01...1, step: 0.01,
+                   "Share of RAM above which pages are evicted at once."),
+            double("webMemoryTargetFraction", \.webMemoryTargetFraction, .web, 0.01...1, step: 0.01,
+                   "Share of RAM eviction brings web pages back down to."),
+            double("memorySampleSeconds", \.memorySampleSeconds, .web, 1...600, step: 1,
+                   "How often web memory is measured. Three samples over budget start eviction."),
+            string("fontName", \.fontName, .terminals, "The terminal font."),
+            double("fontSize", \.fontSize, .terminals, 6...72, step: 1,
+                   "The terminal font size, in points. ⌘= and ⌘- zoom a pane from here."),
+            double("sessionPollSeconds", \.sessionPollSeconds, .terminals, 1...120, step: 1,
+                   "How often RelayTTY's session files are read. pty-host writes every 5 s."),
+            optionalString("relayPtyHostPath", \.relayPtyHostPath, .terminals,
+                           unset: "found next to relay on PATH",
+                           "Where relay-pty-host lives, when it is not next to relay."),
+            optionalString("editor", \.editor, .editorSearch, unset: FileOpen.defaultEditorTemplate,
+                           "What a ⌘-clicked file opens in. %f is the path, %l the line, %c the column."),
+            string("searchUrl", \.searchUrl, .editorSearch,
+                   "Where the address bar sends what is not an address. %s is the query."),
+            ConfigField(
+                name: "theme", group: .appearance, control: .choice(ThemeChoice.allCases.map(\.rawValue)),
+                summary: "Follow the Mac's light or dark mode, or pin one.", appliesLive: true,
+                read: { .string($0.theme.rawValue) },
+                apply: { config, value in
+                    guard case .string(let s) = value, let choice = ThemeChoice(rawValue: s) else {
+                        return "expected one of " + ThemeChoice.allCases.map { "\"\($0.rawValue)\"" }.joined(separator: ", ")
+                    }
+                    config.theme = choice
+                    return nil
+                }),
+        ]
+    }
+
+    /// The table the keymap lives in.
+    public static let keysTable = "keys"
+}
+
+/// Something in the file that was not used, and why.
+public struct ConfigProblem: Equatable, Sendable {
+    /// `lane_min_pt`, `keys.closePane`, or empty for a line with no key.
+    public let key: String
+    public let line: Int?
+    public let reason: String
+
+    public var text: String {
+        let at = line.map { "line \($0): " } ?? ""
+        return key.isEmpty ? "\(at)\(reason)" : "\(at)\(key) — \(reason)"
+    }
+}
+
+/// Reading `config.toml` into a `Config`, and moving an old `config.json` into
+/// one.
+public enum ConfigFile {
+    /// The first lines of a file this app creates.
+    static let header = """
+        # Max Pane settings. Edit here or in Settings (⌘,); each sees the other's changes.
+        # Set only what you want to change: a key that is not here keeps its default.
+        """
+
+    /// Every key read key by key, each one falling back to its default.
+    ///
+    /// The same rule `Config.init(from:)` has always applied to the JSON: one
+    /// bad value costs that value, never the file. What changed is that the
+    /// reason is kept rather than only printed, so the settings window can show
+    /// which key was ignored and why.
+    public static func decode(_ document: TomlDocument) -> (config: Config, problems: [ConfigProblem]) {
+        var config = Config()
+        var problems = document.unreadable.map { ConfigProblem(key: "", line: $0.line, reason: $0.reason + "; left as it is") }
+        let fields = ConfigField.all
+        var seen = Set<String>()
+
+        var bindings: [String: [String]] = [:]
+        for entry in document.entries {
+            let table = entry.table
+            let identity = "\(table ?? "").\(entry.key)"
+            let shown = table.map { "\($0).\(entry.key)" } ?? entry.key
+            if seen.contains(identity) {
+                problems.append(.init(key: shown, line: entry.line, reason: "set twice; the first one is used"))
+                continue
+            }
+            seen.insert(identity)
+
+            if table == ConfigField.keysTable {
+                switch entry.value {
+                case .failure(let error):
+                    problems.append(.init(key: shown, line: entry.line, reason: error.reason))
+                case .success(.string(let one)):
+                    bindings[entry.key] = ["", "none", "off"].contains(one.lowercased()) ? [] : [one]
+                case .success(.array(let items)):
+                    let strings = items.compactMap { item -> String? in
+                        if case .string(let s) = item { return s } else { return nil }
+                    }
+                    if strings.count == items.count {
+                        bindings[entry.key] = strings
+                    } else {
+                        problems.append(.init(key: shown, line: entry.line, reason: "expected a chord, a list of chords, or []"))
+                    }
+                case .success:
+                    problems.append(.init(key: shown, line: entry.line, reason: "expected a chord, a list of chords, or []"))
+                }
+                continue
+            }
+            guard table == nil else {
+                let name = table!.hasPrefix("[") ? table! : "[\(table!)]"
+                problems.append(.init(key: shown, line: entry.line, reason: "\(name) is not a table this file uses; left as it is"))
+                continue
+            }
+            guard let field = fields.first(where: { $0.key == entry.key }) else {
+                // The likeliest typo is the old JSON spelling.
+                let hint = fields.first(where: { $0.name == entry.key }).map { " (the name here is \($0.key))" } ?? ""
+                problems.append(.init(key: shown, line: entry.line, reason: "not a setting\(hint); left as it is"))
+                continue
+            }
+            let fallback = field.defaultValue.map { " — using the default, \($0.toml)" } ?? " — using the default"
+            switch entry.value {
+            case .failure(let error):
+                problems.append(.init(key: shown, line: entry.line, reason: error.reason + fallback))
+            case .success(let value):
+                if let reason = field.apply(&config, value) {
+                    problems.append(.init(key: shown, line: entry.line, reason: reason + fallback))
+                }
+            }
+        }
+        config.keys = KeyBindings(bindings)
+        return (config, problems)
+    }
+
+    /// The file at `path`, read. A missing file is every default and no
+    /// problems — most people never write one.
+    public static func load(from path: URL) -> (config: Config, problems: [ConfigProblem], text: String?) {
+        guard let data = try? Data(contentsOf: path) else { return (Config(), [], nil) }
+        let text = String(decoding: data, as: UTF8.self)
+        let (config, problems) = decode(TomlDocument(text))
+        return (config, problems, text)
+    }
+
+    // MARK: - from config.json
+
+    /// Copy the settings in `json` into a new `toml`, once.
+    ///
+    /// A no-op when `toml` already exists — including a `toml` written by an
+    /// earlier migration and since edited — or when there is no `json`. The
+    /// JSON is never touched: it is the record of what the settings were, and
+    /// an older build still reads it. Returns true when it wrote the file.
+    @discardableResult
+    public static func migrate(json: URL, to toml: URL) throws -> Bool {
+        let fm = FileManager.default
+        guard !fm.fileExists(atPath: toml.path), let data = fm.contents(atPath: json.path) else { return false }
+        let text = try tomlText(fromJSON: data, source: json)
+        try fm.createDirectory(at: toml.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(text.utf8).write(to: toml, options: .atomic)
+        return true
+    }
+
+    /// `config.json`'s settings as `config.toml`.
+    ///
+    /// Only the keys the JSON set are written, so a default the JSON left alone
+    /// stays a default that follows the app. A value the JSON decoder would
+    /// have skipped is skipped here too, and left behind as a comment saying
+    /// so, rather than being silently lost or silently made to work.
+    static func tomlText(fromJSON data: Data, source: URL) throws -> String {
+        let object = try JSONSerialization.jsonObject(with: data)
+        guard let dict = object as? [String: Any] else {
+            throw CocoaError(.fileReadCorruptFile, userInfo: [NSLocalizedDescriptionKey: "\(source.path) is not a JSON object"])
+        }
+        var lines = [header, "# Copied from \(source.path), which is left where it was and is no longer read.", ""]
+        var scratch = Config()
+        let fields = ConfigField.all
+        for field in fields {
+            guard let raw = dict[field.name], !(raw is NSNull) else { continue }
+            guard let value = tomlValue(raw, for: field.control) else {
+                lines.append("# \(field.key): \(jsonText(raw)) was skipped — config.json could not use it either")
+                continue
+            }
+            if let reason = field.apply(&scratch, value) {
+                lines.append("# \(field.key) = \(value.toml) was skipped — \(reason), in config.json too")
+                continue
+            }
+            lines.append("\(field.key) = \(value.toml)")
+        }
+        let known = Set(fields.map(\.name) + ["keys"])
+        for name in dict.keys.sorted() where !known.contains(name) {
+            lines.append("# config.json also had \"\(name)\", which is not a setting")
+        }
+        if let keys = dict["keys"] as? [String: Any], !keys.isEmpty {
+            lines += ["", "[\(ConfigField.keysTable)]"]
+            for (command, raw) in keys.sorted(by: { $0.key < $1.key }) {
+                let key = TomlDocument.bareOrQuoted(command)
+                switch raw {
+                case is NSNull: lines.append("\(key) = []")
+                case let one as String: lines.append("\(key) = \(TomlValue.string(one).toml)")
+                case let many as [String]: lines.append("\(key) = \(TomlValue.array(many.map(TomlValue.string)).toml)")
+                default: lines.append("# \(key): \(jsonText(raw)) was skipped — expected a chord, a list of chords, or null")
+                }
+            }
+        }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// A JSON scalar as the TOML type its field wants, or nil when it is the
+    /// wrong kind entirely. `NSNumber` carries booleans too, so they are told
+    /// apart by type identity rather than by value.
+    private static func tomlValue(_ raw: Any, for control: ConfigControl) -> TomlValue? {
+        if let number = raw as? NSNumber {
+            if CFGetTypeID(number) == CFBooleanGetTypeID() { return .bool(number.boolValue) }
+            let isFloat = CFNumberIsFloatType(number)
+            switch control {
+            case .integer:
+                if !isFloat { return .integer(number.int64Value) }
+                let d = number.doubleValue
+                return d == d.rounded() && abs(d) < 9e18 ? .integer(Int64(d)) : .float(d)
+            case .number:
+                // `14`, written for a number key, comes across as `14.0`, so
+                // the file shows the type the key has.
+                return .float(number.doubleValue)
+            default:
+                return isFloat ? .float(number.doubleValue) : .integer(number.int64Value)
+            }
+        }
+        if let string = raw as? String { return .string(string) }
+        return nil
+    }
+
+    private static func jsonText(_ raw: Any) -> String {
+        guard JSONSerialization.isValidJSONObject([raw]),
+              let data = try? JSONSerialization.data(withJSONObject: [raw]),
+              let text = String(data: data, encoding: .utf8)
+        else { return "\(raw)" }
+        return String(text.dropFirst().dropLast())
+    }
+}

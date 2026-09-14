@@ -21,6 +21,10 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private var alternateMonitor: Any?
     private var memoryDashboard: MemoryDashboard?
     private var helpPanel: HelpPanel?
+    private var settingsWindow: SettingsWindow?
+    /// `config.toml`, open for ⌘,. Set by the app delegate, which owns it
+    /// because it also applies `theme` from it.
+    public var configStore: ConfigStore?
     /// Held only so a second ⌥⌘Y raises the wizard already on screen instead of
     /// stacking another one over it; the wizard keeps itself alive otherwise.
     private var importWizard: ImportHistoryWizard?
@@ -456,6 +460,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return store.focusedLane?.projectRoot != nil
         case .showHelp:
             return true
+        case .showSettings:
+            return configStore != nil
         case .claimSession:
             // Only meaningful for a terminal pane.
             return store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .pty
@@ -529,6 +535,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .showHelp:
                 showHelp()
+
+            case .showSettings:
+                showSettings()
 
             case .splitRight:
                 // iTerm's ⌘D, in this app's geometry: panes stack down inside a
@@ -1040,6 +1049,40 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         let panel = HelpPanel()
         helpPanel = panel
         panel.present(over: window)
+    }
+
+    /// ⌘, — every setting and every key, written to `config.toml` as they
+    /// change. Pressed again while open, it closes, like ⌘/.
+    private func showSettings() {
+        if let existing = settingsWindow, existing.isOpen {
+            existing.closePopup()
+            return
+        }
+        guard let configStore else { return }
+        let panel = SettingsWindow(store: configStore) { [weak self] file in
+            self?.openInEditor(file)
+        }
+        settingsWindow = panel
+        panel.present(over: window)
+    }
+
+    /// A terminal lane running the `editor` setting on `file` — the same line a
+    /// ⌘-clicked path gets, from `FileOpen`, read from the file as it is now
+    /// rather than as it was at launch.
+    private func openInEditor(_ file: URL) {
+        let editor = configStore?.config.editor ?? config.editor
+        guard case .editor(let line) = FileOpen.plan(for: .file(path: file.path, line: nil, column: nil), editor: editor)
+        else { return }
+        let size = newSessionSize()
+        do {
+            let session = try RelaySessionSpawner(config: config)
+                .spawn(cwd: file.deletingLastPathComponent().path, shellLine: line, cols: size.cols, rows: size.rows)
+            try store.newTerminalLane(relaySessionId: session, near: store.focusedLane?.id)
+        } catch {
+            ConfirmPopup.inform(
+                over: window, title: "Could not open the config file in an editor",
+                detail: error.localizedDescription)
+        }
     }
 
     /// PRD §13 Phase 2's memory dashboard. Floating, so it can sit beside the

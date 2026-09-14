@@ -24,7 +24,7 @@ public struct RelaySessionSpawner {
                 // moved it, so following the advice did nothing at all.
                 return """
                     Could not find relay-pty-host. \
-                    Set relayPtyHostPath in \(Config.path.path).
+                    Set relay_pty_host_path in \(Config.path.path), or in Settings (⌘,).
                     """
             case .notAProgram(let command):
                 return """

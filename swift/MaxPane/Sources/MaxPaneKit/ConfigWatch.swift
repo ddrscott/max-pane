@@ -1,13 +1,13 @@
 import Foundation
 
-/// Reads the config file again whenever it changes.
+/// Notices whenever the config file is saved.
 ///
-/// Today only `theme` is applied from here — the rest of `Config` is read once
-/// at launch, and the settings task queued after this one is what makes the
-/// others live. The watch exists now because a setting that says it applies
-/// live has to apply when the file is edited, and the file is most often edited
-/// in a terminal lane *inside* this app, so "re-read when the app comes back to
-/// the front" would never fire.
+/// `ConfigStore` is what listens: it reads `config.toml` again, applies `theme`
+/// — the one key the running app re-reads — and refreshes an open settings
+/// window. The watch exists because a setting that says it applies live has to
+/// apply when the file is edited, and the file is most often edited in a
+/// terminal lane *inside* this app, so "re-read when the app comes back to the
+/// front" would never fire.
 ///
 /// Two sources, because editors save two ways. An in-place write changes the
 /// file; an atomic save renames a new file over it, which the old file's watch
@@ -17,7 +17,7 @@ import Foundation
 @MainActor
 public final class ConfigWatch {
     private let path: URL
-    private let onChange: @MainActor (Config) -> Void
+    private let onSave: @MainActor () -> Void
     nonisolated(unsafe) private var directorySource: DispatchSourceFileSystemObject?
     nonisolated(unsafe) private var fileSource: DispatchSourceFileSystemObject?
     private var pending: DispatchWorkItem?
@@ -25,13 +25,19 @@ public final class ConfigWatch {
     /// A burst of events — a rename, then attributes, then a write — is one save.
     static let settle: TimeInterval = 0.1
 
-    public init(path: URL = Config.path, onChange: @escaping @MainActor (Config) -> Void) {
+    /// Called after each save, settled. The caller reads the file.
+    public init(path: URL, onSave: @escaping @MainActor () -> Void) {
         self.path = path
-        self.onChange = onChange
+        self.onSave = onSave
         directorySource = Self.source(
             for: path.deletingLastPathComponent().path, events: [.write, .rename, .delete]
         ) { [weak self] in self?.changed() }
         watchFile()
+    }
+
+    /// Called with the file read into a `Config`.
+    public convenience init(path: URL = Config.path, onChange: @escaping @MainActor (Config) -> Void) {
+        self.init(path: path, onSave: { onChange(Config.load(from: path)) })
     }
 
     deinit {
@@ -54,7 +60,7 @@ public final class ConfigWatch {
                 // The file may be a different file now; watch whichever one is
                 // there, or nothing until the directory says one arrived.
                 self.watchFile()
-                self.onChange(Config.load(from: self.path))
+                self.onSave()
             }
         }
         pending = work

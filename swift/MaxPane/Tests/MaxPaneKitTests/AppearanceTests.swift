@@ -378,7 +378,7 @@ struct ThemeConfigTests {
             .appendingPathComponent("maxpane-config-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
-        let path = dir.appendingPathComponent("config.json")
+        let path = dir.appendingPathComponent("config.toml")
 
         var seen: [ThemeChoice] = []
         let watch = ConfigWatch(path: path) { seen.append($0.theme) }
@@ -389,13 +389,13 @@ struct ThemeConfigTests {
         }
 
         // Created where there was none, as an atomic save does.
-        try Data(#"{"theme": "dark"}"#.utf8).write(to: path, options: .atomic)
+        try Data(#"theme = "dark""#.utf8).write(to: path, options: .atomic)
         try await settle(1)
         #expect(seen.last == .dark)
 
         // Replaced atomically.
         let count = seen.count
-        try Data(#"{"theme": "light"}"#.utf8).write(to: path, options: .atomic)
+        try Data(#"theme = "light""#.utf8).write(to: path, options: .atomic)
         try await settle(count + 1)
         #expect(seen.last == .light)
 
@@ -403,7 +403,7 @@ struct ThemeConfigTests {
         let inPlace = seen.count
         let handle = try FileHandle(forWritingTo: path)
         try handle.truncate(atOffset: 0)
-        try handle.write(contentsOf: Data(#"{"theme": "system"}"#.utf8))
+        try handle.write(contentsOf: Data(#"theme = "system""#.utf8))
         try handle.close()
         try await settle(inPlace + 1)
         #expect(seen.last == .system)
