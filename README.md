@@ -117,7 +117,7 @@ on **`MAXPANE_BENCH`** and `./scripts/test.sh bench` runs them in release, where
 the numbers are worth reading.
 
 Render-sheet tests (`LaneHeaderRenderTests`, `OmniPickerRenderTests`,
-`SidebarBookmarkRenderTests`) draw views
+`SidebarBookmarkRenderTests`, `WebPopupBarRenderTests`) draw views
 into bitmaps and write PNGs. They are gated on **`MAXPANE_SHOTS`**, which names
 the directory to write into — one variable for every sheet, so a new render test
 joins the same command rather than adding a third switch.
@@ -133,6 +133,15 @@ for its cookie jars — the default profile's salt is empty — and they only as
 for identity so nothing is written today, but a test process that can name the
 live jar should not be one WebKit release away from opening it. See
 [Profiles](#profiles).
+
+`WebPopupDialogTests` is the Swift suite that serves real pages. Two loopback
+sites on two ports — two origins to WebKit — stand in for a site and its sign-in
+provider, and a real `WebPaneController` drives real `window.open`s: the size in
+the features string, the provider's `postMessage` and cookie reaching the
+opener, `window.close()` handing the focus back, five opens in a row, a chooser
+opened from the popup, a `target=_blank` click. It writes a cookie, so it skips
+itself without a named profile. LinkedIn's "Sign in with Google" needs a real
+account and is not driven from a test; this suite is its local reproduction.
 
 `crates/laned-core/tests/durability.rs` holds the half of PRD §15's acceptance
 tests that the core owns — mostly "the strip is identical after a `kill -9`",
@@ -221,6 +230,26 @@ and says so when a navigation fails.
 this one, instead of navigating the lane you are reading. ⌃⌘ and ⌥⌘ are left to
 the system, which already uses them for right-click and download-linked-file.
 `target=_blank` has always landed this way; now the gesture does too.
+
+**A page's popup is a dialog, not a lane.** When a page opens a window of its
+own — "Sign in with Google", a payment confirmation — it appears centred over
+the window, wherever the page that opened it is: scrolled off the strip, docked,
+or a gallery tile. Its bar is the one thing the page cannot draw: a padlock and
+the host for https, an amber **⚠** and `http://` for plain http, the full
+address on hover, and a click copies it. ✕ or Esc closes it, and so do the
+page's own `window.close()`, closing the lane that opened it, and that lane
+going to another site. A click back into the strip does not, so a half-typed
+password survives a look at another lane. Clicking "Sign in" again puts the new
+popup in the same dialog instead of stacking a second, and an account chooser
+the popup opens stacks over it. When it goes, the lane that opened it has the
+keyboard again.
+
+Inside it, **⌥⌘L** fills a saved password into the popup's own form, **⌘W**
+closes it and **⌘R** reloads it; the keys that would act on the page behind it —
+⌘L, zoom, ⌘D, ⇧⌘L — do nothing. A question the popup's page asks is drawn inside
+the dialog, a download lands in the opener's download bar, and a link it opens
+in a new tab gets a lane. Nothing about a popup is saved, so a relaunch does not
+bring one back. See [ADR-0013](docs/decisions/0013-web-popups-are-dialogs.md).
 
 A load that fails says so where the address was — `⚠ server not found —
 example.com`, for five seconds — and takes the hairline down with it. Stopping a
@@ -779,11 +808,12 @@ bookmark editor, and every confirmation, prompt and error close on Esc or a
 click back into the strip. A click away from a confirmation is Cancel, and ↩ on
 anything destructive is still Cancel. ⌘/ pressed again closes it.
 
-Two exceptions, both on purpose. ⇧⌘Y stays open when you ⌘-Tab to another app,
-because a scroll position four hundred rows down is not something to lose to
-reading something else. And the two import wizards look and move like every
-other popup but close only on Esc or their own buttons, so a stray click cannot
-throw away an import half chosen.
+Three exceptions, all on purpose. ⇧⌘Y stays open when you ⌘-Tab to another
+app, because a scroll position four hundred rows down is not something to lose
+to reading something else. The two import wizards look and move like every other
+popup but close only on Esc or their own buttons, so a stray click cannot throw
+away an import half chosen. And a web page's sign-in popup closes only on Esc,
+its ✕, or its page being done with it — see [A web lane](#a-web-lane).
 
 The memory dashboard is the one floating panel left, because watching it while
 the strip scrolls is its whole purpose. File choosers and a web page's own

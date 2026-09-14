@@ -392,21 +392,24 @@ struct WebContextMenuTests {
 
     /// The premise that blocked this in round 2 — *"the one web view this app
     /// does not construct is the adopted popup"* — is false, and this is the
-    /// assertion that keeps it false. Both web views in this target are built by
-    /// us, so the menu is right on an OAuth popup too, and the objection that a
-    /// menu right in most panes is worse than one stock everywhere no longer
-    /// applies.
+    /// assertion that keeps it false. Every web view in this target is built by
+    /// us — the pane's own, and the popup `WebPopupDialog` builds from WebKit's
+    /// configuration, first and in place of a replaced one — so the menu is
+    /// right on an OAuth popup too.
     @Test("the popup's web view is ours, so the menu is right there too")
     func bothWebViewsAreOurs() {
-        let source = try! String(
-            contentsOfFile: #filePath
-                .replacingOccurrences(
-                    of: "Tests/MaxPaneKitTests/ChromeRound3Tests.swift",
-                    with: "Sources/MaxPaneKit/Web/WebPaneController.swift"),
-            encoding: .utf8)
-        // A plain `WKWebView(frame:` anywhere in the pane controller is a view
-        // whose context menu would still say "window".
-        #expect(!source.contains("WKWebView(frame:"))
-        #expect(source.components(separatedBy: "ChromeWebView(frame:").count - 1 == 2)
+        func source(_ path: String) -> String {
+            try! String(
+                contentsOfFile: #filePath.replacingOccurrences(
+                    of: "Tests/MaxPaneKitTests/ChromeRound3Tests.swift", with: "Sources/MaxPaneKit/" + path),
+                encoding: .utf8)
+        }
+        let pane = source("Web/WebPaneController.swift")
+        let popup = source("Views/WebPopupDialog.swift")
+        // A plain `WKWebView(frame:` in either is a view whose context menu
+        // would still say "window".
+        for text in [pane, popup] { #expect(!text.contains("WKWebView(frame:")) }
+        #expect(pane.components(separatedBy: "ChromeWebView(frame:").count - 1 == 1)
+        #expect(popup.components(separatedBy: "ChromeWebView(frame:").count - 1 == 2)
     }
 }

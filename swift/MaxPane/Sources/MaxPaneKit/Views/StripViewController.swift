@@ -1848,14 +1848,16 @@ public final class StripViewController: NSViewController {
                 pane: pane, lane: lane, store: store, config: config,
                 deferLoad: lane.dock == nil && isColdLaunch
                     && distanceFromViewport(laneId: lane.id) > config.rehydrateDistance)
-            // A popup that opens while its opener is scrolled off the strip is
-            // created, focused in the ledger, and never brought on screen —
-            // which is fine for a machine-to-machine round trip and useless for
-            // a sign-in form you have to type into.
+            // A lane this page opens while it is scrolled off the strip is
+            // created and focused in the ledger, and never brought on screen
+            // without this.
             controller.onRevealLane = { [weak self] laneId in
                 guard let self, let laneId else { return }
                 self.reveal(laneId: laneId, flash: true)
             }
+            // A popup's dialog is centred over the window, never over the pane:
+            // the pane may be scrolled away, docked, or a gallery tile.
+            controller.popupParent = { [weak self] in self?.view.window }
             return controller
         }
     }

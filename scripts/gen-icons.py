@@ -33,6 +33,8 @@ WANTED = [
     "ellipsis", "pin",
     # web chrome, continued
     "key-round", "check",
+    # a web popup's origin bar
+    "lock",
 ]
 
 # Lucide draws everything as an outline. A filled variant is emitted for the

@@ -12,11 +12,10 @@ import WebKit
 /// right in most panes and wrong in some is worse than one that is stock
 /// everywhere.
 ///
-/// That premise is wrong. There are exactly two `WKWebView(frame:configuration:)`
-/// calls in this target and **both are ours**: the pane's own view, and the
-/// popup in `openPopup(with:url:near:)`. `WKUIDelegate` does not hand over a
-/// finished view — it hands over a *configuration* and demands a view built from
-/// it, which is the whole reason `PopupHandoff` exists. Building that view as a
+/// That premise is wrong. Every `WKWebView(frame:configuration:)` call in this
+/// target is ours: the pane's own view, and the popup `WebPopupDialog` builds.
+/// `WKUIDelegate` does not hand over a finished view — it hands over a
+/// *configuration* and demands a view built from it. Building that view as a
 /// subclass keeps `window.opener` intact exactly as before, because the opener
 /// relationship lives in the configuration and not in the class. So the menu can
 /// be right everywhere, and the objection that blocked this dissolves.
@@ -113,7 +112,7 @@ enum WebContextMenu {
 /// Anything done here must therefore be cheap and must not fail, because there
 /// is no way to answer "later" from inside it.
 ///
-/// Used for **both** web views this app builds, the adopted popup included. A
+/// Used for every web view this app builds, a popup's dialog included. A
 /// popup built from WebKit's configuration keeps `window.opener` whatever class
 /// it is; see `WebContextMenu`.
 final class ChromeWebView: WKWebView {

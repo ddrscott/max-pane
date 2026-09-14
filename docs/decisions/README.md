@@ -17,6 +17,7 @@ implemented (PRD §0.7).
 | [0010](0010-docking-takes-the-word-pinned.md) | Docking takes the word "pinned"; the eviction flag becomes `keep_live` | Accepted |
 | [0011](0011-gallery-layout.md) | The gallery: a tile is its lane under a transform; docks, gather, eviction and Esc in it | Accepted |
 | [0012](0012-in-house-toml-line-editor.md) | `config.toml` is edited by a line editor in Swift, not `toml_edit` over uniffi | Accepted |
+| [0013](0013-web-popups-are-dialogs.md) | A web page's popup is a dialog over the window, never a lane (**amends PRD §9**) | Accepted |
 
 Each ADR states the decision, what evidence decided it (usually a spike, by
 number), what was rejected and why, and what would make us revisit.

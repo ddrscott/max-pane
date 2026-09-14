@@ -96,16 +96,24 @@ final class WebPaneController: NSObject, PaneController {
     /// Set by the strip so a lane this pane opens can be scrolled to.
     ///
     /// A lane created while its opener is off-screen is focused in the ledger
-    /// and nowhere on screen — and the strip only *builds* a pane's view when
-    /// the lane is inside the materialisation window, so a popup opened from a
-    /// pane fifteen lanes back was created, adopted by nobody, and ran
-    /// headlessly. A machine-to-machine OAuth round trip still completed; a
-    /// human saw an empty lane they had to scroll twenty lanes to find. A sign-in
-    /// is a form you type into, so "created" is not the same as "opened".
+    /// and nowhere on screen — the strip only *builds* a pane's view when the
+    /// lane is inside the materialisation window — so a `target=_blank` or a
+    /// ⌘-click from a pane fifteen lanes back has to be brought to where it can
+    /// be read. It also brings this pane back into view when a popup it opened
+    /// closes and hands it the keyboard.
     ///
     /// The same closure `TerminalPaneController` uses for ⌘-click, for the same
     /// reason.
     var onRevealLane: ((String?) -> Void)?
+
+    /// The window a popup this pane's page opens is centred over. Set by the
+    /// strip, because this pane's own view may be in no window at all — its
+    /// lane scrolled out of the materialisation window — and where a sign-in
+    /// appears must not depend on where its opener happens to be.
+    var popupParent: (() -> NSWindow?)?
+
+    /// The popup this pane's page has open, if any. See `WebPopupDialog`.
+    var popupDialog: WebPopupDialog?
 
     var view: NSView { container }
 
@@ -115,21 +123,12 @@ final class WebPaneController: NSObject, PaneController {
     /// strip that built every one of them at launch would spend gigabytes before
     /// the window appeared.
     init(pane: Pane, lane: Lane, store: StripStore, config: Config, deferLoad: Bool = false) {
-        // A popup's web view was built by `window.open` before this pane
-        // existed, and it is not replaceable: the opener relationship lives in
-        // that object. Claiming it has to happen before the data store is
-        // decided, because the popup is already loading in the opener's jar and
-        // the ledger should say so rather than say what the shard rule would
-        // have picked.
-        let adopted = PopupHandoff.shared.claim(paneId: pane.id, url: pane.url)
         self.paneId = pane.id
         self.pane = pane
         self.store = store
         self.config = config
         self.laneWidth = CGFloat(lane.widthPt)
-        self.dataStoreId = adopted?.dataStoreId
-            ?? pane.dataStoreId
-            ?? Self.shard(for: lane.projectRoot, of: config)
+        self.dataStoreId = pane.dataStoreId ?? Self.shard(for: lane.projectRoot, of: config)
         super.init()
 
         container.wantsLayer = true
@@ -143,10 +142,7 @@ final class WebPaneController: NSObject, PaneController {
 
         // A pane that is already evicted comes back as a placeholder, not as a
         // web view that immediately gets torn down again.
-        if let adopted {
-            Log.debug("pane \(paneId) adopts the popup \(adopted.openerPaneId) opened")
-            adoptPopup(adopted.webView)
-        } else if pane.state == .evicted || pane.kind == .placeholder {
+        if pane.state == .evicted || pane.kind == .placeholder {
             showPlaceholder()
         } else if deferLoad {
             isDeferred = true
@@ -380,6 +376,10 @@ final class WebPaneController: NSObject, PaneController {
                     // restart would land you back at the app's front door.
                     self.pane.url = url
                     self.store.setPaneUrl(self.paneId, url)
+                    if let popup = self.popupDialog,
+                       PopupOpener.hasLeft(openedFrom: popup.openerURL, now: url) {
+                        popup.dismiss()
+                    }
                 }
             },
         ]
@@ -708,13 +708,8 @@ final class WebPaneController: NSObject, PaneController {
         // during anything a single-page app does.
         if webView == nil { showAddress(pane.url) }
         // A URL change from the ledger (not from navigation) means something
-        // outside asked for a different page. Never for a popup: the URL the
-        // lane was created with is a description of what `window.open` asked
-        // for, not an instruction, and `window.open()` followed by the opener
-        // writing into the handle never navigates at all — loading that URL
-        // over the top would erase a document the opener is mid-way through
-        // building.
-        if let url = pane.url, let webView, !isAdoptedPopup, webView.url?.absoluteString != url,
+        // outside asked for a different page.
+        if let url = pane.url, let webView, webView.url?.absoluteString != url,
            webView.isLoading == false, pane.state == .live {
             load(url)
         }
@@ -781,8 +776,9 @@ final class WebPaneController: NSObject, PaneController {
         // closing pane is exactly when it is easiest to forget.
         drainAsks()
         cancelDownloads()
-        // A popup staged for a pane that is going away has nowhere left to go.
-        PopupHandoff.shared.discard(paneId: paneId)
+        // A popup belongs to the page that opened it, and that page is going
+        // away. There is nothing to give the keyboard back to.
+        popupDialog?.dismiss(returningFocus: false)
         scrollObservation?.invalidate()
         scrollObservation = nil
         titleObservation?.invalidate()
@@ -960,11 +956,6 @@ final class WebPaneController: NSObject, PaneController {
         // `wire` sets fixes the flash of *white*; it cannot fix the flash of
         // *nothing*, and a lane that arrives already saying which host it is
         // going to is what makes the arrival animation worth watching.
-        //
-        // Deliberately not done for an adopted popup: that view is already
-        // mid-navigation and may have finished loading before this pane existed,
-        // so a cover over it would sit there for the whole grace period with a
-        // sign-in form underneath it.
         showFirstPaintCover()
 
         // The session, if this pane has one, in place of a bare load. It
@@ -995,7 +986,7 @@ final class WebPaneController: NSObject, PaneController {
         startScrollTracking()
     }
 
-    /// Everything a web view needs to be this pane's, whoever built it.
+    /// Everything a web view needs to be this pane's.
     private func wire(_ webView: WKWebView) {
         // Before anything is parented or loaded: a `WKWebView` with no document
         // paints its own background, and that background is white. On a dark
@@ -1009,10 +1000,6 @@ final class WebPaneController: NSObject, PaneController {
         // not worth the risk. It is never reset to the page's own colour: a
         // gutter in the lane's ground is what the rest of the window already
         // looks like.
-        //
-        // Here rather than in `buildWebView` so an adopted popup gets it too —
-        // that is the one web view this pane does not create, and an OAuth
-        // window is exactly where a white flash is least welcome.
         //
         // Set again on every appearance change, and resolved first: WebKit
         // copies the colour it is handed, so a dynamic `NSColor` given once
@@ -1046,34 +1033,9 @@ final class WebPaneController: NSObject, PaneController {
             guard let title = change.newValue ?? nil, !title.isEmpty else { return }
             Task { @MainActor in self?.adoptTitle(title) }
         }
-        // And once, now. `.new` fires on *change*, and an adopted popup arrives
-        // with its document already built — a popup whose `<title>` was set
-        // before this pane existed never changes it again, so its lane header
-        // sat on the raw URL for the life of the pane.
-        if let title = webView.title, !title.isEmpty { adoptTitle(title) }
         store.setPaneDataStore(paneId, dataStoreId)
         install(webView)
     }
-
-    /// Take over a web view `window.open` already created.
-    ///
-    /// Nothing loads here and no session is restored. The popup is mid-flight —
-    /// WebKit started its navigation the moment it was handed back to the page,
-    /// and the page may already have written to it through the handle it holds.
-    /// Anything this pane did to the URL would be a second navigation racing the
-    /// first, and in an OAuth flow the one that loses is the one carrying the
-    /// state parameter.
-    private func adoptPopup(_ popup: WKWebView) {
-        isAdoptedPopup = true
-        popup.frame = container.bounds
-        wire(popup)
-        startScrollTracking()
-    }
-
-    /// True for the life of a pane that was born as a `window.open` popup. It
-    /// stops being true across a restart, which is right: by then the opener is
-    /// gone and what is left is an ordinary page at an ordinary URL.
-    private var isAdoptedPopup = false
 
     /// Constraints rather than an autoresizing mask, and that is not a taste
     /// call. `contentHost` is laid out by Auto Layout, so its bounds are still
@@ -1101,6 +1063,9 @@ final class WebPaneController: NSObject, PaneController {
         // handlers are about to belong to nothing, and the sheet in front of it
         // would be a question about a document that no longer exists.
         drainAsks()
+        // Its popup's `window.opener` is about to be nothing, and a sign-in
+        // that cannot report back is not worth leaving on screen.
+        popupDialog?.dismiss(returningFocus: false)
         scrollObservation?.invalidate()
         scrollObservation = nil
         titleObservation?.invalidate()
@@ -1366,9 +1331,10 @@ extension WebPaneController: WKNavigationDelegate {
 // MARK: - popups
 
 extension WebPaneController: WKUIDelegate {
-    /// PRD §9: a popup or `target=_blank` becomes a new web pane right of this
-    /// one, not a window and not a tab. Which *kind* of pane is the whole of
-    /// this piece — see `PopupPolicy`.
+    /// PRD §9, as the sign-in bug amended it: a `target=_blank` becomes a new
+    /// web lane right of this one, and a page's `window.open` conversation
+    /// becomes a dialog over the window — never a lane, never a ledger row.
+    /// Which is which is `PopupPolicy`; why a dialog is `WebPopupDialog`.
     func webView(_ webView: WKWebView,
                  createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction,
@@ -1383,73 +1349,52 @@ extension WebPaneController: WKUIDelegate {
             chromeless=\(intent.suppressesChrome) → \(disposition)
             """)
 
-        guard let laneId = store.lane(containing: paneId)?.id else { return nil }
         switch disposition {
         case .lane:
             // A destination, not a conversation: open it ourselves so it lands
             // in the strip under the same ordering rules as everything else.
-            guard let url else { return nil }
-            let before = paneIds()
-            try? store.newWebLane(url: url, near: laneId)
-            revealLane(holding: paneIds().subtracting(before).first)
+            if let url { openLane(url) }
             return nil
         case .popup:
-            return openPopup(with: configuration, url: url ?? "about:blank", near: laneId)
+            // WebKit wants the finished view back from this call, built from
+            // *its* configuration — that configuration is the opener
+            // relationship. The dialog builds it, and is on screen, before this
+            // returns.
+            let dialog = WebPopupDialog.show(
+                replacing: popupDialog, configuration: configuration, features: windowFeatures,
+                pane: self, parent: nil, openerURL: webView.url?.absoluteString,
+                over: popupParent?() ?? container.window)
+            popupDialog = dialog
+            return dialog.webView
         }
     }
 
-    /// Build the popup WebKit asked for and give it a pane to live in.
-    ///
-    /// The order is forced and it is the reason this is not three lines.
-    /// WebKit wants the finished view back from this call, built from *its*
-    /// configuration — that configuration is the opener relationship, and a view
-    /// made from a fresh one has no `window.opener`, which is what made OAuth
-    /// impossible here. A pane, meanwhile, does not exist until the ledger says
-    /// so. So the view is staged, the lane is written, and the controller the
-    /// reconcile builds claims the view on its way up.
-    private func openPopup(with configuration: WKWebViewConfiguration,
-                           url: String,
-                           near laneId: String) -> WKWebView? {
-        // The popup must end up in the opener's cookie jar or the cookie the
-        // sign-in sets lands somewhere the opener cannot read, and the login
-        // evaporates at the redirect. WebKit copies the opener's data store into
-        // the configuration it hands over, so this is a check rather than an
-        // assignment: assigning would be the thing that broke it.
-        let mine = DataStorePool.shared.store(dataStoreId)
-        if configuration.websiteDataStore !== mine {
-            Log.warn("pane \(paneId) popup arrived with a different data store; cookies will not be shared")
-        } else {
-            Log.debug("pane \(paneId) popup shares data store \(dataStoreId) (persistent=\(mine.isPersistent))")
-        }
-
-        // Built from *WebKit's* configuration, as it must be, but as our own
-        // subclass — the class is not where `window.opener` lives, the
-        // configuration is. This is the view round 2 believed could not be ours.
-        let popup = ChromeWebView(frame: container.bounds, configuration: configuration)
-        // Until a pane adopts it, this controller answers for it, so a popup
-        // that closes itself before it is ever shown still takes its pane away.
-        popup.uiDelegate = self
-        PopupHandoff.shared.stage(.init(
-            webView: popup, url: url, openerPaneId: paneId, dataStoreId: dataStoreId))
-
+    /// A page to read, from this pane's page or from a popup over it: a new web
+    /// lane right of this one, revealed.
+    func openLane(_ url: String) {
+        guard let laneId = store.lane(containing: paneId)?.id else { return }
         let before = paneIds()
         do {
             try store.newWebLane(url: url, near: laneId)
         } catch {
-            PopupHandoff.shared.resolvePending(to: nil)
-            Log.warn("pane \(paneId) could not open a lane for its popup: \(error)")
-            return nil
+            Log.warn("pane \(paneId) could not open a lane for \(url): \(error)")
+            return
         }
-        // Usually already claimed: the write reconciles the strip before it
-        // returns, and building the new lane is what builds the controller.
-        let created = paneIds().subtracting(before).first
-        PopupHandoff.shared.resolvePending(to: created)
-        // …unless the opener is off-screen, in which case the reconcile never
-        // built a view for the new lane and there is nothing to claim it. The
-        // reveal is what makes the strip materialise it — and what puts a
-        // sign-in form somewhere a person can see it.
-        revealLane(holding: created)
-        return popup
+        revealLane(holding: paneIds().subtracting(before).first)
+    }
+
+    /// A popup this pane opened has gone. The keyboard comes home — focused in
+    /// the ledger, the lane brought on screen if it was not, the page first
+    /// responder — unless another popup has already taken its place.
+    func popupDidClose(_ dialog: WebPopupDialog, returningFocus: Bool) {
+        if popupDialog === dialog { popupDialog = nil }
+        guard returningFocus, popupDialog == nil else { return }
+        try? store.focusPane(paneId)
+        if container.window == nil || container.visibleRect.isEmpty {
+            revealLane(holding: paneId)
+        }
+        (container.window ?? popupParent?())?.makeKey()
+        takeFocus()
     }
 
     private func revealLane(holding paneId: String?) {
@@ -1457,17 +1402,14 @@ extension WebPaneController: WKUIDelegate {
         onRevealLane?(laneId)
     }
 
-    /// `window.close()`, from a popup that has finished its errand. OAuth
-    /// popups all end this way, and a pane that ignores it lingers for good.
+    /// `window.close()` from this pane's own page. A popup's is its dialog's.
     func webViewDidClose(_ webView: WKWebView) {
-        let doomed = webView === self.webView ? paneId : PopupHandoff.shared.paneId(holding: webView)
-        guard let doomed else { return }
-        Log.debug("pane \(doomed) closed itself")
+        guard webView === self.webView else { return }
+        Log.debug("pane \(paneId) closed itself")
         // WebKit is still on the stack and this tears its view down. One turn
         // later is soon enough and is not inside the callback that asked.
-        Task { @MainActor [store] in
-            PopupHandoff.shared.discard(paneId: doomed)
-            try? store.closePane(doomed)
+        Task { @MainActor [store, paneId] in
+            try? store.closePane(paneId)
         }
     }
 

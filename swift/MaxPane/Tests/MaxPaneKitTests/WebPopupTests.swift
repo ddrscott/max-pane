@@ -5,7 +5,7 @@ import WebKit
 /// Telling an OAuth popup apart from a `target=_blank` link.
 ///
 /// Both arrive at the same `WKUIDelegate` callback, and the cost of confusing
-/// them is asymmetric: a link mistaken for a popup opens a pane that can close
+/// them is asymmetric: a link mistaken for a popup opens a dialog that closes
 /// itself, while a popup mistaken for a link is a sign-in that completes in a
 /// window with no way to hand the result back — the bug this piece exists for.
 @Suite("popup policy")
@@ -57,56 +57,117 @@ struct PopupPolicyTests {
     }
 }
 
-/// The handoff between `window.open` returning and the pane that will hold it.
-@Suite("popup handoff")
+/// How big a popup's dialog is, from what `window.open` asked for.
+@Suite("popup geometry")
 @MainActor
-struct PopupHandoffTests {
-    /// A view with no navigation: WebKit spawns nothing until something loads,
-    /// so this costs an object and no process.
-    private func view() -> WKWebView { WKWebView(frame: .zero, configuration: .init()) }
-
-    /// The claim happens inside the ledger write that creates the pane, before
-    /// anything knows the new pane's id — so the URL is all there is to match on.
-    @Test("a pane built during the write claims the pending popup by URL")
-    func claimsPendingByUrl() {
-        let handoff = PopupHandoff.shared
-        let popup = view()
-        handoff.stage(.init(
-            webView: popup, url: "https://example.com/auth", openerPaneId: "p1", dataStoreId: "shard-3"))
-
-        #expect(handoff.claim(paneId: "other", url: "https://example.com/elsewhere") == nil)
-        let claimed = handoff.claim(paneId: "p2", url: "https://example.com/auth")
-        #expect(claimed?.webView === popup)
-        #expect(claimed?.dataStoreId == "shard-3")
-        // Exactly once: a second pane with the same URL is a different page.
-        #expect(handoff.claim(paneId: "p3", url: "https://example.com/auth") == nil)
+struct PopupGeometryTests {
+    @Test("the page gets the size it asked for, and the bar goes on top of it")
+    func asked() {
+        let page = PopupGeometry.pageSize(width: 500, height: 600)
+        #expect(page == NSSize(width: 500, height: 600))
+        #expect(PopupGeometry.dialogSize(page: page, bar: 28) == NSSize(width: 500, height: 628))
     }
 
-    /// The other order: the new lane was outside the materialisation window, so
-    /// its controller is built later and the id is the only handle left.
-    @Test("an unclaimed popup waits under the pane id the write produced")
-    func resolvesToPaneId() {
-        let handoff = PopupHandoff.shared
-        let popup = view()
-        handoff.stage(.init(
-            webView: popup, url: "https://example.com/late", openerPaneId: "p1", dataStoreId: "shard-0"))
-        handoff.resolvePending(to: "p9")
-
-        #expect(handoff.paneId(holding: popup) == "p9")
-        #expect(handoff.claim(paneId: "p8", url: "https://example.com/late") == nil)
-        #expect(handoff.claim(paneId: "p9", url: nil)?.webView === popup)
+    @Test("no size is a portrait default, and one side missing keeps the other")
+    func defaults() {
+        #expect(PopupGeometry.pageSize(width: nil, height: nil) == PopupGeometry.defaultPage)
+        #expect(PopupGeometry.pageSize(width: 700, height: nil)
+            == NSSize(width: 700, height: PopupGeometry.defaultPage.height))
     }
 
-    @Test("a pane that goes away takes its staged popup with it")
-    func discardsOnTearDown() {
-        let handoff = PopupHandoff.shared
-        let popup = view()
-        handoff.stage(.init(
-            webView: popup, url: "https://example.com/gone", openerPaneId: "p1", dataStoreId: "shard-0"))
-        handoff.resolvePending(to: "p7")
-        handoff.discard(paneId: "p7")
-        #expect(handoff.paneId(holding: popup) == nil)
-        #expect(handoff.claim(paneId: "p7", url: "https://example.com/gone") == nil)
+    /// `width=1` is a pop-under, not a form.
+    @Test("a slit is not a form, and a number that is not one is no size at all")
+    func floor() {
+        #expect(PopupGeometry.pageSize(width: 1, height: -5) == PopupGeometry.minimumPage)
+        #expect(PopupGeometry.pageSize(width: .nan, height: .infinity) == PopupGeometry.defaultPage)
+    }
+
+    @Test("a popup bigger than the window keeps every dialog's margin")
+    func clamped() {
+        let area = NSRect(x: 0, y: 0, width: 800, height: 600)
+        let size = PopupGeometry.dialogSize(page: PopupGeometry.pageSize(width: 1200, height: 900), bar: 28)
+        #expect(Popup.frame(size: size, in: area) == NSRect(x: 40, y: 40, width: 720, height: 520))
+    }
+}
+
+/// When a popup has outlived the page that opened it.
+@Suite("popup opener")
+struct PopupOpenerTests {
+    /// A single-page app moving between routes is still the page waiting for
+    /// the sign-in to report back.
+    @Test("the same origin is still the page that asked")
+    func sameOrigin() {
+        #expect(!PopupOpener.hasLeft(
+            openedFrom: "https://www.linkedin.com/login", now: "https://www.linkedin.com/feed/?trk=x"))
+        #expect(!PopupOpener.hasLeft(
+            openedFrom: "https://app.example.com/", now: "https://app.example.com:443/next"))
+    }
+
+    @Test("another scheme, host or port is a stranger")
+    func otherOrigin() {
+        #expect(PopupOpener.hasLeft(openedFrom: "https://www.linkedin.com/login", now: "https://evil.example/"))
+        #expect(PopupOpener.hasLeft(openedFrom: "https://example.com/", now: "http://example.com/"))
+        #expect(PopupOpener.hasLeft(openedFrom: "http://127.0.0.1:8080/", now: "http://127.0.0.1:8081/"))
+    }
+
+    @Test("an address with no origin decides nothing")
+    func noOrigin() {
+        #expect(!PopupOpener.hasLeft(openedFrom: nil, now: "https://example.com/"))
+        #expect(!PopupOpener.hasLeft(openedFrom: "about:blank", now: "https://example.com/"))
+    }
+}
+
+/// The popup's origin bar: the one row a page cannot draw.
+@Suite("popup origin bar")
+@MainActor
+struct PopupBarTests {
+    /// The path is the page's to choose, and a long one would push the host
+    /// out of sight — the only part of the row that matters.
+    @Test("https is the host alone")
+    func secure() {
+        #expect(WebPopupBar.originText(for: "https://accounts.google.com/v3/signin?continue=x").string
+            == "accounts.google.com")
+    }
+
+    @Test("http keeps its scheme, and a port stays")
+    func insecureAndPorts() {
+        #expect(WebPopupBar.originText(for: "http://login.example.net/oauth").string == "http://login.example.net")
+        #expect(WebPopupBar.originText(for: "https://sso.corp.example:8443/adfs").string == "sso.corp.example:8443")
+    }
+
+    @Test("a page with no host says what it is, not what a data URL holds")
+    func hostless() {
+        #expect(WebPopupBar.originText(for: "about:blank").string == "about:blank")
+        #expect(WebPopupBar.originText(for: "data:text/html,hello").string == "data:")
+        #expect(WebPopupBar.originText(for: "").string == "")
+    }
+}
+
+/// App shortcuts while a popup has the keyboard. The menu would aim most of
+/// them at "the focused page", which is the opener behind the dialog.
+@Suite("popup keys")
+@MainActor
+struct PopupKeyTests {
+    @Test("⌘W closes the dialog, ⌥⌘L fills it, ⌘R reloads it")
+    func dialogKeys() {
+        #expect(WebPopupDialog.keyAction(for: .closePane) == .close)
+        #expect(WebPopupDialog.keyAction(for: .fillPassword) == .fill)
+        #expect(WebPopupDialog.keyAction(for: .reload) == .reload)
+        #expect(WebPopupDialog.keyAction(for: .hardReload) == .reload)
+    }
+
+    @Test("nothing reaches through the dialog to the page behind it")
+    func openerIsLeftAlone() {
+        for command in [Command.closeLane, .savePassword, .editAddress, .zoomIn, .zoomReset, .bookmarkPage] {
+            #expect(WebPopupDialog.keyAction(for: command) == .ignore, "\(command)")
+        }
+    }
+
+    @Test("keys about the strip still go to the menu")
+    func stripKeys() {
+        for command in [Command.openAnything, .toggleGallery, .focusRight, .showSettings] {
+            #expect(WebPopupDialog.keyAction(for: command) == .app, "\(command)")
+        }
     }
 }
 

@@ -27,7 +27,7 @@ struct PopupIntent: Equatable {
 /// What to build for it.
 enum NewViewDisposition: Equatable {
     /// A real `WKWebView` from the configuration WebKit passed, keeping
-    /// `window.opener` intact.
+    /// `window.opener` intact, shown in a `WebPopupDialog` over the window.
     case popup
     /// A new web lane loading the URL, with no relationship to the opener —
     /// what every new page in this app did before popups were distinguished.
@@ -47,7 +47,7 @@ enum PopupPolicy {
     /// A link or a form keeps the old behaviour on purpose. `target=_blank` is
     /// how half the web opens a second page for reading, and those should be
     /// lanes: a lane is durable, ordinal-ordered and restored on the next
-    /// launch, where a popup pane is transient by nature and closes itself.
+    /// launch, where a popup is transient by nature and closes itself.
     static func disposition(for intent: PopupIntent) -> NewViewDisposition {
         guard intent.opensNewView else { return .lane }
         if intent.specifiesGeometry || intent.suppressesChrome { return .popup }
@@ -61,7 +61,7 @@ extension PopupIntent {
         // WebKit reports `.other` for `window.open`; a click on a link is
         // `.linkActivated` and a form target is `.formSubmitted`. Anything it
         // cannot attribute to the user is scripted, which is the safe direction:
-        // the cost of guessing "popup" is a pane that closes itself, and the
+        // the cost of guessing "popup" is a dialog that closes itself, and the
         // cost of guessing "lane" is a sign-in that can never report back.
         isScripted = action.navigationType == .other
         specifiesGeometry =
@@ -110,75 +110,55 @@ enum LinkClick {
     }
 }
 
-/// A popup web view between the moment WebKit hands it over and the moment its
-/// pane exists to hold it.
+/// How big a popup's dialog is.
 ///
-/// The handoff has to exist because the two halves run in the wrong order.
-/// `WKUIDelegate` demands the finished web view back **synchronously** — it must
-/// be built from the configuration it passed, and returning `nil` (or a view
-/// built from a fresh configuration) is what severs `window.opener` — but a pane
-/// in this app is created by writing to the ledger and letting the strip
-/// reconcile, which is what decides the pane's id and builds its controller.
+/// The page says, when it opens one: `window.open(url, name,
+/// "width=500,height=600")` is how every OAuth provider sizes its sign-in form,
+/// and that size is the size of the *page*. The dialog adds its origin bar on
+/// top, so the form gets the room it asked for rather than 28 pt less.
+/// `Popup.frame` then keeps the whole thing inside the window's margins.
+enum PopupGeometry {
+    /// For a page that gave no size — a bare `window.open(url)`, or
+    /// `popup=yes`. Portrait, because a sign-in form is, and about what Google
+    /// and GitHub ask for when they do say.
+    static let defaultPage = NSSize(width: 520, height: 680)
+    /// Below this a page is a slit, not a form. A features string can say
+    /// `width=1`, and a tracker's pop-under does.
+    static let minimumPage = NSSize(width: 320, height: 240)
+
+    static func pageSize(width: Double?, height: Double?) -> NSSize {
+        func side(_ asked: Double?, _ fallback: CGFloat, _ floor: CGFloat) -> CGFloat {
+            guard let asked, asked.isFinite else { return fallback }
+            return max(floor, CGFloat(asked).rounded())
+        }
+        return NSSize(
+            width: side(width, defaultPage.width, minimumPage.width),
+            height: side(height, defaultPage.height, minimumPage.height))
+    }
+
+    static func dialogSize(page: NSSize, bar: CGFloat) -> NSSize {
+        NSSize(width: page.width, height: page.height + bar)
+    }
+}
+
+/// When a popup has outlived the page that opened it.
 ///
-/// So the view is staged first and claimed by whichever `WebPaneController` the
-/// reconcile builds for it. That usually happens inside the ledger write itself,
-/// before it returns, which is why the pending slot matches on URL: at that
-/// point the new pane's id does not exist anywhere yet. Once the write returns,
-/// the id is known and anything still pending is filed under it, for the case
-/// where the new lane was outside the materialisation window and its controller
-/// comes along later.
-@MainActor
-final class PopupHandoff {
-    static let shared = PopupHandoff()
-
-    struct Staged {
-        let webView: WKWebView
-        /// What the lane was created with, and so what the pane's URL will be.
-        let url: String
-        let openerPaneId: String
-        /// The opener's cookie jar, carried across explicitly rather than
-        /// re-derived, so the pane records the jar its page is actually in.
-        let dataStoreId: String
+/// A sign-in dialog is a conversation with one document. When the opener
+/// commits a navigation to a *different origin*, `window.opener` at the far end
+/// is now a stranger — the `postMessage` it is waiting to send goes to a page
+/// that never asked — so the dialog closes. Same-origin moves keep it: a
+/// single-page app's `pushState`, a route change, a redirect within the site
+/// are all still the page that is waiting.
+enum PopupOpener {
+    static func hasLeft(openedFrom before: String?, now after: String?) -> Bool {
+        guard let before = origin(before), let after = origin(after) else { return false }
+        return before != after
     }
 
-    /// At most one: staging and resolving happen in one main-actor run loop
-    /// turn, with only the reconcile in between.
-    private var pending: Staged?
-    private var byPane: [String: Staged] = [:]
-
-    func stage(_ staged: Staged) {
-        if let orphan = pending {
-            // Cannot happen while both halves stay synchronous; if it ever does,
-            // the previous popup would be a web view nothing will ever show.
-            Log.warn("popup handoff: \(orphan.url) was never claimed")
-        }
-        pending = staged
+    /// Scheme, host and non-default port — the web's own idea of an origin, and
+    /// the same key a remembered site permission is filed under.
+    static func origin(_ raw: String?) -> String? {
+        guard let raw, let url = URL(string: raw) else { return nil }
+        return AskOrigin.key(scheme: url.scheme, host: url.host, port: url.port)
     }
-
-    /// The staged view for a pane being built, if it is the popup's pane.
-    func claim(paneId: String, url: String?) -> Staged? {
-        if let staged = byPane.removeValue(forKey: paneId) { return staged }
-        guard let staged = pending, staged.url == url else { return nil }
-        pending = nil
-        return staged
-    }
-
-    /// File anything still unclaimed under the pane the ledger just created.
-    func resolvePending(to paneId: String?) {
-        guard let staged = pending else { return }
-        pending = nil
-        guard let paneId else {
-            Log.warn("popup handoff: no pane was created for \(staged.url)")
-            return
-        }
-        byPane[paneId] = staged
-    }
-
-    /// Which pane a staged view belongs to — for a popup that closes itself
-    /// before anything has shown it.
-    func paneId(holding webView: WKWebView) -> String? {
-        byPane.first { $0.value.webView === webView }?.key
-    }
-
-    func discard(paneId: String) { byPane.removeValue(forKey: paneId) }
 }

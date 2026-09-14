@@ -131,59 +131,11 @@ extension WebPaneController {
         NSWorkspace.shared.open(url)
     }
 
-    /// Read one password and put it in the form. The only injection in the app.
+    /// Read one password and put it in the form. See `PasswordFill.fill`.
     private func fill(_ login: KeychainPasswords.SavedLogin) {
-        guard let webView, let before = liveOrigin, before == login.origin else { return }
-        let account = login.account
-        Task { @MainActor [weak self] in
-            // Off the main actor: this can raise the macOS "may Max Pane use
-            // this password" panel and blocks until it is answered.
-            let secret = await Task.detached(priority: .userInitiated) {
-                KeychainPasswords.password(for: login)
-            }.value
-            guard let self else { return }
-            guard let secret else {
-                self.chrome.showFailure("macOS did not hand over the password")
-                return
-            }
-            // The second origin read. The page is free to have navigated while
-            // the panel was up, and the password below belongs to `before`.
-            guard let now = self.liveOrigin, now == before else {
-                self.chrome.showFailure("The page changed — nothing was filled")
-                return
-            }
-            webView.callAsyncJavaScript(
-                PasswordFill.javaScript,
-                // Bound as values. The secret is never part of a program, so
-                // there is no escaping to get wrong and no script string that
-                // could carry it into a log.
-                arguments: ["user": account, "secret": secret, "expect": before.key],
-                in: nil,
-                in: .defaultClient
-            ) { [weak self] result in
-                Task { @MainActor in
-                    guard let self else { return }
-                    switch result {
-                    case .success(let value):
-                        let outcome = PasswordFill.outcome(from: value)
-                        // The origin and the outcome's *case*. Never the
-                        // account, never the length of anything, never which
-                        // field was found — `WebAuth`'s line, held.
-                        Log.debug("pane \(self.paneId) fill on \(before.label): \(outcome.tag)")
-                        self.chrome.showFailure(outcome.message)
-                    case .failure(let error):
-                        // The domain and the code, not the message: a
-                        // JavaScript exception's text is assembled by the page's
-                        // engine and is not a thing to copy into a log that is
-                        // on for whole sessions.
-                        let ns = error as NSError
-                        Log.debug(
-                            "pane \(self.paneId) fill on \(before.label) threw "
-                            + "\(ns.domain) \(ns.code)")
-                        self.chrome.showFailure("The page would not accept a fill")
-                    }
-                }
-            }
+        guard let webView, liveOrigin == login.origin else { return }
+        PasswordFill.fill(login, into: webView, logName: "pane \(paneId)") { [weak self] message in
+            self?.chrome.showFailure(message)
         }
     }
 
@@ -204,6 +156,65 @@ extension WebPaneController {
             self.chrome.showFailure(
                 ok ? "Saved for \(origin.label)" : "The Keychain would not save it")
             self.refreshSavedPassword()
+        }
+    }
+}
+
+extension PasswordFill {
+    /// Read one password and put it in `webView`'s form. The only injection in
+    /// the app — for a pane's page and a popup's alike, so the rules below have
+    /// one copy.
+    ///
+    /// `report` gets the one line worth showing. `logName` says whose page it
+    /// was in the log, which never carries the account or the secret.
+    @MainActor
+    static func fill(_ login: KeychainPasswords.SavedLogin, into webView: WKWebView, logName: String,
+                     report: @escaping @MainActor (String) -> Void) {
+        guard let before = PasswordOrigin(url: webView.url), before == login.origin else { return }
+        let account = login.account
+        Task { @MainActor [weak webView] in
+            // Off the main actor: this can raise the macOS "may Max Pane use
+            // this password" panel and blocks until it is answered.
+            let secret = await Task.detached(priority: .userInitiated) {
+                KeychainPasswords.password(for: login)
+            }.value
+            guard let webView else { return }
+            guard let secret else { return report("macOS did not hand over the password") }
+            // The second origin read, from the same web view the password is
+            // about to go into. The page is free to have navigated while the
+            // panel was up, and the password below belongs to `before`.
+            guard let now = PasswordOrigin(url: webView.url), now == before else {
+                return report("The page changed — nothing was filled")
+            }
+            webView.callAsyncJavaScript(
+                PasswordFill.javaScript,
+                // Bound as values. The secret is never part of a program, so
+                // there is no escaping to get wrong and no script string that
+                // could carry it into a log.
+                arguments: ["user": account, "secret": secret, "expect": before.key],
+                in: nil,
+                in: .defaultClient
+            ) { result in
+                Task { @MainActor in
+                    switch result {
+                    case .success(let value):
+                        let outcome = PasswordFill.outcome(from: value)
+                        // The origin and the outcome's *case*. Never the
+                        // account, never the length of anything, never which
+                        // field was found — `WebAuth`'s line, held.
+                        Log.debug("\(logName) fill on \(before.label): \(outcome.tag)")
+                        report(outcome.message)
+                    case .failure(let error):
+                        // The domain and the code, not the message: a
+                        // JavaScript exception's text is assembled by the page's
+                        // engine and is not a thing to copy into a log that is
+                        // on for whole sessions.
+                        let ns = error as NSError
+                        Log.debug("\(logName) fill on \(before.label) threw \(ns.domain) \(ns.code)")
+                        report("The page would not accept a fill")
+                    }
+                }
+            }
         }
     }
 }
