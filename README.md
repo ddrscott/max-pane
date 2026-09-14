@@ -1295,6 +1295,20 @@ the next lane always shows. It never moves further than that, and at the two
 ends of the strip it does not move at all — the end of the strip is a fact
 worth seeing. `0` turns it off and gives you exactly centred snapping.
 
+**When fewer than three lanes fit, the strip is a carousel.** A small window, a
+dock eating the strip or an xl lane can leave room for only one or two lanes
+across. Then focus, by whichever door it arrives (a click, ⌘[ / ⌘], the sidebar,
+⌘P, a new lane), centres the focused lane exactly, and both neighbours peek in by
+equal widths. Clicking either sliver focuses that lane, which centres it and
+shows the next sliver, so you can click through the whole strip. "Fit" is
+measured against the three lanes around the focused one, at their own widths,
+in the part of the strip a dock leaves visible. The snap agrees: it settles on
+the nearest lane centred, with no peek nudge, and it leaves alone a strip that
+already rests where focus centred it. With three or more lanes fitting, focus
+still moves the strip as little as it can and the peek applies as above. A lane
+at least as wide as the window is never centred, because its header would be
+cut off. The threshold is fixed at three and has no config key.
+
 `strip_edge_rails` is the other half: an 18 pt column at each end of the strip
 with a count of the lanes hidden that way (`◀ 7`, `5 ▶`), and a plain wall when
 there are none. A sliver says *there is more, this way*; it cannot say how many,

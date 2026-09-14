@@ -1196,7 +1196,8 @@ public final class StripViewController: NSViewController {
         updateMaterialization()
         updateEdgeRails()
         // The lane you were working in, where you can see it. Minimal rather
-        // than centred: the strip is where it was when you left it.
+        // than centred: the strip is where it was when you left it — unless
+        // fewer than three lanes fit, where the carousel centres it.
         if let laneId = store.focusedLane?.id { ensureVisible(laneId) }
     }
 
@@ -1519,9 +1520,11 @@ public final class StripViewController: NSViewController {
         // recentring on it would shove three other lanes off the screen to
         // narrate something already in front of you. `minimal` is asked against
         // the ledger's widths, so it answers about the *finished* column rather
-        // than the zero-width slot it currently occupies.
+        // than the zero-width slot it currently occupies. `focused` is `minimal`
+        // unless the strip is a carousel around the new lane, where "whole on
+        // screen" is not enough and it has to be centred.
         let window = viewport
-        if StripReveal.minimal(
+        if StripReveal.focused(
             from: window.offset, to: laneId,
             lanes: lanes, viewport: window.width) == window.offset { return }
         reveal(laneId: laneId, flash: false)
@@ -2374,11 +2377,14 @@ public final class StripViewController: NSViewController {
         // Nothing to snap to when the whole strip fits.
         guard window.width > 0, content.frame.width > window.width else { return }
 
-        guard let target = LaneSnap.offset(
-            forCentre: window.offset + window.width / 2,
+        // A docked lane is not on the strip, so it has no carousel position to
+        // hold; `stripLanes` does not contain it and `settle` ignores it.
+        guard let target = LaneSnap.settle(
+            from: window.offset,
             viewport: window.width,
             lanes: store.stripLanes,
-            minPeek: CGFloat(config.lanePeekPt))
+            minPeek: CGFloat(config.lanePeekPt),
+            focused: store.focusedLane?.id)
         else { return }
 
         // Within a couple of points is centred; moving anyway would look like a
@@ -2585,6 +2591,13 @@ public final class StripViewController: NSViewController {
     /// as it can, and shaving 28 pt off the lane the user just focused to prove
     /// that another one exists is worse than the ambiguity it fixes. The snap
     /// that follows the next scroll picks it up.
+    ///
+    /// **Except when fewer than three lanes fit** (`StripReveal.isCarousel`):
+    /// then there is no "least movement" that leaves anything to click on
+    /// either side, so focus centres the lane exactly, with both neighbours
+    /// peeking — and a click on a sliver focuses that lane, which centres it,
+    /// which shows the next sliver. Every focus path lands here, so this is the
+    /// one place the carousel is wired in.
     private func ensureVisible(_ laneId: String) {
         // Focusing a dock moves nothing: it is already at the wall, and
         // scrolling the strip to "reach" it would move every lane the user was
@@ -2593,7 +2606,7 @@ public final class StripViewController: NSViewController {
         // Every tile is already whole on screen.
         guard !isGallery else { return }
         let window = viewport
-        guard let target = StripReveal.minimal(
+        guard let target = StripReveal.focused(
             from: window.offset, to: laneId,
             lanes: store.stripLanes, viewport: window.width)
         else { return }
@@ -2777,12 +2790,12 @@ enum LaneSnap {
         forCentre centre: CGFloat, viewport: CGFloat, lanes: [Lane], minPeek: CGFloat = 0
     ) -> CGFloat? {
         var x: CGFloat = 0
-        var best: (distance: CGFloat, origin: CGFloat, width: CGFloat)?
-        for lane in lanes {
+        var best: (distance: CGFloat, origin: CGFloat, width: CGFloat, index: Int)?
+        for (index, lane) in lanes.enumerated() {
             let width = CGFloat(lane.widthPt)
             let distance = abs((x + width / 2) - centre)
             if distance < (best?.distance ?? .greatestFiniteMagnitude) {
-                best = (distance, x, width)
+                best = (distance, x, width, index)
             }
             x += width + Theme.borderWidth
         }
@@ -2790,7 +2803,36 @@ enum LaneSnap {
 
         let centred = best.origin - (viewport - best.width) / 2
         let clamped = min(max(0, centred), max(0, x - viewport))
+        // A carousel settles exactly centred, the same place focus puts it, so
+        // a drag pages to the nearest lane and a snap never pulls a centred
+        // lane 28 pt toward one neighbour.
+        if StripReveal.isCarousel(
+            around: best.index, slots: StripEdges.slots(of: lanes), viewport: viewport) {
+            return clamped
+        }
         return LanePeek.adjust(
             offset: clamped, viewport: viewport, lanes: lanes, minimum: minPeek)
+    }
+
+    /// Where a scroll that has stopped at `offset` settles, given the lane that
+    /// has focus.
+    ///
+    /// One case ahead of `offset(forCentre:)`: a strip already resting where
+    /// the carousel centres the focused lane stays put. At the two ends the
+    /// focused lane is clamped rather than centred, and with mixed widths the
+    /// lane nearest the middle of the screen can then be its neighbour — a snap
+    /// asked only about the middle would pull the strip off the lane focus just
+    /// put there.
+    static func settle(
+        from offset: CGFloat, viewport: CGFloat, lanes: [Lane], minPeek: CGFloat = 0,
+        focused laneId: String?
+    ) -> CGFloat? {
+        if let laneId,
+           let resting = StripReveal.carousel(on: laneId, lanes: lanes, viewport: viewport),
+           abs(resting - offset) <= 2 {
+            return offset
+        }
+        return Self.offset(
+            forCentre: offset + viewport / 2, viewport: viewport, lanes: lanes, minPeek: minPeek)
     }
 }

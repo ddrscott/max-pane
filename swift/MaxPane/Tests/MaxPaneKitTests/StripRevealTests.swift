@@ -169,6 +169,114 @@ struct StripRevealTests {
         }
     }
 
+    // MARK: - the carousel: fewer than three lanes fit
+
+    @Test("one lane fits: focus centres it, with equal slivers either side")
+    func carouselOneLaneFits() {
+        let strip = lanes([600, 600, 600, 600, 600])
+        // Lane 2 starts at 1202; centred in 1000 pt the strip sits at 1002,
+        // where `minimal` from 0 would have stopped at 802 with lane 2 flush
+        // right and nothing of lane 3 to click on.
+        let target = StripReveal.focused(from: 0, to: "lane-2", lanes: strip, viewport: 1000)
+        #expect(target == CGFloat(1002))
+        #expect(StripReveal.minimal(from: 0, to: "lane-2", lanes: strip, viewport: 1000) == CGFloat(802))
+        // Lane 1 ends at 1201 and lane 3 starts at 1803: 199 pt of each.
+        #expect(CGFloat(1201) - target! == CGFloat(199))
+        #expect(target! + 1000 - CGFloat(1803) == CGFloat(199))
+    }
+
+    @Test("two lanes fit: still exactly centred, the neighbours half showing")
+    func carouselTwoLanesFit() {
+        let strip = lanes([600, 600, 600, 600, 600])
+        let target = StripReveal.focused(from: 0, to: "lane-2", lanes: strip, viewport: 1500)
+        #expect(target == CGFloat(752))
+        #expect(CGFloat(1201) - target! == CGFloat(449))
+        #expect(target! + 1500 - CGFloat(1803) == CGFloat(449))
+        // ⌘P, the sidebar and an arriving lane land on the same place.
+        #expect(StripReveal.centred(on: "lane-2", lanes: strip, viewport: 1500, peek: 28) == target)
+    }
+
+    @Test("three lanes fit: focus is the least movement, exactly as before")
+    func threeLanesFitIsUnchanged() {
+        let strip = lanes([UInt32](repeating: 600, count: 7))
+        let tiling = CGFloat(600) + 2 * CGFloat(601)
+        for viewport in [tiling, CGFloat(2000), CGFloat(2600)] {
+            for offset in [CGFloat(0), CGFloat(300), CGFloat(1202)] {
+                for id in strip.map(\.id) {
+                    #expect(StripReveal.carousel(on: id, lanes: strip, viewport: viewport) == nil)
+                    #expect(StripReveal.focused(from: offset, to: id, lanes: strip, viewport: viewport)
+                        == StripReveal.minimal(from: offset, to: id, lanes: strip, viewport: viewport))
+                }
+            }
+        }
+    }
+
+    @Test("mixed widths: the lanes around the focused one decide, not a count")
+    func carouselMixedWidths() {
+        // An xl lane between s lanes. Lanes 1…3 span 421…2463, 2042 pt, which
+        // is more than 1800: a carousel around lane 2.
+        let mixed = lanes([420, 420, 1200, 420, 420])
+        #expect(StripReveal.focused(from: 0, to: "lane-2", lanes: mixed, viewport: 1800)
+            == CGFloat(842 - 300))
+        // The same window over five s lanes fits three of them: no carousel.
+        let small = lanes([420, 420, 420, 420, 420])
+        #expect(StripReveal.carousel(on: "lane-2", lanes: small, viewport: 1800) == nil)
+    }
+
+    @Test("a carousel is centred exactly even where the peek would have nudged it")
+    func carouselIgnoresThePeek() {
+        // Lane 2 (600 pt at 902) centred in 1200 pt puts the left edge 1 pt
+        // into lane 1 and the right edge 1 pt short of lane 3's end: both
+        // flush within the hairline, the case `LanePeek` exists for. Lanes 1…3
+        // span 601…1803, 1202 pt, two more than fits.
+        let strip = lanes([600, 300, 600, 300, 600])
+        #expect(LanePeek.adjust(offset: 602, viewport: 1200, lanes: strip, minimum: 28) != CGFloat(602))
+        #expect(StripReveal.centred(on: "lane-2", lanes: strip, viewport: 1200, peek: 28) == CGFloat(602))
+        #expect(StripReveal.focused(from: 0, to: "lane-2", lanes: strip, viewport: 1200) == CGFloat(602))
+    }
+
+    @Test("the first and last lanes clamp to the ends of the strip")
+    func carouselClampsAtTheEnds() {
+        let strip = lanes([600, 600, 600, 600, 600])
+        let limit = StripEdges.contentWidth(of: strip) - 1000
+        #expect(StripReveal.focused(from: 1500, to: "lane-0", lanes: strip, viewport: 1000) == CGFloat(0))
+        #expect(StripReveal.focused(from: 0, to: "lane-4", lanes: strip, viewport: 1000) == limit)
+        #expect(limit == CGFloat(2005))
+    }
+
+    @Test("a dock taking room from the strip can turn it into a carousel")
+    func aDockNarrowsTheStripIntoACarousel() {
+        let strip = lanes([600, 600, 600, 600, 600])
+        // 2000 pt fits three 600 pt lanes.
+        #expect(StripReveal.carousel(on: "lane-2", lanes: strip, viewport: 2000) == nil)
+        // A 320 pt inset dock: the clip view is made 320 narrower.
+        let inset = DockGeometry.visible(
+            clipOffset: 0, clipWidth: 1680,
+            layout: DockGeometry.Layout(left: .init(width: 320, mode: .inset), right: nil))
+        // A 320 pt overlay dock: the clip keeps its width and loses the view.
+        let overlay = DockGeometry.visible(
+            clipOffset: 0, clipWidth: 2000,
+            layout: DockGeometry.Layout(left: .init(width: 320, mode: .overlay), right: nil))
+        for window in [inset, overlay] {
+            #expect(window.width == CGFloat(1680))
+            #expect(StripReveal.carousel(on: "lane-2", lanes: strip, viewport: window.width)
+                == CGFloat(1202 - 540))
+        }
+    }
+
+    @Test("a lane wider than the window keeps its leading edge, carousel or not")
+    func aLaneWiderThanTheWindowIsNotACarousel() {
+        let strip = lanes([1400, 600])
+        #expect(StripReveal.carousel(on: "lane-0", lanes: strip, viewport: 1000) == nil)
+        #expect(StripReveal.focused(from: 300, to: "lane-0", lanes: strip, viewport: 1000) == CGFloat(0))
+    }
+
+    @Test("a lane already centred asks for no movement")
+    func carouselAlreadyCentred() {
+        let strip = lanes([600, 600, 600, 600, 600])
+        #expect(StripReveal.focused(from: 1002, to: "lane-2", lanes: strip, viewport: 1000) == CGFloat(1002))
+    }
+
     // MARK: - the reason the scroll rides the insert's timer
 
     /// The claim the carried scroll rests on: while a lane's column opens, the

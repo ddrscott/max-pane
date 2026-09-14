@@ -297,11 +297,64 @@ enum StripReveal {
         on laneId: String, lanes: [Lane], viewport: CGFloat, peek: CGFloat
     ) -> CGFloat? {
         guard viewport > 0, let index = lanes.firstIndex(where: { $0.id == laneId }) else { return nil }
-        let slot = StripEdges.slots(of: lanes)[index]
-        let centred = slot.origin - (viewport - slot.width) / 2
-        return LanePeek.adjust(
-            offset: clamp(centred, lanes: lanes, viewport: viewport),
-            viewport: viewport, lanes: lanes, minimum: peek)
+        let slots = StripEdges.slots(of: lanes)
+        let centred = exactCentre(slots[index], lanes: lanes, viewport: viewport)
+        // A carousel is centred exactly: both neighbours already peek by equal
+        // widths, and a nudge toward one of them is a lane off centre for no
+        // gain — the thing the next click on a sliver would have to undo.
+        if isCarousel(around: index, slots: slots, viewport: viewport) { return centred }
+        return LanePeek.adjust(offset: centred, viewport: viewport, lanes: lanes, minimum: peek)
+    }
+
+    /// How many whole lanes have to fit across the strip before it stops being
+    /// a carousel. Three is the smallest number that shows the focused lane and
+    /// a whole neighbour on each side.
+    static let carouselLanes = 3
+
+    /// Whether the strip is too narrow, around the lane at `index`, to show it
+    /// with a whole lane either side — and so focus centres it, with both
+    /// neighbours peeking, and a click on either sliver pages one lane.
+    ///
+    /// Measured against the lanes *around* this one, because s, m and xl lanes
+    /// differ: the three consecutive lanes centred on it, shifted inward at the
+    /// two ends of the strip. A strip of fewer than three lanes is a carousel
+    /// by definition, which costs nothing: when it all fits, every centring
+    /// clamps to zero.
+    ///
+    /// A lane at least as wide as the window is not: nothing can peek past it,
+    /// and centring it would hide its leading edge, where its header is.
+    static func isCarousel(around index: Int, slots: [StripEdges.Slot], viewport: CGFloat) -> Bool {
+        guard viewport > 0, slots.indices.contains(index) else { return false }
+        guard slots[index].width < viewport else { return false }
+        guard slots.count >= carouselLanes else { return true }
+        let first = min(max(0, index - 1), slots.count - carouselLanes)
+        let last = first + carouselLanes - 1
+        return slots[last].end - slots[first].origin > viewport
+    }
+
+    /// Where the strip rests with `laneId` focused when the strip is a
+    /// carousel around it, or nil when it is not.
+    static func carousel(on laneId: String, lanes: [Lane], viewport: CGFloat) -> CGFloat? {
+        guard viewport > 0, let index = lanes.firstIndex(where: { $0.id == laneId }) else { return nil }
+        let slots = StripEdges.slots(of: lanes)
+        guard isCarousel(around: index, slots: slots, viewport: viewport) else { return nil }
+        return exactCentre(slots[index], lanes: lanes, viewport: viewport)
+    }
+
+    /// Where focus landing on `laneId` moves the strip: centred when the strip
+    /// is a carousel around it, and otherwise the least movement, exactly as
+    /// before. Every door focus comes in by — a click, ⌘[ / ⌘], the sidebar,
+    /// ⌘P, a new lane — goes through here or through `centred`, and the two
+    /// agree whenever this is a carousel.
+    static func focused(
+        from offset: CGFloat, to laneId: String, lanes: [Lane], viewport: CGFloat
+    ) -> CGFloat? {
+        carousel(on: laneId, lanes: lanes, viewport: viewport)
+            ?? minimal(from: offset, to: laneId, lanes: lanes, viewport: viewport)
+    }
+
+    private static func exactCentre(_ slot: StripEdges.Slot, lanes: [Lane], viewport: CGFloat) -> CGFloat {
+        clamp(slot.origin - (viewport - slot.width) / 2, lanes: lanes, viewport: viewport)
     }
 
     /// The least movement that brings `laneId` fully on screen, and no peek.
