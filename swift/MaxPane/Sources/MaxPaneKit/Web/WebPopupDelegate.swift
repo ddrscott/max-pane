@@ -168,6 +168,13 @@ extension WebPopupDialog: WKUIDelegate, WKNavigationDelegate {
         pane.webView(webView, navigationResponse: navigationResponse, didBecome: download)
     }
 
+    /// A new document in the dialog has nothing full screen, so the next Esc
+    /// closes the dialog again rather than asking an empty page to leave.
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        guard webView === self.webView else { return }
+        pageIsFullscreen = false
+    }
+
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
                  withError error: Error) {
         report(error)

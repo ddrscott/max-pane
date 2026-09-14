@@ -91,7 +91,17 @@ final class WebPaneController: NSObject, PaneController {
     private var focusToken: UUID?
     private var bookmarkToken: UUID?
     private var hoverRelay: ScriptMessageRelay?
+    private var fullScreenRelay: FullScreenMessageRelay?
     private var keyWindowObserver: (any NSObjectProtocol)?
+
+    /// True while an element of this pane's page fills the pane. See
+    /// `setPaneFullscreen`.
+    private(set) var isPaneFullscreen = false
+    /// Which full screen change a finishing fade belongs to.
+    private var fullscreenGeneration: UInt64 = 0
+    /// The page ends where the bars start, or — full screen — at the pane's foot.
+    private var contentAboveBars: NSLayoutConstraint!
+    private var contentFillsPane: NSLayoutConstraint!
 
     /// Set by the strip so a lane this pane opens can be scrolled to.
     ///
@@ -190,11 +200,13 @@ final class WebPaneController: NSObject, PaneController {
         findBarHeight = findBar.heightAnchor.constraint(equalToConstant: 0)
         findBar.alphaValue = 0
         downloadBarHeight = downloadBar.heightAnchor.constraint(equalToConstant: 0)
+        contentAboveBars = contentHost.bottomAnchor.constraint(equalTo: findBar.topAnchor)
+        contentFillsPane = contentHost.bottomAnchor.constraint(equalTo: container.bottomAnchor)
         NSLayoutConstraint.activate([
             contentHost.topAnchor.constraint(equalTo: container.topAnchor),
             contentHost.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             contentHost.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            contentHost.bottomAnchor.constraint(equalTo: findBar.topAnchor),
+            contentAboveBars,
 
             findBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             findBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
@@ -484,7 +496,12 @@ final class WebPaneController: NSObject, PaneController {
 
     // MARK: - find in page
 
-    private func toggleFind() { setFindVisible(findBarHeight.constant == 0) }
+    private func toggleFind() {
+        // A find bar opening under a page that is filling the pane would be a
+        // field nobody can see.
+        leavePaneFullscreen()
+        setFindVisible(findBarHeight.constant == 0)
+    }
 
     private func setFindVisible(_ visible: Bool) {
         guard (findBarHeight.constant > 0) != visible else {
@@ -632,7 +649,12 @@ final class WebPaneController: NSObject, PaneController {
     /// of that lane" is a fair thing to want from a page that has not been
     /// built yet. Nothing here loads anything — editing an address and
     /// committing one are separate, and only the second navigates.
-    func editAddress() { chrome.beginEditingAddress() }
+    func editAddress() {
+        // ⌘L on a full screen video is asking for the address, and the address
+        // is in the bar the video is covering.
+        leavePaneFullscreen()
+        chrome.beginEditingAddress()
+    }
 
     // MARK: - bookmarks
 
@@ -651,6 +673,8 @@ final class WebPaneController: NSObject, PaneController {
     /// wait for the panel.
     func keepPage() {
         guard let url = currentAddress, !url.isEmpty else { return }
+        // The editor hangs off the star, which is in the bar.
+        leavePaneFullscreen()
         let title = webView?.title.flatMap { $0.isEmpty ? nil : $0 }
             ?? store.lane(containing: paneId)?.title
             ?? ""
@@ -696,6 +720,84 @@ final class WebPaneController: NSObject, PaneController {
         webView?.pageZoom = CGFloat(zoom)
         chrome.setZoom(zoom)
         store.setPaneZoom(paneId, zoom)
+    }
+
+    // MARK: - full screen
+
+    /// A page's full screen element fills the pane, and the bars make way.
+    ///
+    /// The owner's decision (`docs/work/web-fullscreen-in-pane.md`): the pane's
+    /// whole web area, never the lane, the strip or the display. The element is
+    /// sized by `PaneFullscreen`'s script inside the page; all this does is give
+    /// the page the 26 pt the chrome bar was holding — plus the find and
+    /// download bars, when they are open — and fade the bars away over it.
+    ///
+    /// The page's size changes at once and only the bars move, in both
+    /// directions. Growing the web view a frame at a time would reflow a video
+    /// player a dozen times to arrive where one reflow puts it; a bar fading
+    /// out over a page that is already its final size is the same picture
+    /// without that cost. Faded rather than slid: the container does not clip,
+    /// and a bar sliding down would draw across the pane below it in a split.
+    func setPaneFullscreen(_ on: Bool) {
+        guard on != isPaneFullscreen else { return }
+        isPaneFullscreen = on
+        fullscreenGeneration &+= 1
+        let generation = fullscreenGeneration
+        Log.debug("pane \(paneId) full screen \(on ? "fills the pane" : "ended")")
+
+        if on, chrome.isEditingAddress { chrome.endEditingAddress() }
+        completions.hide()
+        layoutCompletions()
+        NSLayoutConstraint.deactivate([on ? contentAboveBars : contentFillsPane])
+        NSLayoutConstraint.activate([on ? contentFillsPane : contentAboveBars])
+        // Now, not at the next display pass: the page is already laying its
+        // element out against the viewport, and should get the final one.
+        container.layoutSubtreeIfNeeded()
+
+        let bars: [NSView] = [chrome, findBar, downloadBar]
+        let findOpen = findBarHeight.constant > 0
+        func alpha(_ bar: NSView) -> CGFloat { on ? 0 : (bar === findBar && !findOpen ? 0 : 1) }
+        if !on { bars.forEach { $0.isHidden = false } }
+        let settle = { [weak self] in
+            guard let self, generation == self.fullscreenGeneration, on else { return }
+            // Hidden once invisible, so nothing under the video takes a click.
+            bars.forEach { $0.isHidden = true }
+        }
+        guard !Motion.isReduced, container.window != nil else {
+            bars.forEach { $0.alphaValue = alpha($0) }
+            return settle()
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Motion.pane
+            context.timingFunction = Motion.easeOutTiming
+            for bar in bars { bar.animator().alphaValue = alpha(bar) }
+        } completionHandler: {
+            settle()
+        }
+    }
+
+    /// Put the bars back and tell the page, for a pane key that needs the bar.
+    private func leavePaneFullscreen() {
+        guard isPaneFullscreen else { return }
+        webView?.evaluateJavaScript(PaneFullscreen.exitScript)
+        setPaneFullscreen(false)
+    }
+
+    /// `{active}` from `PaneFullscreen`'s script.
+    ///
+    /// Only a top frame's, and only from a view this pane knows: an embedded
+    /// frame reaches here through its parents' scripts, never on its own. A
+    /// popup's page shares this pane's content controller — WebKit copies it
+    /// into the configuration a popup is built from — so its message arrives
+    /// here too, and belongs to its dialog rather than to this pane's bar.
+    private func fullScreenMessage(_ message: WKScriptMessage) {
+        guard message.frameInfo.isMainFrame, let active = PaneFullscreen.isActive(message.body) else { return }
+        if let webView, message.webView === webView { return setPaneFullscreen(active) }
+        var dialog = popupDialog
+        while let open = dialog {
+            if message.webView === open.webView { return open.pageIsFullscreen = active }
+            dialog = open.child
+        }
     }
 
     // MARK: - PaneController
@@ -796,6 +898,9 @@ final class WebPaneController: NSObject, PaneController {
         keyWindowObserver = nil
         webView.map(LinkHoverProbe.remove(from:))
         hoverRelay = nil
+        webView.map(PaneFullscreen.remove(from:))
+        fullScreenRelay = nil
+        setPaneFullscreen(false)
         webView?.stopLoading()
         webView?.navigationDelegate = nil
         webView?.uiDelegate = nil
@@ -947,6 +1052,11 @@ final class WebPaneController: NSObject, PaneController {
         // What WebKit sends unaided is not a desktop browser's string at all,
         // though — see `BrowserUserAgent` for the measurement and the choice.
         configuration.applicationNameForUserAgent = BrowserUserAgent.applicationName
+        // Off by default, which is why every video site said this browser could
+        // not do full screen. On, it is the native path `PaneFullscreen` keeps
+        // for ⇧ and a second request; the first request fills the pane. A
+        // popup's configuration is copied from this one and inherits it.
+        configuration.preferences.isElementFullscreenEnabled = true
 
         // `ChromeWebView`, for the context menu's nouns and nothing else. See
         // `WebContextMenu` for why the subclass is safe on a popup too.
@@ -1024,6 +1134,9 @@ final class WebPaneController: NSObject, PaneController {
         }
         hoverRelay = relay
         LinkHoverProbe.install(on: webView, handler: relay)
+        let fullScreen = FullScreenMessageRelay { [weak self] message in self?.fullScreenMessage(message) }
+        fullScreenRelay = fullScreen
+        PaneFullscreen.install(on: webView, handler: fullScreen)
         observeChrome(webView)
         // `webView.title` is usually still empty when `didFinish` fires — the
         // document's <title> often lands a beat later — so observe it rather
@@ -1075,6 +1188,10 @@ final class WebPaneController: NSObject, PaneController {
         chromeObservations = []
         webView.map(LinkHoverProbe.remove(from:))
         hoverRelay = nil
+        webView.map(PaneFullscreen.remove(from:))
+        fullScreenRelay = nil
+        // The snapshot standing in for the page has an address to show.
+        setPaneFullscreen(false)
         chrome.setHoveredLink(nil)
         webView?.navigationDelegate = nil
         webView?.uiDelegate = nil
@@ -1242,6 +1359,20 @@ final class WebPaneController: NSObject, PaneController {
 // MARK: - navigation
 
 extension WebPaneController: WKNavigationDelegate {
+    /// A new document replaced the one that was full screen — a link, a reload,
+    /// back — and the new one has not asked for anything. `pushState` never
+    /// commits, so a single-page player changing its URL keeps its full screen.
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        guard webView === self.webView else { return }
+        setPaneFullscreen(false)
+    }
+
+    /// The page's process died, and the full screen element with it.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard webView === self.webView else { return }
+        setPaneFullscreen(false)
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         // PRD §9: keep pane.url and the lane title current as the user navigates.
         if let url = webView.url?.absoluteString {

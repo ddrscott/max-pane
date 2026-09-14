@@ -244,8 +244,23 @@ final class WebPopupDialog: Popup {
     /// dialog.
     override func popupCancelled() {
         if let askSheet { return askSheet.cancelOperation(nil) }
+        // A video filling the dialog's page leaves full screen first. `Popup`'s
+        // Esc monitor sees the key before the page does, so the page's own Esc
+        // handling never runs here and has to be asked for.
+        if pageIsFullscreen {
+            pageIsFullscreen = false
+            webView.evaluateJavaScript(PaneFullscreen.exitScript)
+            return
+        }
         dismiss()
     }
+
+    /// True while an element of the popup's page fills the dialog's web area.
+    /// The origin bar stays: it is the one row the page cannot draw, and a
+    /// page that could hide it on request could be any site it liked.
+    /// Set by the opener pane, which is where the popup's script messages
+    /// arrive — see `WebPaneController.fullScreenMessage`.
+    var pageIsFullscreen = false
 
     /// Close it, and hand the keyboard back to whatever opened it.
     ///

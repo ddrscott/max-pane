@@ -143,6 +143,17 @@ opened from the popup, a `target=_blank` click. It writes a cookie, so it skips
 itself without a named profile. LinkedIn's "Sign in with Google" needs a real
 account and is not driven from a test; this suite is its local reproduction.
 
+`WebFullscreenTests` uses the same two-origin setup for full screen: a host page
+with a box inside a transformed card and two iframes from the other origin, one
+allowed full screen and one not, in a split lane. It checks the box's size
+against the web view's, the events and `fullscreenElement` a player reads, the
+bars fading and coming back, Esc as a real key event, the embed filling the
+pane and the bare one refused, and a popup's page. WebKit's own full screen is
+never entered: a recorder script sits in front of the functions the shim keeps
+as native, so ⇧ and a second request are checked by the calls that would have
+reached WebKit, and `fullscreenState` stays `.notInFullscreen`. YouTube needs the
+network and plays ads, so ⤢ on a real video is checked by hand after installing.
+
 `crates/laned-core/tests/durability.rs` holds the half of PRD §15's acceptance
 tests that the core owns — mostly "the strip is identical after a `kill -9`",
 which it proves by dropping `Core` with no shutdown path and reopening the file.
@@ -250,6 +261,20 @@ closes it and **⌘R** reloads it; the keys that would act on the page behind it
 the dialog, a download lands in the opener's download bar, and a link it opens
 in a new tab gets a lane. Nothing about a popup is saved, so a relaunch does not
 bring one back. See [ADR-0013](docs/decisions/0013-web-popups-are-dialogs.md).
+
+**Full screen fills the pane; ⇧ for the display.** A video's ⤢, or anything
+else a page asks to show full screen, fills this pane's whole web area. The
+chrome bar, and the find and download bars if they are open, fade out of its
+way, while the lane header, the strip and the lanes beside it stay exactly
+where they are. A player embedded from another site fills the pane too, when
+the page around it allows that player full screen. Esc or the player's own
+control puts it back. So do ⌘L, ⌘F and ⌘D, which need the bar it is covering,
+and so does following a link or reloading. Ask again while it fills the pane,
+or hold ⇧ on the click, and the page gets macOS's own full screen across the
+display; Esc from there returns it to normal. In a sign-in popup it fills the
+dialog's page and the origin bar stays, and the first Esc leaves full screen
+before a second one closes the dialog. See
+[ADR-0014](docs/decisions/0014-web-full-screen-fills-the-pane.md).
 
 A load that fails says so where the address was — `⚠ server not found —
 example.com`, for five seconds — and takes the hairline down with it. Stopping a
