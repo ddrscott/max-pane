@@ -872,8 +872,11 @@ opened at launch — there is no window yet to centre anything on.
 ### The toolbar
 
 A row above the strip, level with the session browser's header so the two read
-as one band: a **LANES | GALLERY** switch, **find a lane…** (⌘P), and on the right
-the number of running sessions. It is there windowed and full screen alike —
+as one band: a two-icon layout switch, **find a lane…** (⌘P), and on the right
+the number of running sessions. The switch is pictures rather than words —
+Lucide `columns-3` for the lanes and `layout-grid` for the gallery, the lit half
+green — with the names in their tooltips (*Lanes (⌘G)*, *Gallery (⌘G)*) and
+accessibility labels. It is there windowed and full screen alike —
 a first version lived in the full-screen title bar, which drew it over an
 expanded tile's header and hid it everywhere else. Every control is a key you
 already have, so nothing up there is the only way to do anything, and `+ NEW`

@@ -25,6 +25,36 @@ struct StripToolbarTests {
         #expect(bar.lanesButton.isOn && !bar.galleryButton.isOn)
     }
 
+    /// No words in the row, so what stands in for them has to be there: the
+    /// picture, the name on hover, and the name a screen reader says.
+    @Test("the switch is two icons, named in tooltips and accessibility labels")
+    func switchIsIcons() {
+        let bar = StripToolbar()
+        #expect(bar.lanesButton.icon == .columns3)
+        #expect(bar.galleryButton.icon == .layoutGrid)
+        for (button, name) in [(bar.lanesButton!, "Lanes"), (bar.galleryButton!, "Gallery")] {
+            #expect(button.title.isEmpty, "\(name) still spells itself out")
+            // Not `imagePosition`: AppKit reports `.imageLeading` once the
+            // (empty) title is set, and still draws the icon centred.
+            #expect(button.image != nil, "\(name) has no icon")
+            #expect(button.toolTip == "\(name) (⌘G)")
+            #expect(button.accessibilityLabel() == name)
+        }
+    }
+
+    @Test("the switch's halves are square-ish, not sized to words")
+    func switchIsCompact() {
+        let bar = StripToolbar(frame: NSRect(x: 0, y: 0, width: 1200, height: StripToolbar.height))
+        bar.layoutSubtreeIfNeeded()
+        for button in [bar.lanesButton!, bar.galleryButton!] {
+            #expect(button.frame.width == StripToolbar.switchWidth, "\(button.frame)")
+            #expect(button.frame.height == 20, "\(button.frame)")
+        }
+        // Still one switch sharing a border, and find sits just past it.
+        #expect(bar.galleryButton.frame.minX == bar.lanesButton.frame.maxX - Theme.borderWidth)
+        #expect(bar.findButton.frame.minX < 8 + 2 * StripToolbar.switchWidth + 12)
+    }
+
     @Test("each control asks for the command its key runs")
     func controlsCallThrough() {
         let bar = StripToolbar()

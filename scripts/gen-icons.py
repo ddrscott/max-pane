@@ -35,6 +35,8 @@ WANTED = [
     "key-round", "check",
     # a web popup's origin bar
     "lock",
+    # the strip toolbar's layout switch: lanes | gallery
+    "columns-3", "layout-grid",
 ]
 
 # Lucide draws everything as an outline. A filled variant is emitted for the

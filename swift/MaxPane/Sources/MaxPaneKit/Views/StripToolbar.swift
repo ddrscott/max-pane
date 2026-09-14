@@ -1,6 +1,6 @@
 import AppKit
 
-/// The row above the strip: a LANES | GALLERY switch, a way into ⌘P, and how
+/// The row above the strip: a lanes | gallery icon switch, a way into ⌘P, and how
 /// many sessions are running — level with the sidebar's header, so the two read
 /// as one band across the window.
 ///
@@ -22,6 +22,8 @@ final class StripToolbar: NSView {
     /// The sidebar header's height (`SidebarViewController.buildHeader`). The two
     /// halves of the row have to agree, or the rule under them steps.
     static let height: CGFloat = 34
+    /// Each half of the layout switch: an icon, so about as wide as it is tall.
+    static let switchWidth: CGFloat = 28
 
     var onLayout: ((_ gallery: Bool) -> Void)?
     var onFind: (() -> Void)?
@@ -38,17 +40,30 @@ final class StripToolbar: NSView {
         // halves of the row are meant to be one band.
         layerBackgroundColor = Theme.stripBackground
 
-        lanesButton = SidebarButton(text: "LANES", look: .quiet, action: #selector(pickLanes), target: self)
-        galleryButton = SidebarButton(text: "GALLERY", look: .quiet, action: #selector(pickGallery), target: self)
+        // The owner: *"Lanes and Gallery should use icons to toggle the view
+        // layout. No need to spell it out."* Two pictures, `columns-3` for the
+        // strip's portrait columns and `layout-grid` for the gallery; the words
+        // moved into the tooltips and the accessibility labels, not out of the app.
+        // Size 12 draws the icon at 14 pt (`SidebarButton` adds two).
+        lanesButton = SidebarButton(
+            text: "", icon: .columns3, look: .quiet, size: 12, action: #selector(pickLanes), target: self)
+        galleryButton = SidebarButton(
+            text: "", icon: .layoutGrid, look: .quiet, size: 12, action: #selector(pickGallery), target: self)
         findButton = SidebarButton(
             text: "find a lane…  ⌘P", icon: .search, look: .quiet, action: #selector(findLane), target: self)
-        lanesButton.toolTip = "The strip (⌘G)"
-        galleryButton.toolTip = "Every lane on one screen (⌘G)"
+        lanesButton.toolTip = "Lanes (⌘G)"
+        galleryButton.toolTip = "Gallery (⌘G)"
+        lanesButton.setAccessibilityLabel("Lanes")
+        galleryButton.setAccessibilityLabel("Gallery")
         findButton.toolTip = "Find a lane by title, URL or something it printed (⌘P)"
         for button in [lanesButton, galleryButton, findButton] as [SidebarButton] {
             button.heightAnchor.constraint(equalToConstant: 20).isActive = true
-            button.widthAnchor.constraint(greaterThanOrEqualToConstant: 52).isActive = true
         }
+        // Square-ish, not sized to a word.
+        for button in [lanesButton, galleryButton] as [SidebarButton] {
+            button.widthAnchor.constraint(equalToConstant: Self.switchWidth).isActive = true
+        }
+        findButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 52).isActive = true
 
         // The two halves of one switch share a border: overlapped by a point, so
         // the seam between them is one line and not two.
@@ -101,9 +116,15 @@ final class StripToolbar: NSView {
     }
 
     /// Light the half of the switch the strip is showing.
+    ///
+    /// A half that changes cross-fades (`Motion.fade`: `Motion.pane`, ease-out,
+    /// nothing under Reduce Motion) rather than cutting; one that is already
+    /// right is left alone, so a repeated call does not flicker.
     func setLayout(isGallery: Bool) {
-        lanesButton.isOn = !isGallery
-        galleryButton.isOn = isGallery
+        for (button, on) in [(lanesButton!, !isGallery), (galleryButton!, isGallery)] where button.isOn != on {
+            if window != nil { Motion.fade(button.layer) }
+            button.isOn = on
+        }
     }
 
     /// The footer's count, with the live marker when anything is running.

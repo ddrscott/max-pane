@@ -377,7 +377,7 @@ final class SidebarButton: NSButton {
     /// Drawn to the left of the text, or alone when there is none. Retinted on
     /// every `restyle`, because the icon has to go green with the label when
     /// the control turns on — a template image cannot be tinted after the fact.
-    private var icon: LucideIcon?
+    private(set) var icon: LucideIcon?
     var isOn = false { didSet { restyle() } }
 
     init(
