@@ -106,6 +106,16 @@ pub struct PaneHeight {
     pub weight: f64,
 }
 
+/// One pane's zoom, as part of a lane size preset. A record for the same reason
+/// `PaneHeight` is one: a pane id and a zoom that could fall out of step across
+/// the FFI is a terminal at the wrong font size.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct PaneZoomSetting {
+    pub pane_id: String,
+    /// 1.0 is actual size. Finite and > 0.
+    pub zoom: f64,
+}
+
 /// Whether the shell should be holding a live view for this pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum PaneState {

@@ -733,7 +733,72 @@ fn imported_widths_are_clamped() {
     let core = Core::open_in_memory().unwrap();
     let st = core.import_strip(json.into()).unwrap();
     assert_eq!(st.lanes[0].width_pt, laned_core::LANE_MAX_PT);
-    assert_eq!(st.lanes[1].width_pt, laned_core::LANE_MIN_PT);
+    // The preset floor: a lane exported at `s` has to import at `s`.
+    assert_eq!(st.lanes[1].width_pt, laned_core::LANE_PRESET_MIN_PT);
+}
+
+/// A size preset is one revision: width, span and every pane's zoom land
+/// together, `s` may go under the drag floor, and a relaunch keeps all three.
+#[test]
+fn a_size_preset_is_one_write_and_survives_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let (lane, top, bottom) = {
+        let core = Core::open(db(&dir)).unwrap();
+        let st = core.create_lane(Placement::End, PaneKind::Pty, Some("s1".into()), None, None).unwrap();
+        let lane = st.lanes[0].id.clone();
+        let st = core.add_pane(lane.clone(), PaneKind::Web, None, Some("https://x".into())).unwrap();
+        let top = st.lanes[0].panes[0].id.clone();
+        let bottom = st.lanes[0].panes[1].id.clone();
+
+        let before = core.revision();
+        let st = core
+            .set_lane_size(
+                lane.clone(),
+                412,
+                1,
+                vec![
+                    PaneZoomSetting { pane_id: top.clone(), zoom: 0.6 },
+                    PaneZoomSetting { pane_id: bottom.clone(), zoom: 0.628 },
+                ],
+            )
+            .unwrap();
+        assert_eq!(st.revision, before + 1, "one preset, one revision");
+        assert_eq!(st.lanes[0].width_pt, 412, "s is not clamped up to the drag floor");
+        assert_eq!(st.lanes[0].panes[0].zoom, 0.6);
+        assert_eq!(st.lanes[0].panes[1].zoom, 0.628);
+        (lane, top, bottom)
+    };
+
+    let core = Core::open(db(&dir)).unwrap();
+    let st = core.state().unwrap();
+    assert_eq!(st.lanes[0].width_pt, 412);
+    assert_eq!(st.lanes[0].panes[0].zoom, 0.6);
+
+    // xl: span 2 and double the width, back at actual size.
+    let zooms = vec![
+        PaneZoomSetting { pane_id: top.clone(), zoom: 1.0 },
+        PaneZoomSetting { pane_id: bottom.clone(), zoom: 1.0 },
+    ];
+    let st = core.set_lane_size(lane.clone(), 1312, 2, zooms.clone()).unwrap();
+    assert_eq!((st.lanes[0].width_pt, st.lanes[0].span), (1312, 2));
+
+    // The floor and the ceiling still exist; they are just the preset's.
+    let st = core.set_lane_size(lane.clone(), 1, 1, vec![]).unwrap();
+    assert_eq!(st.lanes[0].width_pt, laned_core::LANE_PRESET_MIN_PT);
+    let st = core.set_lane_size(lane.clone(), 99_999, 5, vec![]).unwrap();
+    assert_eq!((st.lanes[0].width_pt, st.lanes[0].span), (laned_core::LANE_MAX_PT * 2, 2));
+
+    // A drag from `s` still stops at the drag floor.
+    let st = core.set_lane_width(lane.clone(), 300).unwrap();
+    assert_eq!(st.lanes[0].width_pt, laned_core::LANE_MIN_PT);
+
+    // A bad zoom writes nothing at all.
+    let before = core.state().unwrap();
+    let bad = vec![PaneZoomSetting { pane_id: top, zoom: f64::NAN }];
+    assert!(core.set_lane_size(lane, 656, 1, bad).is_err());
+    let after = core.state().unwrap();
+    assert_eq!(after.lanes[0].width_pt, before.lanes[0].width_pt);
+    assert_eq!(after.revision, before.revision);
 }
 
 /// §13 Phase 3 — lane spanning. A deliberate, bounded exception to §1's

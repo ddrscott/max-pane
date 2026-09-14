@@ -181,6 +181,17 @@ public final class StripStore {
         publish(try core.setLaneSpan(laneId: laneId, span: span))
     }
 
+    /// Put a lane at a size preset: width, span and every listed pane's zoom, as
+    /// one revision (`Core::set_lane_size`). The width may go under `laneMinPt`
+    /// — `s` is computed, and the preset is the point. See `LaneSizePreset`.
+    func setLaneSize(
+        _ laneId: String, widthPt: UInt32, span: UInt32, zooms: [(paneId: String, zoom: Double)]
+    ) throws {
+        publish(try core.setLaneSize(
+            laneId: laneId, widthPt: widthPt, span: span,
+            zooms: zooms.map { PaneZoomSetting(paneId: $0.paneId, zoom: $0.zoom) }))
+    }
+
     /// Protect a lane's web panes from eviction. ⇧⌘P, formerly "Pin Lane".
     ///
     /// The word "pinned" went to docking, because that is what it means to the

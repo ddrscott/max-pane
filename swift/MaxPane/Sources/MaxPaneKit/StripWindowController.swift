@@ -490,6 +490,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             // none. Greying it out is how the menu says which of the two
             // questions this key answers.
             return store.focusedLane?.dock != nil
+        case .laneSizeSmall, .laneSizeMedium, .laneSizeLarge:
+            // A strip lane, on the strip. A dock's width is its own number with
+            // its own bounds, and the gallery writes nothing but the layout and
+            // focus — the header hides the switch in both for the same reasons.
+            guard let lane = store.focusedLane else { return false }
+            return lane.dock == nil && !strip.isGallery
         case .focusDockLeft:
             return store.dockedLane(.left) != nil
         case .focusDockRight:
@@ -677,6 +683,10 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                         try store.setLaneWidth(lane.id, config.laneMaxPt * 2)
                     }
                 }
+
+            case .laneSizeSmall, .laneSizeMedium, .laneSizeLarge:
+                let preset: LaneSizePreset = command == .laneSizeSmall ? .s : command == .laneSizeMedium ? .m : .xl
+                if let lane = focusedLane { strip.applySizePreset(preset, toLane: lane.id) }
             }
         } catch {
             showError(error)

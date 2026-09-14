@@ -52,6 +52,9 @@ public enum Command: String, CaseIterable, Sendable {
     case savePassword
     case importBrowserPasswords
     case toggleSpan
+    case laneSizeSmall
+    case laneSizeMedium
+    case laneSizeLarge
     case showHelp
     case showSettings
 
@@ -103,6 +106,9 @@ public enum Command: String, CaseIterable, Sendable {
         case .savePassword: return "Save a Password for This Site…"
         case .importBrowserPasswords: return "Import Passwords From Another Browser…"
         case .toggleSpan: return "Span Lane (2× Width)"
+        case .laneSizeSmall: return "Lane Size: Small"
+        case .laneSizeMedium: return "Lane Size: Medium"
+        case .laneSizeLarge: return "Lane Size: Extra Large"
         case .showHelp: return "Keyboard Shortcuts"
         case .showSettings: return "Settings…"
         }
@@ -258,6 +264,11 @@ public enum Command: String, CaseIterable, Sendable {
         // importing history would be a browser helping itself to passwords.
         case .importBrowserPasswords: return ("y", [.command, .option, .control])
         case .toggleSpan:      return ("\\", [.command])
+        // The lane header's `s | m | xl` switch, as commands. No keys: the owner
+        // asked for the switch, the menu and the ⌘/ sheet, and every obvious
+        // chord near ⌃⌘= / ⌘\ is already a width key of its own. `keys` binds
+        // them for anyone who wants one.
+        case .laneSizeSmall, .laneSizeMedium, .laneSizeLarge: return nil
         // The one everybody reaches for when they do not know the others.
         case .showHelp:        return ("/", [.command])
         // ⌘, is Settings in every Mac app, which is the whole argument.
@@ -379,7 +390,7 @@ public enum Command: String, CaseIterable, Sendable {
         // the other import.
         case .fillPassword, .savePassword: return .navigate
         case .importBrowserPasswords: return .file
-        case .toggleSpan: return .view
+        case .toggleSpan, .laneSizeSmall, .laneSizeMedium, .laneSizeLarge: return .view
         // In the app menu, under About, where a Mac user reaches for it.
         case .showSettings: return .app
         }

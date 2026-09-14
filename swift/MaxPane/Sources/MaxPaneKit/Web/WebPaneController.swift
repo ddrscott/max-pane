@@ -722,6 +722,39 @@ final class WebPaneController: NSObject, PaneController {
         store.setPaneZoom(paneId, zoom)
     }
 
+    // MARK: - size presets
+
+    /// A size preset's page zoom, from where it was to where it is going.
+    ///
+    /// Stepped with the lane's width rather than set at either end: at `s` the
+    /// width and the zoom shrink in the same proportion, so moving both together
+    /// keeps the page's `innerWidth` — its layout — still for the whole ease, and
+    /// the page simply gets smaller. Setting the zoom first would lay the page out
+    /// at 1.7× its width for a fifth of a second; setting it last would lay it
+    /// out at 60%.
+    private var sizeTransition: (from: Double, to: Double)?
+
+    /// The ledger already holds `target`; this only moves the page there.
+    func beginSizeTransition(toZoom target: Double) {
+        let ladder = PaneZoom.ladder
+        let next = min(max(target, ladder.first!), ladder.last!)
+        sizeTransition = (webView.map { Double($0.pageZoom) } ?? zoom, next)
+        zoom = next
+    }
+
+    /// One frame: `progress` is already eased.
+    func stepSizeTransition(_ progress: CGFloat) {
+        guard let move = sizeTransition else { return }
+        webView?.pageZoom = CGFloat(move.from + (move.to - move.from) * Double(progress))
+    }
+
+    func endSizeTransition() {
+        guard sizeTransition != nil else { return }
+        sizeTransition = nil
+        webView?.pageZoom = CGFloat(zoom)
+        chrome.setZoom(zoom)
+    }
+
     // MARK: - full screen
 
     /// A page's full screen element fills the pane, and the bars make way.

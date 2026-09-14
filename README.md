@@ -800,6 +800,41 @@ of a terminal's first row — and that is the price of a pane having a handle at
 all: a lane is dragged by its header, and a pane has no chrome of its own. A
 press on the grip that never moves is a click, and focuses the pane.
 
+### Lane sizes
+
+Every lane header on the strip carries a square **`s | m | xl`** switch, the
+current size lit in the accent green. The same three sizes are
+**View › Lane Size: Small / Medium / Extra Large** and in the ⌘/ sheet. They ship
+without keys; bind `laneSizeSmall`, `laneSizeMedium` and `laneSizeLarge` in
+`[keys]` if you want some. The sizes are absolute, the same for every lane:
+
+- **m** is `lane_default_pt` (656 pt) at 100%: 80 columns of 13 pt text.
+- **s** keeps **m**'s columns and draws them at 60% text. The width is computed
+  from the terminal's real cell, which is a whole number of pixels, so it holds
+  exactly those columns and not one more. That comes to 412 pt on a 1× panel and
+  372 pt on Retina. A lane of pages alone goes to 60% of **m**'s width at the zoom
+  that leaves the page's `innerWidth` where it was, so the page lays out as it did
+  at **m**, only smaller. `s` may be narrower than `lane_min_pt`, because the
+  preset is the point. Dragging a lane still stops at the minimum.
+- **xl** is double wide (span 2) at 100%. A terminal gets the columns the wider
+  lane holds.
+
+A split lane applies the size to every pane in it. None of the three is lit when
+you have dragged or zoomed the lane off them all. The lit size is worked out from
+the lane's width, span and zoom, which the ledger already keeps, so it survives a
+relaunch without a second copy that could disagree.
+
+Changing size eases the lane's width on the strip's usual 0.22 s, with the text
+or page zoom easing along with it, and lands at once under Reduce Motion. A
+terminal keeps its columns while the lane moves. It is drawn scaling toward its
+new text size, and reflows once when the lane arrives. The session is told the
+new size once, and only if it changed: going **m → s** keeps every column but
+fits more rows into the same height, and **s → m** gives them back.
+
+The switch is hidden on a docked lane, because a dock's width is a separate
+number with its own bounds. It is also hidden on a gallery tile, because the
+gallery changes nothing but the layout and focus.
+
 ### Docking a lane to an edge
 
 **⌃⌘[** and **⌃⌘]** hold a lane at the left or right edge of the window instead

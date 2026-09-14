@@ -1256,6 +1256,22 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func setKeepLive(laneId: String, keepLive: Bool) throws  -> StripState
     
     /**
+     * Put a lane at a size preset (`s | m | xl`): its width, its span and its
+     * panes' zoom, as **one** revision.
+     *
+     * One call rather than three because the shell animates the difference
+     * between two snapshots. Span, then width, then zoom as separate writes is
+     * three snapshots, three diffs and a lane that visibly steps through a
+     * shape nobody chose on its way to the one they did.
+     *
+     * The width floor is `LANE_PRESET_MIN_PT`, not `LANE_MIN_PT`: see the
+     * constant. The ceiling is the span's, as in `set_lane_width`. Every zoom is
+     * checked before anything is written, so a bad one leaves the lane exactly
+     * as it was rather than half-resized.
+     */
+    func setLaneSize(laneId: String, widthPt: UInt32, span: UInt32, zooms: [PaneZoomSetting]) throws  -> StripState
+    
+    /**
      * How many lane-widths a lane may occupy (PRD §13 Phase 3).
      *
      * Clamped to 1..=2. §1's invariant is that a lane is a portrait column, and
@@ -2587,6 +2603,33 @@ open func setKeepLive(laneId: String, keepLive: Bool)throws  -> StripState  {
             self.uniffiCloneHandle(),
         FfiConverterString.lower(laneId),
         FfiConverterBool.lower(keepLive),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Put a lane at a size preset (`s | m | xl`): its width, its span and its
+     * panes' zoom, as **one** revision.
+     *
+     * One call rather than three because the shell animates the difference
+     * between two snapshots. Span, then width, then zoom as separate writes is
+     * three snapshots, three diffs and a lane that visibly steps through a
+     * shape nobody chose on its way to the one they did.
+     *
+     * The width floor is `LANE_PRESET_MIN_PT`, not `LANE_MIN_PT`: see the
+     * constant. The ceiling is the span's, as in `set_lane_width`. Every zoom is
+     * checked before anything is written, so a bad one leaves the lane exactly
+     * as it was rather than half-resized.
+     */
+open func setLaneSize(laneId: String, widthPt: UInt32, span: UInt32, zooms: [PaneZoomSetting])throws  -> StripState  {
+    return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_set_lane_size(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(laneId),
+        FfiConverterUInt32.lower(widthPt),
+        FfiConverterUInt32.lower(span),
+        FfiConverterSequenceTypePaneZoomSetting.lower(zooms),uniffiCallStatus
     )
 })
 }
@@ -4551,6 +4594,71 @@ public func FfiConverterTypePaneHeight_lift(_ buf: RustBuffer) throws -> PaneHei
 #endif
 public func FfiConverterTypePaneHeight_lower(_ value: PaneHeight) -> RustBuffer {
     return FfiConverterTypePaneHeight.lower(value)
+}
+
+
+/**
+ * One pane's zoom, as part of a lane size preset. A record for the same reason
+ * `PaneHeight` is one: a pane id and a zoom that could fall out of step across
+ * the FFI is a terminal at the wrong font size.
+ */
+public struct PaneZoomSetting: Equatable, Hashable {
+    public var paneId: String
+    /**
+     * 1.0 is actual size. Finite and > 0.
+     */
+    public var zoom: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(paneId: String, 
+        /**
+         * 1.0 is actual size. Finite and > 0.
+         */zoom: Double) {
+        self.paneId = paneId
+        self.zoom = zoom
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PaneZoomSetting: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePaneZoomSetting: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PaneZoomSetting {
+        return
+            try PaneZoomSetting(
+                paneId: FfiConverterString.read(from: &buf), 
+                zoom: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PaneZoomSetting, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.paneId, into: &buf)
+        FfiConverterDouble.write(value.zoom, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePaneZoomSetting_lift(_ buf: RustBuffer) throws -> PaneZoomSetting {
+    return try FfiConverterTypePaneZoomSetting.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePaneZoomSetting_lower(_ value: PaneZoomSetting) -> RustBuffer {
+    return FfiConverterTypePaneZoomSetting.lower(value)
 }
 
 
@@ -6847,6 +6955,31 @@ fileprivate struct FfiConverterSequenceTypePaneHeight: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypePaneZoomSetting: FfiConverterRustBuffer {
+    typealias SwiftType = [PaneZoomSetting]
+
+    public static func write(_ value: [PaneZoomSetting], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePaneZoomSetting.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PaneZoomSetting] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PaneZoomSetting]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePaneZoomSetting.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypePortablePane: FfiConverterRustBuffer {
     typealias SwiftType = [PortablePane]
 
@@ -7143,6 +7276,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_set_keep_live() != 52968) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_set_lane_size() != 33609) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_set_lane_span() != 29040) {

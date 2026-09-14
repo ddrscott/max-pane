@@ -48,6 +48,18 @@ pub const LANE_MAX_PT: u32 = 900;
 /// says anything — the tests, a future shell mid-boot — gets.
 pub const LANE_DEFAULT_PT: u32 = 656;
 
+/// The narrowest a lane may be when it is put there by a size preset rather
+/// than dragged.
+///
+/// Deliberately below `LANE_MIN_PT`. The `s` preset keeps a terminal's columns
+/// and shrinks its font to 60%, so its width is *computed* from the cell metric
+/// — about 412 pt for 80 columns of 13 pt JetBrains Mono — and clamping that to
+/// 420 would give it a column it did not ask for. The preset is the point, so
+/// it is honoured; dragging still stops at `LANE_MIN_PT`. 240 rather than
+/// nothing for the same reason a dock's floor is 240: below it there is no lane
+/// left to read.
+pub const LANE_PRESET_MIN_PT: u32 = 240;
+
 /// Both ends of the allowed *dock* width, in points.
 ///
 /// Deliberately not `LANE_MIN_PT`/`LANE_MAX_PT`. §8's 420 pt floor exists so a
@@ -577,6 +589,44 @@ impl Core {
         let allowed = LANE_MAX_PT * span;
         if current > allowed {
             inner.ledger.update_lane_width(&lane_id, allowed)?;
+        }
+        Self::bump(&mut inner);
+        Self::snapshot(&inner)
+    }
+
+    /// Put a lane at a size preset (`s | m | xl`): its width, its span and its
+    /// panes' zoom, as **one** revision.
+    ///
+    /// One call rather than three because the shell animates the difference
+    /// between two snapshots. Span, then width, then zoom as separate writes is
+    /// three snapshots, three diffs and a lane that visibly steps through a
+    /// shape nobody chose on its way to the one they did.
+    ///
+    /// The width floor is `LANE_PRESET_MIN_PT`, not `LANE_MIN_PT`: see the
+    /// constant. The ceiling is the span's, as in `set_lane_width`. Every zoom is
+    /// checked before anything is written, so a bad one leaves the lane exactly
+    /// as it was rather than half-resized.
+    pub fn set_lane_size(
+        &self,
+        lane_id: String,
+        width_pt: u32,
+        span: u32,
+        zooms: Vec<PaneZoomSetting>,
+    ) -> Result<StripState> {
+        let mut inner = self.inner.lock();
+        inner.ledger.lane(&lane_id)?;
+        for z in &zooms {
+            if !z.zoom.is_finite() || z.zoom <= 0.0 {
+                return Err(CoreError::Invalid {
+                    message: format!("pane zoom must be finite and positive, got {}", z.zoom),
+                });
+            }
+        }
+        let span = span.clamp(1, 2);
+        inner.ledger.set_span(&lane_id, span)?;
+        inner.ledger.update_lane_width(&lane_id, width_pt.clamp(LANE_PRESET_MIN_PT, LANE_MAX_PT * span))?;
+        for z in &zooms {
+            inner.ledger.update_pane_zoom(&z.pane_id, z.zoom)?;
         }
         Self::bump(&mut inner);
         Self::snapshot(&inner)
@@ -1549,7 +1599,9 @@ impl Core {
             let lane = Lane {
                 id: new_id(),
                 ordinal,
-                width_pt: incoming.width_pt.clamp(LANE_MIN_PT, LANE_MAX_PT * incoming.span.clamp(1, 2)),
+                // The preset floor, so a lane at `s` exports and imports as
+                // itself rather than coming back a column wider.
+                width_pt: incoming.width_pt.clamp(LANE_PRESET_MIN_PT, LANE_MAX_PT * incoming.span.clamp(1, 2)),
                 title: incoming.title,
                 project_root: incoming.project_root,
                 project_source: incoming.project_source,

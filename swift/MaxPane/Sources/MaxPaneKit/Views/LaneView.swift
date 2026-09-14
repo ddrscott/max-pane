@@ -94,6 +94,28 @@ final class LaneView: NSView {
     /// session. Whoever connects this owes the user a confirmation first.
     var onClaimSession: (() -> Void)?
     var onCloseLane: (() -> Void)?
+    /// The header's `s | m | xl` switch. The strip does the work; see
+    /// `StripViewController.applySizePreset`.
+    var onSizePreset: ((LaneSizePreset) -> Void)?
+
+    /// The preset this lane is at, lit in the header; nil when it has been
+    /// dragged or zoomed off all three. Derived by the strip, never stored.
+    var sizePreset: LaneSizePreset? {
+        didSet { header.sizePreset = sizePreset }
+    }
+
+    /// Held for the switch's visibility, which depends on it and on being a tile.
+    private var isDocked = false
+
+    /// The switch is hidden on a dock — its width is a separate number with its
+    /// own bounds, and docking promises not to reflow what it holds — and on a
+    /// gallery tile, which writes nothing but the layout and focus.
+    private func updateSizeSwitchVisibility() {
+        header.showsSizeSwitch = !isDocked && !isThumbnail
+    }
+
+    /// Whether the header offers the switch at all, for tests.
+    var showsSizeSwitch: Bool { header.showsSizeSwitch }
 
     /// What the drag handle is currently asking for. The parent reads it during
     /// a live resize; the ledger only hears about it on the drop.
@@ -298,6 +320,8 @@ final class LaneView: NSView {
         // its place.
         paneWeights = Dictionary(uniqueKeysWithValues: lane.panes.map { ($0.id, $0.heightWeight) })
         header.apply(lane)
+        isDocked = lane.dock != nil
+        updateSizeSwitchVisibility()
         needsLayout = true
     }
 
@@ -856,6 +880,7 @@ final class LaneView: NSView {
         didSet {
             guard thumbnailScale != oldValue else { return }
             resizeHandle.isHidden = isThumbnail
+            updateSizeSwitchVisibility()
             let scale = min(1, max(thumbnailScale ?? 1, 0.05))
             focusOutline.layer?.borderWidth = PaneFocusOutlineView.width / scale
             needsLayout = true
@@ -918,6 +943,7 @@ protocol LaneHeaderActions: AnyObject {
     var onToggleDockMode: (() -> Void)? { get }
     var onClaimSession: (() -> Void)? { get }
     var onCloseLane: (() -> Void)? { get }
+    var onSizePreset: ((LaneSizePreset) -> Void)? { get }
 }
 
 extension LaneView: LaneHeaderActions {}
@@ -945,6 +971,27 @@ final class LaneHeaderView: NSView {
     private let badge = NSTextField(labelWithString: "")
     private let path = NSTextField(labelWithString: "")
     private let overflow = LaneHeaderMenuButton()
+    /// `s | m | xl`. Internal rather than private so tests can press it.
+    let sizeSwitch = LaneSizeSwitch()
+
+    /// The preset to light, or nil for none.
+    var sizePreset: LaneSizePreset? {
+        get { sizeSwitch.selected }
+        set { sizeSwitch.selected = newValue }
+    }
+
+    /// False on a dock and on a gallery tile. See `LaneView.updateSizeSwitchVisibility`.
+    var showsSizeSwitch = true {
+        didSet {
+            guard showsSizeSwitch != oldValue else { return }
+            needsLayout = true
+        }
+    }
+
+    /// Below this the header has no room to spare for the switch and gives it
+    /// back to the title and path. Every preset is wider — `s` is ~400 pt — so
+    /// it only ever goes on a lane dragged or configured narrower than those.
+    static let sizeSwitchMinWidth: CGFloat = 300
 
     var onDoubleClick: (() -> Void)?
     /// `(x in the superview's superview, isFinal)`.
@@ -1035,8 +1082,9 @@ final class LaneHeaderView: NSView {
         markers.textColor = .labelColor
 
         overflow.onPress = { [weak self] in self?.showOverflowMenu() }
+        sizeSwitch.onPick = { [weak self] preset in self?.actions?.onSizePreset?(preset) }
 
-        for v in [kindGlyph, chip, markers, title, badge, path] {
+        for v in [kindGlyph, chip, markers, title, badge, path, sizeSwitch] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = true
             addSubview(v)
         }
@@ -1178,6 +1226,17 @@ final class LaneHeaderView: NSView {
             rightEdge -= markerWidth + 6
         } else {
             markers.frame = NSRect(x: rightEdge, y: mid - 8, width: 0, height: 16)
+        }
+        // The size switch sits outside the markers, so the markers stay beside
+        // the `⋯` that toggles them, and at the same x on every lane of a width.
+        let wantsSwitch = showsSizeSwitch && bounds.width >= Self.sizeSwitchMinWidth
+        sizeSwitch.isHidden = !wantsSwitch
+        if wantsSwitch {
+            let switchWidth = sizeSwitch.fittingWidth
+            sizeSwitch.frame = NSRect(
+                x: rightEdge - switchWidth, y: ((bounds.height - LaneSizeSwitch.height) / 2).rounded(),
+                width: switchWidth, height: LaneSizeSwitch.height)
+            rightEdge -= switchWidth + 8
         }
         // The chip sits at a fixed x on every lane, so a strip of ten headers
         // has one column your eye runs along rather than ten places to look.

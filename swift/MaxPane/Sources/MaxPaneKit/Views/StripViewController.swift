@@ -533,6 +533,7 @@ public final class StripViewController: NSViewController {
 
         for lane in state.lanes {
             laneViews[lane.id]?.apply(lane)
+            laneViews[lane.id]?.sizePreset = sizePreset(of: lane)
             if let laneView = laneViews[lane.id] { applyHandleBounds(laneView, lane: lane) }
             laneViews[lane.id]?.isFocused = state.focusedPaneId.map { id in
                 lane.panes.contains { $0.id == id }
@@ -883,6 +884,10 @@ public final class StripViewController: NSViewController {
             guard let self, let lane = self.store.lane(lane.id) else { return }
             try? self.store.setLaneSpan(lane.id, lane.span == 1 ? 2 : 1)
         }
+        laneView.onSizePreset = { [weak self] preset in
+            self?.applySizePreset(preset, toLane: lane.id)
+        }
+        laneView.sizePreset = sizePreset(of: lane)
         laneView.onCloseLane = { [weak self] in
             try? self?.store.closeLane(lane.id)
         }
@@ -1693,6 +1698,115 @@ public final class StripViewController: NSViewController {
                 PaneZoom.next(from: controller.zoom, up: command == .zoomIn))
         default:
             break
+        }
+        // A zoom is written without a snapshot, so nothing else would tell the
+        // header its lane just left — or reached — a size preset.
+        if let lane = store.lane(containing: paneId) { refreshSizePreset(lane.id) }
+    }
+
+    // MARK: - size presets
+
+    /// How to land a size preset that is still easing, by lane.
+    private var sizeTransitionEnds: [String: () -> Void] = [:]
+
+    private var backingScale: CGFloat {
+        view.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+    }
+
+    /// The preset a lane is at, if any. Each pane's zoom is asked of its
+    /// controller when it has one, because ⌘= writes a zoom without publishing
+    /// a snapshot and the snapshot's copy is stale until something else does.
+    func sizePreset(of lane: Lane) -> LaneSizePreset? {
+        LaneSizePreset.current(
+            of: lane, zoom: { [paneControllers] pane in paneControllers[pane.id]?.zoom ?? pane.zoom },
+            config: config, backingScale: backingScale)
+    }
+
+    private func refreshSizePreset(_ laneId: String) {
+        guard let lane = store.lane(laneId) else { return }
+        laneViews[laneId]?.sizePreset = sizePreset(of: lane)
+    }
+
+    /// Put a lane at `s`, `m` or `xl` — from the header's switch or the menu.
+    ///
+    /// The ledger first, as everywhere: width, span and every pane's zoom in one
+    /// write, so there is one snapshot and nothing to animate twice. Then the
+    /// lane's slot eases from the width it is drawn at to the new one on
+    /// `Motion.lane`, while each pane gets there its own way — a terminal holds
+    /// its columns and is drawn scaling toward its new cell, a page steps its
+    /// zoom with the width. When the slot arrives, each lands for real: the
+    /// terminal reflows once and tells the far end once, if at all.
+    ///
+    /// Not on a docked lane and not in the gallery: a dock's width is its own
+    /// number with its own bounds, and the gallery writes nothing but the layout
+    /// and focus. The header hides the switch in both places.
+    func applySizePreset(_ preset: LaneSizePreset, toLane laneId: String) {
+        guard !isGallery, let current = store.lane(laneId), current.dock == nil else { return }
+        // A second click before the first has landed: start from where the lane
+        // is drawn, after landing the first so no pane is left holding.
+        let drawn = laneOverrides[laneId]?.slot
+        sizeTransitionEnds.removeValue(forKey: laneId)?()
+        guard let lane = store.lane(laneId) else { return }
+
+        let scale = backingScale
+        let shape = LaneSizePreset.shape(
+            preset, hasTerminal: lane.panes.contains { $0.kind == .pty }, config: config, backingScale: scale)
+        let terminals = lane.panes.compactMap { paneControllers[$0.id] as? TerminalPaneController }
+        let pages = lane.panes.compactMap { paneControllers[$0.id] as? WebPaneController }
+        let from = drawn ?? CGFloat(lane.widthPt)
+
+        // The slot stays where it is drawn through the publish below; the
+        // transition's first frame moves it.
+        laneOverrides[laneId] = LaneOverride(slot: from, masked: false)
+        for terminal in terminals { terminal.beginSizeTransition(toZoom: shape.terminalZoom, backingScale: scale) }
+        for page in pages { page.beginSizeTransition(toZoom: shape.webZoom) }
+        do {
+            try store.setLaneSize(
+                laneId, widthPt: shape.widthPt, span: shape.span,
+                zooms: lane.panes.map { (paneId: $0.id, zoom: shape.zoom(for: $0.kind)) })
+        } catch {
+            // Nothing was written, so every pane goes back to what the ledger says.
+            laneOverrides[laneId] = nil
+            relayout()
+            for pane in lane.panes {
+                (paneControllers[pane.id] as? TerminalPaneController)?
+                    .beginSizeTransition(toZoom: pane.zoom, backingScale: scale)
+                (paneControllers[pane.id] as? WebPaneController)?.beginSizeTransition(toZoom: pane.zoom)
+            }
+            terminals.forEach { $0.endSizeTransition() }
+            pages.forEach { $0.endSizeTransition() }
+            return
+        }
+        // What the core actually stored, which a config wider than its bounds
+        // can make different from what was asked for.
+        let target = CGFloat(store.lane(laneId)?.widthPt ?? shape.widthPt)
+        let key = "size:\(laneId)"
+
+        let land: @MainActor () -> Void = { [weak self] in
+            guard let self else { return }
+            self.sizeTransitionEnds[laneId] = nil
+            self.laneOverrides[laneId] = nil
+            self.relayout()
+            self.laneViews[laneId]?.layoutSubtreeIfNeeded()
+            terminals.forEach { $0.endSizeTransition() }
+            pages.forEach { $0.endSizeTransition() }
+            self.refreshSizePreset(laneId)
+        }
+        sizeTransitionEnds[laneId] = { [weak self] in
+            self?.transitions.removeValue(forKey: key)?.cancel()
+            land()
+        }
+        refreshSizePreset(laneId)
+        startTransition(lane: key, duration: Motion.lane) { [weak self] t in
+            guard let self else { return }
+            let eased = Motion.easeOut(t)
+            self.laneOverrides[laneId] = LaneOverride(slot: from + (target - from) * eased, masked: false)
+            self.relayout()
+            self.laneViews[laneId]?.layoutSubtreeIfNeeded()
+            terminals.forEach { $0.stepSizeTransition(eased) }
+            pages.forEach { $0.stepSizeTransition(eased) }
+        } completion: {
+            land()
         }
     }
 

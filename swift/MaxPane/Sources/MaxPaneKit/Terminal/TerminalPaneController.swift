@@ -129,7 +129,9 @@ final class TerminalPaneController: NSObject, PaneController {
 
     var view: NSView { container }
 
-    init(pane: Pane, store: StripStore, config: Config) {
+    /// `controller` is the shared one unless a test hands in its own — see
+    /// `TerminalControllerPool.makeController`.
+    init(pane: Pane, store: StripStore, config: Config, controller: TerminalController? = nil) {
         self.paneId = pane.id
         self.pane = pane
         self.store = store
@@ -213,7 +215,7 @@ final class TerminalPaneController: NSObject, PaneController {
         // A pane you made bigger stays bigger: the ledger carries it, so it
         // survives a relaunch and a lane view being recycled alike.
         zoom = pane.zoom
-        terminal.controller = TerminalControllerPool.shared.controller(for: config)
+        terminal.controller = controller ?? TerminalControllerPool.shared.controller(for: config)
         terminal.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
         terminal.delegate = self
         terminal.translatesAutoresizingMaskIntoConstraints = false
@@ -264,6 +266,7 @@ final class TerminalPaneController: NSObject, PaneController {
             // frame. Recorded so the header can show the real shape.
             self?.hostCols = cols
             self?.hostRows = rows
+            self?.claimedSize = (cols, rows)
         }
         attachment.onTitle = { [weak self] title in
             self?.adoptTitle(title)
@@ -391,10 +394,25 @@ final class TerminalPaneController: NSObject, PaneController {
         guard cols > 0, rows > 0, cols != hostCols || rows != hostRows else { return }
         hostCols = cols
         hostRows = rows
+        // A preset that has just landed is still arriving: the font and the
+        // width each re-derive the grid, a run loop apart. Wait for it to stop.
+        if isSettling { scheduleSettle() }
         // Mid-drag, the shape the pointer is passing through is not a decision.
         guard !isLiveResizing else { return }
+        claim(cols: cols, rows: rows)
+    }
+
+    /// The one way a size reaches the far end, so `claimedSize` cannot drift
+    /// from what was actually sent.
+    private func claim(cols: Int, rows: Int) {
+        claimedSize = (cols, rows)
         attachment?.claimSize(cols: cols, rows: rows)
     }
+
+    /// The size the PTY was last told, or last reported. What a size preset
+    /// compares its landing against, so a preset that ends on the grid it
+    /// started from sends nothing at all.
+    private var claimedSize: (cols: Int, rows: Int)?
 
     /// The user has grabbed something that changes this pane's size and has not
     /// let go — today, the seam between two stacked panes.
@@ -438,12 +456,131 @@ final class TerminalPaneController: NSObject, PaneController {
         guard isLiveResizing else { return }
         isLiveResizing = false
         guard hostCols > 0, hostRows > 0 else { return }
-        attachment?.claimSize(cols: hostCols, rows: hostRows)
+        claim(cols: hostCols, rows: hostRows)
     }
 
     /// The explicit "claim this session" command (ADR-0007 §5).
     func claimSessionAtLaneWidth() {
-        attachment?.claimSize(cols: hostCols, rows: hostRows)
+        claim(cols: hostCols, rows: hostRows)
+    }
+
+    // MARK: - size presets
+
+    /// A size preset in flight (`LaneSizePreset`).
+    ///
+    /// The lane's width eases on `Motion.lane`, and a terminal that followed it
+    /// frame by frame would reflow its text a dozen times and — with the font
+    /// changing too — pass through column counts nobody chose, each one a
+    /// reshape on every other client of the session. So for the length of the
+    /// animation the terminal **keeps the width it had**, and is drawn scaled
+    /// toward the cell it is heading for by giving its container larger bounds
+    /// than frame, the same bounds-versus-frame trick a gallery tile uses. Its
+    /// columns never move; its rows follow the pane's height as they always do.
+    /// When the lane arrives the font and the width land together: one reflow.
+    private struct SizeHold {
+        /// The terminal's width when the preset began, held.
+        var width: CGFloat
+        /// How much smaller, or larger, a cell is drawn at the end: the target
+        /// cell over the starting one. 1 when only the width changes.
+        var endScale: CGFloat
+        var progress: CGFloat = 0
+        /// Whether the container clipped before the hold made it.
+        var wasMasked: Bool
+    }
+    private var sizeHold: SizeHold?
+    /// Between a preset landing and its grid going quiet. See `scheduleSettle`.
+    private var isSettling = false
+    private var settleGeneration = 0
+
+    var isInSizeTransition: Bool { sizeHold != nil }
+
+    /// Start a size preset toward `target` zoom. The ledger already holds the
+    /// new zoom; this only has to get the surface there without jumping.
+    func beginSizeTransition(toZoom target: Double, backingScale: CGFloat) {
+        if sizeHold != nil { endSizeTransition() }
+        let ladder = PaneZoom.ladder
+        let next = min(max(target, ladder.first!), ladder.last!)
+        let fromCell = LaneSizePreset.cellWidth(
+            fontName: config.fontName, fontSize: config.fontSize * zoom, backingScale: backingScale)
+        let toCell = LaneSizePreset.cellWidth(
+            fontName: config.fontName, fontSize: config.fontSize * next, backingScale: backingScale)
+        zoom = next
+
+        // Nothing leaves for the far end until the grid has landed and gone
+        // quiet; `finishSettle` then sends one size, or none.
+        isLiveResizing = true
+        isSettling = false
+        settleGeneration &+= 1
+        if claimedSize == nil, hostCols > 0, hostRows > 0 { claimedSize = (hostCols, hostRows) }
+
+        let width = terminal.bounds.width > 0 ? terminal.bounds.width : container.bounds.width
+        sizeHold = SizeHold(
+            width: width, endScale: fromCell > 0 ? toCell / fromCell : 1,
+            wasMasked: container.layer?.masksToBounds ?? false)
+        // A lane going from xl to s draws a 160-column terminal into a column
+        // shrinking to 80: clipped, not spilling over its neighbour.
+        container.layer?.masksToBounds = true
+        if thumbnailHold == nil {
+            NSLayoutConstraint.deactivate(terminalEdges)
+            terminal.translatesAutoresizingMaskIntoConstraints = true
+        }
+        fitTerminal()
+    }
+
+    /// One frame of the preset: `progress` is already eased.
+    func stepSizeTransition(_ progress: CGFloat) {
+        guard sizeHold != nil else { return }
+        sizeHold?.progress = progress
+        fitTerminal()
+    }
+
+    /// The lane has arrived. Font and width land together, and the far end
+    /// hears about it once the grid has stopped moving.
+    func endSizeTransition() {
+        guard let hold = sizeHold else { return }
+        sizeHold = nil
+        container.setBoundsSize(container.frame.size)
+        container.layer?.masksToBounds = hold.wasMasked
+        if thumbnailHold == nil {
+            terminal.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate(terminalEdges)
+        }
+        applyZoom()
+        container.needsLayout = true
+        container.layoutSubtreeIfNeeded()
+        terminal.fitToSize()
+        isSettling = true
+        scheduleSettle()
+    }
+
+    /// How long the grid has to be quiet before a preset's landing counts.
+    ///
+    /// Ghostty re-derives the grid once for the font and once for the width,
+    /// and reports each through a hop to the main actor — so the size the
+    /// preset lands on arrives a run loop or two after `endSizeTransition`, by
+    /// way of a size it only passed through. Every report re-arms this.
+    static let settleDelay: TimeInterval = 0.2
+
+    private func scheduleSettle() {
+        settleGeneration &+= 1
+        let generation = settleGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.settleDelay) { [weak self] in
+            guard let self, generation == self.settleGeneration else { return }
+            self.finishSettle()
+        }
+    }
+
+    /// Tell the far end the shape the preset landed on — only if it is not the
+    /// one it already has. `m → s` keeps every column, so what changes there is
+    /// the rows a smaller font fits into the same height; `s → m` gives them
+    /// back, and nothing in between is ever sent.
+    private func finishSettle() {
+        guard isSettling, sizeHold == nil else { return }
+        isSettling = false
+        isLiveResizing = false
+        guard let grid, grid.columns > 0, grid.rows > 0 else { return }
+        if let claimedSize, claimedSize == (grid.columns, grid.rows) { return }
+        claim(cols: grid.columns, rows: grid.rows)
     }
 
     // MARK: - zoom
@@ -517,6 +654,9 @@ final class TerminalPaneController: NSObject, PaneController {
     /// constraints and keeps the size it had on the strip, adopting a new one
     /// only when the space it is given moves by more than rounding explains.
     func setThumbnail(scale: CGFloat?, backingScale: CGFloat) {
+        // Two holds on one surface would each think it owned the constraints.
+        // A preset cannot start in the gallery, so one in flight simply lands.
+        if scale != nil, sizeHold != nil { endSizeTransition() }
         if let scale {
             minificationFilter = GalleryLayout.minificationFilter(scale: scale, backingScale: backingScale)
             let tolerance = GalleryLayout.roundingTolerance(scale: scale, backingScale: backingScale)
@@ -543,6 +683,19 @@ final class TerminalPaneController: NSObject, PaneController {
 
     /// Size the surface: from its constraints on the strip, from the hold in a tile.
     private func fitTerminal() {
+        if let hold = sizeHold {
+            // Larger bounds than frame draw the terminal smaller; the terminal
+            // keeps its width in those bounds, so its columns stay put, and
+            // fills their height, so its rows follow the pane.
+            let scale = max(0.05, 1 + (hold.endScale - 1) * hold.progress)
+            let frame = container.frame.size
+            let bounds = NSSize(width: frame.width / scale, height: frame.height / scale)
+            if container.bounds.size != bounds { container.setBoundsSize(bounds) }
+            let rect = CGRect(x: 0, y: 0, width: hold.width, height: bounds.height)
+            if terminal.frame != rect { terminal.frame = rect }
+            terminal.fitToSize()
+            return
+        }
         if var hold = thumbnailHold {
             // A terminal never laid out has nothing to hold; it takes the tile's.
             let measured = container.bounds.size
@@ -843,7 +996,21 @@ enum TerminalControllerPool {
         /// The shared controller, built on first use from the app's config.
         func controller(for config: Config) -> TerminalController {
             if let controller { return controller }
-            let made = TerminalController(
+            let made = TerminalControllerPool.makeController(for: config)
+            controller = made
+            return made
+        }
+    }
+
+    /// A controller with the app's font, palette and padding, not shared.
+    ///
+    /// For tests that need a real surface measured exactly as a pane's would be,
+    /// without touching the shared controller: a controller follows the
+    /// appearance of the surfaces it minted, so a test window in the system's
+    /// mode flips the palette under any other test that is waiting on the
+    /// shared one (`AppearanceTests` is, and did).
+    static func makeController(for config: Config) -> TerminalController {
+        TerminalController(
                 theme: theme,
                 terminalConfiguration: TerminalConfiguration { builder in
                     builder.withFontFamily(config.fontName)
@@ -870,9 +1037,6 @@ enum TerminalControllerPool {
                     builder.withWindowPaddingX(Int(TerminalPaneController.terminalPadding.x))
                     builder.withWindowPaddingY(Int(TerminalPaneController.terminalPadding.y))
                 })
-            controller = made
-            return made
-        }
     }
 
     /// Afterglow and Alabaster, with the two colours that are ours.
