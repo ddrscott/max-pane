@@ -75,11 +75,9 @@ public final class StripViewController: NSViewController {
     private var observer: UUID?
     private var scrollDebounce: DispatchWorkItem?
     private var memoryTimer: Timer?
-    /// `(lane being dragged, index it would land at)` during a drag.
-    private var dragPreview: (laneId: String, target: Int)?
-    /// Where a pane being dragged would land, and what picked it up. Both live
-    /// in the document view, above every lane, and exist only while the mouse
-    /// is down — see `PaneDropIndicatorView`.
+    /// Where a pane or lane being dragged would land, and what picked it up.
+    /// Both live above every lane — in the document view, or in the gallery —
+    /// and exist only while the mouse is down; see `PaneDropIndicatorView`.
     private let dropIndicator = PaneDropIndicatorView()
     private let dragSourceMark = PaneDropIndicatorView()
     /// True until the strip has settled after launch. See `makeController`.
@@ -838,18 +836,16 @@ public final class StripViewController: NSViewController {
             for terminal in terminals { terminal.endLiveResize() }
         }
         applyHandleBounds(laneView, lane: lane)
-        laneView.onHeaderDrag = { [weak self] x, isFinal in
-            // No reordering from the gallery: it is a view over the ordinals.
-            guard let self, !self.isGallery else { return }
-            self.handleLaneDrag(laneId: lane.id, toX: x, isFinal: isFinal)
+        // The header picks up the lane; a grip picks one pane out of a stack.
+        // Two handles because a lane carries a width, a title and a tag that a
+        // pane does not — but one drop, decided by `PaneDrag`, so "above this
+        // pane" and "beside this lane" mean the same thing whichever was
+        // picked up. The gallery takes both: it is where every lane is in reach.
+        laneView.onLaneGrab = { [weak self] point, isFinal in
+            self?.handleDrag(.lane(lane.id), at: point, isFinal: isFinal)
         }
-        // The header drags the lane; a grip drags one pane out of it. Two
-        // gestures rather than one because a lane carries a width, a title and
-        // a tag that a pane does not, and "move this column" and "move this
-        // pane into that column" are different sentences.
         laneView.onPaneGrab = { [weak self] paneId, point, isFinal in
-            guard let self, !self.isGallery else { return }
-            self.handlePaneDrag(paneId: paneId, at: point, isFinal: isFinal)
+            self?.handleDrag(.pane(paneId), at: point, isFinal: isFinal)
         }
         // A press on a grip that never became a drag. The click monitor would
         // reach the same conclusion — the grip is inside the pane's rectangle —
@@ -1163,6 +1159,8 @@ public final class StripViewController: NSViewController {
     private func applyLayout(_ layout: StripLayout) {
         let entering = layout == .gallery
         guard entering != isGallery else { return }
+        // A drag under way belongs to the surface it started on.
+        hideDropFeedback()
         isGallery = entering
         onLayoutChange?(layout)
         scrollView.isHidden = entering
@@ -1247,8 +1245,7 @@ public final class StripViewController: NSViewController {
             })
             : [:]
         let lanes = store.state.lanes
-        let stripHeight = scrollView.contentView.bounds.height > 0
-            ? scrollView.contentView.bounds.height : view.bounds.height
+        let stripHeight = galleryStripHeight
         let sizes = lanes.map { realSize(of: $0, stripHeight: stripHeight) }
         let placement = GalleryLayout.place(
             widths: sizes.map(\.width), laneHeight: stripHeight, in: view.bounds.size)
@@ -1289,6 +1286,13 @@ public final class StripViewController: NSViewController {
             if let tile = gallery.tile(for: id) { animateTile(tile, from: from) }
         }
         gallery.removeTiles(except: shown)
+    }
+
+    /// How tall a strip lane is while the strip is hidden behind the gallery —
+    /// the height every tile keeps, and the height a drop over one is worked
+    /// out at.
+    private var galleryStripHeight: CGFloat {
+        scrollView.contentView.bounds.height > 0 ? scrollView.contentView.bounds.height : view.bounds.height
     }
 
     /// The size a lane has when it is not a tile — which is the size its tile
@@ -2100,42 +2104,6 @@ public final class StripViewController: NSViewController {
     ///
     /// **The system never reorders** (§7.2). This runs only from the user's own
     /// gesture, and it is the only thing besides ⌘⇧←/→ that writes an ordinal.
-    private func handleLaneDrag(laneId: String, toX x: CGFloat, isFinal: Bool) {
-        // A dock's header is not a handle for reordering: it holds an edge, and
-        // the ordinal it is keeping is the one it will go back to.
-        let lanes = store.stripLanes
-        guard store.lane(laneId)?.dock == nil,
-              let target = laneIndex(atX: x, in: lanes),
-              let from = lanes.firstIndex(where: { $0.id == laneId })
-        else { return }
-
-        guard isFinal else {
-            // Live feedback without a write: slide the dragged lane's view to
-            // where it would land.
-            dragPreview = (laneId, target)
-            relayout(lanes: reordered(lanes, from: from, to: target))
-            return
-        }
-
-        dragPreview = nil
-        guard target != from else {
-            // Dropped where it started. Re-lay out so the preview does not stick.
-            relayout()
-            return
-        }
-
-        let neighbour = lanes[target]
-        do {
-            if target > from {
-                try store.moveLane(laneId, rightOf: neighbour.id)
-            } else {
-                try store.moveLane(laneId, leftOf: neighbour.id)
-            }
-        } catch {
-            Log.warn("could not move lane \(laneId): \(error)")
-        }
-    }
-
     /// Take the view of every pane that changed lane out of the lane it left,
     /// with no animation and no teardown.
     ///
@@ -2165,68 +2133,78 @@ public final class StripViewController: NSViewController {
         }
     }
 
-    // MARK: - dragging a pane between lanes
+    // MARK: - dragging a pane or a lane
 
-    /// A pane being dragged by its grip.
+    /// A lane dragged by its header, or a pane by its grip — on the strip or in
+    /// the gallery.
     ///
     /// Every decision in here is `PaneDrag`'s; this is the wiring — convert a
-    /// window point into the document's own space, draw what comes back, and on
-    /// the drop turn it into exactly one ledger write. The strip is deliberately
-    /// **not** re-laid-out live the way a lane drag previews its reorder: moving
-    /// a pane between stacks would resize live terminals on every frame of the
-    /// gesture, which is a grid change per frame for a session that may have a
-    /// phone attached (ADR-0007). The indicator says where it will land instead.
-    private func handlePaneDrag(paneId: String, at windowPoint: NSPoint, isFinal: Bool) {
-        let laneHeight = content.bounds.height
-        let boxes = PaneDrag.boxes(lanes: store.stripLanes, laneHeight: laneHeight)
-        let point = content.convert(windowPoint, from: nil)
-        let target = PaneDrag.target(at: point, in: boxes, dragging: paneId)
+    /// window point into the surface the lanes are drawn on, draw what comes
+    /// back, and on the drop turn it into exactly one ledger write. Nothing is
+    /// re-laid-out live: moving a pane between stacks would resize live
+    /// terminals on every frame of the gesture, which is a grid change per
+    /// frame for a session that may have a phone attached (ADR-0007). The
+    /// indicator says where it will land instead, and the layout moves once.
+    private func handleDrag(_ source: PaneDrag.Source, at windowPoint: NSPoint, isFinal: Bool) {
+        let surface: NSView = isGallery ? gallery : content
+        let boxes = isGallery ? galleryDropBoxes() : PaneDrag.boxes(lanes: store.stripLanes, laneHeight: content.bounds.height)
+        // Over a dock the strip lane under the pointer is one the dock is
+        // hiding, and a drop there would land somewhere nobody can see.
+        let drop = !isGallery && isOverADock(windowPoint)
+            ? nil
+            : PaneDrag.drop(
+                at: surface.convert(windowPoint, from: nil), in: boxes, dragging: source,
+                topmost: isGallery ? expandedLaneId : nil, openEnds: !isGallery)
 
         guard isFinal else {
-            showDropFeedback(target, dragging: paneId, boxes: boxes, laneHeight: laneHeight)
+            showDropFeedback(drop, source: source, boxes: boxes, on: surface)
             return
         }
         hideDropFeedback()
         // nil is both "nowhere" and "back where it started", and both mean the
         // same thing here: one less write than a drag that ended in mid-air.
-        guard let target else { return }
+        guard let drop else { return }
         do {
-            switch target {
-            case .into(let laneId, let index):
+            switch (source, drop.target) {
+            case (.pane(let paneId), .into(let laneId, let index)):
                 try store.movePane(paneId, to: laneId, at: index)
-            case .newLane(let before):
+            case (.pane(let paneId), .newLane(let before)):
                 try store.movePaneToNewLane(paneId, before: before)
+            case (.lane(let laneId), .into(let into, let index)):
+                try store.moveLane(laneId, into: into, at: index)
+            case (.lane(let laneId), .newLane(let before)):
+                try store.moveLane(laneId, before: before)
             }
         } catch {
-            Log.warn("could not move pane \(paneId): \(error)")
+            Log.warn("could not drop \(source): \(error)")
+        }
+    }
+
+    /// Every tile as a drop surface, in strip order. A docked lane is a tile at
+    /// its ordinal here (ADR-0011), so it is a place to drop like any other.
+    private func galleryDropBoxes() -> [PaneDrag.LaneBox] {
+        store.state.lanes.compactMap { lane in
+            guard let tile = gallery.tile(for: lane.id) else { return nil }
+            return PaneDrag.box(
+                for: lane, laneSize: realSize(of: lane, stripHeight: galleryStripHeight), drawnIn: tile.frame)
         }
     }
 
     private func showDropFeedback(
-        _ target: PaneDrag.Target?, dragging paneId: String,
-        boxes: [PaneDrag.LaneBox], laneHeight: CGFloat
+        _ drop: PaneDrag.Drop?, source: PaneDrag.Source, boxes: [PaneDrag.LaneBox], on surface: NSView
     ) {
-        if let slot = PaneDrag.slot(of: paneId, in: boxes) {
-            raise(dragSourceMark)
+        if let slot = PaneDrag.slot(of: source, in: boxes) {
+            raise(dragSourceMark, on: surface)
             dragSourceMark.show(.source, frame: slot)
         } else {
             dragSourceMark.hide()
         }
-
-        guard let target,
-              let indicator = PaneDrag.indicator(
-                  for: target, in: boxes, laneHeight: laneHeight, dragging: paneId)
-        else {
+        guard let drop else {
             dropIndicator.hide()
             return
         }
-        raise(dropIndicator)
-        switch indicator {
-        case .insertion(let lane, let y):
-            dropIndicator.show(.insertion(y: y), frame: lane)
-        case .seam(let rect):
-            dropIndicator.show(.seam, frame: rect)
-        }
+        raise(dropIndicator, on: surface)
+        dropIndicator.show(.region, frame: drop.region)
     }
 
     private func hideDropFeedback() {
@@ -2238,32 +2216,10 @@ public final class StripViewController: NSViewController {
     /// frame: lane views come and go with materialization, so "last subview"
     /// is only true until the next one is built — and re-adding a view sixty
     /// times a second is a subview list churning under a live drag.
-    private func raise(_ overlay: NSView) {
-        guard overlay.isHidden || overlay.superview !== content else { return }
+    private func raise(_ overlay: NSView, on surface: NSView) {
+        guard overlay.isHidden || overlay.superview !== surface else { return }
         overlay.removeFromSuperview()
-        content.addSubview(overlay)
-    }
-
-    /// `lanes` with the lane at `from` moved to `to`. Preview only — the ledger
-    /// is what decides the real order.
-    private func reordered(_ lanes: [Lane], from: Int, to: Int) -> [Lane] {
-        guard from != to, lanes.indices.contains(from), lanes.indices.contains(to) else { return lanes }
-        var copy = lanes
-        let moved = copy.remove(at: from)
-        copy.insert(moved, at: to)
-        return copy
-    }
-
-    /// Which lane sits under a point in the strip's coordinate space.
-    private func laneIndex(atX x: CGFloat, in lanes: [Lane]) -> Int? {
-        guard !lanes.isEmpty else { return nil }
-        var left: CGFloat = 0
-        for (i, lane) in lanes.enumerated() {
-            let right = left + CGFloat(lane.widthPt)
-            if x < right { return i }
-            left = right + Theme.borderWidth
-        }
-        return lanes.count - 1
+        surface.addSubview(overlay)
     }
 
     // MARK: - geometry

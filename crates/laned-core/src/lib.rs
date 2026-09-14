@@ -471,10 +471,79 @@ impl Core {
         Self::snapshot(&inner)
     }
 
+    /// Drop a whole lane into another lane's stack: every pane it holds joins
+    /// `into_lane_id` at `index`, top to bottom in the order they already
+    /// stood, and the lane they came from is gone.
+    ///
+    /// The drop half of dragging a lane by its **header** onto the top or the
+    /// bottom of a pane. A lane of one is the common case and is exactly
+    /// `move_pane`; a lane of several stays one flat stack, because a pane's
+    /// only parent is a lane and there is no shape a nested split could be
+    /// written into.
+    ///
+    /// # Heights
+    ///
+    /// The arrivals keep their split *with each other* and, between them, take
+    /// one mean share of the target per pane — `add_pane`'s rule, applied to the
+    /// group rather than pane by pane. Pane by pane would flatten a 3:1 split
+    /// the user dragged into 1:1 on the way in; the group rule carries it.
+    ///
+    /// # Focus
+    ///
+    /// The pane with the keyboard keeps it if it was one of the arrivals;
+    /// otherwise the top arrival takes it, for `move_pane`'s reason — the thing
+    /// you just put down is the thing you are working in.
+    pub fn move_lane_into(
+        &self,
+        lane_id: String,
+        into_lane_id: String,
+        index: u32,
+    ) -> Result<StripState> {
+        let mut inner = self.inner.lock();
+        if lane_id == into_lane_id {
+            return Err(CoreError::Invalid { message: "a lane cannot be dropped into itself".into() });
+        }
+        let source = inner.ledger.lane(&lane_id)?;
+        let target = inner.ledger.lane(&into_lane_id)?;
+        let Some(first) = source.panes.first().map(|p| p.id.clone()) else {
+            return Self::snapshot(&inner);
+        };
+
+        let mean = mean_weight(&target.panes.iter().map(|p| p.height_weight).collect::<Vec<_>>());
+        let sane: Vec<f64> = source
+            .panes
+            .iter()
+            .map(|p| if p.height_weight.is_finite() && p.height_weight > 0.0 { p.height_weight } else { 1.0 })
+            .collect();
+        let total: f64 = sane.iter().sum();
+        let share = mean * source.panes.len() as f64;
+        let weights: Vec<(String, f64)> = source
+            .panes
+            .iter()
+            .zip(&sane)
+            .map(|(p, w)| (p.id.clone(), share * w / total))
+            .collect();
+        inner.ledger.merge_lane_into(&lane_id, &into_lane_id, index, &weights)?;
+
+        let focused = inner.ledger.app_state(KEY_FOCUSED_PANE)?;
+        let keeps = focused.as_ref().is_some_and(|f| source.panes.iter().any(|p| &p.id == f));
+        if !keeps {
+            inner.ledger.set_app_state(KEY_FOCUSED_PANE, &first)?;
+        }
+        inner.ledger.touch_focus(&into_lane_id, now_ms())?;
+        Self::bump(&mut inner);
+        Self::snapshot(&inner)
+    }
+
     // ---- ordering ----------------------------------------------------------
 
     /// Move a lane to a new place in the strip. The only thing that ever writes
     /// an ordinal outside of creation — and only ever because the user asked.
+    ///
+    /// A docked lane placed this way stops holding its edge, which is
+    /// `move_pane_to_new_lane`'s rule for a lane of one: the only caller is a
+    /// header dropped beside another lane, and a dock visibly put down between
+    /// two columns that is still at the wall is a gesture that did nothing.
     pub fn move_lane(&self, lane_id: String, placement: Placement) -> Result<StripState> {
         let mut inner = self.inner.lock();
         if let Placement::RightOf { lane_id: t } | Placement::LeftOf { lane_id: t } = &placement {
@@ -484,8 +553,12 @@ impl Core {
                 });
             }
         }
+        let docked = inner.ledger.lane(&lane_id)?.dock.is_some();
         let ordinal = Self::place(&mut inner.ledger, &placement)?;
         inner.ledger.set_ordinal(&lane_id, ordinal)?;
+        if docked {
+            inner.ledger.set_dock(&lane_id, None)?;
+        }
         Self::bump(&mut inner);
         Self::snapshot(&inner)
     }

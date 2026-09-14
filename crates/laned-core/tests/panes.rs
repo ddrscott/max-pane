@@ -331,3 +331,125 @@ fn a_pane_never_holds_a_pane() {
     let stacked = pane(&core, &id, "b");
     assert!(core.move_pane(stacked.clone(), stacked, 0).is_err());
 }
+
+// ---- dropping a whole lane, by its header ----------------------------------
+
+#[test]
+fn a_lane_dropped_into_a_stack_brings_every_pane_in_order_and_is_gone() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = Core::open(db(&dir)).unwrap();
+    let target = lane(&core, "a");
+    pane(&core, &target, "b");
+    let source = lane(&core, "x");
+    pane(&core, &source, "y");
+    let last = lane(&core, "z");
+
+    // Between a and b.
+    core.move_lane_into(source.clone(), target.clone(), 1).unwrap();
+
+    assert_eq!(strip(&core), vec![vec!["a", "x", "y", "b"], vec!["z"]]);
+    positions_are_dense(&core);
+    assert!(core.lane(source).is_err(), "the lane it came out of is still there");
+    assert_eq!(core.state().unwrap().lanes[1].id, last);
+}
+
+#[test]
+fn a_lane_dropped_into_a_stack_keeps_its_own_split_and_takes_a_mean_share_per_pane() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = Core::open(db(&dir)).unwrap();
+    let target = lane(&core, "a");
+    let b = pane(&core, &target, "b");
+    core.set_pane_heights(vec![
+        PaneHeight { pane_id: only_pane(&core, &target), weight: 1.0 },
+        PaneHeight { pane_id: b, weight: 3.0 },
+    ])
+    .unwrap();
+    let source = lane(&core, "x");
+    let y = pane(&core, &source, "y");
+    let x = only_pane(&core, &source);
+    core.set_pane_heights(vec![
+        PaneHeight { pane_id: x.clone(), weight: 3.0 },
+        PaneHeight { pane_id: y.clone(), weight: 1.0 },
+    ])
+    .unwrap();
+
+    core.move_lane_into(source, target.clone(), 2).unwrap();
+
+    let weights: Vec<f64> =
+        core.lane(target).unwrap().panes.iter().map(|p| p.height_weight).collect();
+    // The target's own panes are untouched.
+    assert_eq!(&weights[..2], &[1.0, 3.0]);
+    // Two arrivals, one mean (2.0) each between them, still 3:1.
+    assert!((weights[2] + weights[3] - 4.0).abs() < 1e-9);
+    assert!((weights[2] / weights[3] - 3.0).abs() < 1e-9);
+}
+
+#[test]
+fn a_lane_dropped_into_a_stack_keeps_the_keyboard_where_it_was_if_it_came_along() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = Core::open(db(&dir)).unwrap();
+    let target = lane(&core, "a");
+    let source = lane(&core, "x");
+    let y = pane(&core, &source, "y");
+
+    core.focus_pane(y.clone()).unwrap();
+    let st = core.move_lane_into(source, target.clone(), 0).unwrap();
+    assert_eq!(st.focused_pane_id.as_deref(), Some(y.as_str()));
+
+    // And when it did not, the top arrival takes it.
+    let other = lane(&core, "o");
+    let o = only_pane(&core, &other);
+    core.focus_pane(only_pane(&core, &target)).unwrap();
+    let st = core.move_lane_into(other, target, 0).unwrap();
+    assert_eq!(st.focused_pane_id.as_deref(), Some(o.as_str()));
+}
+
+#[test]
+fn a_lane_cannot_be_dropped_into_itself() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = Core::open(db(&dir)).unwrap();
+    let id = lane(&core, "a");
+    pane(&core, &id, "b");
+    let before = core.state().unwrap();
+
+    assert!(core.move_lane_into(id.clone(), id, 0).is_err());
+    assert!(core.move_lane_into("gone".into(), before.lanes[0].id.clone(), 0).is_err());
+
+    assert_eq!(core.state().unwrap().lanes, before.lanes);
+}
+
+#[test]
+fn a_merge_survives_a_kill_9() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = db(&dir);
+    let want = {
+        let core = Core::open(path.clone()).unwrap();
+        let left = lane(&core, "a");
+        let right = lane(&core, "x");
+        pane(&core, &right, "y");
+        core.move_lane_into(right, left, 1).unwrap();
+        strip(&core)
+    };
+
+    let core = Core::open(path).unwrap();
+    assert_eq!(strip(&core), want);
+    assert_eq!(want, vec![vec!["a", "x", "y"]]);
+    positions_are_dense(&core);
+}
+
+#[test]
+fn a_docked_lane_placed_beside_another_stops_holding_the_edge() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = Core::open(db(&dir)).unwrap();
+    let first = lane(&core, "a");
+    let music = lane(&core, "music");
+    pane(&core, &music, "visualiser");
+    core.dock_lane(music.clone(), DockSide::Left, DockMode::Overlay, None).unwrap();
+
+    core.move_lane(music.clone(), Placement::RightOf { lane_id: first }).unwrap();
+
+    let lanes = core.state().unwrap().lanes;
+    assert_eq!(lanes[1].id, music);
+    assert!(lanes[1].dock.is_none());
+    assert_eq!(lanes[1].panes.len(), 2, "moving a lane is not rebuilding it");
+}

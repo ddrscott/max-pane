@@ -159,3 +159,34 @@ on its header, a click on the gallery between tiles, or expanding another tile
 puts it back; inside an expanded tile's pane a double click is the program's
 again. Which tile is expanded is held in memory only. Because a tile's bounds are
 always the lane's own size, expanding changes a frame and resizes nothing.
+
+### Amended 2026-09-14: tiles rearrange the strip
+
+The owner: *"The dragging should also be available in gallery mode which is
+arguably more important since gallery lets us see all the lanes at once."* The
+section above — *Tiles do not edit the strip* — is narrowed to **tiles do not
+resize anything**.
+
+A tile's header drags its lane, through the same `PaneDrag.drop` the strip uses:
+each tile is a `LaneBox` laid out at the lane's real size and scaled into the
+tile's frame, which is the transform AppKit is already applying to the views. The
+top or bottom of a pane stacks the lane there (`move_lane_into`); the left or
+right moves it beside that lane (`move_lane`). One write per drag, as on the
+strip.
+
+What did not change, and why:
+
+- **No width handle, no seam drags, no size presets.** A tile is the lane drawn
+  smaller; a width or a height set from a thumbnail is a number chosen without
+  seeing what it does to the grid inside.
+- **No pane grips.** At a gallery scale of 0.3 a 14 pt grip is four points
+  square. A stacked pane is taken out of its lane on the strip; in the gallery
+  the lane moves as one.
+- **The space between tiles is not a target.** On the strip, past the last lane
+  is where a new column goes; in a wrapped grid the gap between two tiles is
+  between two rows as often as between two lanes, and a target that means
+  different things in different gaps is not one.
+- **Docked tiles are targets and sources like any other**, at their ordinal. A
+  dock dropped beside a lane leaves its edge — `move_lane` now clears the dock,
+  which is `move_pane_to_new_lane`'s existing rule for a lane of one — and a dock
+  dropped into a stack is gone with its lane.

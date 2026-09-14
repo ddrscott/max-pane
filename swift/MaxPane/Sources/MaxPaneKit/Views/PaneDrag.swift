@@ -1,83 +1,98 @@
 import AppKit
 import LanedCore
 
-/// Where a pane being dragged would land, and what index that means.
+/// Where a pane or a lane being dragged would land, and what that means to the
+/// ledger.
 ///
-/// **The whole decision half of pane drag-and-drop, and none of the gesture.**
-/// The AppKit side of a drag cannot be tested here — there is no synthetic
-/// mouse — so everything that could be *wrong* rather than merely ugly lives in
-/// this file: which zone a point is in, which gap in a stack, what index the
-/// ledger takes for that gap, and whether the drop would do anything at all.
-/// What is left outside is a mouse-down, a mouse-up, and a rectangle to draw.
+/// **The whole decision half of drag-and-drop, and none of the gesture.** The
+/// AppKit side of a drag cannot be tested here — there is no synthetic mouse —
+/// so everything that could be *wrong* rather than merely ugly lives in this
+/// file: which pane the pointer is over, which edge of it, what index the
+/// ledger takes for that, and whether the drop would do anything at all. What
+/// is left outside is a mouse-down, a mouse-up, and a rectangle to draw.
 ///
 /// The precedent is `SidebarModel.dropTarget`, deliberately, and so is the
 /// subtlety it documents: **the index a move takes counts siblings *without*
-/// the moved row, while the view's gaps count a list that still has it.** The
-/// bookmark bar and a lane's stack are the same problem — a row leaving one
-/// ordered sibling list and joining another — and the one-off is in the same
-/// place in both.
+/// the moved row, while the view's gaps count a list that still has it.**
 ///
 /// # The zones
 ///
+/// Every pane is cut along its diagonals, and the edge the pointer is nearest
+/// is the edge the arrival goes against:
+///
 /// ```text
-///   ┌──────────┬──────────────────────────────┬──────────┐
-///   │ new lane │          into this lane      │ new lane │   ← by x
-///   │  before  │  at the gap the pointer is    │  after   │
-///   │   this   │  nearest, by y                │   this   │
-///   └──────────┴──────────────────────────────┴──────────┘
+///   ┌──────────────────────┐
+///   │╲        top         ╱│   top / bottom — into this lane's stack,
+///   │  ╲                ╱  │                  above or below this pane
+///   │    ╲            ╱    │
+///   │left  ╲        ╱ right│   left / right — a column of its own,
+///   │        ╲    ╱        │                  beside this lane
+///   │         ╱  ╲         │
+///   │       ╱      ╲       │
+///   │     ╱  bottom  ╲     │
+///   └──────────────────────┘
 /// ```
 ///
-/// A band at each edge of a lane means *between two columns*; everything
-/// between them means *into this column's stack*. A one-point gap between two
-/// lanes is what the layout actually leaves (`Theme.borderWidth`), and a
-/// one-point drop target is not a target, so the band is taken out of the
-/// lane rather than found between them.
+/// That is the owner's gesture — *"hover over the top, left, right, bottom of
+/// another pane to subdivide it up to a single level"* — and it is also the
+/// whole of what one level of nesting can say. Panes stack inside a lane and
+/// lanes sit side by side, so above and below a pane is its lane's stack and
+/// beside it is the strip. There is no drop that makes a tree because there is
+/// no third place to put anything.
+///
+/// Cut on the diagonals of the pane's *own* shape, not by fixed bands, so a
+/// short pane in a stack of four and a whole-height portrait column both give
+/// every edge a quarter of their area. The header belongs to the top pane and
+/// reads as its top edge, and a seam belongs to the pane below it.
 enum PaneDrag {
-    /// One pane's slot, measured **downward** from the top of its lane.
-    ///
-    /// Down, because `StripContentView` is flipped: the strip's document view
-    /// and this arithmetic are then the same coordinate space, and the wiring
-    /// converts a window point and stops.
+    /// What was picked up.
+    enum Source: Equatable {
+        /// One pane, by its grip — the only way to take one pane out of a stack.
+        case pane(String)
+        /// A whole lane, by its header. A lane of one pane *is* that pane, and
+        /// the core treats it so; a lane of several moves as one.
+        case lane(String)
+    }
+
+    /// One pane's slot, in the same space as the `LaneBox` holding it.
     struct PaneBox: Equatable {
         let paneId: String
         let top: CGFloat
         let height: CGFloat
     }
 
-    /// One lane's column, in the strip's own coordinates.
+    /// One lane as it is drawn, in a flipped space — the strip's document view
+    /// or the gallery, which are both measured downward from their top.
     struct LaneBox: Equatable {
         let laneId: String
-        let minX: CGFloat
-        let width: CGFloat
-        /// Top to bottom. Empty is representable and means the same as a lane
-        /// with one slot: everything lands at index 0.
+        let frame: NSRect
+        /// Top to bottom.
         let panes: [PaneBox]
 
-        var maxX: CGFloat { minX + width }
+        var minX: CGFloat { frame.minX }
+        var maxX: CGFloat { frame.maxX }
+        var width: CGFloat { frame.width }
     }
 
     /// What the drop would do.
     enum Target: Equatable {
         /// Into `laneId`'s stack, at `index` among the panes that will be its
-        /// siblings — counted **without** the pane being dragged.
+        /// siblings — counted **without** the pane being dragged. For a lane
+        /// source every one of its panes goes in there, in order.
         case into(laneId: String, index: Int)
-        /// Out into a lane of its own, immediately left of `before` — or at the
-        /// far right of the strip when that is nil.
+        /// A column of its own, immediately left of `before` — or at the far
+        /// right of the strip when that is nil. For a lane source the lane
+        /// itself moves there.
         case newLane(before: String?)
     }
 
-    /// How much of each end of a lane means "between two columns".
-    ///
-    /// 64 pt is about a tenth of a default 656 pt lane and a seventh of the
-    /// 420 pt floor — wide enough to aim at without looking, narrow enough that
-    /// the middle of a column is unambiguously the column. It is capped at a
-    /// third of the lane so a lane dragged to its minimum still has a middle:
-    /// two bands meeting in the centre would make "into this lane" unreachable
-    /// on exactly the lanes where stacking matters most.
-    static let edgeBandPt: CGFloat = 64
+    enum Edge: Equatable, CaseIterable { case top, bottom, left, right }
 
-    static func band(for width: CGFloat) -> CGFloat {
-        min(edgeBandPt, max(0, width / 3))
+    /// A target, and the rectangle to show it with: the half of the pane — or
+    /// of the lane, for a new column — that the arrival will take.
+    struct Drop: Equatable {
+        let target: Target
+        let region: NSRect
     }
 
     // MARK: - the geometry, derived from the snapshot
@@ -87,7 +102,7 @@ enum PaneDrag {
     /// No view is read. The heights come from `PaneSplit.heights`, which is the
     /// same function `LaneView.applyPaneHeights` resolves its constraints with,
     /// so the rectangle this file decides against and the rectangle on screen
-    /// cannot come to disagree — they are one computation, called twice.
+    /// are one computation, called twice.
     ///
     /// `lanes` must be the lanes the strip actually lays out
     /// (`StripStore.stripLanes`): a docked lane is not in the row and has no x
@@ -97,196 +112,209 @@ enum PaneDrag {
         var out: [LaneBox] = []
         for lane in lanes {
             let width = CGFloat(lane.widthPt)
-            let seams = CGFloat(max(0, lane.panes.count - 1)) * PaneSplit.seam
-            let available = max(0, laneHeight - Theme.laneHeaderHeight - seams)
-            let heights = PaneSplit.heights(
-                weights: lane.panes.map(\.heightWeight), available: available)
-            var panes: [PaneBox] = []
-            for (index, pane) in lane.panes.enumerated() {
-                panes.append(PaneBox(
-                    paneId: pane.id,
-                    top: Theme.laneHeaderHeight + PaneSplit.top(ofPaneAt: index, heights: heights),
-                    height: heights.indices.contains(index) ? heights[index] : 0))
-            }
-            out.append(LaneBox(laneId: lane.id, minX: x, width: width, panes: panes))
+            let size = CGSize(width: width, height: laneHeight)
+            out.append(box(for: lane, laneSize: size, drawnIn: NSRect(origin: CGPoint(x: x, y: 0), size: size)))
             // The strip lays lanes out by summing widths and a border
-            // (ADR-0004). Same sum, or the bands land a point off per lane and
+            // (ADR-0004). Same sum, or the zones land a point off per lane and
             // forty lanes along they land in the wrong column.
             x += width + Theme.borderWidth
         }
         return out
     }
 
+    /// One lane, laid out at its real `laneSize` and drawn into `frame`.
+    ///
+    /// On the strip the two are the same size. In the gallery the frame is the
+    /// tile and the lane is its real size under a transform (ADR-0011), so the
+    /// slots are worked out at the size the lane lays itself out at and then
+    /// scaled into the tile — which is exactly what AppKit does to the views.
+    static func box(for lane: Lane, laneSize: CGSize, drawnIn frame: NSRect) -> LaneBox {
+        let seams = CGFloat(max(0, lane.panes.count - 1)) * PaneSplit.seam
+        let available = max(0, laneSize.height - Theme.laneHeaderHeight - seams)
+        let heights = PaneSplit.heights(weights: lane.panes.map(\.heightWeight), available: available)
+        let scale = laneSize.height > 0 ? frame.height / laneSize.height : 1
+        let panes = lane.panes.enumerated().map { index, pane in
+            PaneBox(
+                paneId: pane.id,
+                top: frame.minY
+                    + (Theme.laneHeaderHeight + PaneSplit.top(ofPaneAt: index, heights: heights)) * scale,
+                height: (heights.indices.contains(index) ? heights[index] : 0) * scale)
+        }
+        return LaneBox(laneId: lane.id, frame: frame, panes: panes)
+    }
+
     // MARK: - the decision
 
-    /// Where the pane would land, or nil when the drop would change nothing.
+    /// Where the drop would land, or nil when it would change nothing.
     ///
     /// nil is both "nowhere" and "back where it started", and they are the same
     /// answer on purpose: the indicator is drawn from this, so a gesture that
-    /// would do nothing shows nothing — which is the sidebar's rule, and the
-    /// only one that does not promise a move and then decline to make it.
-    static func target(at point: CGPoint, in lanes: [LaneBox], dragging paneId: String) -> Target? {
-        guard !lanes.isEmpty else { return nil }
+    /// would do nothing shows nothing — the sidebar's rule, and the only one
+    /// that does not promise a move and then decline to make it.
+    ///
+    /// - Parameters:
+    ///   - topmost: a lane drawn over the others — the gallery's expanded tile —
+    ///     which wins a point inside it.
+    ///   - openEnds: whether the space before the first lane and after the last
+    ///     means the outer edge of that lane. True on the strip, where the lanes
+    ///     are one row and the window past its end is where a new column goes;
+    ///     false in the gallery, where the space between tiles is not a place.
+    static func drop(
+        at point: CGPoint, in lanes: [LaneBox], dragging source: Source,
+        topmost: String? = nil, openEnds: Bool = true
+    ) -> Drop? {
+        guard let first = lanes.first, let last = lanes.last else { return nil }
 
-        let home = lanes.firstIndex { $0.panes.contains { $0.paneId == paneId } }
-        // A lane that is only this pane has no stack to be pulled out of: it is
-        // already a column, so the gaps either side of it put it back.
-        let alone = home.map { lanes[$0].panes.count == 1 } ?? false
-
-        if point.x < lanes[0].minX {
-            return newLane(before: lanes[0].laneId, in: lanes, home: home, alone: alone)
-        }
-        guard let index = lanes.firstIndex(where: { point.x < $0.maxX }) else {
-            return newLane(before: nil, in: lanes, home: home, alone: alone)
+        let index: Int
+        let forced: Edge?
+        if let hit = laneIndex(at: point, in: lanes, topmost: topmost) {
+            index = hit
+            forced = nil
+        } else if openEnds, point.x < first.minX {
+            index = 0
+            forced = .left
+        } else if openEnds, point.x >= last.maxX {
+            index = lanes.count - 1
+            forced = .right
+        } else {
+            return nil
         }
 
         let lane = lanes[index]
-        let band = band(for: lane.width)
-        if point.x < lane.minX + band {
-            return newLane(before: lane.laneId, in: lanes, home: home, alone: alone)
+        let (slot, rect) = paneSlot(at: point.y, in: lane)
+        let edge = forced ?? nearestEdge(to: point, in: rect)
+
+        let target: Target
+        let region: NSRect
+        switch edge {
+        case .top:
+            target = .into(laneId: lane.laneId, index: slot)
+            region = NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height / 2)
+        case .bottom:
+            target = .into(laneId: lane.laneId, index: lane.panes.isEmpty ? 0 : slot + 1)
+            region = NSRect(x: rect.minX, y: rect.midY, width: rect.width, height: rect.height / 2)
+        case .left:
+            target = .newLane(before: lane.laneId)
+            region = NSRect(x: lane.minX, y: lane.frame.minY, width: lane.width / 2, height: lane.frame.height)
+        case .right:
+            target = .newLane(before: index + 1 < lanes.count ? lanes[index + 1].laneId : nil)
+            region = NSRect(x: lane.frame.midX, y: lane.frame.minY, width: lane.width / 2, height: lane.frame.height)
         }
-        if point.x > lane.maxX - band {
-            let after = index + 1 < lanes.count ? lanes[index + 1].laneId : nil
-            return newLane(before: after, in: lanes, home: home, alone: alone)
-        }
-        return into(lane: lane, y: point.y, dragging: paneId)
+        guard let resolved = resolve(target, in: lanes, dragging: source) else { return nil }
+        return Drop(target: resolved, region: region)
     }
 
-    /// Into a lane's stack, at the gap the pointer is nearest.
-    private static func into(lane: LaneBox, y: CGFloat, dragging paneId: String) -> Target? {
-        // Which gap, counted over the panes the lane has **now** — the list the
-        // pointer is looking at, dragged pane included.
-        var gap = lane.panes.count
-        for (index, box) in lane.panes.enumerated() where y < box.top + box.height / 2 {
-            gap = index
-            break
-        }
-
-        guard let from = lane.panes.firstIndex(where: { $0.paneId == paneId }) else {
-            return .into(laneId: lane.laneId, index: gap)
-        }
-        // The ledger counts the pane's new siblings, which do not include it.
-        var index = gap
-        if gap > from { index -= 1 }
-        // Both gaps either side of a pane put it back where it is.
-        if index == from { return nil }
-        return .into(laneId: lane.laneId, index: index)
+    /// The edge of `rect` that `point` is nearest, measured in the rectangle's
+    /// own proportions — its diagonals are the boundaries.
+    ///
+    /// Ties go top, bottom, left, right, so the dead centre of a pane stacks
+    /// rather than opening a column: stacking is the smaller change.
+    static func nearestEdge(to point: CGPoint, in rect: NSRect) -> Edge {
+        let u = rect.width > 0 ? min(max((point.x - rect.minX) / rect.width, 0), 1) : 0.5
+        let v = rect.height > 0 ? min(max((point.y - rect.minY) / rect.height, 0), 1) : 0.5
+        let distances: [(Edge, CGFloat)] = [(.top, v), (.bottom, 1 - v), (.left, u), (.right, 1 - u)]
+        return distances.min { $0.1 < $1.1 }!.0
     }
 
-    /// Out into a column of its own — refusing the two places that are already
-    /// where it is.
-    private static func newLane(
-        before: String?, in lanes: [LaneBox], home: Int?, alone: Bool
-    ) -> Target? {
-        guard alone, let home else { return .newLane(before: before) }
-        // The lane *is* the pane, so "a new column here" and "the column it is
-        // already in" are the same place on both sides of it.
-        if before == lanes[home].laneId { return nil }
-        if let before, lanes.firstIndex(where: { $0.laneId == before }) == home + 1 { return nil }
-        if before == nil, home == lanes.count - 1 { return nil }
-        return .newLane(before: before)
+    /// Which lane holds the point, the topmost one first.
+    ///
+    /// Each lane owns the one-point border after it, so the gap the strip
+    /// leaves between two columns is not a hole the indicator flickers through.
+    private static func laneIndex(at point: CGPoint, in lanes: [LaneBox], topmost: String?) -> Int? {
+        func contains(_ lane: LaneBox) -> Bool {
+            point.y >= lane.frame.minY && point.y < lane.frame.maxY
+                && point.x >= lane.minX && point.x < lane.maxX + Theme.borderWidth
+        }
+        if let topmost, let index = lanes.firstIndex(where: { $0.laneId == topmost }), contains(lanes[index]) {
+            return index
+        }
+        return lanes.firstIndex(where: contains)
+    }
+
+    /// The pane a height is over — the header counts as the top pane and a
+    /// seam as the pane below it — and that pane's rectangle.
+    private static func paneSlot(at y: CGFloat, in lane: LaneBox) -> (index: Int, rect: NSRect) {
+        guard !lane.panes.isEmpty else {
+            let top = lane.frame.minY + min(Theme.laneHeaderHeight, lane.frame.height)
+            return (0, NSRect(x: lane.minX, y: top, width: lane.width, height: max(0, lane.frame.maxY - top)))
+        }
+        let index = lane.panes.firstIndex { y < $0.top + $0.height } ?? lane.panes.count - 1
+        let box = lane.panes[index]
+        return (index, NSRect(x: lane.minX, y: box.top, width: lane.width, height: box.height))
+    }
+
+    /// Turn a place on screen into the move it means for this source — or nil,
+    /// for the places that are where it already is.
+    private static func resolve(_ target: Target, in lanes: [LaneBox], dragging source: Source) -> Target? {
+        switch (source, target) {
+        case (.pane(let paneId), .into(let laneId, let gap)):
+            guard let lane = lanes.first(where: { $0.laneId == laneId }) else { return nil }
+            guard let from = lane.panes.firstIndex(where: { $0.paneId == paneId }) else { return target }
+            // The ledger counts the pane's new siblings, which do not include
+            // it; both gaps either side of a pane put it back where it is.
+            let index = gap > from ? gap - 1 : gap
+            return index == from ? nil : .into(laneId: laneId, index: index)
+
+        case (.pane(let paneId), .newLane(let before)):
+            // Out of a stack, every column is a real move. Only a lane that is
+            // this pane alone is already a column.
+            guard let home = lanes.firstIndex(where: { $0.panes.contains { $0.paneId == paneId } }),
+                  lanes[home].panes.count == 1
+            else { return target }
+            return isBeside(before, home: home, in: lanes) ? nil : target
+
+        case (.lane(let laneId), .into(let into, _)):
+            return into == laneId ? nil : target
+
+        case (.lane(let laneId), .newLane(let before)):
+            // A docked lane has no place in the row, so every column is a move.
+            guard let home = lanes.firstIndex(where: { $0.laneId == laneId }) else { return target }
+            return isBeside(before, home: home, in: lanes) ? nil : target
+        }
+    }
+
+    /// Whether "a new column left of `before`" is the column at `home` itself.
+    /// It is on both sides of it: left of itself, and left of the lane after it.
+    private static func isBeside(_ before: String?, home: Int, in lanes: [LaneBox]) -> Bool {
+        guard let before else { return home == lanes.count - 1 }
+        if before == lanes[home].laneId { return true }
+        return lanes.firstIndex(where: { $0.laneId == before }) == home + 1
     }
 
     // MARK: - what to draw
 
-    /// The rectangle a target should be drawn over, in the strip's coordinates.
-    ///
-    /// Here rather than in the view for the same reason the decision is: it is
-    /// derived from the same boxes, and an indicator drawn a lane to the left of
-    /// where the drop will land is a lie that no assertion about the drop would
-    /// catch.
-    enum Indicator: Equatable {
-        /// A rule across `lane`, at `y` below the top of the strip, with the
-        /// whole column outlined.
-        case insertion(lane: NSRect, y: CGFloat)
-        /// A hard vertical rule where the new column will open.
-        case seam(NSRect)
-    }
-
-    /// How wide the bar drawn between two columns is. Thicker than a lane's own
-    /// border by enough that it cannot be read as one.
-    static let seamWidthPt: CGFloat = 4
-
-    static func indicator(
-        for target: Target, in lanes: [LaneBox], laneHeight: CGFloat, dragging paneId: String
-    ) -> Indicator? {
-        switch target {
-        case .into(let laneId, let index):
-            guard let lane = lanes.first(where: { $0.laneId == laneId }) else { return nil }
-            let rect = NSRect(x: lane.minX, y: 0, width: lane.width, height: laneHeight)
-            return .insertion(lane: rect, y: gapTop(at: index, in: lane, dragging: paneId))
-
-        case .newLane(let before):
-            let boundary: CGFloat
-            if let before, let lane = lanes.first(where: { $0.laneId == before }) {
-                boundary = lane.minX - Theme.borderWidth / 2
-            } else {
-                boundary = (lanes.last?.maxX ?? 0) + Theme.borderWidth / 2
+    /// What the drag picked up, for marking it: a pane's slot, or a whole lane.
+    static func slot(of source: Source, in lanes: [LaneBox]) -> NSRect? {
+        switch source {
+        case .lane(let laneId):
+            return lanes.first { $0.laneId == laneId }?.frame
+        case .pane(let paneId):
+            for lane in lanes {
+                guard let box = lane.panes.first(where: { $0.paneId == paneId }) else { continue }
+                return NSRect(x: lane.minX, y: box.top, width: lane.width, height: box.height)
             }
-            // Kept inside the strip. The document view is exactly as wide as
-            // the lanes, so a bar centred on either end is half off it — and
-            // the half that is off is not drawn at all. Measured in a render
-            // sheet: "a column at the end of the strip" showed as a two-point
-            // sliver against the window's edge, which is the one drop target
-            // that most needs to be unmistakable.
-            let half = seamWidthPt / 2
-            let x = min(max(boundary, half), max(half, (lanes.last?.maxX ?? 0) - half))
-            return .seam(NSRect(x: x - half, y: 0, width: seamWidthPt, height: laneHeight))
+            return nil
         }
-    }
-
-    /// The slot a pane currently occupies, for marking what the drag picked up.
-    static func slot(of paneId: String, in lanes: [LaneBox]) -> NSRect? {
-        for lane in lanes {
-            guard let box = lane.panes.first(where: { $0.paneId == paneId }) else { continue }
-            return NSRect(x: lane.minX, y: box.top, width: lane.width, height: box.height)
-        }
-        return nil
-    }
-
-    /// Where the rule goes for a landing index.
-    ///
-    /// **This is the one-off run backwards, and it has to be.** `Target.into`
-    /// counts the panes that will be the arrival's siblings; the stack on
-    /// screen still has the dragged pane in it. In the lane the pane came out
-    /// of, index 1 among the survivors is a different boundary from index 1
-    /// among all of them, so drawing the rule straight from the index puts it a
-    /// pane too high for every drop below where the pane started — the one
-    /// error this whole file exists to keep in one place.
-    private static func gapTop(at index: Int, in lane: LaneBox, dragging paneId: String) -> CGFloat {
-        guard !lane.panes.isEmpty else { return Theme.laneHeaderHeight }
-        var gap = index
-        if let from = lane.panes.firstIndex(where: { $0.paneId == paneId }), index >= from {
-            gap = index + 1
-        }
-        if gap <= 0 { return lane.panes[0].top }
-        if gap >= lane.panes.count {
-            let last = lane.panes[lane.panes.count - 1]
-            return last.top + last.height
-        }
-        return lane.panes[gap].top - PaneSplit.seam / 2
     }
 }
 
-/// The thing you pick a pane up by.
+/// The thing you pick one pane of a stack up by.
 ///
 /// A pane has no chrome of its own — a terminal is a Ghostty surface edge to
-/// edge and a page is a `WKWebView` with a 26 pt bar at the foot — so a drag
-/// has to come from somewhere, and the lane's header is already the handle for
-/// the *lane*. This is the pane's: a small grip at the top-left of its slot,
-/// square, in the lane's border colour, brightening to the accent under the
-/// pointer exactly as the seam does and for exactly as long.
+/// edge and a page is a `WKWebView` with a 26 pt bar at the foot — and the
+/// lane's header picks up the *lane*. In a lane of one pane that is the same
+/// thing, so the grip is only there when the lane holds a stack: that is the
+/// one case where a handle for a single pane says something the header cannot.
 ///
-/// **It is always there and it always takes the click, and that is a real
-/// cost, stated plainly**: 14 × 14 pt at the top-left corner of every pane —
-/// about two characters of the first row of a terminal — stop being the pane's
-/// to receive. The alternative considered was revealing it on hover and letting
-/// clicks through until then, which would give the corner back; it was dropped
-/// because it rests on a tracking area firing for a view that refuses
-/// `hitTest`, and a handle that is sometimes not there is worse than a handle
-/// that costs two characters. What the corner keeps is the cheap half of what
-/// it did: a press that never moves is a click, and it focuses the pane rather
-/// than being swallowed.
+/// **Where it is shown it always takes the click, and that is a real cost,
+/// stated plainly**: 14 × 14 pt at the top-left corner of the pane — about two
+/// characters of the first row of a terminal — stop being the pane's to
+/// receive. The alternative considered was revealing it on hover and letting
+/// clicks through until then; it was dropped because it rests on a tracking
+/// area firing for a view that refuses `hitTest`, and a handle that is
+/// sometimes not there is worse than a handle that costs two characters. What
+/// the corner keeps is the cheap half of what it did: a press that never moves
+/// is a click, and it focuses the pane rather than being swallowed.
 @MainActor
 final class PaneGripView: NSView {
     static let size = NSSize(width: 14, height: 14)
@@ -390,27 +418,24 @@ final class PaneGripView: NSView {
     }
 }
 
-/// Where the pane will land, drawn over the strip while the drag is live.
+/// Where the drag will land, drawn over the strip or the gallery while it is
+/// live.
 ///
-/// One class, two instances and three shapes, because they are one decision
-/// seen from two ends: what you picked up, and where it is going. Both are
-/// derived from `PaneDrag.indicator` and `PaneDrag.slot`, so the rectangle on
-/// screen and the rectangle the drop will use are the same arithmetic.
+/// One class, two instances and two shapes, because they are one decision seen
+/// from two ends: what you picked up, and where it is going. Both are derived
+/// from `PaneDrag.drop` and `PaneDrag.slot`, so the rectangle on screen and the
+/// rectangle the drop will use are the same arithmetic.
 ///
 /// Square, hard-edged, in the accent, and gone the instant the mouse comes up.
 /// It spends no new meaning: the accent's reserved state is focus, and that is
-/// a *state a pane is in* — this outlives nothing, exactly
-/// as a lit seam under the pointer does not.
+/// a *state a pane is in* — this outlives nothing, exactly as a lit seam under
+/// the pointer does not.
 @MainActor
 final class PaneDropIndicatorView: NSView {
     enum Shape: Equatable {
-        /// The column the pane is going into, with a rule across it at `y` —
-        /// measured down from the top of the strip, which is the view's own
-        /// origin because this is flipped like the document view it sits in.
-        case insertion(y: CGFloat)
-        /// A hard bar where a new column will open.
-        case seam
-        /// The slot the drag picked up.
+        /// The half of a pane or a lane the arrival will take.
+        case region
+        /// What the drag picked up.
         case source
     }
 
@@ -418,13 +443,8 @@ final class PaneDropIndicatorView: NSView {
         didSet { if shape != oldValue { needsDisplay = true } }
     }
 
-    /// How thick the rule across a column is. Thicker than the 2 pt outline
-    /// around it, because it is the part that answers *where*.
-    private let ruleWidth: CGFloat = 3
-
-    /// Flipped, like `StripContentView`. The whole of this feature is laid out
-    /// with y growing downward; a view that disagreed with its parent about
-    /// that would put every rule on the mirror of where it belongs.
+    /// Flipped, like `StripContentView` and `GalleryView`, the two things it is
+    /// drawn in: every frame it is given is measured downward from the top.
     override var isFlipped: Bool { true }
 
     /// Transparent to the mouse, without exception. It covers a live terminal
@@ -441,27 +461,35 @@ final class PaneDropIndicatorView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not a nib") }
 
-    /// Put it on screen, fading up the first time. Moving it while it is
-    /// already showing is deliberately *not* animated: an eased indicator
-    /// trails the pointer that is placing it, which is the same reason a seam
-    /// takes no implicit animation.
+    /// Put it on screen, fading up the first time and easing between regions
+    /// after that. The ease is short and it is not a trail: a region changes
+    /// when the pointer crosses a diagonal, a handful of times a drag, and a
+    /// half-pane of wash that cuts from the top of a column to its right side
+    /// is exactly the jump the eye loses track of.
     func show(_ shape: Shape, frame: NSRect) {
         let appearing = isHidden
         self.shape = shape
-        if self.frame != frame {
+        if appearing {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             self.frame = frame
             CATransaction.commit()
+            isHidden = false
+            guard !Motion.isReduced else { return alphaValue = 1 }
+            alphaValue = 0
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = Motion.pane
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                animator().alphaValue = 1
+            }
+            return
         }
-        guard appearing else { return }
-        isHidden = false
-        guard !Motion.isReduced else { return alphaValue = 1 }
-        alphaValue = 0
+        guard self.frame != frame else { return }
+        guard !Motion.isReduced else { return self.frame = frame }
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = Motion.pane
+            context.duration = Motion.pane / 2
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            animator().alphaValue = 1
+            animator().frame = frame
         }
     }
 
@@ -475,17 +503,11 @@ final class PaneDropIndicatorView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard let shape else { return }
         switch shape {
-        case .seam:
-            Theme.accent.setFill()
-            bounds.fill()
-
         case .source:
-            // A wash rather than an outline, and that is not a taste call: in a
-            // reorder *inside* one stack the source and the target are the same
-            // column, and two accent outlines a pane apart read as one lane
-            // with a rendering fault rather than as "this one, going there".
-            // A tint says what was picked up without competing with the rule
-            // that says where it lands.
+            // A wash rather than an outline: in a reorder inside one stack the
+            // source and the target are the same column, and two accent
+            // outlines a pane apart read as one lane with a rendering fault
+            // rather than as "this one, going there".
             Theme.accent.withAlphaComponent(0.12).setFill()
             bounds.fill()
             Theme.accent.withAlphaComponent(0.4).setStroke()
@@ -493,32 +515,16 @@ final class PaneDropIndicatorView: NSView {
             path.lineWidth = 1
             path.stroke()
 
-        case .insertion(let y):
-            // The column, outlined whole. A single-edge rail bent round a
-            // corner is the thing this vocabulary refuses; the perimeter says
-            // "this column" without claiming an edge.
+        case .region:
+            // Stronger wash, and a full-perimeter outline. A single lit edge
+            // bent round a corner is the thing this vocabulary refuses; the
+            // perimeter says "this half" without claiming a side.
+            Theme.accent.withAlphaComponent(0.22).setFill()
+            bounds.fill()
             Theme.accent.setStroke()
             let outline = NSBezierPath(rect: bounds.insetBy(dx: 1, dy: 1))
             outline.lineWidth = 2
             outline.stroke()
-
-            // And the rule where it will actually land, which is the half of
-            // this that answers *where in the stack*.
-            //
-            // Held a seam's width inside the column. The top of a stack is the
-            // bottom of the header and the bottom of a stack is the bottom of
-            // the lane, so a rule centred on either is half outside the view
-            // and half merged into the outline around it — measured in a render
-            // sheet, where "append at the end of this stack" was the one target
-            // that showed nothing at all, and then read as a slightly thicker
-            // bottom border. A seam is exactly the gap the rule sits in
-            // everywhere else in the stack, so the two ends now look like the
-            // middle rather than like an edge that has gone bold.
-            let half = ruleWidth / 2
-            let inset = PaneSplit.seam + half
-            let clamped = min(max(y, inset), bounds.height - inset)
-            Theme.accent.setFill()
-            NSRect(x: 0, y: clamped - half, width: bounds.width, height: ruleWidth).fill()
         }
     }
 }

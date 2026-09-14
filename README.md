@@ -764,24 +764,45 @@ focused lane's header is lifted a shade instead, which is what still says
 hairline, and flashes green only for the ⌘P jump, which is a place to look
 rather than a place to type.
 
-### Moving a pane
+### Moving a pane or a lane
 
-**Drag a pane by the grip at its top-left.** Drop it in the upper or lower half
-of a pane in another lane and it joins that lane's stack, there; drop it in the
-gap between two lanes — or off either end of the strip — and it comes out into a
-column of its own. Which is ⇧⌘D and ⌘D in the other direction, by hand: the
-stack and the strip are the two axes this app has, and until now a pane could
-only be *made* on one of them and never moved to the other.
+**Drag a lane by its header** — anywhere on it except the `⋯` and the
+`s | m | xl` switch — and hover over another pane. The half of that pane the
+lane will take lights up:
 
-A bar between two columns means a new lane opens there. A column outlined, with
-a rule across it, means the pane lands in that stack at that rule. A drop that
-would put the pane back where it already is shows nothing and does nothing —
-including dropping a lane's only pane onto its own lane, which would otherwise
-dissolve the lane and put the pane into the column it had just destroyed.
+- **its top or bottom**: the lane joins that pane's stack, above or below it. A
+  lane of several panes goes in whole, in its own order.
+- **its left or right**: the lane moves beside that pane's lane, as a column of
+  its own. Past either end of the strip means that end.
+
+Each pane is cut along its own diagonals, so the edge you are nearest is the
+edge that lights, whatever shape the pane is — a whole-height column and a short
+pane in a stack of four both give each edge a quarter of their area. The header
+counts as the top of its lane's first pane, and a seam as the top of the pane
+below it. A press that moves less than 4 pt is still a click.
+
+**The gallery takes the same gesture**, and it is where it matters most: every
+lane is on screen at once, so any lane can go into any other without scrolling
+to find it. A tile's own edges are the targets; the gap between two tiles is not
+a place. An expanded tile takes the pointer over the tiles it covers.
+
+**Drag one pane out of a stack by its grip**, the three rules at the top-left of
+each pane in a lane that holds more than one. The same four edges apply, so it
+can go into another stack, to another place in its own, or out beside any lane
+into a column of its own. Which is ⇧⌘D and ⌘D in the other direction, by hand.
+
+Nothing slides while you drag. The half that lights is the answer, and the strip
+moves once, on the drop: a pane changing stack mid-gesture would resize a live
+terminal on every frame, which is a grid change per frame for a phone attached to
+the same session (ADR-0007). A drop that would leave everything where it is
+lights nothing and does nothing — including a lane onto itself, and a lane's only
+pane onto its own lane, which would otherwise dissolve the lane and put the pane
+into the column it had just destroyed.
 
 **One level of nesting, still.** Lanes hold panes and panes hold nothing, so
-there is no drop that could make a tree; the drag has exactly two outcomes
-because the strip has exactly two places to put something.
+above and below a pane is always its lane's stack and beside it is always the
+strip. There is no drop that could make a tree, because there is no third place
+to put anything.
 
 A lane left with no panes goes with the pane that left it, for the reason ⌘W
 already deletes one: an empty column is not a thing you can do anything with.
@@ -793,12 +814,19 @@ the pointer was.
 A pane joining another lane takes the mean of that stack's heights, which is the
 rule ⇧⌘D already follows: the newcomer gets an equal share of the enlarged lane
 and every pane already there gives up height in proportion to what it had.
-Reordering *inside* one lane changes no height at all.
+Reordering *inside* one lane changes no height at all. A lane of several panes
+takes one mean share per pane between them and keeps its own split inside that,
+so a 3:1 pair arrives as a 3:1 pair rather than being flattened on the way in.
 
-The grip costs the pane 14 × 14 pt of its top-left corner — about two characters
-of a terminal's first row — and that is the price of a pane having a handle at
-all: a lane is dragged by its header, and a pane has no chrome of its own. A
-press on the grip that never moves is a click, and focuses the pane.
+A docked lane can be dragged by its header too. Dropped beside a lane, it leaves
+its edge and takes that place in the strip; dropped into a stack, its panes join
+it and the dock is gone with the lane.
+
+The grip costs a stacked pane 14 × 14 pt of its top-left corner — about two
+characters of a terminal's first row — because a pane has no chrome of its own
+and the header picks up the whole lane. A lane of one pane has no grip, since
+its header already is that pane's handle, and the corner goes back to the
+terminal. A press on the grip that never moves is a click, and focuses the pane.
 
 ### Lane sizes
 
@@ -994,8 +1022,11 @@ again, since that tile is big enough to read. The session browser follows the
 same gestures while the gallery is up — click to focus, double-click to expand —
 and keeps its usual behaviour on the strip. ⌘G is still the way out.
 
-Tiles do not edit the strip: no width handle, no pane grips, no seams to drag, no
-header to drag into a new position. The ⋯ menu still works.
+Tiles do not resize anything: no width handle and no seams to drag, and no pane
+grips, which would be four points square at a tile's scale. **They do rearrange
+the strip.** Drag a tile's header onto the edge of a pane in another tile and it
+lands there exactly as it would on the strip — see *Moving a pane or a lane*.
+The ⋯ menu still works.
 
 A few things behave the way the rest of the strip made them:
 

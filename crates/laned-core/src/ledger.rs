@@ -458,6 +458,66 @@ impl Ledger {
         Ok(from)
     }
 
+    /// Move every pane of `from_lane` into `into_lane`'s stack, in the order
+    /// they already stand, starting at `index` among the panes already there —
+    /// and delete `from_lane`, in the same transaction.
+    ///
+    /// `move_pane_to` once per pane would be a stack of commits with a lane
+    /// holding half its panes between two of them, and a `kill -9` there
+    /// leaves a column that is neither where it was nor where it was dropped.
+    /// The delete is inside for the same reason: an empty lane surviving a
+    /// crash is a header on the strip with nothing under it.
+    ///
+    /// `weights` names each arriving pane's new `height_weight`, and must name
+    /// all of them. The deletion comes last because `pane.lane_id` cascades.
+    pub fn merge_lane_into(
+        &mut self,
+        from_lane: &str,
+        into_lane: &str,
+        index: u32,
+        weights: &[(String, f64)],
+    ) -> Result<()> {
+        if from_lane == into_lane {
+            return Err(CoreError::Invalid { message: "a lane cannot be merged into itself".into() });
+        }
+        self.ordinal_of(from_lane)?;
+        self.ordinal_of(into_lane)?;
+        if let Some((_, w)) = weights.iter().find(|(_, w)| !w.is_finite() || *w <= 0.0) {
+            return Err(CoreError::Ledger {
+                message: format!("height weight must be positive and finite, got {w}"),
+            });
+        }
+
+        let tx = self.conn.transaction()?;
+        let ids_of = |lane: &str| -> Result<Vec<String>> {
+            let mut stmt =
+                tx.prepare("SELECT id FROM pane WHERE lane_id = ?1 ORDER BY position, id")?;
+            let ids = stmt.query_map([lane], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+            Ok(ids)
+        };
+        let arriving = ids_of(from_lane)?;
+        let mut stack = ids_of(into_lane)?;
+        let at = (index as usize).min(stack.len());
+        stack.splice(at..at, arriving.iter().cloned());
+
+        {
+            let mut stmt =
+                tx.prepare("UPDATE pane SET lane_id = ?2, position = ?3 WHERE id = ?1")?;
+            for (position, id) in stack.iter().enumerate() {
+                stmt.execute(params![id, into_lane, position as i64])?;
+            }
+            let mut stmt = tx.prepare("UPDATE pane SET height_weight = ?2 WHERE id = ?1")?;
+            for (id, weight) in weights {
+                if arriving.contains(id) {
+                    stmt.execute(params![id, weight])?;
+                }
+            }
+        }
+        tx.execute("DELETE FROM lane WHERE id = ?1", [from_lane])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn update_lane_tag(&self, lane_id: &str, root: Option<&str>, source: ProjectSource) -> Result<()> {
         self.conn.execute(
             "UPDATE lane SET project_root = ?2, project_source = ?3 WHERE id = ?1",

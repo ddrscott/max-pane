@@ -123,12 +123,20 @@ public final class StripStore {
 
     // MARK: - ordering
 
-    func moveLane(_ laneId: String, rightOf target: String) throws {
-        publish(try core.moveLane(laneId: laneId, placement: .rightOf(laneId: target)))
+    /// A lane dropped beside another by its header: immediately left of
+    /// `before`, or at the far right of the strip when that is nil. A docked
+    /// lane put down this way leaves its edge.
+    func moveLane(_ laneId: String, before target: String?) throws {
+        publish(try core.moveLane(
+            laneId: laneId, placement: target.map { .leftOf(laneId: $0) } ?? .end))
     }
 
-    func moveLane(_ laneId: String, leftOf target: String) throws {
-        publish(try core.moveLane(laneId: laneId, placement: .leftOf(laneId: target)))
+    /// A lane dropped onto the top or bottom of a pane by its header: every
+    /// pane it holds joins `target`'s stack at `index`, in order, and the lane
+    /// is gone. `index` counts the panes already there.
+    func moveLane(_ laneId: String, into target: String, at index: Int) throws {
+        publish(try core.moveLaneInto(
+            laneId: laneId, intoLaneId: target, index: UInt32(max(0, index))))
     }
 
     /// Move a pane into a lane's stack — the drop half of a pane drag.

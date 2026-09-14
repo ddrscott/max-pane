@@ -63,15 +63,15 @@ final class LaneView: NSView {
     /// per decision. Only the two panes either side of the seam appear in it.
     var onPaneHeights: (([(paneId: String, weight: Double)], _ final: Bool) -> Void)?
     var onFocusPane: ((String) -> Void)?
-    /// Dragging a pane by its grip. `(pane, where the pointer is in window
-    /// coordinates, is this the drop)` — the same shape and the same discipline
-    /// as `onHeaderDrag`: live while the pointer moves so the strip can show
-    /// where the pane would land, once more on the drop so the ledger takes one
-    /// write per decision.
+    /// Dragging one pane of a stack by its grip. `(pane, where the pointer is in
+    /// window coordinates, is this the drop)` — live while the pointer moves so
+    /// the strip can show where the pane would land, once more on the drop so
+    /// the ledger takes one write per decision.
     var onPaneGrab: ((String, NSPoint, Bool) -> Void)?
-    /// Dragging the header reorders the strip (PRD §7.2). `x` is in the strip's
-    /// coordinate space; `final` marks the drop.
-    var onHeaderDrag: ((_ x: CGFloat, _ final: Bool) -> Void)?
+    /// Dragging the header picks up the whole lane: onto the top or bottom of
+    /// another pane it joins that stack, beside one it moves there (PRD §7.2).
+    /// Same shape and discipline as `onPaneGrab`, without the pane.
+    var onLaneGrab: ((NSPoint, _ final: Bool) -> Void)?
 
     /// The header's overflow menu (`⋯`). These are the lane actions that already
     /// exist as `Command`s; the menu is a mouse-reachable path to them for the
@@ -283,7 +283,7 @@ final class LaneView: NSView {
             self.desiredWidth = CGFloat(next)
             self.onResize?(next, final)
         }
-        header.onDrag = { [weak self] x, final in self?.onHeaderDrag?(x, final) }
+        header.onDrag = { [weak self] point, final in self?.onLaneGrab?(point, final) }
         // The header reads the lane's callbacks through this at click time
         // rather than copying them: the strip connects them after `init`, and
         // reconnects them when it recycles this view onto a different lane. It
@@ -722,7 +722,9 @@ final class LaneView: NSView {
                 grip.isHidden = true
                 continue
             }
-            grip.isHidden = isThumbnail
+            // A lane of one pane is picked up by its header, which is that
+            // pane's handle too, so its corner goes back to the terminal.
+            grip.isHidden = isThumbnail || ids.count < 2
             let paneTop = top - PaneSplit.top(ofPaneAt: slot, heights: heights)
             let frame = NSRect(
                 x: PaneGripView.insetX,
@@ -996,8 +998,16 @@ final class LaneHeaderView: NSView {
     static let sizeSwitchMinWidth: CGFloat = 300
 
     var onDoubleClick: (() -> Void)?
-    /// `(x in the superview's superview, isFinal)`.
-    var onDrag: ((CGFloat, Bool) -> Void)?
+    /// `(where the pointer is, in window coordinates; isFinal)`. Window
+    /// coordinates because the header is not always on the strip: in a gallery
+    /// tile it is under a transform, and whoever decides the drop converts into
+    /// whichever surface the lane is drawn on.
+    var onDrag: ((NSPoint, Bool) -> Void)?
+
+    /// How far a press has to travel before it is a drag. Without it a click
+    /// that twitches a point is a drag, and a drag draws a drop indicator over
+    /// the lane you only meant to click.
+    static let dragThreshold: CGFloat = 4
 
     /// The lane, for the overflow menu's actions. Weak and read at click time:
     /// the owner connects its callbacks after the header exists, and a nil
@@ -1022,6 +1032,8 @@ final class LaneHeaderView: NSView {
 
     private var lane: Lane?
     private var model = LaneHeaderModel()
+    /// Where the press that may become a drag went down, in the window.
+    private var pressedAt: NSPoint?
     private var dragging = false
     private var statusSquare = NSRect.zero
 
@@ -1473,26 +1485,38 @@ final class LaneHeaderView: NSView {
         addCursorRect(bounds, cursor: .openHand)
     }
 
+    // The `⋯` and the size switch are subviews that take their own
+    // mouse-down, so a press on either never reaches these: the header is a
+    // handle everywhere except over its buttons.
     override func mouseDown(with event: NSEvent) {
+        dragging = false
         if event.clickCount == 2 {
+            pressedAt = nil
             onDoubleClick?()
         } else {
-            dragging = true
+            pressedAt = event.locationInWindow
         }
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard dragging, let strip = superview?.superview else { return }
-        onDrag?(strip.convert(event.locationInWindow, from: nil).x, false)
+        guard let pressedAt else { return }
+        let point = event.locationInWindow
+        if !dragging {
+            guard hypot(point.x - pressedAt.x, point.y - pressedAt.y) >= Self.dragThreshold else { return }
+            dragging = true
+            NSCursor.closedHand.set()
+        }
+        onDrag?(point, false)
     }
 
     override func mouseUp(with event: NSEvent) {
-        guard dragging, let strip = superview?.superview else {
+        defer {
+            pressedAt = nil
             dragging = false
-            return
         }
-        dragging = false
-        onDrag?(strip.convert(event.locationInWindow, from: nil).x, true)
+        guard dragging else { return }
+        NSCursor.openHand.set()
+        onDrag?(event.locationInWindow, true)
     }
 }
 

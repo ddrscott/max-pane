@@ -982,8 +982,39 @@ public protocol CoreProtocol: AnyObject, Sendable {
     /**
      * Move a lane to a new place in the strip. The only thing that ever writes
      * an ordinal outside of creation — and only ever because the user asked.
+     *
+     * A docked lane placed this way stops holding its edge, which is
+     * `move_pane_to_new_lane`'s rule for a lane of one: the only caller is a
+     * header dropped beside another lane, and a dock visibly put down between
+     * two columns that is still at the wall is a gesture that did nothing.
      */
     func moveLane(laneId: String, placement: Placement) throws  -> StripState
+    
+    /**
+     * Drop a whole lane into another lane's stack: every pane it holds joins
+     * `into_lane_id` at `index`, top to bottom in the order they already
+     * stood, and the lane they came from is gone.
+     *
+     * The drop half of dragging a lane by its **header** onto the top or the
+     * bottom of a pane. A lane of one is the common case and is exactly
+     * `move_pane`; a lane of several stays one flat stack, because a pane's
+     * only parent is a lane and there is no shape a nested split could be
+     * written into.
+     *
+     * # Heights
+     *
+     * The arrivals keep their split *with each other* and, between them, take
+     * one mean share of the target per pane — `add_pane`'s rule, applied to the
+     * group rather than pane by pane. Pane by pane would flatten a 3:1 split
+     * the user dragged into 1:1 on the way in; the group rule carries it.
+     *
+     * # Focus
+     *
+     * The pane with the keyboard keeps it if it was one of the arrivals;
+     * otherwise the top arrival takes it, for `move_pane`'s reason — the thing
+     * you just put down is the thing you are working in.
+     */
+    func moveLaneInto(laneId: String, intoLaneId: String, index: UInt32) throws  -> StripState
     
     /**
      * Move a pane into another lane's stack — or to a different place in its
@@ -2105,6 +2136,11 @@ open func moveBookmark(id: String, parentId: String?, index: UInt32?)throws   {t
     /**
      * Move a lane to a new place in the strip. The only thing that ever writes
      * an ordinal outside of creation — and only ever because the user asked.
+     *
+     * A docked lane placed this way stops holding its edge, which is
+     * `move_pane_to_new_lane`'s rule for a lane of one: the only caller is a
+     * header dropped beside another lane, and a dock visibly put down between
+     * two columns that is still at the wall is a gesture that did nothing.
      */
 open func moveLane(laneId: String, placement: Placement)throws  -> StripState  {
     return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
@@ -2113,6 +2149,42 @@ open func moveLane(laneId: String, placement: Placement)throws  -> StripState  {
             self.uniffiCloneHandle(),
         FfiConverterString.lower(laneId),
         FfiConverterTypePlacement_lower(placement),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Drop a whole lane into another lane's stack: every pane it holds joins
+     * `into_lane_id` at `index`, top to bottom in the order they already
+     * stood, and the lane they came from is gone.
+     *
+     * The drop half of dragging a lane by its **header** onto the top or the
+     * bottom of a pane. A lane of one is the common case and is exactly
+     * `move_pane`; a lane of several stays one flat stack, because a pane's
+     * only parent is a lane and there is no shape a nested split could be
+     * written into.
+     *
+     * # Heights
+     *
+     * The arrivals keep their split *with each other* and, between them, take
+     * one mean share of the target per pane — `add_pane`'s rule, applied to the
+     * group rather than pane by pane. Pane by pane would flatten a 3:1 split
+     * the user dragged into 1:1 on the way in; the group rule carries it.
+     *
+     * # Focus
+     *
+     * The pane with the keyboard keeps it if it was one of the arrivals;
+     * otherwise the top arrival takes it, for `move_pane`'s reason — the thing
+     * you just put down is the thing you are working in.
+     */
+open func moveLaneInto(laneId: String, intoLaneId: String, index: UInt32)throws  -> StripState  {
+    return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_move_lane_into(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(laneId),
+        FfiConverterString.lower(intoLaneId),
+        FfiConverterUInt32.lower(index),uniffiCallStatus
     )
 })
 }
@@ -7186,7 +7258,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_move_bookmark() != 1350) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_laned_core_checksum_method_core_move_lane() != 14936) {
+    if (uniffi_laned_core_checksum_method_core_move_lane() != 1400) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_move_lane_into() != 58628) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_move_pane() != 24780) {
