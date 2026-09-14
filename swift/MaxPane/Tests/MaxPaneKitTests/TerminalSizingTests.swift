@@ -119,7 +119,13 @@ struct AgentStateTests {
         #expect(t.badgeText == "idle")
         #expect(t.needsAttention)
 
+        // Green means working, so a blocked session's trickle is not a rate.
         t.bytesPerSecond = 1740
+        #expect(t.badgeText == "idle")
+        #expect(!t.badgeIsThroughput)
+        #expect(t.needsAttention)
+
+        t.relayState = .working
         #expect(t.badgeText == "1.7KB/s")
         #expect(t.badgeIsThroughput)
     }

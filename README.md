@@ -726,6 +726,30 @@ lane, and the gather hid each one; one of the owner's sessions reached six.
 A row names a *session*, and a lane holds a stack of them, so the click focuses
 the pane whose session you clicked rather than whichever pane is on top.
 
+**Green means the agent is actually working, and nothing else.** The rate on a
+row, a lane header or a ⌘P row is green only while the session's state is
+WORKING; otherwise it reads a dim `idle`, with no trickle numbers. That state is
+derived once, in `AgentState.derived`, and every surface reads it — sidebar rows
+and chips, lane headers, gallery tiles, ⌘P and the status bar's `N working`:
+
+1. Relay's **BLOCKED** wins, whatever the title says — a permission prompt is
+   the one thing that must never be hidden. So does **EXITED**.
+2. A title that starts with Claude Code's spinner (`◐ ◓ ◑ ◒`) is **WORKING**,
+   even when relay's file says `idle`.
+3. A title that starts with `✳` is **idle** (or DONE, if relay says so).
+4. Anything else — no recognised glyph, any other program — keeps relay's state.
+
+Relay alone was not enough. Its rate, `bps1`, is a sixty-second average, and its
+WORKING rule is that same rate, so the redraw every session does when a
+relaunch reattaches it read as a minute of work on every idle agent. It has
+also filed a session that was visibly working as `idle`. Claude Code's title
+matched real activity for every Claude session measured. Separately, the
+registry used to keep the larger of the old and new rate "because the wire is
+fresher" — but nothing fed it from the wire, so an agent's peak rate stayed
+green forever. Each session file now replaces the reading before it. What relay
+could change to make the title rule unnecessary is in
+[docs/proposals/relay-agent-state.md](docs/proposals/relay-agent-state.md).
+
 **The orange outline is around the pane with the keyboard, never the lane.** It
 used to go around the whole column, with a short tick marking the pane inside —
 which meant a two-pane lane outlined in orange with the keystrokes going to the

@@ -263,11 +263,18 @@ struct SidebarModelTests {
         #expect(row.title == "Pane terminal size")
         #expect(row.glyph == AgentState.blocked.glyph)
 
-        // pty-host has none: the title's mark fills the column, but never the
-        // chip — an inferred BLOCKED would be worse than none.
-        let guess = telemetry("s", title: "◑ Pane terminal size", cwd: NSHomeDirectory(), state: .unknown)
+        // Claude Code's spinner is a state, not a guess: it reads WORKING
+        // (`AgentState.derived`). A title never infers BLOCKED.
+        let spinning = telemetry("s", title: "◑ Pane terminal size", cwd: NSHomeDirectory(), state: .unknown)
+        let working = entries(SidebarModel.rows(lanes: [], telemetry: ["s": spinning])).first!
+        #expect(working.glyph == AgentState.working.glyph)
+        #expect(working.chip == "WORKING")
+
+        // Any other mark with no opinion from pty-host fills the column, but
+        // never the chip.
+        let guess = telemetry("s", title: "● Pane terminal size", cwd: NSHomeDirectory(), state: .unknown)
         let inferred = entries(SidebarModel.rows(lanes: [], telemetry: ["s": guess])).first!
-        #expect(inferred.glyph == "◑")
+        #expect(inferred.glyph == "●")
         #expect(inferred.chip == "")
     }
 

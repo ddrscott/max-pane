@@ -66,7 +66,8 @@ enum SidebarModel {
         /// worth a test.
         var paneId: String?
         var sessionId: String?
-        /// pty-host's verdict, and the only source for the chip.
+        /// `SessionTelemetry.state` — relay's verdict corrected by the title —
+        /// and the only source for the chip.
         var state: AgentState
         /// The state column's mark.
         var glyph: String
@@ -546,6 +547,22 @@ enum SidebarModel {
     static func group(for lane: Lane) -> String {
         guard let root = lane.projectRoot, !root.isEmpty else { return looseWebGroup }
         return SessionTelemetry.abbreviate(root)
+    }
+
+    /// True when a row that is in both lists now says something different about
+    /// what its session is doing — state, chip or whether the badge is a rate.
+    ///
+    /// The sidebar fades on this and not on every change: the age column moves
+    /// every second, and a list that shimmers once a second is noise.
+    static func statusChanged(from old: [Row], to new: [Row]) -> Bool {
+        var before: [String: Entry] = [:]
+        for case .entry(let e) in old { before[e.id] = e }
+        for case .entry(let e) in new {
+            guard let was = before[e.id] else { continue }
+            if was.state != e.state || was.chip != e.chip
+                || was.badgeIsThroughput != e.badgeIsThroughput { return true }
+        }
+        return false
     }
 
     static func displayTitle(_ t: SessionTelemetry) -> String {

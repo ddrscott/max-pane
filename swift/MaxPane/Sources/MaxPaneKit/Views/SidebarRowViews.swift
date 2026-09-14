@@ -132,7 +132,7 @@ final class SidebarEntryView: NSTableCellView {
 
         badge.stringValue = entry.badge.uppercased()
         badge.font = Theme.mono(10, weight: entry.badgeIsThroughput ? .medium : .regular)
-        badge.textColor = entry.badgeIsThroughput ? SidebarInk.flow : Theme.dimText
+        badge.textColor = Self.badgeInk(entry)
         badge.alignment = .right
 
         age.stringValue = entry.age
@@ -250,6 +250,12 @@ final class SidebarEntryView: NSTableCellView {
             case .exited: return SidebarInk.gone
             }
         }
+    }
+
+    /// Green only while the session is working and bytes are moving; dim
+    /// otherwise. `badgeIsThroughput` already requires both.
+    static func badgeInk(_ entry: SidebarModel.Entry) -> NSColor {
+        entry.badgeIsThroughput ? SidebarInk.flow : Theme.dimText
     }
 
     /// `Theme.agentStateColor` is the authority, and it deliberately returns

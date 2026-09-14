@@ -41,6 +41,21 @@ enum Motion {
         CAMediaTimingFunction(controlPoints: 0.215, 0.61, 0.355, 1)
     }
 
+    /// Fade a layer's contents from what it last drew to what it draws next.
+    ///
+    /// For a readout changing its meaning in place — a badge going dim, a chip
+    /// changing — where the text and colour are not animatable properties and
+    /// a cut is exactly the jank this app does not do. Nothing under Reduce
+    /// Motion: the new frame simply lands.
+    static func fade(_ layer: CALayer?, duration: TimeInterval = Motion.pane) {
+        guard let layer, !isReduced else { return }
+        let fade = CATransition()
+        fade.type = .fade
+        fade.duration = duration
+        fade.timingFunction = easeOutTiming
+        layer.add(fade, forKey: kCATransition)
+    }
+
     /// System Settings › Accessibility › Display › Reduce motion.
     ///
     /// Read per transition rather than cached: it is a live preference, and

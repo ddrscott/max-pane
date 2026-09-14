@@ -389,6 +389,9 @@ final class SidebarViewController: NSViewController {
             syncSelection(state)
             return
         }
+        // A row going from WORKING to idle is rebuilt as a new cell, so without
+        // this the green would cut out mid-glance.
+        if SidebarModel.statusChanged(from: rows, to: next) { Motion.fade(table.layer) }
         rows = next
         table.reloadData()
         syncSelection(state)

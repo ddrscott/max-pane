@@ -111,7 +111,10 @@ struct LaneHeaderModel: Equatable {
             tooltip = [
                 telemetry.title.isEmpty ? title : telemetry.title,
                 telemetry.cwd,
-                [telemetry.state.rawValue, telemetry.ageText, telemetry.throughputText]
+                // The rate only while it is working, as on the badge: an idle
+                // session's sixty-second trickle is not news.
+                [telemetry.state.rawValue, telemetry.ageText,
+                 telemetry.badgeIsThroughput ? telemetry.throughputText : ""]
                     .filter { !$0.isEmpty }.joined(separator: " · "),
                 telemetry.command,
             ].filter { !$0.isEmpty }.joined(separator: "\n")

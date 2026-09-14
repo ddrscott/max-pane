@@ -1059,6 +1059,11 @@ final class LaneHeaderView: NSView {
         guard let lane else { return }
         let next = LaneHeaderModel(lane: lane, telemetry: telemetry)
         guard next != model else { return }
+        // The chip and the badge change meaning in place; ease it rather than
+        // cut. Not on an age tick, which changes the text and nothing else.
+        if next.state != model.state || next.badgeIsThroughput != model.badgeIsThroughput {
+            Motion.fade(layer)
+        }
         model = next
 
         kindGlyph.stringValue = Theme.glyph(for: model.kind)

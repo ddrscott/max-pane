@@ -72,6 +72,36 @@ public enum AgentState: String, Sendable {
 
     public var hasChip: Bool { !chipText.isEmpty }
 
+    /// Claude Code's title spinner while it works. Measured on the owner's live
+    /// sessions, it matched real activity for every Claude session, where
+    /// relay's own verdict was wrong in both directions.
+    static let workingTitleGlyphs: Set<Character> = ["◐", "◓", "◑", "◒"]
+    /// Claude Code's title mark while it waits for input.
+    static let idleTitleGlyph: Character = "✳"
+
+    /// The state every surface shows: relay's verdict, corrected by the title.
+    ///
+    /// Relay's WORKING is `bps1 ≥ 1` over a sixty-second window, so a redraw
+    /// burst — every session repainting when a relaunch reattaches it — reads
+    /// as a minute of work, and a session visibly working has been filed as
+    /// `idle`. Claude Code's own title says which it is. In order:
+    ///
+    /// 1. **BLOCKED wins.** A permission prompt is the one thing that must never
+    ///    be hidden, whatever the title claims.
+    /// 2. **EXITED wins.** The process is gone; its last title is a fossil.
+    /// 3. **A spinner title is WORKING**, even when relay says idle or done.
+    /// 4. **A `✳` title is not working.** Relay's DONE survives it, because
+    ///    "finished while nobody watched" does not contradict "not working" and
+    ///    is worth its chip; anything else becomes IDLE.
+    /// 5. **No recognised glyph keeps relay's state** — every other program.
+    public static func derived(title: String, relay: AgentState) -> AgentState {
+        if relay == .blocked || relay == .exited { return relay }
+        guard let first = title.drop(while: { $0 == " " }).first else { return relay }
+        if workingTitleGlyphs.contains(first) { return .working }
+        if first == idleTitleGlyph { return relay == .done ? .done : .idle }
+        return relay
+    }
+
     /// A glyph for places too narrow for a chip.
     public var glyph: String {
         switch self {
@@ -87,16 +117,20 @@ public enum AgentState: String, Sendable {
 
 /// Everything known about one session's liveness, in one value.
 ///
-/// Assembled from two sources that disagree by design: the session file, which
-/// pty-host flushes every ≤5 s and which covers *every* session including ones
-/// no lane is attached to; and the live wire, which is instant but only exists
-/// for sessions we are attached to. The wire wins where it has an opinion.
+/// Read from the session file, which pty-host flushes every ≤5 s and which
+/// covers *every* session including ones no lane is attached to. Each file
+/// replaces the last reading outright; nothing is carried forward.
 public struct SessionTelemetry: Sendable, Equatable {
     public var sessionId: String
     public var title: String
     public var cwd: String
     public var command: String
-    public var state: AgentState
+    /// pty-host's verdict, as the file has it. Shown nowhere directly.
+    public var relayState: AgentState
+    /// What the session is doing, and the only state any surface reads:
+    /// sidebar rows and chips, lane headers, gallery tiles, ⌘P, the status bar.
+    /// See `AgentState.derived`.
+    public var state: AgentState { AgentState.derived(title: title, relay: relayState) }
     /// Bytes per second over the last minute. The bar's "1.7KB/s".
     public var bytesPerSecond: Double
     /// When output was last seen. The bar's "6s ago".
@@ -114,7 +148,7 @@ public struct SessionTelemetry: Sendable, Equatable {
         self.title = title
         self.cwd = cwd
         self.command = command
-        self.state = state
+        self.relayState = state
         self.bytesPerSecond = bytesPerSecond
         self.lastActivity = lastActivity
         self.isRunning = isRunning
@@ -148,20 +182,18 @@ public struct SessionTelemetry: Sendable, Equatable {
         return String(format: "%.0fB/s", bytesPerSecond)
     }
 
-    /// The throughput slot: a rate when bytes are moving, the word "idle" when
-    /// they are not.
+    /// The throughput slot: a green rate while the agent is working, the word
+    /// "idle" otherwise.
     ///
-    /// This is *not* the agent state, and conflating the two loses the signal.
-    /// RelayTTY shows both: this readout answers "is anything coming out of it",
-    /// and the chip answers "does it need me". A session can read `idle` here
-    /// and `BLOCKED` on its chip at the same time — indeed that is the exact
-    /// combination worth walking across the room for.
-    public var badgeText: String {
-        let flow = throughputText
-        return flow.isEmpty ? "idle" : flow
-    }
+    /// Green means the agent is actually working, and nothing else. `bps1` is
+    /// a sixty-second average, so a bare `≥ 1 B/s` rule lit every idle Claude
+    /// session for a minute after each redraw and printed trickle numbers
+    /// forever; a rate is only shown while the derived state is WORKING. A
+    /// session can read `idle` here and `BLOCKED` on its chip at the same time
+    /// — the combination worth walking across the room for.
+    public var badgeText: String { badgeIsThroughput ? throughputText : "idle" }
 
-    public var badgeIsThroughput: Bool { !throughputText.isEmpty }
+    public var badgeIsThroughput: Bool { state == .working && !throughputText.isEmpty }
 
     /// True when this session is waiting on a human.
     public var needsAttention: Bool { state == .blocked }
@@ -222,6 +254,12 @@ public final class SessionRegistry {
         adopt(RelaySessionDirectory().live())
     }
 
+    /// A registry over the files it is handed and nothing else: no watcher, no
+    /// ticker, no read of the real sessions directory. For tests.
+    init(files: [RelaySessionInfo]) {
+        adopt(files)
+    }
+
     deinit { watcher = nil }
 
     @discardableResult
@@ -276,38 +314,20 @@ public final class SessionRegistry {
         notify()
     }
 
-    /// Live values straight off the wire, which beat the ≤5 s file for a session
-    /// we are attached to.
-    public func observeLive(sessionId: String, bytesPerSecond: Double? = nil, active: Bool? = nil) {
-        guard var t = sessions[sessionId] else { return }
-        var changed = false
-        if let bytesPerSecond, t.bytesPerSecond != bytesPerSecond {
-            t.bytesPerSecond = bytesPerSecond
-            t.lastActivity = bytesPerSecond > 0 ? Date() : t.lastActivity
-            changed = true
-        }
-        // SESSION_STATE (0x12) only says "bytes are moving". It must never
-        // overwrite `blocked` or `done`, which pty-host decides from the
-        // terminal's tail and which are strictly more informative.
-        if let active, active, t.state == .idle || t.state == .unknown {
-            t.state = .working
-            changed = true
-        }
-        guard changed else { return }
-        sessions[sessionId] = t
-        notify()
-    }
-
-    private func adopt(_ infos: [RelaySessionInfo]) {
+    /// Every file replaces the reading before it, rate and state both.
+    ///
+    /// This used to keep the existing rate — and its state — whenever it was
+    /// larger, "because a live wire reading is fresher than the file". Nothing
+    /// fed live readings (`observeLive` had no caller), so an agent's peak
+    /// rate and the WORKING that came with it were carried forward every five
+    /// seconds forever. The merge and `observeLive` are gone rather than wired
+    /// up: the wire's SESSION_METRICS frame carries the same sixty-second
+    /// `bps1` the file does, so it would only have been ≤5 s sooner, at the
+    /// cost of a freshness clock to stop it doing this again.
+    func adopt(_ infos: [RelaySessionInfo]) {
         var next: [String: SessionTelemetry] = [:]
         for info in infos {
-            var t = SessionTelemetry(info, isAttached: attached.contains(info.id))
-            // A live wire reading is fresher than the file it just replaced.
-            if let existing = sessions[info.id], existing.bytesPerSecond > t.bytesPerSecond {
-                t.bytesPerSecond = existing.bytesPerSecond
-                t.state = existing.state
-            }
-            next[info.id] = t
+            next[info.id] = SessionTelemetry(info, isAttached: attached.contains(info.id))
         }
         guard next != sessions else { return }
         sessions = next
