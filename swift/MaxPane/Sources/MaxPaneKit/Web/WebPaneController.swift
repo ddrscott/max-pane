@@ -133,7 +133,7 @@ final class WebPaneController: NSObject, PaneController {
         super.init()
 
         container.wantsLayer = true
-        container.layer?.backgroundColor = Theme.laneBackground.cgColor
+        container.layerBackgroundColor = Theme.laneBackground
         installChrome()
         // Before any web view exists, so a deferred or evicted pane's chrome is
         // never blank — the ledger already knows the address.
@@ -1006,14 +1006,23 @@ final class WebPaneController: NSObject, PaneController {
         //
         // `underPageBackgroundColor` is the public lever for it; the private
         // `drawsBackground`/`_backgroundColor` pair is the usual answer and is
-        // not worth the risk. It is never reset to the page's own colour: this
-        // is a dark app, and a dark gutter behind a page is what the rest of the
-        // window already looks like.
+        // not worth the risk. It is never reset to the page's own colour: a
+        // gutter in the lane's ground is what the rest of the window already
+        // looks like.
         //
         // Here rather than in `buildWebView` so an adopted popup gets it too —
         // that is the one web view this pane does not create, and an OAuth
         // window is exactly where a white flash is least welcome.
-        webView.underPageBackgroundColor = Theme.laneBackground
+        //
+        // Set again on every appearance change, and resolved first: WebKit
+        // copies the colour it is handed, so a dynamic `NSColor` given once
+        // would keep a light lane's gutter dark. The page itself needs nothing
+        // from us — `prefers-color-scheme` follows the web view's own
+        // appearance, live, `matchMedia` listeners included (`AppearanceTests`).
+        webView.onAppearanceChange { view in
+            (view as? WKWebView)?.underPageBackgroundColor =
+                NSColor(cgColor: Theme.laneBackground.cgColor(in: view.effectiveAppearance))
+        }
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true

@@ -992,6 +992,33 @@ terminal that asked. For a terminal you started yourself:
 export BROWSER="$PWD/build/MaxPane.app/Contents/Helpers/maxpane-open"
 ```
 
+### Light and dark
+
+Max Pane follows the Mac's System Settings › Appearance, live. Switch it with the
+app open and the whole window crossfades on the lane clock, or cuts if Reduce
+Motion is on:
+
+- **Chrome:** lanes, headers, the sidebar, the toolbar, docks, gallery tiles and
+  any open popup.
+- **Terminals:** they swap Afterglow for Alabaster without resizing or losing
+  what is on screen.
+- **Web pages:** each page sees the new `prefers-color-scheme`, and its
+  `matchMedia` listeners fire, with no reload.
+
+Signal Orange is the same in both.
+
+`"theme"` in the config file overrides the system: `"system"` (the default),
+`"light"` or `"dark"`. It is the one key that applies the moment the file is
+saved. Every other key is still read at launch.
+
+An evicted web lane's placeholder picture keeps the appearance it was taken in.
+Its frame and caption follow the switch, and the page comes back in the current
+appearance when the lane is revisited ([ADR-0006](docs/decisions/0006-placeholder-snapshots.md)).
+
+For anyone adding a view: paint layers with `layerBackgroundColor` /
+`layerBorderColor`, not `layer.backgroundColor = x.cgColor`. A `CGColor` is a
+snapshot of one appearance. A test fails the build on a hand conversion.
+
 ### Preferences
 
 `~/.config/maxpane/config.json`. Set only what you want to change; everything
@@ -999,6 +1026,7 @@ else keeps its default.
 
 ```json
 {
+  "theme": "system",
   "snapToLanes": true,
   "laneDefaultPt": 656,
   "lanePeekPt": 28,
@@ -1007,6 +1035,8 @@ else keeps its default.
   "fontSize": 13
 }
 ```
+
+`theme` is `system`, `light` or `dark`. See [Light and dark](#light-and-dark).
 
 `searchUrl` is where a web pane's address bar sends something that is not an
 address — `%s` is the query. A portrait lane has room for one text field, so the

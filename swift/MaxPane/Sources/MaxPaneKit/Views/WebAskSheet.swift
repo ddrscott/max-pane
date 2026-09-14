@@ -100,7 +100,7 @@ final class WebAskSheet: NSView {
         // Dark enough that the page is visibly not the thing to interact with,
         // light enough that you can still see *which* page is asking — a solid
         // cover would make one asking lane look like any other.
-        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
+        layerBackgroundColor = NSColor.black.withAlphaComponent(0.55)
         build(origin: origin)
     }
 
@@ -264,7 +264,7 @@ final class WebAskSheet: NSView {
         field.backgroundColor = Theme.laneBackground
         field.focusRingType = .none
         field.wantsLayer = true
-        field.layer?.borderColor = Theme.laneBorder.cgColor
+        field.layerBorderColor = Theme.laneBorder
         field.layer?.borderWidth = 1
         field.layer?.cornerRadius = 0
         field.delegate = self

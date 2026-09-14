@@ -269,25 +269,24 @@ struct LaneHeaderRenderTests {
         ]
 
         for width in [420.0, 620.0, 900.0] as [CGFloat] {
-            let sheet = NSView(frame: NSRect(x: 0, y: 0, width: width, height: CGFloat(cases.count) * 40))
-            sheet.wantsLayer = true
-            sheet.layer?.backgroundColor = Theme.laneBackground.cgColor
-            for (index, item) in cases.enumerated() {
-                let header = LaneHeaderView()
-                header.frame = NSRect(
-                    x: 0, y: CGFloat(cases.count - index - 1) * 40 + 6,
-                    width: width, height: Theme.laneHeaderHeight)
-                header.apply(item.1)
-                header.telemetry = item.2
-                header.isFocused = item.3
-                sheet.addSubview(header)
-                header.layoutSubtreeIfNeeded()
-                header.layout()
+            try AppearanceSheet.render(to: dir, named: "header-\(Int(width))") {
+                let sheet = NSView(frame: NSRect(x: 0, y: 0, width: width, height: CGFloat(cases.count) * 40))
+                sheet.wantsLayer = true
+                sheet.layerBackgroundColor = Theme.laneBackground
+                for (index, item) in cases.enumerated() {
+                    let header = LaneHeaderView()
+                    header.frame = NSRect(
+                        x: 0, y: CGFloat(cases.count - index - 1) * 40 + 6,
+                        width: width, height: Theme.laneHeaderHeight)
+                    header.apply(item.1)
+                    header.telemetry = item.2
+                    header.isFocused = item.3
+                    sheet.addSubview(header)
+                    header.layoutSubtreeIfNeeded()
+                    header.layout()
+                }
+                return sheet
             }
-            guard let rep = sheet.bitmapImageRepForCachingDisplay(in: sheet.bounds) else { return }
-            sheet.cacheDisplay(in: sheet.bounds, to: rep)
-            guard let png = rep.representation(using: .png, properties: [:]) else { return }
-            try png.write(to: URL(fileURLWithPath: dir).appendingPathComponent("header-\(Int(width)).png"))
         }
     }
 

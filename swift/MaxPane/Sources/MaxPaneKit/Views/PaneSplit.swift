@@ -437,7 +437,7 @@ final class PaneFocusOutlineView: NSView {
     init() {
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.borderColor = Theme.accent.cgColor
+        layerBorderColor = Theme.accent
         layer?.borderWidth = Self.width
         // Square. Explicitly, for the same reason the lane says so.
         layer?.cornerRadius = 0

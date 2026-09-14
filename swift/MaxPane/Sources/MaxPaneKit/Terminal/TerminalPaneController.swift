@@ -159,7 +159,7 @@ final class TerminalPaneController: NSObject, PaneController {
         }
 
         container.wantsLayer = true
-        container.layer?.backgroundColor = Theme.laneBackground.cgColor
+        container.layerBackgroundColor = Theme.laneBackground
         // Ghostty derives its grid from the view's size and only builds its
         // surface once it has one. Without a nudge on every layout pass the
         // pane renders nothing at all while bytes arrive perfectly happily —
@@ -783,12 +783,12 @@ final class ReconnectingBanner: NSView {
             isHidden = false
             label.stringValue = "RECONNECTING"
             label.textColor = Theme.accent
-            layer?.backgroundColor = Theme.accent.withAlphaComponent(0.12).cgColor
+            layerBackgroundColor = Theme.accent.withAlphaComponent(0.12)
         case .exited(let code):
             isHidden = false
             label.stringValue = code == 0 ? "EXITED" : "EXITED \(code)"
             label.textColor = Theme.dimText
-            layer?.backgroundColor = Theme.laneBorder.withAlphaComponent(0.3).cgColor
+            layerBackgroundColor = Theme.laneBorder.withAlphaComponent(0.3)
         }
     }
 }

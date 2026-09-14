@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var config = Config()
     private var store: StripStore!
     private var windowController: StripWindowController!
+    private var configWatch: ConfigWatch?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Before anything derives a path. A refused `--profile` stops the
@@ -42,6 +43,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         config = Config.load()
+        // Before any window exists, so nothing is built in one appearance and
+        // then faded into the other on launch.
+        Appearance.apply(config.theme)
+        // `theme` is the one key that applies the moment the file is saved.
+        configWatch = ConfigWatch { next in Appearance.apply(next.theme) }
         // Before the window and before the menu: both bake in key equivalents
         // when they are built, so a keymap installed after either of them would
         // leave the menu advertising one key and the monitor answering another.

@@ -553,29 +553,27 @@ struct SidebarBookmarkRenderTests {
                 if case .group = row { return SidebarGroupView.height }
                 return SidebarBookmarkView.height
             }
-            let sheet = NSView(frame: NSRect(
-                x: 0, y: 0, width: width, height: heights.reduce(0, +) + 8))
-            sheet.wantsLayer = true
-            sheet.layer?.backgroundColor = Theme.stripBackground.cgColor
+            try AppearanceSheet.render(to: dir, named: "bookmarks-\(Int(width))") {
+                let sheet = NSView(frame: NSRect(
+                    x: 0, y: 0, width: width, height: heights.reduce(0, +) + 8))
+                sheet.wantsLayer = true
+                sheet.layerBackgroundColor = Theme.stripBackground
 
-            var y = sheet.bounds.height - 4
-            for (row, height) in zip(rows, heights) {
-                let view: NSView
-                switch row {
-                case .group(let g): view = SidebarGroupView(group: g)
-                case .bookmark(let b): view = SidebarBookmarkView(row: b)
-                case .entry: continue
+                var y = sheet.bounds.height - 4
+                for (row, height) in zip(rows, heights) {
+                    let view: NSView
+                    switch row {
+                    case .group(let g): view = SidebarGroupView(group: g)
+                    case .bookmark(let b): view = SidebarBookmarkView(row: b)
+                    case .entry: continue
+                    }
+                    y -= height
+                    view.frame = NSRect(x: 0, y: y, width: width, height: height)
+                    sheet.addSubview(view)
+                    view.layoutSubtreeIfNeeded()
                 }
-                y -= height
-                view.frame = NSRect(x: 0, y: y, width: width, height: height)
-                sheet.addSubview(view)
-                view.layoutSubtreeIfNeeded()
+                return sheet
             }
-            guard let rep = sheet.bitmapImageRepForCachingDisplay(in: sheet.bounds) else { return }
-            sheet.cacheDisplay(in: sheet.bounds, to: rep)
-            guard let png = rep.representation(using: .png, properties: [:]) else { return }
-            try png.write(
-                to: URL(fileURLWithPath: dir).appendingPathComponent("bookmarks-\(Int(width)).png"))
         }
     }
 }

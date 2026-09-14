@@ -28,6 +28,15 @@ enum IconImage {
     ///
     /// `@MainActor` on the enum, so the cache needs no lock: every caller is a
     /// view, and Swift 6 will not let that assumption stay implicit.
+    ///
+    /// **Inked once per appearance, chosen when drawn.** A dynamic colour baked
+    /// into a bitmap is a snapshot, and the key cannot tell the two apart —
+    /// `secondaryLabelColor` describes itself the same in light and dark — so a
+    /// cache of plain bitmaps handed a dark-mode icon to a light sidebar for the
+    /// life of the process. The image returned draws through a handler, which
+    /// AppKit calls with the drawing view's appearance current; both inks are
+    /// rendered up front, so the handler only picks one and touches nothing
+    /// shared.
     static func make(_ icon: LucideIcon, points: CGFloat, colour: NSColor) -> NSImage? {
         let key = Key(icon: icon, points: points, colour: colour.description)
         if let hit = cache[key] { return hit }
@@ -37,17 +46,43 @@ enum IconImage {
         else { return nil }
 
         let size = NSSize(width: points, height: points)
-        let out = NSImage(size: size)
-        out.lockFocus()
-        source.draw(in: NSRect(origin: .zero, size: size))
-        // `.sourceAtop` paints the colour only where the stroke already put
-        // pixels, which is the whole trick: the SVG decides the shape and the
-        // caller decides the ink.
-        colour.set()
-        NSRect(origin: .zero, size: size).fill(using: .sourceAtop)
-        out.unlockFocus()
+        let inks = Inks(
+            light: ink(source, size: size, colour: colour, in: .aqua),
+            dark: ink(source, size: size, colour: colour, in: .darkAqua))
+        let out = NSImage(size: size, flipped: false) { rect in
+            let dark = NSAppearance.currentDrawing().bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            (dark ? inks.dark : inks.light).draw(in: rect)
+            return true
+        }
 
         cache[key] = out
+        return out
+    }
+
+    /// Two finished bitmaps, never written after they are made.
+    private final class Inks: @unchecked Sendable {
+        let light: NSImage
+        let dark: NSImage
+        init(light: NSImage, dark: NSImage) {
+            self.light = light
+            self.dark = dark
+        }
+    }
+
+    private static func ink(
+        _ source: NSImage, size: NSSize, colour: NSColor, in appearance: NSAppearance.Name
+    ) -> NSImage {
+        let out = NSImage(size: size)
+        NSAppearance(named: appearance)?.performAsCurrentDrawingAppearance {
+            out.lockFocus()
+            source.draw(in: NSRect(origin: .zero, size: size))
+            // `.sourceAtop` paints the colour only where the stroke already put
+            // pixels, which is the whole trick: the SVG decides the shape and the
+            // caller decides the ink.
+            colour.set()
+            NSRect(origin: .zero, size: size).fill(using: .sourceAtop)
+            out.unlockFocus()
+        }
         return out
     }
 

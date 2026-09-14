@@ -79,15 +79,12 @@ struct StripToolbarTests {
     func renderSheet() throws {
         guard let dir = ProcessInfo.processInfo.environment["MAXPANE_SHOTS"] else { return }
         for gallery in [false, true] {
-            let bar = StripToolbar(frame: NSRect(x: 0, y: 0, width: 1200, height: StripToolbar.height))
-            bar.setLayout(isGallery: gallery)
-            bar.setSessions(11)
-            bar.layoutSubtreeIfNeeded()
-            guard let rep = bar.bitmapImageRepForCachingDisplay(in: bar.bounds) else { return }
-            bar.cacheDisplay(in: bar.bounds, to: rep)
-            guard let png = rep.representation(using: .png, properties: [:]) else { return }
-            try png.write(to: URL(fileURLWithPath: dir)
-                .appendingPathComponent("strip-toolbar-\(gallery ? "gallery" : "lanes").png"))
+            try AppearanceSheet.render(to: dir, named: "strip-toolbar-\(gallery ? "gallery" : "lanes")") {
+                let bar = StripToolbar(frame: NSRect(x: 0, y: 0, width: 1200, height: StripToolbar.height))
+                bar.setLayout(isGallery: gallery)
+                bar.setSessions(11)
+                return bar
+            }
         }
     }
 }

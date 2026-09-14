@@ -178,7 +178,7 @@ public final class StripViewController: NSViewController {
     public override func loadView() {
         view = NSView()
         view.wantsLayer = true
-        view.layer?.backgroundColor = Theme.stripBackground.cgColor
+        view.layerBackgroundColor = Theme.stripBackground
 
         content.translatesAutoresizingMaskIntoConstraints = false
         scrollView.documentView = content

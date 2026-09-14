@@ -105,7 +105,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         // Left unpainted that band is the window's grey, which reads as a title
         // bar — the thing this window does not have.
         stripSide.view.wantsLayer = true
-        stripSide.view.layer?.backgroundColor = Theme.stripBackground.cgColor
+        stripSide.view.layerBackgroundColor = Theme.stripBackground
         strip.view.translatesAutoresizingMaskIntoConstraints = false
         statusBar.translatesAutoresizingMaskIntoConstraints = false
         stripSide.addChild(strip)

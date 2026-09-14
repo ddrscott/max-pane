@@ -10,6 +10,13 @@ import LanedCore
 /// And a lane can be evicted before it ever painted, so there was never a
 /// snapshot to take. In both cases this draws a plain dimmed panel with the URL,
 /// never an error and never a blank rectangle.
+///
+/// After a light/dark switch the frame, the dim and the caption follow; the
+/// picture does not. It is a JPEG of the page as it last painted, and re-taking
+/// it would mean loading the page, which is the one thing eviction exists to
+/// avoid. A dimmed picture in the other mode still says *which* page this is,
+/// and the page itself comes back in the current appearance when the lane
+/// rehydrates — see ADR-0006.
 @MainActor
 final class PlaceholderView: NSView {
     private let imageView = NSImageView()
@@ -20,7 +27,7 @@ final class PlaceholderView: NSView {
     init(pane: Pane) {
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = Theme.laneBackground.cgColor
+        layerBackgroundColor = Theme.laneBackground
 
         imageView.imageScaling = .scaleProportionallyUpOrDown
         // The snapshot was taken at the lane's width; pin it to the top so the
@@ -29,7 +36,7 @@ final class PlaceholderView: NSView {
         imageView.translatesAutoresizingMaskIntoConstraints = false
 
         dim.wantsLayer = true
-        dim.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.45).cgColor
+        dim.layerBackgroundColor = NSColor.black.withAlphaComponent(0.45)
         dim.translatesAutoresizingMaskIntoConstraints = false
 
         glyph.font = Theme.mono(22)
@@ -83,11 +90,11 @@ final class PlaceholderView: NSView {
             // No snapshot, by accident or because there never was one. A dimmed
             // panel with the host is still a recognisable lane.
             imageView.image = nil
-            dim.layer?.backgroundColor = Theme.stripBackground.cgColor
+            dim.layerBackgroundColor = Theme.stripBackground
             return
         }
         imageView.image = image
-        dim.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.45).cgColor
+        dim.layerBackgroundColor = NSColor.black.withAlphaComponent(0.45)
     }
 }
 

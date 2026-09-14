@@ -67,8 +67,8 @@ class PaletteController: Popup, NSTextFieldDelegate {
 
         let content = NSView()
         content.wantsLayer = true
-        content.layer?.backgroundColor = Theme.laneBackground.cgColor
-        content.layer?.borderColor = Theme.laneBorder.cgColor
+        content.layerBackgroundColor = Theme.laneBackground
+        content.layerBorderColor = Theme.laneBorder
         content.layer?.borderWidth = Theme.borderWidth
         // Square. A rounded palette is the thing this project is not.
         content.layer?.cornerRadius = 0
@@ -365,8 +365,8 @@ enum PaletteStyle {
         view.wantsLayer = true
         view.layer?.cornerRadius = 0
         view.layer?.borderWidth = 1
-        view.layer?.borderColor = colour.withAlphaComponent(0.55).cgColor
-        view.layer?.backgroundColor = colour.withAlphaComponent(0.14).cgColor
+        view.layerBorderColor = colour.withAlphaComponent(0.55)
+        view.layerBackgroundColor = colour.withAlphaComponent(0.14)
         let text = label(state.chipText, Theme.mono(9, weight: .bold), colour)
         text.alignment = .center
         view.addSubview(text)

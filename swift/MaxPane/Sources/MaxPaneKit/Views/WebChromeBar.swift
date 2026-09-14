@@ -598,7 +598,7 @@ final class AddressField: NSTextField, NSTextFieldDelegate {
         // A square 1 pt accent outline. This is the one place the accent is
         // right: it means "the keyboard is here", which is what focus means
         // everywhere else in the app.
-        layer?.borderColor = Theme.accent.cgColor
+        layerBorderColor = Theme.accent
         layer?.borderWidth = 1
         layer?.cornerRadius = 0
         window?.makeFirstResponder(self)

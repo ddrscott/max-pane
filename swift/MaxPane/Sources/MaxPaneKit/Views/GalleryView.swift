@@ -16,7 +16,7 @@ final class GalleryView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = Theme.stripBackground.cgColor
+        layerBackgroundColor = Theme.stripBackground
     }
 
     @available(*, unavailable)

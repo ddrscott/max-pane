@@ -43,8 +43,8 @@ final class HelpPanel: Popup {
 
         let content = NSView()
         content.wantsLayer = true
-        content.layer?.backgroundColor = Theme.laneBackground.cgColor
-        content.layer?.borderColor = Theme.laneBorder.cgColor
+        content.layerBackgroundColor = Theme.laneBackground
+        content.layerBorderColor = Theme.laneBorder
         content.layer?.borderWidth = Theme.borderWidth
         // Square, like every other popup.
         content.layer?.cornerRadius = 0

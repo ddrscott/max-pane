@@ -62,6 +62,13 @@ dimmed away.
   A 10 MB ledger would make every `state()` slower to no purpose.
 - **Delete on close.** A pane's snapshot goes when the pane does, and a sweep at
   launch removes files with no matching pane row.
+- **A snapshot keeps the appearance it was taken in.** Added with light/dark
+  following: after a switch, the placeholder's frame, dim and caption repaint in
+  the new appearance and the picture stays as the page last painted. Re-taking
+  it would mean loading the page, the one cost eviction exists to avoid, and
+  there is no page left to take it from. The lane's job while evicted is to be
+  recognisable, and a dimmed page in the other mode still is. When it
+  rehydrates, the page comes back in the current appearance.
 
 ## Rejected
 

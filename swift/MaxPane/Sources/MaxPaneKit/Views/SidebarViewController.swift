@@ -124,7 +124,7 @@ final class SidebarViewController: NSViewController {
         // A sidebar split item is vibrant translucent chrome by default, which
         // is a different material from the strip it indexes. The browser is part
         // of the strip, so it takes the strip's ground.
-        view.layer?.backgroundColor = Theme.stripBackground.cgColor
+        view.layerBackgroundColor = Theme.stripBackground
 
         buildHeader()
         buildFilterBar()
@@ -190,7 +190,7 @@ final class SidebarViewController: NSViewController {
 
         let rule = NSView()
         rule.wantsLayer = true
-        rule.layer?.backgroundColor = Theme.laneBorder.cgColor
+        rule.layerBackgroundColor = Theme.laneBorder
         rule.translatesAutoresizingMaskIntoConstraints = false
 
         for v: NSView in [newButton, foldButton, filterButton, sortButton, rule] {
@@ -309,7 +309,7 @@ final class SidebarViewController: NSViewController {
     private func buildFooter() {
         let rule = NSView()
         rule.wantsLayer = true
-        rule.layer?.backgroundColor = Theme.laneBorder.cgColor
+        rule.layerBackgroundColor = Theme.laneBorder
         rule.translatesAutoresizingMaskIntoConstraints = false
 
         let version = NSTextField(labelWithString: "v" + Self.versionString)

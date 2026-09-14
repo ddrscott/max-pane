@@ -37,7 +37,7 @@ public final class StatusBar: NSView {
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = Theme.laneBackground.cgColor
+        layerBackgroundColor = Theme.laneBackground
 
         sidebarToggle.isBordered = false
         sidebarToggle.bezelStyle = .inline

@@ -104,33 +104,37 @@ struct PopupTests {
 @Suite("popup rendering")
 @MainActor
 struct PopupRenderTests {
-    private func write(_ view: NSView, _ name: String, to dir: String) throws {
-        view.layoutSubtreeIfNeeded()
-        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
-        view.cacheDisplay(in: view.bounds, to: rep)
-        guard let png = rep.representation(using: .png, properties: [:]) else { return }
-        try png.write(to: URL(fileURLWithPath: dir).appendingPathComponent("popup-\(name).png"))
-    }
-
     @Test("renders a confirmation, a prompt and the shortcuts")
     func renderSheet() throws {
         guard let dir = ProcessInfo.processInfo.environment["MAXPANE_SHOTS"] else { return }
-        let confirm = ConfirmPopup(
-            title: "Resize this session to fit the lane?",
-            detail: "This changes the terminal's size for everyone attached to it, including the Relay web client on your phone, and will redraw whatever is running.\n\nMax Pane otherwise never resizes a session — it sizes the lane to the session instead.",
-            choices: [.init(title: "Cancel", isDefault: false), .init(title: "Resize Session", isDefault: true)]
-        ) { _, _ in }
-        let prompt = ConfirmPopup(
-            title: "Project tag for this lane",
-            detail: "Sticky — the cwd tagger will not overwrite it. Empty clears it.",
-            choices: [.init(title: "Cancel", isDefault: false), .init(title: "Set", isDefault: true)],
-            fieldText: "/Users/spierce/code/max-pane"
-        ) { _, _ in }
-        let help = HelpPanel()
-        for (popup, name) in [(confirm as Popup, "confirm"), (prompt, "prompt"), (help, "help")] {
-            let content = try #require(popup.window?.contentView)
-            content.frame = NSRect(origin: .zero, size: popup.window?.frame.size ?? .zero)
-            try write(content, name, to: dir)
+        let makers: [(String, () -> Popup)] = [
+            ("confirm", {
+                ConfirmPopup(
+                    title: "Resize this session to fit the lane?",
+                    detail: "This changes the terminal's size for everyone attached to it, including the Relay web client on your phone, and will redraw whatever is running.\n\nMax Pane otherwise never resizes a session — it sizes the lane to the session instead.",
+                    choices: [.init(title: "Cancel", isDefault: false), .init(title: "Resize Session", isDefault: true)]
+                ) { _, _ in }
+            }),
+            ("prompt", {
+                ConfirmPopup(
+                    title: "Project tag for this lane",
+                    detail: "Sticky — the cwd tagger will not overwrite it. Empty clears it.",
+                    choices: [.init(title: "Cancel", isDefault: false), .init(title: "Set", isDefault: true)],
+                    fieldText: "/Users/spierce/code/max-pane"
+                ) { _, _ in }
+            }),
+            ("help", { HelpPanel() }),
+        ]
+        // Held for the whole sheet: the popup owns the window its content is in.
+        var open: [Popup] = []
+        for (name, make) in makers {
+            try AppearanceSheet.render(to: dir, named: "popup-\(name)") {
+                let popup = make()
+                open.append(popup)
+                let content = try #require(popup.window?.contentView)
+                content.frame = NSRect(origin: .zero, size: popup.window?.frame.size ?? .zero)
+                return content
+            }
         }
     }
 }

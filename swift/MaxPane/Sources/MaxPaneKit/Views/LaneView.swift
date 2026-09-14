@@ -179,8 +179,8 @@ final class LaneView: NSView {
         super.init(frame: .zero)
 
         wantsLayer = true
-        layer?.backgroundColor = Theme.laneBackground.cgColor
-        layer?.borderColor = Theme.laneBorder.cgColor
+        layerBackgroundColor = Theme.laneBackground
+        layerBorderColor = Theme.laneBorder
         layer?.borderWidth = Theme.borderWidth
         // Square. Explicitly, so nobody "improves" it later.
         layer?.cornerRadius = 0
@@ -885,8 +885,11 @@ final class LaneView: NSView {
     func flash() {
         guard let layer else { return }
         let animation = CABasicAnimation(keyPath: "borderColor")
-        animation.fromValue = Theme.accent.cgColor
-        animation.toValue = Theme.laneBorder.cgColor
+        // Snapshots, taken now, in this lane's appearance: an animation's
+        // endpoints are fixed for its 300 ms, and the layer's own border — which
+        // it settles back onto — is the one that follows a switch.
+        animation.fromValue = Theme.accent.cgColor(in: effectiveAppearance)
+        animation.toValue = Theme.laneBorder.cgColor(in: effectiveAppearance)
         animation.duration = 0.3
         animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
 
@@ -1004,7 +1007,7 @@ final class LaneHeaderView: NSView {
     init() {
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = NSColor.clear.cgColor
+        layerBackgroundColor = NSColor.clear
 
         kindGlyph.font = Theme.mono(11, weight: .medium)
         chip.alignment = .center
@@ -1101,7 +1104,7 @@ final class LaneHeaderView: NSView {
     private func applyChip() {
         guard let state = model.state, state.hasChip else {
             chip.stringValue = ""
-            chip.layer?.backgroundColor = NSColor.clear.cgColor
+            chip.layerBackgroundColor = NSColor.clear
             chip.layer?.borderWidth = 0
             return
         }
@@ -1112,12 +1115,12 @@ final class LaneHeaderView: NSView {
             if state == .blocked {
                 // The only filled thing in the header, because it is the only
                 // thing worth interrupting someone for.
-                chip.layer?.backgroundColor = colour.cgColor
+                chip.layerBackgroundColor = colour
                 chip.layer?.borderWidth = 0
                 chip.textColor = .black
             } else {
-                chip.layer?.backgroundColor = NSColor.clear.cgColor
-                chip.layer?.borderColor = colour.withAlphaComponent(0.6).cgColor
+                chip.layerBackgroundColor = NSColor.clear
+                chip.layerBorderColor = colour.withAlphaComponent(0.6)
                 chip.layer?.borderWidth = 1
                 chip.textColor = colour
             }
@@ -1127,7 +1130,7 @@ final class LaneHeaderView: NSView {
             // the row.
             chip.stringValue = state.glyph
             chip.font = Theme.mono(11, weight: .bold)
-            chip.layer?.backgroundColor = NSColor.clear.cgColor
+            chip.layerBackgroundColor = NSColor.clear
             chip.layer?.borderWidth = 0
             chip.textColor = colour
         }

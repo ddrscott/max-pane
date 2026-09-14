@@ -36,7 +36,7 @@ final class StripToolbar: NSView {
         wantsLayer = true
         // The sidebar's own ground: its header has none of its own, and the two
         // halves of the row are meant to be one band.
-        layer?.backgroundColor = Theme.stripBackground.cgColor
+        layerBackgroundColor = Theme.stripBackground
 
         lanesButton = SidebarButton(text: "LANES", look: .quiet, action: #selector(pickLanes), target: self)
         galleryButton = SidebarButton(text: "GALLERY", look: .quiet, action: #selector(pickGallery), target: self)

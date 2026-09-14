@@ -7,6 +7,11 @@ import AppKit
 /// "bubble" cards and no single-edge colour rail on a rounded corner — a lane is
 /// a column with a hard edge, and status is carried by content, not by a bent
 /// stripe.
+///
+/// The greys are dynamic, one value per appearance; the accent is one value in
+/// both. Paint a layer with `layerBackgroundColor` / `layerBorderColor`, never
+/// `layer.backgroundColor = x.cgColor` — that is a snapshot of whichever mode
+/// was current, and it stays wrong after a switch. See `Appearance`.
 enum Theme {
     static let accent = NSColor(srgbRed: 0xE8 / 255, green: 0x5D / 255, blue: 0x00 / 255, alpha: 1)
 
@@ -80,10 +85,10 @@ enum Theme {
         field.wantsLayer = true
         // The whole field, not just the text: the cell paints its ground inside its
         // inset only, which left a lighter ring between the text and the border.
-        field.layer?.backgroundColor = ground.cgColor
+        field.layerBackgroundColor = ground
         field.layer?.cornerRadius = 0
         field.layer?.borderWidth = Theme.borderWidth
-        field.layer?.borderColor = Theme.laneBorder.cgColor
+        field.layerBorderColor = Theme.laneBorder
         field.font = font
         field.focusRingType = .none
         if let height { field.heightAnchor.constraint(equalToConstant: height).isActive = true }

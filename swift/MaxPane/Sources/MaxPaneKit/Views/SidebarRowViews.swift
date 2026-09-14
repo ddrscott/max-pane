@@ -91,10 +91,10 @@ final class SidebarEntryView: NSTableCellView {
         status.layer?.cornerRadius = 0
         let tint = Self.statusColor(entry)
         if entry.isRunning && !isWeb {
-            status.layer?.backgroundColor = tint.cgColor
+            status.layerBackgroundColor = tint
         } else {
             status.layer?.borderWidth = 1
-            status.layer?.borderColor = tint.cgColor
+            status.layerBorderColor = tint
         }
 
         // Kind first, then state: a terminal, a page, or a session that is not
@@ -121,12 +121,12 @@ final class SidebarEntryView: NSTableCellView {
         // Square, like RelayTTY's own chip and like everything else here.
         chip.layer?.cornerRadius = 0
         chip.layer?.borderWidth = entry.chip.isEmpty ? 0 : 1
-        chip.layer?.borderColor = chipInk.cgColor
+        chip.layerBorderColor = chipInk
         // BLOCKED is the only chip that gets filled. It is the one signal the
         // eye has to find across ten rows without reading any of them.
-        chip.layer?.backgroundColor = entry.needsAttention
-            ? Theme.accent.withAlphaComponent(0.18).cgColor
-            : NSColor.clear.cgColor
+        chip.layerBackgroundColor = entry.needsAttention
+            ? Theme.accent.withAlphaComponent(0.18)
+            : NSColor.clear
 
         title.attributedStringValue = Self.titleText(entry)
 
@@ -311,7 +311,7 @@ final class SidebarGroupView: NSTableCellView {
         // A hairline above the header instead of padding: the strip is made of
         // hard edges, and so is its index.
         rule.wantsLayer = true
-        rule.layer?.backgroundColor = Theme.laneBorder.cgColor
+        rule.layerBackgroundColor = Theme.laneBorder
 
         for v in [label, count] {
             v.isBezeled = false
@@ -415,8 +415,8 @@ final class SidebarButton: NSButton {
             ink = isOn ? Theme.accent : Theme.dimText
             border = isOn ? Theme.accent : Theme.laneBorder
         }
-        layer?.borderColor = border.cgColor
-        layer?.backgroundColor = isOn ? Theme.accent.withAlphaComponent(0.12).cgColor : NSColor.clear.cgColor
+        layerBorderColor = border
+        layerBackgroundColor = isOn ? Theme.accent.withAlphaComponent(0.12) : NSColor.clear
         if let icon {
             image = IconImage.make(icon, points: (font?.pointSize ?? 10) + 2, colour: ink)
             imagePosition = text.isEmpty ? .imageOnly : .imageLeading

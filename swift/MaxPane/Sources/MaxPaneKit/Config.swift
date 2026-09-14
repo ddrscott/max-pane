@@ -138,6 +138,14 @@ public struct Config: Codable {
     /// keys would be worse to read and worse to write.
     public var keys: KeyBindings = KeyBindings()
 
+    /// Light or dark: `"system"` follows the Mac, live; `"light"` and `"dark"`
+    /// pin it, for the chrome, the terminals and what web pages see as
+    /// `prefers-color-scheme` alike.
+    ///
+    /// The one key that applies the moment the file is saved — `ConfigWatch`
+    /// says why it is only this one, for now.
+    public var theme: ThemeChoice = .system
+
     /// `~/.config/maxpane/profiles/<profile>/config.json`.
     ///
     /// Per profile, so a preference can be exercised at runtime without editing
@@ -146,7 +154,7 @@ public struct Config: Codable {
     /// tried in a running instance.
     public static var path: URL { Profile.current.configPath }
 
-    public static func load() -> Config {
+    public static func load(from path: URL = Config.path) -> Config {
         guard let data = try? Data(contentsOf: path) else { return Config() }
         do {
             return try JSONDecoder().decode(Config.self, from: data)
@@ -198,6 +206,7 @@ public struct Config: Codable {
         snapToLanes = read(.snapToLanes, d.snapToLanes)
         snapSeconds = read(.snapSeconds, d.snapSeconds)
         keys = read(.keys, d.keys)
+        theme = read(.theme, d.theme)
     }
 
     /// The lane width bounds, already ordered, so a config with min > max does
@@ -220,4 +229,9 @@ public struct Config: Codable {
     public var webMemoryHardBytes: UInt64 { UInt64(physicalMemory * webMemoryHardFraction) }
     /// Evict down to here once evicting, so the cooldown has something to hold.
     public var webMemoryTargetBytes: UInt64 { UInt64(physicalMemory * webMemoryTargetFraction) }
+}
+
+/// `theme` in the config file. See `Appearance`.
+public enum ThemeChoice: String, Codable, CaseIterable, Sendable {
+    case system, light, dark
 }

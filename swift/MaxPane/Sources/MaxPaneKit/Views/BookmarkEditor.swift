@@ -234,8 +234,8 @@ final class BookmarkPopup: Popup {
         body.translatesAutoresizingMaskIntoConstraints = false
         let content = NSView()
         content.wantsLayer = true
-        content.layer?.backgroundColor = Theme.laneBackground.cgColor
-        content.layer?.borderColor = Theme.laneBorder.cgColor
+        content.layerBackgroundColor = Theme.laneBackground
+        content.layerBorderColor = Theme.laneBorder
         content.layer?.borderWidth = Theme.borderWidth
         content.layer?.cornerRadius = 0
         content.addSubview(body)

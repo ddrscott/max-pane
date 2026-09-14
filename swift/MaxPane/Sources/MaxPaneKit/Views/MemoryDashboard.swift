@@ -61,7 +61,7 @@ public final class MemoryDashboard: NSPanel {
 
         let content = NSView()
         content.wantsLayer = true
-        content.layer?.backgroundColor = Theme.laneBackground.cgColor
+        content.layerBackgroundColor = Theme.laneBackground
         for v in [summary, bar, scroll] {
             v.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(v)
