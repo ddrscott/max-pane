@@ -167,7 +167,7 @@ enum MatchQuality: Int, Comparable, Sendable {
     /// `literal` is the row's own answer, not this field's. A page whose URL is
     /// `doc.rust-lang.org/…` matched the query `doc` outright; asking a
     /// subsequence matcher to explain that in the page's *title* lights the d of
-    /// `std`, the o of `collections` and a c further along — three orange
+    /// `std`, the o of `collections` and a c further along — three green
     /// letters that had nothing to do with why the row is on screen. A
     /// highlight exists so a hit can be trusted, so a field with no literal hit
     /// in a row that won on one says nothing at all.
@@ -258,7 +258,7 @@ struct PaletteGroup: Equatable {
 
 struct PaletteSession: Equatable {
     var telemetry: SessionTelemetry
-    /// Offsets in the title to paint orange, when the query matched there.
+    /// Offsets in the title to paint in the accent, when the query matched there.
     var titleMatches: [Int]
 }
 

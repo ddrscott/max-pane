@@ -750,9 +750,9 @@ green forever. Each session file now replaces the reading before it. What relay
 could change to make the title rule unnecessary is in
 [docs/proposals/relay-agent-state.md](docs/proposals/relay-agent-state.md).
 
-**The orange outline is around the pane with the keyboard, never the lane.** It
+**The green outline is around the pane with the keyboard, never the lane.** It
 used to go around the whole column, with a short tick marking the pane inside —
-which meant a two-pane lane outlined in orange with the keystrokes going to the
+which meant a two-pane lane outlined in the accent with the keystrokes going to the
 pane at the bottom, and the tick the only thing on screen that disagreed. "Which
 of these gets the next keystroke" has a real answer in a split lane, a terminal
 only blinks a cursor, and a page looks identical either way.
@@ -761,7 +761,7 @@ The rule has no exceptions, including a lane of one pane: the outline stops
 below the header, because the header is never where a keystroke goes. The
 focused lane's header is lifted a shade instead, which is what still says
 *which column* from across the strip. The lane's own border stays a neutral
-hairline, and flashes orange only for the ⌘P jump, which is a place to look
+hairline, and flashes green only for the ⌘P jump, which is a place to look
 rather than a place to type.
 
 ### Moving a pane
@@ -919,7 +919,7 @@ Animation's filters shrinks a terminal is decided by how many device pixels each
 point of the lane gets, because that is what the measurements followed.
 
 **Click a tile to type into it.** The keyboard goes to the pane under the
-pointer, the orange outline goes around it, and every key without ⌘ — Esc and
+pointer, the green outline goes around it, and every key without ⌘ — Esc and
 Return above all — goes to that pane. Answering a prompt from its thumbnail is
 the point, which is why Esc does not leave the gallery. ⌘G does.
 
@@ -1072,6 +1072,30 @@ terminal that asked. For a terminal you started yourself:
 export BROWSER="$PWD/build/MaxPane.app/Contents/Helpers/maxpane-open"
 ```
 
+### Colour
+
+**One green family, and no orange** ([ADR-0015](docs/decisions/0015-one-green-family.md)).
+Each green has a role, and the roles differ in form as well as shade, so they
+stay tellable apart at a glance:
+
+| Role | Dark | Light | Where |
+|---|---|---|---|
+| working | `#16A34A`, muted | `#4D7C5F` | the filled status square, the WORKING chip, a moving rate |
+| focus / accent | `#22C55E`, mid | `#15773A` | the outline around the pane with the keyboard, default and `+ NEW` buttons, `//` slashes, the `$` marker, selection, drop indicators, the terminal cursor, the ⌘P flash |
+| blocked | `#4ADE80`, brightest | `#166534` | BLOCKED chips (always filled), the `N BLOCKED` counts, the lane header's blocked mark |
+
+**BLOCKED breathes.** It pulses slowly between full strength and 60 %, taking
+1.8 s per breath, and never goes out. The pulse runs only while the mark is on
+screen, and every blocked mark breathes in step. It stops the moment the agent
+is no longer blocked. With Reduce Motion on it holds steady at full strength,
+and the filled block is what sets it apart. DONE stays slate and EXITED dim.
+
+Light mode has its own greens because the dark ones fail on a light ground:
+`#4ADE80` is 1.7:1 on white. There, BLOCKED is the strongest ink rather than the
+lightest one. Two colours outside the family are kept on purpose. Amber marks
+an insecure `http://` or a missing saved password in the web bars, because
+green would read as *safe*. Red marks memory past the hard limit.
+
 ### Light and dark
 
 Max Pane follows the Mac's System Settings › Appearance, live. Switch it with the
@@ -1085,7 +1109,7 @@ Motion is on:
 - **Web pages:** each page sees the new `prefers-color-scheme`, and its
   `matchMedia` listeners fire, with no reload.
 
-Signal Orange is the same in both.
+The greens have a light value and a dark value each; see [Colour](#colour).
 
 The `theme` [setting](#settings) overrides the system: `system` (the default),
 `light` or `dark`. It is the one key that applies the moment it changes, from

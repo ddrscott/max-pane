@@ -88,7 +88,7 @@ struct GalleryTileTests {
 }
 
 /// A gallery of mixed lanes, rendered so a human can check it — the tiles'
-/// order and wrapping, the split lane's proportions, the placeholder, the orange
+/// order and wrapping, the split lane's proportions, the placeholder, the accent
 /// outline around the focused pane, and how sharp text survives.
 ///
 ///     MAXPANE_SHOTS=build/shots ./scripts/test.sh shots build/shots

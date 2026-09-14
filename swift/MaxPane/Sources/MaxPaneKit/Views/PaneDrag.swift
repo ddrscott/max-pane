@@ -397,9 +397,9 @@ final class PaneGripView: NSView {
 /// derived from `PaneDrag.indicator` and `PaneDrag.slot`, so the rectangle on
 /// screen and the rectangle the drop will use are the same arithmetic.
 ///
-/// Square, hard-edged, Signal Orange, and gone the instant the mouse comes up.
-/// It spends no new meaning: the accent's two reserved states are focus and
-/// BLOCKED, and both are *states a lane is in* — this outlives nothing, exactly
+/// Square, hard-edged, in the accent, and gone the instant the mouse comes up.
+/// It spends no new meaning: the accent's reserved state is focus, and that is
+/// a *state a pane is in* — this outlives nothing, exactly
 /// as a lit seam under the pointer does not.
 @MainActor
 final class PaneDropIndicatorView: NSView {

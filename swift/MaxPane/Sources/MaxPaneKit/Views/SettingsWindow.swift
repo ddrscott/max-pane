@@ -432,7 +432,7 @@ private func setShown(_ view: NSView, _ shown: Bool, in container: NSView?, anim
     })
 }
 
-/// A group in the left column. The current one wears the orange `$`.
+/// A group in the left column. The current one wears the accent `$`.
 @MainActor
 private final class NavItem: NSView {
     var onClick: (() -> Void)?
@@ -524,7 +524,7 @@ final class SquareSegments: NSView {
         for (index, rect) in frames.enumerated() where index != selected {
             draw(options[index], in: rect, chosen: false)
         }
-        // The chosen one last, so its orange edge is not overdrawn by a
+        // The chosen one last, so its green edge is not overdrawn by a
         // neighbour's grey one.
         if let selected, selected < frames.count { draw(options[selected], in: frames[selected], chosen: true) }
     }

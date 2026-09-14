@@ -172,9 +172,11 @@ extension MemoryDashboard: NSTableViewDataSource, NSTableViewDelegate {
 
 /// Where the current footprint sits between the soft and hard marks.
 ///
-/// Square, because everything here is. The orange band is the range in which
-/// eviction is armed but waiting for three consecutive samples; past the hard
-/// mark it acts immediately.
+/// Square, because everything here is. Under the soft mark the fill is the
+/// muted green; the brightest green band is the range in which eviction is
+/// armed but waiting for three consecutive samples; past the hard mark it is
+/// red and acts immediately. Red is not a highlight, it is "over the limit",
+/// and a green there would say the opposite.
 @MainActor
 final class BudgetBar: NSView {
     private var used: UInt64 = 0
@@ -203,12 +205,12 @@ final class BudgetBar: NSView {
 
         let fill = Double(used) > Double(hard)
             ? NSColor.systemRed
-            : (Double(used) > Double(soft) ? Theme.accent : NSColor.systemGreen)
+            : (Double(used) > Double(soft) ? Theme.blocked : Theme.working)
         fill.setFill()
         NSRect(x: 0, y: 0, width: x(used), height: bounds.height).fill()
 
         // Marks.
-        for (value, colour) in [(target, Theme.dimText), (soft, Theme.accent), (hard, NSColor.systemRed)] {
+        for (value, colour) in [(target, Theme.dimText), (soft, Theme.blocked), (hard, NSColor.systemRed)] {
             colour.setFill()
             NSRect(x: x(value) - 1, y: 0, width: 2, height: bounds.height).fill()
         }

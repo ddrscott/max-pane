@@ -27,7 +27,7 @@ import Foundation
 /// - **The lane is off screen**: nothing scrolls. A page you cannot see does
 ///   not get to move the viewport — that is the freeze bug wearing a different
 ///   hat. It raises the signal this app already has for *this one needs you*:
-///   the status bar's Signal Orange count, which is clickable and scrolls to
+///   the status bar's bright green count, which is clickable and scrolls to
 ///   the first lane that is asking (`WebAskCenter`).
 /// - **Dismissing something you did not ask for**: Esc, or the sheet's ✕, and
 ///   both mean exactly what Cancel means. Nothing is remembered from a dismissal

@@ -840,7 +840,7 @@ final class OmniPicker: PaletteController {
 
         let line = PaletteStyle.caps(parts.joined(separator: " · "))
         // The blocked count is the one number here that is an instruction rather
-        // than a statistic, so it is the only one in the accent.
+        // than a statistic, so it is the only one in the blocked green.
         let blocked = registry.sessions.values.filter {
             !$0.isAttached && $0.isRunning && $0.needsAttention
         }.count
@@ -848,7 +848,7 @@ final class OmniPicker: PaletteController {
             let mutable = NSMutableAttributedString(attributedString: line)
             mutable.append(NSAttributedString(
                 string: "  ·  \(blocked) BLOCKED",
-                attributes: [.foregroundColor: Theme.accent, .font: Theme.mono(10, weight: .bold)]))
+                attributes: [.foregroundColor: Theme.blocked, .font: Theme.mono(10, weight: .bold)]))
             footerLeft.attributedStringValue = mutable
         } else {
             footerLeft.attributedStringValue = line

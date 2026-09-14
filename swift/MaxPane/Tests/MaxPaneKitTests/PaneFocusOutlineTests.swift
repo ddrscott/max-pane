@@ -6,7 +6,7 @@ import AppKit
 ///
 /// Focus used to be the lane's border, which in a split lane said "one of these
 /// three" and left the owner to guess which — with a screenshot of a lane
-/// outlined in orange around a pane that did not have the keyboard. The outline
+/// outlined in the accent around a pane that did not have the keyboard. The outline
 /// is now drawn around the pane, and its frame is arithmetic on the same
 /// heights the seams are placed from, so it is tested as arithmetic: a rect a
 /// point off is "the border looks slightly wrong" on screen and a wrong number

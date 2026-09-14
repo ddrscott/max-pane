@@ -49,7 +49,7 @@ struct MatchQualityTests {
     func highlightsExplainTheRow() {
         // The measured wart: `doc` matched `doc.rust-lang.org` outright, and the
         // row's *title* then lit the d of `std`, an o in `collections` and a c
-        // further along — three orange letters that had nothing to do with why
+        // further along — three green letters that had nothing to do with why
         // the row was on screen.
         #expect(MatchQuality.offsets("doc", in: "doc.rust-lang.org/std", literal: true) == [0, 1, 2])
         #expect(MatchQuality.offsets("doc", in: "HashMap in std::collections", literal: true) == [])

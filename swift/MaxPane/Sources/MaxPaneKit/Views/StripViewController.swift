@@ -783,7 +783,7 @@ public final class StripViewController: NSViewController {
         // materialised by scrolling — which is not a mutation and does not run
         // `apply`. So a focused lane scrolled out and back came back unlit until
         // something else happened to change the snapshot, and a *recycled* view
-        // came back carrying the previous lane's answer, which is an orange
+        // came back carrying the previous lane's answer, which is an accent
         // outline around a pane that does not have the keyboard.
         laneView.isFocused = store.state.focusedPaneId.map { id in
             lane.panes.contains { $0.id == id }
@@ -1775,7 +1775,7 @@ public final class StripViewController: NSViewController {
     /// reads `isFocused` when it fires to decide what colour to settle on, and
     /// on the two paths where reveal flashes immediately — a lane already
     /// centred, and a docked lane, which cannot be scrolled to at all — focusing
-    /// afterwards leaves the border animating *away* from Signal Orange for
+    /// afterwards leaves the border animating *away* from the accent for
     /// 300 ms before snapping back to it. That is the reported bug wearing a
     /// third of a second: it looks like the click focused the lane and then gave
     /// up.

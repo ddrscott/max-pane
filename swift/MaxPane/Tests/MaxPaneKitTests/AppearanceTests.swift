@@ -41,8 +41,10 @@ struct AppearanceTests {
     func theModesDiffer() {
         #expect(resolved(Theme.laneBackground, .aqua) != resolved(Theme.laneBackground, .darkAqua))
         #expect(resolved(Theme.laneBorder, .aqua) != resolved(Theme.laneBorder, .darkAqua))
-        // Signal Orange is the same in both.
-        #expect(resolved(Theme.accent, .aqua) == resolved(Theme.accent, .darkAqua))
+        // The greens have their own light values too: the dark shades are
+        // unreadable on a light ground (ADR-0015).
+        #expect(resolved(Theme.accent, .aqua) != resolved(Theme.accent, .darkAqua))
+        #expect(resolved(Theme.blocked, .aqua) != resolved(Theme.blocked, .darkAqua))
     }
 
     @Test("a painted layer repaints when the app switches, in the same turn")

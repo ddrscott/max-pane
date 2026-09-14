@@ -34,7 +34,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private var historyWindow: HistoryWindow?
     private let statusBar = StatusBar()
     private var statusTimer: Timer?
-    /// Our subscription to `WebAskCenter`, so the orange count appears the
+    /// Our subscription to `WebAskCenter`, so the bright count appears the
     /// instant a page asks rather than on the next status tick.
     private var askToken: UUID?
     /// The strip's distance from the top of its half of the split. Non-zero

@@ -312,7 +312,7 @@ final class TerminalPaneController: NSObject, PaneController {
     /// matter of course: a new lane materialising, a lane view recycled on
     /// scroll, a split reconciling. `takeFocus` used to clear its flag on the
     /// first success, so a pane focused and *then* reparented came back with
-    /// the orange border, a live cursor, and no keyboard at all. Every
+    /// the accent border, a live cursor, and no keyboard at all. Every
     /// keystroke and every ⌘V went to the window and stopped there, which is
     /// exactly the "freshly created lane where paste does nothing" report.
     ///
@@ -881,8 +881,8 @@ enum TerminalControllerPool {
     /// config is overwritten by whatever the theme says — which is why these
     /// belong here and not beside the font. Starting from Ghostty's defaults
     /// keeps a full, legible ANSI palette; overriding the background makes the
-    /// pane the same colour as the lane around it, and the cursor is Signal
-    /// Orange because a cursor marks where the focus is.
+    /// pane the same colour as the lane around it, and the cursor is the
+    /// accent because a cursor marks where the focus is.
     static var theme: TerminalTheme {
         TerminalTheme(
             light: TerminalConfiguration(startingFrom: .alabaster) { builder in

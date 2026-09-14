@@ -682,9 +682,9 @@ final class ImportWizardPanelView: NSView {
     }
 }
 
-/// `// SECTION_HEADER`, with the slashes in Signal Orange.
+/// `// SECTION_HEADER`, with the slashes in the accent.
 @MainActor
-/// `// SECTION_NAME` with the slashes in Signal Orange — the house header, used
+/// `// SECTION_NAME` with the slashes in the accent — the house header, used
 /// by every panel that is not a palette.
 final class SectionHeader: NSTextField {
     init(text: String) {

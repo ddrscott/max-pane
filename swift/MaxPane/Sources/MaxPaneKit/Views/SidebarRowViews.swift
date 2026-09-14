@@ -1,17 +1,18 @@
 import AppKit
 import LanedCore
 
-/// The sidebar's ink beyond `Theme`'s one accent.
+/// The sidebar's ink beyond `Theme`'s greens.
 ///
-/// Status is not decoration, so it gets colour — but only three: orange for
-/// "working right now", green for "alive and waiting on you", grey for "gone".
-/// Anything else would make the accent stop meaning anything.
+/// Status is not decoration, so it gets colour — but only the green family and
+/// grey: the brightest, filled and pulsing for "blocked on you", muted green for
+/// "working right now", a quieter green for "alive", grey for "gone". Anything
+/// else would make the greens stop meaning anything.
 enum SidebarInk {
-    /// Alive and quiet. Dimmer than `Theme.agentStateColor(.working)`, so a
-    /// session that is actually producing output still reads brighter.
-    static let live = NSColor(srgbRed: 0.18, green: 0.55, blue: 0.31, alpha: 1)
+    /// Alive and quiet. Quieter than `Theme.working`, so a session that is
+    /// actually producing output still reads louder.
+    static let live = Theme.alive
     /// The throughput readout. Green only while bytes are moving.
-    static let flow = Theme.agentStateColor(.working)
+    static let flow = Theme.working
     static let gone = NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? NSColor(white: 0.42, alpha: 1)
@@ -21,7 +22,7 @@ enum SidebarInk {
     static let selection = Theme.accent.withAlphaComponent(0.16)
 }
 
-/// Square selection, square hover, and a hard orange edge on the selected row.
+/// Square selection, square hover, and a hard accent edge on the selected row.
 ///
 /// `NSTableView`'s source-list style draws a rounded blue capsule; that is the
 /// one thing the house style has no version of, so the row draws its own.
@@ -74,7 +75,10 @@ final class SidebarEntryView: NSTableCellView {
     private let title = NSTextField(labelWithString: "")
     private let badge = NSTextField(labelWithString: "")
     private let age = NSTextField(labelWithString: "")
-    private let chip = NSTextField(labelWithString: "")
+    private let chip = PulseLabel(labelWithString: "")
+
+    /// Whether this row's BLOCKED chip is breathing right now, for tests.
+    var isBlockedMarkPulsing: Bool { chip.isAnimatingPulse }
 
     static let height: CGFloat = 40
 
@@ -98,9 +102,9 @@ final class SidebarEntryView: NSTableCellView {
         }
 
         // Kind first, then state: a terminal, a page, or a session that is not
-        // on the strip yet. Orange means "live, and on the strip" — a lane whose
+        // on the strip yet. Green means "live, and on the strip" — a lane whose
         // session has died is neither, so it goes grey with the rest of the row.
-        let markerInk = (attached && entry.isRunning && !isWeb) ? Theme.flowing : SidebarInk.gone
+        let markerInk = (attached && entry.isRunning && !isWeb) ? Theme.working : SidebarInk.gone
         let markerIsFor: LucideIcon = isWeb ? .globe : (attached ? .squareTerminal : .plus)
         markerIcon.image = IconImage.make(markerIsFor, points: 12, colour: markerInk)
         markerIcon.imageScaling = .scaleProportionallyDown
@@ -116,17 +120,18 @@ final class SidebarEntryView: NSTableCellView {
         let chipInk = Theme.agentStateColor(entry.state)
         chip.stringValue = entry.chip.isEmpty ? "" : " \(entry.chip) "
         chip.font = Theme.mono(8, weight: entry.needsAttention ? .bold : .medium)
-        chip.textColor = chipInk
+        chip.textColor = entry.needsAttention ? Theme.onBlocked : chipInk
         chip.wantsLayer = true
         // Square, like RelayTTY's own chip and like everything else here.
         chip.layer?.cornerRadius = 0
         chip.layer?.borderWidth = entry.chip.isEmpty ? 0 : 1
         chip.layerBorderColor = chipInk
-        // BLOCKED is the only chip that gets filled. It is the one signal the
-        // eye has to find across ten rows without reading any of them.
-        chip.layerBackgroundColor = entry.needsAttention
-            ? Theme.accent.withAlphaComponent(0.18)
-            : NSColor.clear
+        // BLOCKED is the only chip that gets filled — solid, in the brightest
+        // green, and breathing. It is the one signal the eye has to find across
+        // ten rows without reading any of them, and in a family of greens the
+        // fill and the movement are what keep it from being one more green word.
+        chip.layerBackgroundColor = entry.needsAttention ? chipInk : NSColor.clear
+        chip.isPulsing = entry.needsAttention
 
         title.attributedStringValue = Self.titleText(entry)
 
@@ -244,8 +249,8 @@ final class SidebarEntryView: NSTableCellView {
         case .web, .placeholder: return SidebarInk.gone
         case .session:
             switch entry.state {
-            case .blocked: return Theme.accent
-            case .working: return Theme.agentStateColor(.working)
+            case .blocked: return Theme.blocked
+            case .working: return Theme.working
             case .idle, .done, .unknown: return SidebarInk.live
             case .exited: return SidebarInk.gone
             }
@@ -275,7 +280,7 @@ final class SidebarEntryView: NSTableCellView {
 final class SidebarGroupView: NSTableCellView {
     private let triangle = NSImageView()
     private let label = NSTextField(labelWithString: "")
-    private let count = NSTextField(labelWithString: "")
+    private let count = PulseLabel(labelWithString: "")
     private let rule = NSView()
 
     static let height: CGFloat = 26
@@ -308,10 +313,11 @@ final class SidebarGroupView: NSTableCellView {
 
         // A collapsed group hides its rows; the count is then the only thing
         // left to say "there is an agent in here waiting on you", so when there
-        // is one it takes the accent and the rest stays quiet.
+        // is one it takes the blocked green, breathing, and the rest stays quiet.
         count.stringValue = group.countText
         count.font = Theme.mono(9, weight: group.blocked > 0 ? .bold : .regular)
-        count.textColor = group.blocked > 0 ? Theme.accent : Theme.dimText
+        count.textColor = group.blocked > 0 ? Theme.blocked : Theme.dimText
+        count.isPulsing = group.blocked > 0
         count.alignment = .right
 
         // A hairline above the header instead of padding: the strip is made of
@@ -369,7 +375,7 @@ final class SidebarButton: NSButton {
     private var look: Look = .quiet
     private var text: String = ""
     /// Drawn to the left of the text, or alone when there is none. Retinted on
-    /// every `restyle`, because the icon has to go orange with the label when
+    /// every `restyle`, because the icon has to go green with the label when
     /// the control turns on — a template image cannot be tinted after the fact.
     private var icon: LucideIcon?
     var isOn = false { didSet { restyle() } }

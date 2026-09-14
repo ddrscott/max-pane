@@ -263,7 +263,7 @@ final class WebChromeBar: NSView {
     /// Hidden entirely when it has none, rather than shown greyed. A key that
     /// is always there is a key people stop seeing, and the one fact it carries
     /// — *there is a sign-in saved for this site* — is only worth a glyph when
-    /// it is true. It goes orange when there is one, which is this app's one
+    /// it is true. It goes green when there is one, which is this app's one
     /// meaning for the accent: the thing here is live.
     func setHasSavedPassword(_ saved: Bool) {
         key.isHidden = !saved
@@ -272,7 +272,7 @@ final class WebChromeBar: NSView {
 
     /// Whether this page is one of the ones kept.
     ///
-    /// A filled orange star, not a hollow one gone bright: the difference
+    /// A filled green star, not a hollow one gone bright: the difference
     /// between the two states has to survive being glanced at in a 420 pt
     /// column, and `☆`/`★` differ in their middle rather than only in weight.
     func setKept(_ kept: Bool) {
@@ -437,12 +437,12 @@ final class WebChromeBar: NSView {
         NSRect(x: 0, y: bounds.height - Theme.borderWidth,
                width: bounds.width, height: Theme.borderWidth).fill()
 
-        // Load progress, on the same hairline. Not the accent: Signal Orange is
-        // spent on focus and on BLOCKED, and ten lanes each drawing an orange
+        // Load progress, on the same hairline. Not the accent: the accent is
+        // spent on focus, and ten lanes each drawing a bright
         // line every time a page loads is how BLOCKED stops meaning anything.
-        // `Theme.flowing` is already this app's "bytes are moving".
+        // `Theme.working` is already this app's "bytes are moving".
         guard progress > 0.001, progress < 0.999 else { return }
-        Theme.flowing.setFill()
+        Theme.working.setFill()
         NSRect(x: 0, y: bounds.height - 2, width: bounds.width * CGFloat(progress), height: 2).fill()
     }
 

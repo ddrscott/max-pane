@@ -170,7 +170,7 @@ final class LaneView: NSView {
     }
 
     /// The outline around the pane with the keyboard — see
-    /// `PaneFocusOutlineView`. The one place focus is drawn in orange.
+    /// `PaneFocusOutlineView`. The one place focus is drawn in the accent.
     private let focusOutline = PaneFocusOutlineView()
 
     init(lane: Lane, widthBounds: ClosedRange<UInt32>) {
@@ -867,7 +867,7 @@ final class LaneView: NSView {
     // MARK: - focus and flash
 
     /// Whether this lane holds the focused pane. It lifts the header and leaves
-    /// the border alone: the orange belongs to the pane, drawn by
+    /// the border alone: the accent belongs to the pane, drawn by
     /// `focusOutline`, and a lane lit around a pane that was not the one being
     /// typed into is the bug that moved it there.
     var isFocused: Bool = false {
@@ -939,7 +939,7 @@ extension LaneView: LaneHeaderActions {}
 @MainActor
 final class LaneHeaderView: NSView {
     private let kindGlyph = NSTextField(labelWithString: "")
-    private let chip = NSTextField(labelWithString: "")
+    private let chip = PulseLabel(labelWithString: "")
     private let markers = NSTextField(labelWithString: "")
     private let title = NSTextField(labelWithString: "")
     private let badge = NSTextField(labelWithString: "")
@@ -1030,9 +1030,8 @@ final class LaneHeaderView: NSView {
         markers.alignment = .center
         // Neutral, not accent. Both markers are structural — this lane is never
         // evicted, this lane is held at an edge — and neither changes from
-        // minute to minute. An orange mark for something that is true all day
-        // spends the one colour that has to keep meaning "this agent is waiting
-        // on you".
+        // minute to minute. A green mark for something that is true all day
+        // would blur the greens that have to keep meaning focus and state.
         markers.textColor = .labelColor
 
         overflow.onPress = { [weak self] in self?.showOverflowMenu() }
@@ -1067,17 +1066,17 @@ final class LaneHeaderView: NSView {
         model = next
 
         kindGlyph.stringValue = Theme.glyph(for: model.kind)
-        // The orange $ marks a live terminal and nothing else.
-        // Not the accent: every terminal lane carries this glyph, so tinting it
-        // orange spends the alarm colour on the most routine state there is.
-        kindGlyph.textColor = (model.kind == .pty && model.isLive) ? Theme.flowing : Theme.dimText
+        // The green $ marks a live terminal and nothing else. The muted green,
+        // not the accent: every terminal lane carries this glyph, so the louder
+        // shade would be spent on the most routine state there is.
+        kindGlyph.textColor = (model.kind == .pty && model.isLive) ? Theme.working : Theme.dimText
         applyChip()
         applyMarkers()
         title.stringValue = model.title
         badge.stringValue = model.badge
         // Throughput is the thing that is changing right now, so it gets the
-        // accent; a quiet lane's age is reference material and stays dim.
-        badge.textColor = model.badgeIsThroughput ? Theme.flowing : Theme.dimText
+        // working green; a quiet lane's age is reference material and stays dim.
+        badge.textColor = model.badgeIsThroughput ? Theme.working : Theme.dimText
         toolTip = model.tooltip.isEmpty ? nil : model.tooltip
 
         needsLayout = true
@@ -1097,49 +1096,51 @@ final class LaneHeaderView: NSView {
     /// is right to — a chip on every header is a chip nobody reads, and this one
     /// has to survive being one of ten.
     ///
-    /// **Blocked is filled; focus is an outline.** The focused lane wears a 2pt
-    /// Signal Orange border around the whole column, and BLOCKED is Signal
-    /// Orange too, so the two could be confused. They are not, because they use
-    /// different channels: attention is a solid orange block *inside* the header
-    /// with a word in it, focus is a hairline *around* the column. A focused
-    /// idle lane has no orange anywhere inside it; a blocked unfocused lane has
-    /// a grey outline and an orange block. The focused header therefore gets a
-    /// neutral lift rather than the accent wash it first had — an orange-tinted
+    /// **Blocked is filled and moving; focus is an outline.** Focus and BLOCKED
+    /// are both green (ADR-0015), so they must differ by channel, not hue:
+    /// attention is a solid block of the brightest green *inside* the header,
+    /// pulsing, with a word in it; focus is a hairline *around* the pane below.
+    /// A focused idle lane has no green block anywhere in its header; a blocked
+    /// unfocused lane has a grey outline and a bright block. The focused header
+    /// therefore gets a neutral lift rather than an accent wash — a tinted
     /// header on a focused idle lane was exactly the collision.
     private func applyChip() {
         guard let state = model.state, state.hasChip else {
             chip.stringValue = ""
             chip.layerBackgroundColor = NSColor.clear
             chip.layer?.borderWidth = 0
+            chip.isPulsing = false
             return
         }
         let colour = Theme.agentStateColor(state)
-        if chipFits {
-            chip.stringValue = state.chipText
-            chip.font = Theme.mono(9, weight: .bold)
-            if state == .blocked {
-                // The only filled thing in the header, because it is the only
-                // thing worth interrupting someone for.
-                chip.layerBackgroundColor = colour
-                chip.layer?.borderWidth = 0
-                chip.textColor = .black
-            } else {
-                chip.layerBackgroundColor = NSColor.clear
-                chip.layerBorderColor = colour.withAlphaComponent(0.6)
-                chip.layer?.borderWidth = 1
-                chip.textColor = colour
-            }
+        let blocked = state == .blocked
+        chip.stringValue = chipFits ? state.chipText : state.glyph
+        chip.font = chipFits ? Theme.mono(9, weight: .bold) : Theme.mono(11, weight: .bold)
+        if blocked {
+            // The only filled thing in the header, because it is the only thing
+            // worth interrupting someone for — and filled at a glyph's width as
+            // well as a word's, so under Reduce Motion, where it cannot pulse,
+            // `!` is still a bright block rather than one more green character.
+            chip.layerBackgroundColor = colour
+            chip.layer?.borderWidth = 0
+            chip.textColor = Theme.onBlocked
+        } else if chipFits {
+            chip.layerBackgroundColor = NSColor.clear
+            chip.layerBorderColor = colour.withAlphaComponent(0.6)
+            chip.layer?.borderWidth = 1
+            chip.textColor = colour
         } else {
             // Too narrow for a word. The glyph keeps the colour and the meaning
-            // and costs one cell; `!` for blocked is still the loudest thing in
-            // the row.
-            chip.stringValue = state.glyph
-            chip.font = Theme.mono(11, weight: .bold)
+            // and costs one cell.
             chip.layerBackgroundColor = NSColor.clear
             chip.layer?.borderWidth = 0
             chip.textColor = colour
         }
+        chip.isPulsing = blocked
     }
+
+    /// Whether the header's blocked mark is breathing right now, for tests.
+    var isBlockedMarkPulsing: Bool { chip.isAnimatingPulse }
 
     /// Whether the last layout had room for words rather than a glyph. Decided
     /// in `layout`, because it depends on what the title and path need.
@@ -1166,7 +1167,7 @@ final class LaneHeaderView: NSView {
 
         var rightEdge = overflowX - 6
         // The markers sit beside the `⋯` that toggles them rather than beside
-        // the status square, which is also a small orange square: three squares
+        // the status square, which is also a small green square: three squares
         // in a row on the left read as one indicator with a bug in it.
         if !markers.stringValue.isEmpty {
             // Measured rather than assumed to be one cell each: `▪` and `◀` are
@@ -1255,10 +1256,10 @@ final class LaneHeaderView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
-        // A neutral lift, deliberately not an accent wash. The orange belongs to
-        // the focused pane's outline; tinting the header orange as well made a
-        // focused idle lane look like a blocked one, and blocked is the only
-        // other thing in this app allowed to shout in orange. The lift is what
+        // A neutral lift, deliberately not an accent wash. The accent belongs to
+        // the focused pane's outline; tinting the header green as well would
+        // make a focused idle lane look like a blocked one, and blocked is the
+        // only thing in this app allowed a filled green block. The lift is what
         // says *which column* now that the lane's border no longer does.
         if isFocused {
             NSColor.labelColor.withAlphaComponent(0.09).setFill()
@@ -1269,11 +1270,10 @@ final class LaneHeaderView: NSView {
         // round corners. Filled means running; outlined means gone, and the chip
         // beside it says how.
         //
-        // Green, not orange, and this is the point: every live lane would
-        // otherwise carry an orange mark, and an accent that appears on all ten
-        // lanes cannot also mean "this one needs you". The colour is the theme's
-        // own — the one non-accent state colour it already defines — rather than
-        // a new one invented here.
+        // The muted green, not the accent or the blocked green, and this is the
+        // point: every live lane carries this mark, and a shade that appears on
+        // all ten lanes cannot also mean "this one needs you". The colour is the
+        // theme's `working` role rather than a new one invented here.
         if model.isLive {
             Theme.agentStateColor(.working).setFill()
             statusSquare.fill()
@@ -1443,7 +1443,7 @@ final class DockEdgeView: NSView {
 /// The `⋯` at the end of the header.
 ///
 /// A borderless button rather than an image button so the glyph stays in the
-/// same typeface as everything else in the row, and so hover can turn it orange
+/// same typeface as everything else in the row, and so hover can turn it the accent
 /// without an asset.
 @MainActor
 final class LaneHeaderMenuButton: NSView {

@@ -15,7 +15,10 @@ public final class StatusBar: NSView {
     private let profile = NSTextField(labelWithString: "")
     private let lanes = NSTextField(labelWithString: "")
     private let sessions = NSTextField(labelWithString: "")
-    private let attention = NSTextField(labelWithString: "")
+    private let attention = PulseLabel(labelWithString: "")
+
+    /// Whether the attention count is breathing right now, for tests.
+    var isAttentionPulsing: Bool { attention.isAnimatingPulse }
     private let memory = NSTextField(labelWithString: "")
     private let hint = NSTextField(labelWithString: "")
 
@@ -161,7 +164,8 @@ public final class StatusBar: NSView {
     /// `asking` is how many web panes have a dialog on screen waiting for an
     /// answer. It shares the attention column with BLOCKED because they are the
     /// same sentence — *something has stopped and is waiting on you* — and two
-    /// separate orange counts would each be half as loud.
+    /// separate bright counts would each be half as loud. So they share one ink,
+    /// the blocked green, and one breath.
     public func update(
         state: StripState, telemetry: [String: SessionTelemetry], webBytes: UInt64, asking: Int
     ) {
@@ -187,9 +191,12 @@ public final class StatusBar: NSView {
         var parts: [String] = []
         if asking > 0 { parts.append("\(asking) ASKING") }
         if blocked > 0 { parts.append("\(blocked) BLOCKED") }
-        if !parts.isEmpty {
+        let alarmed = !parts.isEmpty
+        // Into or out of the alarm is a change of meaning in place; ease it.
+        if alarmed != (attention.isPulsing) { Motion.fade(attention.layer) }
+        if alarmed {
             attention.stringValue = parts.joined(separator: " · ")
-            attention.textColor = Theme.accent
+            attention.textColor = Theme.blocked
             attention.toolTip = asking > 0 ? "Click to go to the page that is asking" : nil
         } else {
             let working = running.filter { $0.state == .working }.count
@@ -197,6 +204,7 @@ public final class StatusBar: NSView {
             attention.textColor = Theme.dimText
             attention.toolTip = nil
         }
+        attention.isPulsing = alarmed
 
         memory.stringValue = webBytes > 0 ? "web \(Self.mb(webBytes))" : ""
 

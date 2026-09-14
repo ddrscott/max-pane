@@ -35,6 +35,8 @@ final class SidebarViewController: NSViewController {
     private var filterButton: SidebarButton!
     private var chips: [SidebarModel.Scope: SidebarButton] = [:]
     private let countLabel = NSTextField(labelWithString: "")
+    /// `N BLOCKED`, beside the count: the brightest green, breathing.
+    private let blockedLabel = PulseLabel(labelWithString: "")
     private var filterBarHeight: NSLayoutConstraint!
     private var headerTop: NSLayoutConstraint!
 
@@ -321,13 +323,17 @@ final class SidebarViewController: NSViewController {
         countLabel.textColor = Theme.dimText
         countLabel.translatesAutoresizingMaskIntoConstraints = false
 
+        blockedLabel.font = Theme.mono(9, weight: .bold)
+        blockedLabel.textColor = Theme.blocked
+        blockedLabel.translatesAutoresizingMaskIntoConstraints = false
+
         let gear = SidebarButton(
             text: "⚙", look: .quiet, size: 11,
             action: #selector(showSettingsMenu), target: self)
         gear.layer?.borderWidth = 0
         gear.toolTip = "Settings and help"
 
-        for v: NSView in [rule, version, countLabel, gear] { footer.addSubview(v) }
+        for v: NSView in [rule, version, countLabel, blockedLabel, gear] { footer.addSubview(v) }
 
         NSLayoutConstraint.activate([
             rule.topAnchor.constraint(equalTo: footer.topAnchor),
@@ -340,6 +346,10 @@ final class SidebarViewController: NSViewController {
 
             countLabel.leadingAnchor.constraint(equalTo: version.trailingAnchor, constant: 8),
             countLabel.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
+
+            blockedLabel.leadingAnchor.constraint(equalTo: countLabel.trailingAnchor, constant: 10),
+            blockedLabel.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
+            blockedLabel.trailingAnchor.constraint(lessThanOrEqualTo: gear.leadingAnchor, constant: -6),
 
             gear.trailingAnchor.constraint(equalTo: footer.trailingAnchor, constant: -6),
             gear.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
@@ -400,20 +410,11 @@ final class SidebarViewController: NSViewController {
     /// The footer is the one line that is always on screen, however far the list
     /// is scrolled — so it carries the count, and the alarm.
     private func updateFooter(_ state: StripState) {
-        let count = SidebarModel.footerCount(telemetry: telemetry, lanes: store.allLanes)
+        countLabel.stringValue = SidebarModel.footerCount(telemetry: telemetry, lanes: store.allLanes)
+        // Its own label, so the alarm can breathe without the count beside it.
         let blocked = SidebarModel.blockedCount(telemetry)
-        let text = NSMutableAttributedString(
-            string: count,
-            attributes: [.foregroundColor: Theme.dimText, .font: Theme.mono(9)])
-        if blocked > 0 {
-            text.append(NSAttributedString(
-                string: "  \(blocked) BLOCKED",
-                attributes: [
-                    .foregroundColor: Theme.accent,
-                    .font: Theme.mono(9, weight: .bold),
-                ]))
-        }
-        countLabel.attributedStringValue = text
+        blockedLabel.stringValue = blocked > 0 ? "\(blocked) BLOCKED" : ""
+        blockedLabel.isPulsing = blocked > 0
     }
 
     /// The focused lane is selected in the browser, so the two halves of the

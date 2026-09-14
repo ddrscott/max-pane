@@ -52,8 +52,8 @@ struct LaneHeaderModel: Equatable {
     /// The dock glyph is **filled when the dock takes its room out of the strip
     /// and hollow when it floats over it**, so the shape carries the mode and
     /// the marker answers "which edge" and "at whose expense" with no word and
-    /// no colour. Signal Orange is spent on focus and BLOCKED; a permanent
-    /// orange mark on a lane that is docked all day would spend it on something
+    /// no colour. The greens are spent on focus and state; a permanent
+    /// green mark on a lane that is docked all day would spend it on something
     /// that is true all the time.
     var markerText: String { markerText(drawnMode: nil) }
 

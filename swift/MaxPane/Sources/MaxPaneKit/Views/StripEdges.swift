@@ -223,8 +223,8 @@ enum LanePeek {
 /// which is the one thing on screen it must not cover.
 ///
 /// Square, hairlined on the inner side, no fill of its own — it reads as the
-/// wall of the window, not as a widget. Signal Orange is spent on focus and
-/// BLOCKED (see `Theme`) and a permanent orange number at both edges would spend
+/// wall of the window, not as a widget. The greens are spent on focus and
+/// BLOCKED (see `Theme`) and a permanent green number at both edges would spend
 /// it on something that is true all the time, so the count is plain text.
 @MainActor
 final class StripEdgeRail: NSView {

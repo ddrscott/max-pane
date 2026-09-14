@@ -287,7 +287,7 @@ extension PaletteController: NSTableViewDataSource, NSTableViewDelegate {
     }
 }
 
-/// Square selection in Signal Orange: a tinted band with a hard 2pt edge. The
+/// Square selection in the accent: a tinted band with a hard 2pt edge. The
 /// row itself has no corner radius, so the edge stays an edge.
 final class PaletteSelectionRowView: NSTableRowView {
     override func drawSelection(in dirtyRect: NSRect) {
@@ -303,7 +303,7 @@ final class PaletteSelectionRowView: NSTableRowView {
 
 @MainActor
 enum PaletteStyle {
-    /// `// SECTION_HEADER` with the slashes in orange — the house header.
+    /// `// SECTION_HEADER` with the slashes in the accent — the house header.
     ///
     /// `shout` is off for paths: `~/CODE/MAX-PANE/.CLAUDE/WORKTREES/AGENT-AD3B`
     /// is harder to read than the path the user typed, and a group header
@@ -340,7 +340,7 @@ enum PaletteStyle {
     /// does not. The state itself is carried by the glyph and the chip.
     static func dotColor(running: Bool) -> NSColor {
         running
-            ? NSColor(srgbRed: 0.30, green: 0.74, blue: 0.36, alpha: 1)
+            ? Theme.alive
             : NSColor(white: 0.45, alpha: 1)
     }
 
@@ -407,14 +407,14 @@ final class PaletteGroupRow: NSTableCellView {
 
         // "1 blocked" displaces "2 running" whenever it is true: the count that
         // decides whether to open a group is the one waiting on you, and it is
-        // the only thing in a header worth the accent.
+        // the only thing in a header worth the blocked green.
         let blocked = group.blocked > 0
         let running = PaletteStyle.label(
             blocked
                 ? "\(group.blocked) blocked"
                 : (group.running > 0 ? "\(group.running) running" : "none running"),
             Theme.mono(10, weight: blocked ? .bold : .medium),
-            blocked ? Theme.accent : Theme.dimText)
+            blocked ? Theme.blocked : Theme.dimText)
         running.alignment = .right
 
         for v in [path, total, running] { addSubview(v) }
@@ -515,7 +515,7 @@ final class PaletteSessionRow: NSTableCellView {
             PaletteStyle.glyphColor(t.state))
         glyph.alignment = .center
 
-        // Already on the strip: a square orange mark, never a second copy of
+        // Already on the strip: a square accent mark, never a second copy of
         // the session. The footer says what it means.
         let attached = PaletteStyle.label(
             t.isAttached ? "▪" : "", Theme.mono(10, weight: .bold), Theme.accent)
@@ -542,7 +542,7 @@ final class PaletteSessionRow: NSTableCellView {
 
         let badge = PaletteStyle.label(
             t.badgeText, Theme.mono(11, weight: t.badgeIsThroughput ? .medium : .regular),
-            t.badgeIsThroughput ? Theme.accent : Theme.dimText)
+            t.badgeIsThroughput ? Theme.working : Theme.dimText)
         badge.alignment = .right
 
         let age = PaletteStyle.label(t.ageText, Theme.mono(11), Theme.dimText)
@@ -616,7 +616,7 @@ final class PaletteSearchRow: NSTableCellView {
         let state = PaletteStyle.label(
             telemetry?.badgeText ?? "",
             Theme.mono(11, weight: .medium),
-            telemetry?.badgeIsThroughput == true ? Theme.accent : Theme.dimText)
+            telemetry?.badgeIsThroughput == true ? Theme.working : Theme.dimText)
         state.alignment = .right
 
         let age = PaletteStyle.label(telemetry?.ageText ?? "", Theme.mono(11), Theme.dimText)
@@ -844,7 +844,7 @@ final class SearchPaletteController: PaletteController {
     }
 }
 
-/// The plain row — an orange marker, a line, and where it lives. The memory
+/// The plain row — an accent marker, a line, and where it lives. The memory
 /// dashboard still lists panes this way; the palettes outgrew it.
 final class PaletteRow: NSTableCellView {
     init(glyph: String, primary: String, secondary: String) {

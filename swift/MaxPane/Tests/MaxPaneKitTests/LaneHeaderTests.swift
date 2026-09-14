@@ -90,7 +90,7 @@ private struct StubLane: LaneHeaderSource {
 struct LaneHeaderModelTests {
     /// The header's one spare column carries both structural facts about a
     /// lane. They have to stay legible together, and the dock's mode has to be
-    /// readable without a colour — Signal Orange is spent elsewhere.
+    /// readable without a colour — the greens are spent elsewhere.
     @Test("the markers say which edge, at whose expense, and whether it is kept")
     func markerGlyphs() {
         func marker(_ dock: Dock?, keepLive: Bool = false) -> String {
@@ -241,8 +241,19 @@ struct LaneHeaderRenderTests {
 
         // The pair that has to be distinguishable at a glance is the first
         // two: a blocked lane nobody is looking at, and a focused lane with
-        // nothing to say. Both are Signal Orange somewhere.
+        // nothing to say. Both are green somewhere (ADR-0015), so the sheet
+        // also has each state focused and not.
         let cases: [(String, Lane, SessionTelemetry?, Bool)] = [
+            ("blocked-focused", lane(title: "Latest commit changes",
+                                     root: "/Users/spierce/code/trifecta-discovery"),
+             SessionTelemetry(sessionId: "a", title: "Latest commit changes",
+                              cwd: "/Users/spierce/code/trifecta-discovery", command: "claude",
+                              state: .blocked,
+                              lastActivity: Date().addingTimeInterval(-90)), true),
+            ("working-focused", lane(title: "trifecta ask", root: "/Users/spierce/code/trifecta-discovery"),
+             SessionTelemetry(sessionId: "c", cwd: "/Users/spierce/code/trifecta-discovery",
+                              command: "claude", state: .working, bytesPerSecond: 1740,
+                              lastActivity: Date()), true),
             ("blocked-unfocused", lane(title: "Latest commit changes",
                                        root: "/Users/spierce/code/trifecta-discovery"),
              SessionTelemetry(sessionId: "a", title: "Latest commit changes",

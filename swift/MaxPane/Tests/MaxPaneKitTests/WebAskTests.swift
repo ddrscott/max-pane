@@ -247,7 +247,7 @@ struct ByteSizeTests {
     }
 }
 
-/// Which lane the status bar's orange count sends you to next.
+/// Which lane the status bar's bright count sends you to next.
 @MainActor
 @Suite("the asking registry")
 struct WebAskCenterTests {

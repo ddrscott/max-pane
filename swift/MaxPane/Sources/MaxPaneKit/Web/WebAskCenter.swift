@@ -14,7 +14,7 @@ import Foundation
 /// terminal you are typing in. It raises a signal and waits to be clicked.
 ///
 /// The signal is the one this app already has for *this one needs you*: the
-/// status bar's Signal Orange count, beside `N BLOCKED`, which is the same
+/// status bar's bright green count, beside `N BLOCKED`, which is the same
 /// sentence about an agent. `next()` walks the queue oldest-first so clicking
 /// it repeatedly visits every waiting lane exactly once and comes back round.
 @MainActor

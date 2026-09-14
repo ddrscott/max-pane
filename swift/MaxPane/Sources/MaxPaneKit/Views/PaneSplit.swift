@@ -276,8 +276,8 @@ enum PaneSplit {
 /// cards. A split lane reads as one column with a hard rule across it, which is
 /// the thing the owner asked to be able to *see*.
 ///
-/// It brightens to the accent under the pointer. That is the one use of Signal
-/// Orange in this file and it is deliberately the same one `LaneHeaderMenuButton`
+/// It brightens to the accent under the pointer. That is the one use of the
+/// accent in this file and it is deliberately the same one `LaneHeaderMenuButton`
 /// already makes: a momentary "this responds to you" that is gone the instant
 /// the pointer leaves. The accent's reserved meanings — focus, and blocked —
 /// are both *states a lane is in*, and nothing here outlives the pointer.
@@ -341,7 +341,7 @@ final class PaneDividerView: NSView {
     /// When the **view** travels under a stationary pointer it delivers the
     /// `mouseEntered` and then, often, no matching `mouseExited` at all — so the
     /// seam stays lit for the rest of the session. Measured: a ⇧⌘D whose seam
-    /// swept 340 pt past a parked cursor left an orange rule across the lane
+    /// swept 340 pt past a parked cursor left an accent rule across the lane
     /// two and a half seconds later, and it was still there after the next
     /// split. A drag or a window resize could always do this; the entrance does
     /// it every time, which is what turned a latent bug into a visible one.
@@ -410,9 +410,9 @@ final class PaneDividerView: NSView {
 
 /// Focus, drawn around the pane that has it.
 ///
-/// It used to be a 2pt Signal Orange border around the whole *lane*, with a
+/// It used to be a 2pt accent border around the whole *lane*, with a
 /// short tick inside marking the pane — and the owner's screenshot is why it is
-/// not any more: a two-pane lane outlined in orange, keystrokes going to the
+/// not any more: a two-pane lane outlined in the accent, keystrokes going to the
 /// bottom pane, and a 14 pt tick the only thing on screen that disagreed. On a
 /// strip of agent CLIs that is not an aesthetic complaint; a stray `y` answers a
 /// prompt nobody read.

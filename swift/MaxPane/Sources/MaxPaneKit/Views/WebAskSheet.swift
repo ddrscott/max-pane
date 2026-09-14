@@ -74,7 +74,7 @@ enum AskOutcome: Equatable {
 /// the same run, or putting the origin after the message, is how a dialog
 /// becomes a place to type a password into.
 ///
-/// Signal Orange appears exactly twice: the `//` of the section header, and the
+/// The accent appears exactly twice: the `//` of the section header, and the
 /// outline on the default button — which is the accent's existing meaning
 /// everywhere else in the app, *the keyboard is here*.
 @MainActor
@@ -159,7 +159,7 @@ final class WebAskSheet: NSView {
         row.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
     }
 
-    /// `// ASKS` — the house section header, with the slashes in Signal Orange.
+    /// `// ASKS` — the house section header, with the slashes in the accent.
     private func headerLabel() -> NSTextField {
         let field = NSTextField(labelWithString: "")
         let text = NSMutableAttributedString(string: "// ", attributes: [

@@ -563,11 +563,11 @@ final class WebPopupBar: NSView {
         Theme.laneBackground.setFill()
         bounds.fill()
         // The hairline between the bar and the page, and the load on it —
-        // `Theme.flowing`, as in the chrome bar, because it is the same news.
+        // `Theme.working`, as in the chrome bar, because it is the same news.
         Theme.laneBorder.setFill()
         NSRect(x: 0, y: 0, width: bounds.width, height: Theme.borderWidth).fill()
         if progress > 0.001, progress < 0.999 {
-            Theme.flowing.setFill()
+            Theme.working.setFill()
             NSRect(x: 0, y: 0, width: bounds.width * CGFloat(progress), height: 2).fill()
         }
 

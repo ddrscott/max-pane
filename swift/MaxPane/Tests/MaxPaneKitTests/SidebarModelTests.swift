@@ -763,13 +763,16 @@ struct LucideIconTests {
     @Test("the drawn icon is the caller's colour, not the SVG's")
     func takesTheCallersInk() throws {
         IconImage.resetCacheForTesting()
-        let orange = try #require(IconImage.make(.globe, points: 16, colour: Theme.accent))
-        let rep = try #require(orange.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+        let green = try #require(IconImage.make(.globe, points: 16, colour: Theme.accent))
+        let rep = try #require(green.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
         var sawAccent = false
         for x in 0..<rep.pixelsWide where !sawAccent {
             for y in 0..<rep.pixelsHigh {
                 guard let c = rep.colorAt(x: x, y: y), c.alphaComponent > 0.9 else { continue }
-                if c.redComponent > 0.7 && c.blueComponent < 0.3 { sawAccent = true; break }
+                // Either appearance's accent: green well above red and blue.
+                if c.greenComponent > 0.4 && c.redComponent < 0.3 && c.blueComponent < 0.45 {
+                    sawAccent = true; break
+                }
             }
         }
         #expect(sawAccent, "the globe drew in the SVG's black instead of the accent")

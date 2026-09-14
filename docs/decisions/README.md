@@ -19,6 +19,7 @@ implemented (PRD §0.7).
 | [0012](0012-in-house-toml-line-editor.md) | `config.toml` is edited by a line editor in Swift, not `toml_edit` over uniffi | Accepted |
 | [0013](0013-web-popups-are-dialogs.md) | A web page's popup is a dialog over the window, never a lane (**amends PRD §9**) | Accepted |
 | [0014](0014-web-full-screen-fills-the-pane.md) | A page's full screen fills its pane; ⇧ or a second request goes to the display | Accepted |
+| [0015](0015-one-green-family.md) | One green family instead of Signal Orange; BLOCKED is the brightest green and pulses (**overrides the owner's global accent for this project**) | Accepted |
 
 Each ADR states the decision, what evidence decided it (usually a spike, by
 number), what was rejected and why, and what would make us revisit.

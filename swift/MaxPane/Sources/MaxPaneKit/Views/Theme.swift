@@ -8,12 +8,54 @@ import AppKit
 /// a column with a hard edge, and status is carried by content, not by a bent
 /// stripe.
 ///
-/// The greys are dynamic, one value per appearance; the accent is one value in
-/// both. Paint a layer with `layerBackgroundColor` / `layerBorderColor`, never
+/// **One green family, no orange** (ADR-0015, `docs/decisions/0015-one-green-family.md`).
+/// The owner's global signature is Signal Orange; this project overrides it on
+/// his instruction, so do not "restore" it. Every highlight and every state is a
+/// green, told apart by role and form rather than by hue:
+///
+/// - `working` — muted. A filled status square, a state chip, a moving rate.
+/// - `accent` — mid. Focus outlines, default buttons, `//` slashes, the `$`
+///   marker, selection, drop indicators, the cursor, the ⌘P flash.
+/// - `blocked` — the loudest, filled, and pulsing (`BlockedPulse`).
+///
+/// Every colour is dynamic, one value per appearance. The dark values are the
+/// ticket's; on a light ground those shades are unreadable (`#4ADE80` is 1.7:1 on
+/// white), so light mode keeps the *order of loudness* — contrast and saturation
+/// — rather than the order of lightness. Paint a layer with
+/// `layerBackgroundColor` / `layerBorderColor`, never
 /// `layer.backgroundColor = x.cgColor` — that is a snapshot of whichever mode
 /// was current, and it stays wrong after a switch. See `Appearance`.
 enum Theme {
-    static let accent = NSColor(srgbRed: 0xE8 / 255, green: 0x5D / 255, blue: 0x00 / 255, alpha: 1)
+    /// Mid green: `#22C55E` dark (7.5:1 on a lane), `#15773A` light (5.5:1 on a
+    /// lane, 4.9:1 on the strip — `#15803D` was 4.4:1 there, under the bar).
+    static let accent = green(dark: 0x22C55E, light: 0x15773A)
+
+    /// Muted green: `#16A34A` dark (5.2:1), a greyed `#4D7C5F` light (4.7:1).
+    static let working = green(dark: 0x16A34A, light: 0x4D7C5F)
+
+    /// The brightest green: `#4ADE80` dark (9.8:1), and in light the strongest
+    /// ink of the three, `#166534` (7.0:1). Always carried by a filled mark and,
+    /// motion permitting, a slow pulse — see `BlockedPulse`.
+    static let blocked = green(dark: 0x4ADE80, light: 0x166534)
+
+    /// Text on a filled `blocked` mark: `#052E16` on `#4ADE80` is 8.6:1, white on
+    /// `#166534` is 7.1:1.
+    static let onBlocked = green(dark: 0x052E16, light: 0xFFFFFF)
+
+    /// Alive and quiet: a running session with nothing to say. Quieter than
+    /// `working`, so a session actually producing output still reads louder.
+    static let alive = green(dark: 0x2E8C4F, light: 0x6B9A7A)
+
+    private static func green(dark: UInt32, light: UInt32) -> NSColor {
+        NSColor(name: nil) { appearance in
+            let hex = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+            return NSColor(
+                srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+                green: CGFloat((hex >> 8) & 0xFF) / 255,
+                blue: CGFloat(hex & 0xFF) / 255,
+                alpha: 1)
+        }
+    }
 
     static let laneBackground = NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
@@ -40,8 +82,8 @@ enum Theme {
     /// Stronger than `laneBorder` on purpose: a lane boundary separates two
     /// things at the same depth, and this one separates a thing in front from a
     /// thing behind. Same hue, more of it — the difference is legible without
-    /// spending a second colour, and Signal Orange stays on focus and BLOCKED
-    /// where a dock that is on screen all day would have drowned it.
+    /// spending a colour, and the greens stay on focus and state where a dock
+    /// that is on screen all day would have drowned them.
     static let dockEdge = NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? NSColor(white: 0.40, alpha: 1)
@@ -99,26 +141,17 @@ enum Theme {
             ?? NSFont.monospacedSystemFont(ofSize: size, weight: weight)
     }
 
-    /// Throughput and other "this is moving" readouts.
-    ///
-    /// Green, not the accent. Signal Orange has to mean one thing — *this one
-    /// needs you* — and a strip of ten lanes where the byte counters are all
-    /// orange is a strip where BLOCKED arrives and changes nothing. The accent
-    /// is now spent on exactly two things: focus, and blocked. They are told
-    /// apart by form, not hue — focus is a hairline around a column, blocked is
-    /// a filled chip inside it.
-    static let flowing = NSColor(srgbRed: 0x22 / 255, green: 0xc5 / 255, blue: 0x5e / 255, alpha: 1)
-
     /// The colour of an agent-state chip.
     ///
-    /// RelayTTY renders BLOCKED in `#E85D00` — which is, by coincidence or good
-    /// taste, exactly Signal Orange. So the most important signal in the app
-    /// already arrives in the house accent, and the other two stay muted so it
-    /// keeps that meaning.
+    /// Three greens that stay tellable apart because they differ in more than
+    /// shade: focus (`accent`) is an *outline* around a pane, working a muted
+    /// *filled* square, BLOCKED the loudest, filled and *moving*. RelayTTY draws
+    /// BLOCKED in orange; this app does not follow it there. DONE stays slate
+    /// and EXITED dim, so neither competes with the greens.
     static func agentStateColor(_ state: AgentState) -> NSColor {
         switch state {
-        case .blocked: return accent
-        case .working: return NSColor(srgbRed: 0x22 / 255, green: 0xc5 / 255, blue: 0x5e / 255, alpha: 1)
+        case .blocked: return blocked
+        case .working: return working
         case .done: return NSColor(srgbRed: 0x94 / 255, green: 0xa3 / 255, blue: 0xb8 / 255, alpha: 1)
         case .exited: return dimText
         case .idle, .unknown: return .clear

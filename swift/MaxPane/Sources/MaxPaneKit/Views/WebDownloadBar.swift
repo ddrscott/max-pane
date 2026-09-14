@@ -17,8 +17,8 @@ import AppKit
 ///
 /// Rows are 20 pt and there are at most three; a fourth download collapses the
 /// oldest finished row rather than growing the bar into the page. The progress
-/// hairline is `Theme.flowing` green — the app's existing "bytes are moving" —
-/// and not Signal Orange, which is spent on focus and attention.
+/// hairline is `Theme.working` green — the app's existing "bytes are moving" —
+/// and not the accent, which is spent on focus.
 @MainActor
 final class WebDownloadBar: NSView {
     static let rowHeight: CGFloat = 20
@@ -106,9 +106,9 @@ private final class DownloadRowView: NSView {
 
         switch job.state {
         case .running:
-            glyph.image = IconImage.make(.download, points: 12, colour: Theme.flowing)
+            glyph.image = IconImage.make(.download, points: 12, colour: Theme.working)
         case .finished:
-            glyph.image = IconImage.make(.check, points: 12, colour: Theme.flowing)
+            glyph.image = IconImage.make(.check, points: 12, colour: Theme.working)
         case .failed:
             glyph.image = IconImage.make(.x, points: 12, colour: WebChromeBar.warning)
         }
@@ -158,7 +158,7 @@ private final class DownloadRowView: NSView {
         // A 2 pt bar along the bottom of the row rather than a spinner: it is
         // the only readout that answers "will this be a while", and in a mono
         // row it is free — no glyph, no layout, no width that changes.
-        Theme.flowing.withAlphaComponent(0.5).setFill()
+        Theme.working.withAlphaComponent(0.5).setFill()
         NSRect(x: 0, y: 0, width: bounds.width * CGFloat(fraction), height: 2).fill()
     }
 }
