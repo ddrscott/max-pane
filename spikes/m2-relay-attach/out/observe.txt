@@ -1,9 +1,0 @@
-## Read-only attach to a real, live session (a46eee7b) — no RESIZE, no input
-
-- command: /bin/zsh 
-- PTY size on disk: 73x62, title: ✳ Github project management improvements, agentState: idle
-- handshake 69.247 ms; inbound RESIZE says 73x62; replay wire 25192 B -> plain 262111 B (gz=yes); inflate 0.214 ms
-- rendered 62 rows; longest line 73 cells; lines wider than 50 cells: 44/62
-- screen dump: /Users/spierce/code/max-pane/spikes/m2-relay-attach/out/observed-a46eee7b.txt
-- raw replay bytes (262111 B) saved for the narrow-lane render test: /Users/spierce/code/max-pane/spikes/m2-relay-attach/out/capture-real.bin
-- SwiftTerm scrollback: pulled 125 lines, 5725 chars

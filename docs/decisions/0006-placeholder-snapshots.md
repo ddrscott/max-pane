@@ -2,7 +2,7 @@
 
 **Status:** Accepted · 2026-09-12
 **Decides:** PRD §14 — "Snapshot format/resolution for placeholders."
-**Evidence:** [`spikes/placeholder-snapshots`](../../spikes/placeholder-snapshots)
+**Evidence:** `spikes/placeholder-snapshots`, removed from the tree in the commit after d66c659 and readable there
 (re-runnable; numbers below are from this machine).
 
 ## Decision

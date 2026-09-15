@@ -1,6 +1,0 @@
-# Every run writes ~40 PNGs. The numbers are in results.json; one scale's worth
-# of pictures is kept so the tables have something to squint at, and ./run.sh
-# regenerates the rest.
-out/**/*.png
-!out/*/s0.40-*.png
-!out/*/terminal-full.png
