@@ -48,6 +48,32 @@ export PATH="/opt/homebrew/opt/rustup/bin:$PATH"   # or: source scripts/env.sh
 
 Everything in `scripts/` does this for you.
 
+## Requirements
+
+Nothing from RelayTTY is compiled into MaxPane. The app is a third-party client
+of a daemon that has to be installed separately, and that is the one thing a
+fresh machine needs before the app will start a session:
+
+```sh
+npm install -g relay-tty
+```
+
+**relay-tty 1.22.0 or newer**, which is the release that added agent state.
+An older `relay-pty-host` starts sessions fine and never reports BLOCKED, with
+nothing anywhere saying why.
+
+At launch the app finds `relay-pty-host` by walking up from wherever `relay`
+resolves on your login shell's `PATH` (an npm global, or a source checkout),
+then `/usr/local/bin`, then `PATH` itself. When more than one turns up it takes
+the newest that has the agent-state classifier. `relayPtyHostPath` in the
+config file names one outright and skips the search. Sessions, sockets and
+titles all live in `~/.relay-tty`, which the daemon owns and the app only
+reads, so a session started from `relay` in a terminal and one started from
+⌘O are the same kind of thing.
+
+Building needs the toolchain below. Running the built app needs only macOS 14
+and relay-tty.
+
 ## Build
 
 ```sh
