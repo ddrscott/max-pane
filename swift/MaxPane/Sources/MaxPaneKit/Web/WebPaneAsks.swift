@@ -380,7 +380,7 @@ extension WebPaneController {
             // replaced, which is both halves of the bug at once.
             return decisionHandler(.cancel)
         }
-        decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow)
+        decisionHandler(navigationAction.shouldPerformDownload ? .download : .allowWithoutAppLink)
     }
 
     /// A new web lane right of this one, by the same path `target=_blank`
@@ -638,4 +638,22 @@ extension WebPaneController {
 
     /// True while a page in this pane is waiting on a person.
     var isAsking: Bool { !askQueue.isEmpty }
+}
+
+
+extension WKNavigationActionPolicy {
+    /// `.allow`, minus WebKit's app-link check.
+    ///
+    /// On a plain `.allow`, WebKit asks LaunchServices whether some installed
+    /// app has claimed the destination domain before loading it. A Safari
+    /// "Add to Dock" web app claims its whole site, so with one made for
+    /// youtube.com every click from another page to a YouTube link left the
+    /// lane and opened the Dock shortcut instead. A browser does not lose
+    /// pages to whatever the user has pinned.
+    ///
+    /// WebKit exposes this as `_WKNavigationActionPolicyAllowWithoutTryingAppLink`,
+    /// defined as `WKNavigationActionPolicyAllow + 2`. It is not in the public
+    /// header, but the value has been stable since it was added and the
+    /// WebKit-based browsers on macOS return it for the same reason.
+    static let allowWithoutAppLink = WKNavigationActionPolicy(rawValue: WKNavigationActionPolicy.allow.rawValue + 2)!
 }
