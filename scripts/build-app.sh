@@ -49,7 +49,8 @@ cp "$BIN" "$APP/Contents/MacOS/MaxPane"
 cp swift/MaxPane/Resources/Info.plist "$APP/Contents/Info.plist"
 # CFBundleIconFile names this without the extension. Dock and Finder read it
 # from the bundle, not from the plist, so a missing file here is a generic
-# icon and no error anywhere.
+# icon and no error anywhere. The .icns is generated from AppIcon-source.png
+# by scripts/gen-app-icon.py; edit the PNG, re-run that, commit both.
 cp swift/MaxPane/Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 # A throwaway bundle gets a throwaway bundle id.

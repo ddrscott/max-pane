@@ -72,6 +72,15 @@ generated module **must** be called `laned_coreFFI` — the generated Swift does
 `#if canImport(laned_coreFFI)`, and a different name compiles cleanly with no FFI
 symbols at all, which fails at link time in a thoroughly unhelpful way.
 
+### The app icon
+
+`swift/MaxPane/Resources/AppIcon.icns` is generated, not hand-made. The master
+is `AppIcon-source.png` next to it: a full-bleed 1024px square. Run
+`./scripts/gen-app-icon.py` after changing the PNG and commit both files. The
+script masks the artwork to Apple's squircle on a transparent canvas, because
+macOS 26 clips a square icon to its own squircle and paints the glass rim over
+the cut, which shows as a pale ring and light corners.
+
 ## Test
 
 ```sh
