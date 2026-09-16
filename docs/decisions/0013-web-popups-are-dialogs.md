@@ -70,7 +70,7 @@ page served from two loopback ports:
    - ⌘W closes the dialog.
    - ⌘R and ⇧⌘R reload the popup.
    - ⌥⌘L fills the popup's form.
-   - ⌘L, zoom, ⌘D, ⇧⌘L and close-lane do nothing.
+   - ⌘L, zoom, Keep This Page, ⇧⌘L and close-lane do nothing.
    - Commands about the strip reach the menu, as they do from a pane.
 6. **The popup's questions go through its own delegate, not the pane's.** A
    pane's ask handling is an extension of `WebPaneController`, bound to that

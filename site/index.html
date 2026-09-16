@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>Max Pane</title>
+<meta name="description" content="Terminals and web pages as columns on one infinite strip. A fullscreen macOS app for watching several coding agents run while you read what they cite.">
+<meta property="og:title" content="Max Pane">
+<meta property="og:description" content="Terminals and web pages as columns on one infinite strip. A fullscreen macOS app for watching several coding agents run while you read what they cite.">
+<meta property="og:image" content="img/hero.png">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23121212'/%3E%3Crect x='2' y='2' width='3' height='12' fill='%2322C55E'/%3E%3Crect x='6.5' y='2' width='3' height='12' fill='%234ADE80'/%3E%3Crect x='11' y='2' width='3' height='12' fill='%2316A34A'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+<style>
+  /* Palette: Theme.swift grounds, ADR-0015 greens. Dark first; light values
+     are the app's own light greens, not tinted dark ones. */
+  :root {
+    --strip: #121212;      /* NSColor(white: 0.07) */
+    --lane:  #1C1C1C;      /* NSColor(white: 0.11) */
+    --lane-border: #383838;/* NSColor(white: 0.22) */
+    --edge:  #666666;      /* dockEdge 0.40 */
+    --ink:   #E6E6E6;
+    --ink-dim: #9A9A9A;
+    --working: #16A34A;
+    --accent:  #22C55E;
+    --blocked: #4ADE80;
+    --on-blocked: #052E16;
+    --on-accent: #052E16;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --strip: #F0F0F0;      /* 0.94 */
+      --lane:  #FCFCFC;      /* 0.99 */
+      --lane-border: #D9D9D9;/* 0.85 */
+      --edge:  #9E9E9E;      /* 0.62 */
+      --ink:   #1A1A1A;
+      --ink-dim: #5C5C5C;
+      --working: #4D7C5F;
+      --accent:  #15773A;
+      --blocked: #166534;
+      --on-blocked: #FFFFFF;
+      --on-accent: #FFFFFF;
+      color-scheme: light;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--strip);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 17px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; text-underline-offset: 3px; }
+  code, kbd, pre { font-family: var(--mono); }
+  kbd {
+    font-size: 0.9em;
+    border: 1px solid var(--edge);
+    padding: 0 0.35em;
+    color: var(--ink);
+    white-space: nowrap;
+  }
+  ::selection { background: var(--accent); color: var(--on-accent); }
+
+  .wrap {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding-inline: 20px;
+  }
+
+  /* ---------- nav ---------- */
+  .nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding-block: 18px;
+    border-bottom: 1px solid var(--lane-border);
+    font-family: var(--mono);
+    font-size: 14px;
+  }
+  .nav .mark {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .nav .mark svg { display: block; }
+  .nav .links { display: flex; gap: 22px; }
+  .nav .links a { color: var(--ink-dim); }
+  .nav .links a:hover { color: var(--ink); }
+
+  /* ---------- hero ---------- */
+  .hero { padding-block: 48px 28px; }
+  .hero h1 {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: clamp(30px, 4.4vw, 56px);
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    max-width: 18em;
+    margin: 0 0 22px;
+  }
+  .hero h1 .slash { color: var(--accent); }
+  .lede {
+    font-size: clamp(20px, 2.6vw, 28px);
+    line-height: 1.3;
+    max-width: 22em;
+    margin: 0 0 14px;
+    font-weight: 500;
+  }
+  .whofor {
+    color: var(--ink-dim);
+    max-width: 38em;
+    margin: 0 0 30px;
+    font-size: 18px;
+  }
+  .cta { display: flex; flex-wrap: wrap; align-items: center; gap: 18px 28px; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--mono);
+    font-size: 16px;
+    font-weight: 500;
+    padding: 14px 22px;
+    background: var(--accent);
+    color: var(--on-accent);
+    border: 2px solid var(--accent);
+    white-space: nowrap;
+  }
+  .btn .p { opacity: 0; width: 0; overflow: hidden; transition: opacity 120ms ease-out, width 120ms ease-out; }
+  .btn:hover, .btn:focus-visible { text-decoration: none; }
+  .btn:hover .p, .btn:focus-visible .p { opacity: 1; width: 0.65em; }
+  .btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .cta .ghost {
+    font-family: var(--mono);
+    font-size: 15px;
+    color: var(--ink);
+    border-bottom: 1px solid var(--edge);
+    padding-bottom: 2px;
+  }
+  .cta .ghost:hover { text-decoration: none; border-color: var(--accent); }
+  .reqs {
+    margin: 18px 0 0;
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--ink-dim);
+  }
+  .reqs .sep { margin-inline: 0.2em; color: var(--edge); }
+
+  /* ---------- shots ---------- */
+  .shot {
+    display: block;
+    margin: 0;
+    background: var(--lane);
+    border: 1px solid var(--lane-border);
+  }
+  .shot img {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 10;
+    object-fit: cover;
+    color: var(--ink-dim);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 12px;
+  }
+  .shot figcaption {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-dim);
+    padding: 8px 12px;
+    border-top: 1px solid var(--lane-border);
+  }
+  /* Portrait crops (a single lane, the sidebar) keep their own shape; the
+     16:10 frame above would crop the sidebar's BLOCKED row out of the shot
+     that exists to show it. */
+  .shot.tall img { width: auto; max-width: 100%; max-height: 720px; aspect-ratio: auto; object-fit: contain; margin: 0 auto; }
+  .hero-shot { margin-top: 48px; }
+
+  /* ---------- section headers ---------- */
+  .sec { padding-block: 72px; border-top: 1px solid var(--lane-border); }
+  .sec > .h {
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    color: var(--ink-dim);
+    margin: 0 0 36px;
+  }
+  .sec > .h .s { color: var(--accent); }
+
+  /* ---------- feature blocks ---------- */
+  .feat {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: 40px 56px;
+    align-items: start;
+    padding-block: 36px;
+  }
+  .feat + .feat { border-top: 1px solid var(--lane-border); }
+  .feat:nth-child(even of .feat) .text { order: 2; }
+  .feat .n {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--accent);
+    margin: 0 0 8px;
+  }
+  .feat h2 {
+    font-family: var(--mono);
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+    margin: 0 0 14px;
+  }
+  .feat p { margin: 0 0 12px; color: var(--ink); }
+  .feat p.dim { color: var(--ink-dim); font-size: 15px; }
+  .feat .row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-top: 10px; }
+
+  /* the BLOCKED mark, breathing as it does in the app (ADR-0015) */
+  .chip {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 2px 7px;
+    background: var(--blocked);
+    color: var(--on-blocked);
+  }
+  .chip.pulse { animation: breathe 1.8s ease-in-out infinite; }
+  @keyframes breathe { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+  @media (prefers-reduced-motion: reduce) { .chip.pulse { animation: none; } }
+
+  .sq { display: inline-block; width: 10px; height: 10px; vertical-align: -1px; margin-right: 6px; }
+  .sq.working { background: var(--working); }
+  .sq.grey { background: var(--edge); }
+  .sq.blocked { background: var(--blocked); }
+  .legend { font-family: var(--mono); font-size: 13px; color: var(--ink-dim); display: flex; flex-wrap: wrap; gap: 6px 22px; }
+
+  /* the ⌘O line, as a mock */
+  .term {
+    font-family: var(--mono);
+    font-size: 14px;
+    background: var(--lane);
+    border: 1px solid var(--lane-border);
+    padding: 14px 16px;
+    margin: 0;
+    overflow-x: auto;
+    line-height: 1.7;
+  }
+  .term .ps { color: var(--accent); }
+  .term .c { color: var(--ink-dim); }
+  .term .cur { display: inline-block; width: 0.6em; height: 1.05em; background: var(--accent); vertical-align: -0.15em; }
+
+  /* ---------- install ---------- */
+  .steps { display: block; }
+  .step > div, .feat > *, .wrap { min-width: 0; }
+  .term { max-width: 100%; }
+  .step {
+    display: grid;
+    grid-template-columns: 56px minmax(0, 1fr);
+    gap: 0 20px;
+    padding-block: 28px;
+    border-top: 1px solid var(--lane-border);
+  }
+  .step:last-child { border-bottom: 1px solid var(--lane-border); }
+  .step .k {
+    font-family: var(--mono);
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1;
+  }
+  .step h3 { font-family: var(--mono); font-size: 18px; margin: 4px 0 10px; }
+  .step p { margin: 0 0 12px; }
+  .step p:last-child { margin-bottom: 0; }
+  .step .term { margin-block: 12px; }
+  .req-table { font-family: var(--mono); font-size: 14px; border-collapse: collapse; margin-top: 32px; width: 100%; max-width: 640px; }
+  .req-table td { border-top: 1px solid var(--lane-border); padding: 10px 0; vertical-align: top; }
+  .req-table tr:last-child td { border-bottom: 1px solid var(--lane-border); }
+  .req-table td:first-child { color: var(--ink-dim); width: 12em; }
+
+  /* ---------- footer ---------- */
+  .foot {
+    border-top: 1px solid var(--lane-border);
+    padding-block: 32px 48px;
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--ink-dim);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 28px;
+    justify-content: space-between;
+  }
+  .foot a { color: var(--ink-dim); }
+  .foot a:hover { color: var(--ink); }
+  .foot .by { color: var(--ink); }
+
+  /* ---------- narrow ---------- */
+  @media (max-width: 760px) {
+    body { font-size: 16px; }
+    .hero { padding-block: 44px 28px; }
+    .whofor { font-size: 16px; }
+    .feat { grid-template-columns: minmax(0, 1fr); gap: 20px; padding-block: 28px; }
+    .feat:nth-child(even of .feat) .text { order: 0; }
+    .sec { padding-block: 48px; }
+    .step { grid-template-columns: 40px minmax(0, 1fr); gap: 0 12px; }
+    .step .k { font-size: 22px; }
+    .nav .links { gap: 16px; }
+    .btn { width: 100%; justify-content: center; }
+    .req-table td:first-child { width: 9em; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <nav class="nav" aria-label="Site">
+    <a class="mark" href="#top">
+      <svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true"><rect width="16" height="16" fill="var(--strip)"/><rect x="1" y="1" width="3.5" height="14" fill="var(--working)"/><rect x="6.25" y="1" width="3.5" height="14" fill="var(--blocked)"/><rect x="11.5" y="1" width="3.5" height="14" fill="var(--accent)"/></svg>
+      max-pane
+    </a>
+    <div class="links">
+      <a href="#install">Install</a>
+      <a href="https://github.com/ddrscott/max-pane/blob/main/CHANGELOG.md">Changelog</a>
+      <a href="https://github.com/ddrscott/max-pane">GitHub</a>
+    </div>
+  </nav>
+
+  <header class="hero" id="top">
+    <h1>Run several Claude Codes and know which one needs you.</h1>
+    <p class="lede">One fullscreen window on your Mac, the terminals and the pages they cite side by side, and a sidebar that says who is waiting.</p>
+    <div class="cta">
+      <a class="btn" href="https://github.com/ddrscott/max-pane/releases/download/v0.6.0/MaxPane-0.6.0.dmg"><span class="p" aria-hidden="true">$</span>Download for macOS</a>
+      <a class="ghost" href="https://github.com/ddrscott/max-pane">Source on GitHub →</a>
+    </div>
+    <p class="reqs">Apple silicon · macOS 14+ <span class="sep">·</span> free, MIT <span class="sep">·</span> v0.6.0</p>
+
+    <figure class="shot hero-shot">
+      <img src="img/hero.png" width="3456" height="2170" alt="Max Pane: agent sessions and the pages they cite, side by side in portrait lanes" fetchpriority="high">
+    </figure>
+  </header>
+
+  <section class="sec" id="features">
+    <p class="h"><span class="s">//</span> WHAT_IT_DOES</p>
+
+    <article class="feat">
+      <div class="text">
+        <p class="n">01</p>
+        <h2>Lanes, not windows.</h2>
+        <p>A terminal and a web page are peers. Each is a portrait column on one horizontal strip; wide content scrolls inside the lane, and the lane never widens past its max. Lanes never overlap.</p>
+        <p class="dim">Three sizes, <code>s | m | xl</code>, in every lane's menu; <kbd>⌘\</kbd> cycles them. <kbd>⌘D</kbd> splits a pane to the right, the way iTerm does. Drag a lane by its header onto any edge of another, or pick a pane up and drop it in a different column.</p>
+      </div>
+      <figure class="shot tall">
+        <img src="img/web-pane.png" width="1340" height="2010" alt="A terminal lane beside a web page lane, both portrait columns on the strip" loading="lazy">
+      </figure>
+    </article>
+
+    <article class="feat">
+      <div class="text">
+        <p class="n">02</p>
+        <h2>One lane per agent session.</h2>
+        <p>A sidebar lists every running session and says which one is <span class="chip pulse">BLOCKED</span> on a prompt. That one is the brightest green, and it pulses. Click it and you are there.</p>
+        <p class="dim">One green family for status, so the eye has one thing to find. BLOCKED breathes between full strength and 60 % every 1.8 s and never goes out; with Reduce Motion on it holds steady. The <code>claude</code> running inside a pane saves its own transcript, because panes never inherit the session markers of whatever launched the app.</p>
+        <div class="legend" aria-hidden="true">
+          <span><span class="sq grey"></span>at rest</span>
+          <span><span class="sq working"></span>working</span>
+          <span><span class="sq blocked"></span>blocked</span>
+        </div>
+      </div>
+      <figure class="shot tall">
+        <img src="img/sidebar.png" width="1380" height="2170" alt="The session sidebar with one row marked BLOCKED in the brightest green" loading="lazy">
+      </figure>
+    </article>
+
+    <article class="feat">
+      <div class="text">
+        <p class="n">03</p>
+        <h2><kbd>⌘O</kbd> starts anything.</h2>
+        <p>A command, a URL, a page you have kept, a session that is already running somewhere else. One key, because "something goes to the right of this" is a single decision.</p>
+        <p class="dim"><kbd>⌘O</kbd> runs a command line rather than pretending to be a shell. <kbd>⌘</kbd>-click a file path in a terminal to open it in your editor. Every key is in a keymap file, and Esc does something at last.</p>
+      </div>
+      <pre class="term" aria-label="The ⌘O prompt"><span class="ps">$</span> claude<span class="cur"></span>
+<span class="c">  ↩  opens a new lane to the right of this one</span>
+<span class="ps">$</span> https://docs.anthropic.com/
+<span class="c">  ↩  a web lane, same strip, same key</span></pre>
+    </article>
+
+    <article class="feat">
+      <div class="text">
+        <p class="n">04</p>
+        <h2><kbd>⌘G</kbd> is the gallery.</h2>
+        <p>Every lane on one screen, live. <kbd>⌘G</kbd> again goes back. Lanes can be dragged in the gallery too, and the layout is also one click in the toolbar.</p>
+        <p class="dim">On the strip, the focused lane centres itself when fewer than three fit, first and last included, so the carousel never leaves you at the edge.</p>
+      </div>
+      <figure class="shot">
+        <img src="img/gallery.png" width="3456" height="2170" alt="The gallery layout: every lane on one screen at once" loading="lazy">
+      </figure>
+    </article>
+
+    <article class="feat">
+      <div class="text">
+        <p class="n">05</p>
+        <h2>It keeps your things.</h2>
+        <p>History with no limit, in a window with room for it; another browser's history imports interleaved by date. Pages you star sit on a bookmark bar you can reorder. Passwords live in the Keychain and go nowhere else. Every setting is editable in Settings and stored as TOML that keeps your comments where you put them.</p>
+        <p class="dim">It follows the Mac's light and dark appearance live, terminals and web pages included, with a <code>theme</code> override in the same file.</p>
+      </div>
+      <pre class="term" aria-label="A config file excerpt"><span class="c"># ~/.config/maxpane/config.toml</span>
+<span class="c"># comments are yours, and stay where you put them</span>
+theme = "system"
+snap_to_lanes = true
+lane_default_pt = 656
+font_name = "JetBrains Mono"
+font_size = 13</pre>
+    </article>
+  </section>
+
+  <section class="sec" id="install">
+    <p class="h"><span class="s">//</span> INSTALL</p>
+    <p style="max-width:40em;margin:0 0 28px">Two things to install, because the terminal sessions are owned by a separate daemon, <a href="https://github.com/ddrscott/relay-tty">relay-tty</a>, and Max Pane attaches to it. That is also why a session already running somewhere else shows up in <kbd>⌘O</kbd>.</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="k">1</div>
+        <div>
+          <h3>Install relay-tty</h3>
+<pre class="term"><span class="ps">$</span> curl -fsSL https://raw.githubusercontent.com/ddrscott/relay-tty/main/install.sh | bash</pre>
+          <p>Or, if you already have Node 18 or newer, <code>npm i -g relay-tty</code>. Max Pane needs 1.22.0 or newer.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="k">2</div>
+        <div>
+          <h3>Download the DMG</h3>
+          <p><a class="btn" href="https://github.com/ddrscott/max-pane/releases/download/v0.6.0/MaxPane-0.6.0.dmg"><span class="p" aria-hidden="true">$</span>Download for macOS</a></p>
+          <p>Open it, drag Max Pane to Applications, and open the app.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="k">3</div>
+        <div>
+          <h3>Start an agent</h3>
+          <p>Press <kbd>⌘O</kbd>, type <code>claude</code>, press <kbd>↩</kbd>. Press <kbd>⌘/</kbd> for every other shortcut.</p>
+        </div>
+      </div>
+    </div>
+
+    <table class="req-table" aria-label="Requirements">
+      <tr><td>Mac</td><td>Apple silicon, macOS 14 (Sonoma) or newer</td></tr>
+      <tr><td>relay-tty</td><td>1.22.0 or newer, installed separately as above</td></tr>
+      <tr><td>Price</td><td>Free. MIT licence. Built and used daily by one person; bugs go in <a href="https://github.com/ddrscott/max-pane/issues">Issues</a>.</td></tr>
+      <tr><td>Version</td><td>0.6.0. What it does today is in the <a href="https://github.com/ddrscott/max-pane/blob/main/CHANGELOG.md">changelog</a>, and this page claims nothing more.</td></tr>
+    </table>
+  </section>
+
+  <footer class="foot">
+    <span><span class="by">Max Pane</span> by <a href="https://github.com/ddrscott">Scott Pierce</a></span>
+    <span><a href="https://github.com/ddrscott/max-pane/blob/main/LICENSE">MIT</a><span class="sep"> · </span><a href="https://github.com/ddrscott/max-pane">GitHub</a><span class="sep"> · </span><a href="https://github.com/ddrscott/max-pane/blob/main/CHANGELOG.md">Changelog</a></span>
+  </footer>
+
+</div>
+
+</body>
+</html>

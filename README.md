@@ -1,9 +1,58 @@
 # Max Pane
 
-A fullscreen macOS app where terminals and web views are peer panes, arranged as
-portrait-bounded columns ("lanes") on an infinite horizontal strip. A supervision
-surface for agentic CLI work: watch several agents run while reading what they
-cite, in columns, not overlapping windows.
+Terminals and web pages as columns on one infinite strip. A fullscreen macOS
+app for watching several coding agents run while you read what they cite.
+
+![Max Pane: agent sessions and the pages they cite, side by side in portrait lanes](docs/launch/hero.png)
+
+- **Lanes, not windows.** A terminal and a web page are peers. Each is a
+  portrait column; wide content scrolls inside the lane, and the lane never
+  widens past its max. Lanes never overlap.
+- **One lane per agent session.** A sidebar lists every running session and
+  says which one is BLOCKED on a prompt. That one is the brightest green, and it
+  pulses. Click it and you are there.
+- **⌘O starts anything.** A command, a URL, a page you have kept, a session
+  that is already running somewhere else. One key, because "something goes to
+  the right of this" is a single decision.
+- **⌘G is the gallery.** Every lane on one screen, live. ⌘G again goes back.
+- **It keeps your things.** History with no limit, pages you star, passwords in
+  the Keychain and nowhere else, every setting in a TOML file that keeps your
+  comments where you put them.
+
+## Install
+
+Max Pane needs an Apple silicon Mac on macOS 14 or newer, and [relay-tty](https://github.com/ddrscott/relay-tty)
+1.22.0 or newer, the daemon that owns the terminal sessions.
+
+1. Install relay-tty:
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/ddrscott/relay-tty/main/install.sh | bash
+   ```
+
+   Or, if you already have Node 18 or newer, `npm i -g relay-tty`.
+
+2. Download the DMG from the [v0.6.0 release](https://github.com/ddrscott/max-pane/releases/tag/v0.6.0),
+   drag Max Pane to Applications, and open it.
+
+3. Press **⌘O**, type `claude`, press **↩**. Press **⌘/** for every other
+   shortcut.
+
+## Status
+
+**0.6.0.** What it does today is in [CHANGELOG.md](CHANGELOG.md), and nothing
+here claims more than that. Built and used daily by one person; bugs go in
+[Issues](https://github.com/ddrscott/max-pane/issues).
+
+**Contents:** [Install](#install) · [Using it](#using-it) ·
+[Building from source](#building-from-source) · [Layout](#layout) ·
+[Toolchain](#toolchain) · [Requirements](#requirements) · [Build](#build) ·
+[Test](#test) · [RelayTTY](#relaytty) · [Conventions](#conventions) ·
+[License](LICENSE)
+
+---
+
+## Building from source
 
 The spec is [`docs/PRDSwift.md`](docs/PRDSwift.md). This README is the source of
 truth for how to build and work on it.
@@ -55,8 +104,10 @@ of a daemon that has to be installed separately, and that is the one thing a
 fresh machine needs before the app will start a session:
 
 ```sh
-npm install -g relay-tty
+curl -fsSL https://raw.githubusercontent.com/ddrscott/relay-tty/main/install.sh | bash
 ```
+
+Or, with Node 18 or newer already installed, `npm i -g relay-tty`.
 
 **relay-tty 1.22.0 or newer**, which is the release that added agent state.
 An older `relay-pty-host` starts sessions fine and never reports BLOCKED, with
@@ -71,8 +122,8 @@ titles all live in `~/.relay-tty`, which the daemon owns and the app only
 reads, so a session started from `relay` in a terminal and one started from
 ⌘O are the same kind of thing.
 
-Building needs the toolchain below. Running the built app needs only macOS 14
-and relay-tty.
+Building needs the toolchain below. Running the built app needs only an Apple
+silicon Mac on macOS 14 or newer, and relay-tty.
 
 ## Build
 
@@ -97,6 +148,14 @@ Re-run `gen-bindings.sh` after changing any `#[uniffi::export]` signature. The
 generated module **must** be called `laned_coreFFI` — the generated Swift does
 `#if canImport(laned_coreFFI)`, and a different name compiles cleanly with no FFI
 symbols at all, which fails at link time in a thoroughly unhelpful way.
+
+`gen-bindings.sh` also stages `liblaned_core.a` into `swift/MaxPaneCore/lib/`,
+and that directory — never `target/` — is the Swift linker's only search path
+for the core. cargo leaves a `.dylib` beside the `.a` in `target/`, ld prefers
+the `.dylib`, and an app linked that way loads the core from this checkout by
+absolute path at runtime. The next `cargo build` that changes the FFI then
+kills every launch of the installed app with a uniffi checksum trap in
+`Core.open`. `build-app.sh` refuses to assemble a bundle that links the dylib.
 
 ### The app icon
 
@@ -292,7 +351,7 @@ keyboard again.
 
 Inside it, **⌥⌘L** fills a saved password into the popup's own form, **⌘W**
 closes it and **⌘R** reloads it; the keys that would act on the page behind it —
-⌘L, zoom, ⌘D, ⇧⌘L — do nothing. A question the popup's page asks is drawn inside
+⌘L, zoom, ⇧⌘L — do nothing. A question the popup's page asks is drawn inside
 the dialog, a download lands in the opener's download bar, and a link it opens
 in a new tab gets a lane. Nothing about a popup is saved, so a relaunch does not
 bring one back. See [ADR-0013](docs/decisions/0013-web-popups-are-dialogs.md).
@@ -303,13 +362,28 @@ chrome bar, and the find and download bars if they are open, fade out of its
 way, while the lane header, the strip and the lanes beside it stay exactly
 where they are. A player embedded from another site fills the pane too, when
 the page around it allows that player full screen. Esc or the player's own
-control puts it back. So do ⌘L, ⌘F and ⌘D, which need the bar it is covering,
+control puts it back. So do ⌘L, ⌘F and the ★, which need the bar it is covering,
 and so does following a link or reloading. Ask again while it fills the pane,
 or hold ⇧ on the click, and the page gets macOS's own full screen across the
 display; Esc from there returns it to normal. In a sign-in popup it fills the
 dialog's page and the origin bar stays, and the first Esc leaves full screen
 before a second one closes the dialog. See
 [ADR-0014](docs/decisions/0014-web-full-screen-fills-the-pane.md).
+
+**Mobile Layout**, in the lane's `⋯` menu and the View menu, asks the site for
+its phone page. A portrait lane is a phone's shape, and a site that draws one
+layout per device — Discord, in a 656 pt column, with its sidebars folded over
+the channel — is cramped in it while its phone layout was drawn for exactly
+that width. On, the pane tells sites it is an iPhone (the same Safari version,
+`MaxPane/` still last) and reloads; every page in the lane goes together, the
+item is ticked while they are on it, and it is greyed out on a terminal lane.
+Off puts the desktop string back, exactly, and reloads again. It is per pane
+and kept in the ledger, so the lane comes back the way you left it. WebKit's
+own mobile content mode is asked for on every navigation too, but measured on
+a Mac it changes nothing a page can see — a page with no viewport still lays
+out at the lane's width, not a phone's 980 — so what you get is what a site
+serves to that user agent, which is what the ones that matter decide on. No
+key by default; `keys` binds `toggleMobileLayout`.
 
 A load that fails says so where the address was — `⚠ server not found —
 example.com`, for five seconds — and takes the hairline down with it. Stopping a
@@ -446,14 +520,17 @@ backwards, which is the case `seq` exists for.
 
 ### Bookmarks
 
-**⌘D** keeps the page in the focused lane, and the **★** in its chrome bar
-lights. ⌘D on a page already kept opens the same little panel on it. The panel
-is where the name and the folder are — nothing on it is a commit button, because
-the page was kept the moment you pressed the key; **Remove** is the undo, and it
-is there because *"I meant ⌘W"* is the other thing that happens a second after
-⌘D.
+The **★** in a page's chrome bar keeps the page in the focused lane, and
+lights. Clicking it on a page already kept opens the same little panel on it.
+The panel is where the name and the folder are — nothing on it is a commit
+button, because the page was kept the moment you clicked; **Remove** is the
+undo, and it is there because *"I meant the other button"* is the other thing
+that happens a second after a click.
 
-⌘D cost ⌘O one of its two alternate keys. ⌘T still opens the door.
+There is no key for it. ⌘D is Split Right in every pane, page or terminal,
+because a page is found again by ⌘Y and a search far more often than by a
+bookmark. **Keep This Page…** is in the Navigate menu for anyone who wants to
+bind it through `keys`.
 
 **The folders are in the sidebar**, above the sessions, as a section you can
 fold away. That is the answer to a gap a critic called the most defensible one
@@ -774,6 +851,20 @@ and chips, lane headers, gallery tiles, ⌘P and the status bar's `N working`:
 3. A title that starts with `✳` is **idle** (or DONE, if relay says so).
 4. Anything else — no recognised glyph, any other program — keeps relay's state.
 
+**DONE is the app's verdict, not relay's.** pty-host's DONE exists only while
+no client is attached — `(Working, 0 clients) → Done`, `(Done, >0 clients) →
+Idle` — and a lane is a client, so for anything on the strip the file goes
+WORKING → idle with nothing between, and the chip never showed. The registry
+now notices the finish itself: a session whose shown state was WORKING and
+whose file now says idle is DONE, and stays DONE until you focus its pane (a
+click, the sidebar, ⌘P, the keyboard) or `doneHoldSeconds` runs out, thirty
+minutes by default and never when set to 0. Merely having the lane on screen
+does not clear it, because in the gallery every lane is on screen. Working
+again, a prompt, or an exit clears it at once. Claude Code's title makes this
+sharp: the spinner becomes `✳` on the turn's last frame, not between tool
+calls, so there is nothing to debounce. A session that becomes DONE or BLOCKED
+while the app is not in front bounces the Dock icon once.
+
 Relay alone was not enough. Its rate, `bps1`, is a sixty-second average, and its
 WORKING rule is that same rate, so the redraw every session does when a
 relaunch reattaches it read as a minute of work on every idle agent. It has
@@ -972,7 +1063,7 @@ An empty strip says the same thing, so a fresh launch is not a blank rectangle.
 
 Every dialog is the same popup: square, centred in the window below its title
 bar with the same margin on every side, arriving with a short fade and a rise
-of a few points and leaving with a quicker one. ⌘P, ⌘O, ⌘/, ⇧⌘Y, the ⌘D
+of a few points and leaving with a quicker one. ⌘P, ⌘O, ⌘/, ⇧⌘Y, the ★'s
 bookmark editor, and every confirmation, prompt and error close on Esc or a
 click back into the strip. A click away from a confirmation is Cancel, and ↩ on
 anything destructive is still Cancel. ⌘/ pressed again closes it.
@@ -1206,7 +1297,7 @@ stay tellable apart at a glance:
 
 | Role | Dark | Light | Where |
 |---|---|---|---|
-| working | `#16A34A`, muted | `#4D7C5F` | the filled status square, the WORKING chip, a moving rate |
+| working | `#16A34A`, muted | `#4D7C5F` | the filled status square and terminal icon, a moving rate |
 | focus / accent | `#22C55E`, mid | `#15773A` | the outline around the pane with the keyboard, default and `+ NEW` buttons, `//` slashes, the `$` marker, selection, drop indicators, the terminal cursor, the ⌘P flash |
 | blocked | `#4ADE80`, brightest | `#166534` | BLOCKED chips (always filled), the `N BLOCKED` counts, the lane header's blocked mark |
 
@@ -1214,7 +1305,16 @@ stay tellable apart at a glance:
 1.8 s per breath, and never goes out. The pulse runs only while the mark is on
 screen, and every blocked mark breathes in step. It stops the moment the agent
 is no longer blocked. With Reduce Motion on it holds steady at full strength,
-and the filled block is what sets it apart. DONE stays slate and EXITED dim.
+and the filled block is what sets it apart. EXITED is dim.
+
+**Colour in the sidebar is for a change of state, and nothing else.** At rest
+— idle, unknown, a web page, a session with no lane — a row's status square
+and icon are grey. They go green while the agent is WORKING, and there is no
+WORKING chip: the green mark and the moving rate already say it, and a chip
+under every busy row was one more green word to read past. DONE is the one
+hue outside the family: Signal Orange, `#E85D00` dark and `#B84800` light,
+on the square, the icon and the DONE chip, so the lanes waiting for a
+decision are findable across a gallery of ten without reading a word.
 
 Light mode has its own greens because the dark ones fail on a light ground:
 `#4ADE80` is 1.7:1 on white. There, BLOCKED is the strongest ink rather than the
@@ -1337,9 +1437,12 @@ across. Then focus, by whichever door it arrives (a click, ⌘[ / ⌘], the side
 equal widths. Clicking either sliver focuses that lane, which centres it and
 shows the next sliver, so you can click through the whole strip. "Fit" is
 measured against the three lanes around the focused one, at their own widths,
-in the part of the strip a dock leaves visible. The snap agrees: it settles on
-the nearest lane centred, with no peek nudge, and it leaves alone a strip that
-already rests where focus centred it. With three or more lanes fitting, focus
+in the part of the strip a dock leaves visible. The first and last lanes centre
+too, with empty strip beyond them: an end lane pinned to the wall looked like
+any other lane with a neighbour peeking, and the blank space is what says there
+is nothing further. The snap agrees: it settles on the nearest lane centred,
+with no peek nudge, and it leaves alone a strip that already rests where focus
+centred it. With three or more lanes fitting, focus
 still moves the strip as little as it can and the peek applies as above. A lane
 at least as wide as the window is never centred, because its header would be
 cut off. The threshold is fixed at three and has no config key.

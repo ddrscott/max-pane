@@ -82,7 +82,7 @@ served from two loopback ports, the host in the top pane of a split lane:
    fade rather than slide, because the pane does not clip and a sliding bar would
    draw across the pane below it in a split. Once invisible they are hidden, so
    nothing under a video takes a click.
-4. **Keys that need the bar leave full screen first.** ⌘L, ⌘F and ⌘D all open
+4. **Keys that need the bar leave full screen first.** ⌘L, ⌘F and Keep This Page all open
    something in or over the bar that the video is covering, so each of them
    calls the page's own `exitFullscreen` before it acts. The app claims no new
    key. Esc is still the page's (`WebPaneKeyRoutingTests` passes unchanged), and
