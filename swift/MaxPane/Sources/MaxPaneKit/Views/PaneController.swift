@@ -49,7 +49,7 @@ protocol PaneController: AnyObject {
     /// that does not.
     func editAddress()
 
-    /// ⌘D — keep this page, and open the editor on it. Greyed out for a
+    /// Keep This Page — keep it, and open the editor on it. Greyed out for a
     /// terminal for the same reason `editAddress` is: a pane with no address
     /// has no page to keep.
     func keepPage()

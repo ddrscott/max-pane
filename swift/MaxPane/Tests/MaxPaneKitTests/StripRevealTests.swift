@@ -43,13 +43,14 @@ struct StripRevealTests {
         let target = StripReveal.centred(
             on: "lane-2", lanes: strip, viewport: viewport, peek: 28)
         // Lane 2 starts at 2 × 655 = 1310 and is 654 wide, so the whole strip is
-        // 1965 and the furthest right the viewport can go is 1965 - 1264 = 701.
-        // Centring wants 1310 - (1264 - 654)/2 = 1005, which is past that, so
-        // the strip ends flush with the end — where it must, because the
-        // arriving lane is the last one.
-        #expect(target == CGFloat(701))
+        // 1965 and the furthest right the viewport can go is 1965 - 1264 = 701 —
+        // plus the carousel's margin. Centring wants 1310 - (1264 - 654)/2 =
+        // 1005, and two lanes in 1264 pt is a carousel, so the strip goes there:
+        // the last lane in the middle, 305 pt of empty strip after it.
+        #expect(target == CGFloat(1005))
+        #expect(StripReveal.margins(lanes: strip, viewport: viewport).right == CGFloat(305))
         // And that is enough to show all of it: the lane ends at 1964, the
-        // viewport at 701 + 1264 = 1965.
+        // viewport at 1005 + 1264 = 2269.
         #expect(target! + viewport >= CGFloat(1310 + 654))
     }
 
@@ -74,7 +75,9 @@ struct StripRevealTests {
         let strip = lanes([600, 600, 600])
         let target = StripReveal.centred(on: "lane-2", lanes: strip, viewport: 1201, peek: 28)
         #expect(target != CGFloat(0))
-        #expect(target == CGFloat(1803 - 1201))
+        // Two fit, so it is a carousel and the new lane is centred, past the
+        // strip's end by half the room left over.
+        #expect(target == CGFloat(1202) - (1201 - 600) / 2)
     }
 
     // MARK: - centring
@@ -88,11 +91,11 @@ struct StripRevealTests {
         #expect(target == CGFloat(1002))
     }
 
-    @Test("the first lane cannot be centred, so the strip sits at the start")
-    func firstLaneClampsToZero() {
+    @Test("in a carousel the first lane centres too, with empty strip before it")
+    func firstLaneCentresIntoTheMargin() {
         let target = StripReveal.centred(
             on: "lane-0", lanes: lanes([600, 600, 600]), viewport: 1000, peek: 0)
-        #expect(target == CGFloat(0))
+        #expect(target == CGFloat(-200))
     }
 
     @Test("a lane the strip does not have reveals nothing rather than scrolling to zero")
@@ -156,15 +159,19 @@ struct StripRevealTests {
         #expect(target == CGFloat(0))
     }
 
-    @Test("neither reveal ever asks for a scroll past the end of the strip")
+    @Test("neither reveal ever asks for a scroll past the end of the strip, margins included")
     func neverPastTheEnd() {
         let widths: [UInt32] = [600, 700, 500, 900]
         let strip = lanes(widths)
         let limit = StripEdges.contentWidth(of: strip) - 1000
+        // A carousel: the ends may go past the strip by their margins, which
+        // is exactly the room the view gives them, and never further.
+        let margins = StripReveal.margins(lanes: strip, viewport: 1000)
+        #expect(margins == (200, 50))
         for id in strip.map(\.id) {
             let centred = StripReveal.centred(on: id, lanes: strip, viewport: 1000, peek: 28)!
             let minimal = StripReveal.minimal(from: 0, to: id, lanes: strip, viewport: 1000)!
-            #expect(centred >= CGFloat(0) && centred <= limit)
+            #expect(centred >= -margins.left && centred <= limit + margins.right)
             #expect(minimal >= CGFloat(0) && minimal <= limit)
         }
     }
@@ -235,13 +242,33 @@ struct StripRevealTests {
         #expect(StripReveal.focused(from: 0, to: "lane-2", lanes: strip, viewport: 1200) == CGFloat(602))
     }
 
-    @Test("the first and last lanes clamp to the ends of the strip")
-    func carouselClampsAtTheEnds() {
+    @Test("the first and last lanes centre past the ends of the strip, by the margins")
+    func carouselCentresTheEnds() {
         let strip = lanes([600, 600, 600, 600, 600])
         let limit = StripEdges.contentWidth(of: strip) - 1000
-        #expect(StripReveal.focused(from: 1500, to: "lane-0", lanes: strip, viewport: 1000) == CGFloat(0))
-        #expect(StripReveal.focused(from: 0, to: "lane-4", lanes: strip, viewport: 1000) == limit)
         #expect(limit == CGFloat(2005))
+        // Pinned to the wall, an end lane looked like any other lane with a
+        // neighbour peeking on one side. 200 pt of empty strip is what says
+        // there is nothing further.
+        let margins = StripReveal.margins(lanes: strip, viewport: 1000)
+        #expect(margins.left == CGFloat(200))
+        #expect(margins.right == CGFloat(200))
+        #expect(StripReveal.focused(from: 1500, to: "lane-0", lanes: strip, viewport: 1000) == CGFloat(-200))
+        #expect(StripReveal.focused(from: 0, to: "lane-4", lanes: strip, viewport: 1000) == CGFloat(2404 - 200))
+        #expect(StripReveal.focused(from: 0, to: "lane-4", lanes: strip, viewport: 1000)! <= limit + margins.right)
+    }
+
+    @Test("the margins exist only where a carousel needs them")
+    func marginsOnlyForACarousel() {
+        // The whole strip fits: nothing scrolls, so nothing needs room.
+        #expect(StripReveal.margins(lanes: lanes([600, 600]), viewport: 1300) == (0, 0))
+        // Three fit: focus moves as little as it can and the ends are the ends.
+        #expect(StripReveal.margins(lanes: lanes([UInt32](repeating: 600, count: 7)), viewport: 2000) == (0, 0))
+        // A lane wider than the window keeps its leading edge, so no margin at
+        // its end — while the other end, a carousel, still gets one.
+        #expect(StripReveal.margins(lanes: lanes([1400, 600, 600]), viewport: 1000) == (0, 200))
+        // Mixed widths: each end is measured on its own lane.
+        #expect(StripReveal.margins(lanes: lanes([420, 900, 900, 600]), viewport: 1000) == (290, 200))
     }
 
     @Test("a dock taking room from the strip can turn it into a carousel")
@@ -300,9 +327,13 @@ struct StripRevealTests {
             // the part of the opening column that has not opened yet — the
             // border is already there from the first frame, which is the one
             // point of slack that keeps the first frame from being clamped.
+            // The carousel's margin is in the clip view's content inset from
+            // the snapshot on, so the room past the strip is there from the
+            // first frame while the column is still opening.
             let wanted = start + (target - start) * eased
             let available =
                 StripEdges.contentWidth(of: after) - opening * (1 - eased) - viewport
+                + StripReveal.margins(lanes: after, viewport: viewport).right
             #expect(wanted <= available + 0.0001)
         }
     }

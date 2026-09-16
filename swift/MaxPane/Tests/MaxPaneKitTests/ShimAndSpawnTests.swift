@@ -100,6 +100,16 @@ struct OpenServerParsingTests {
 /// never updates.
 @Suite("relay-pty-host argv")
 struct RelaySpawnTests {
+    @Test("panes do not inherit Claude Code's child-session markers")
+    func scrubsClaudeMarkers() {
+        let env = RelaySessionSpawner.scrubClaudeMarkers([
+            "CLAUDECODE": "1", "CLAUDE_CODE_CHILD_SESSION": "1", "CLAUDE_CODE_SESSION_ID": "x",
+            "CLAUDE_PID": "1", "CLAUDE_EFFORT": "medium",
+            "PATH": "/bin", "SHELL": "/bin/zsh", "ANTHROPIC_API_KEY": "k", "CLAUDE_CONFIG_DIR": "d",
+        ])
+        #expect(env == ["PATH": "/bin", "SHELL": "/bin/zsh", "ANTHROPIC_API_KEY": "k", "CLAUDE_CONFIG_DIR": "d"])
+    }
+
     @Test("a shell session gets --login so cwd tracking works")
     func shellSessionGetsLogin() {
         let argv = RelaySessionSpawner.buildArgs(

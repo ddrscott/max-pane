@@ -64,6 +64,37 @@ enum BrowserUserAgent {
         "Version/\(safariVersion) Safari/605.1.15 MaxPane/\(appVersion)"
     }
 
+    /// What a web pane on its Mobile Layout tells sites it is: an iPhone.
+    ///
+    /// Set through `customUserAgent`, which is the one case where replacing
+    /// the platform prefix is the point — `applicationNameForUserAgent` can
+    /// only finish WebKit's Macintosh sentence, and a site decides desktop or
+    /// phone on the prefix. Computed per read for the same reason as
+    /// `applicationName`.
+    static var mobile: String {
+        mobileToken(safariVersion: installedSafariVersion() ?? fallbackSafariVersion,
+                    appVersion: appVersion)
+    }
+
+    /// `Mozilla/5.0 (iPhone; CPU iPhone OS 26_6 like Mac OS X) AppleWebKit/605.1.15
+    /// (KHTML, like Gecko) Version/26.6.2 Mobile/15E148 Safari/604.1 MaxPane/0.1.0`,
+    /// given those two inputs.
+    ///
+    /// The shape is iPhone Safari's own, token for token, with `MaxPane/` last
+    /// as in `token`. The `Version/` is the installed Safari's, because it is
+    /// still this machine's WebKit rendering the page. The `iPhone OS` number
+    /// is derived from it — Safari and iOS have shared a major.minor since
+    /// Safari 15 — so nothing here is a pinned number that goes stale.
+    /// `Mobile/15E148` and `Safari/604.1` are the two constants every iPhone
+    /// Safari has sent since iOS 11, the way `Safari/605.1.15` is the Mac's.
+    static func mobileToken(safariVersion: String, appVersion: String) -> String {
+        let parts = safariVersion.split(separator: ".").map(String.init)
+        let os = parts.prefix(2).joined(separator: "_") + (parts.count < 2 ? "_0" : "")
+        return "Mozilla/5.0 (iPhone; CPU iPhone OS \(os) like Mac OS X) "
+            + "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+            + "Version/\(safariVersion) Mobile/15E148 Safari/604.1 MaxPane/\(appVersion)"
+    }
+
     /// The installed Safari's marketing version — the number it puts in its own
     /// `Version/` token.
     ///

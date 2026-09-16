@@ -55,6 +55,7 @@ public enum Command: String, CaseIterable, Sendable {
     case laneSizeMedium
     case laneSizeLarge
     case laneSizeCycle
+    case toggleMobileLayout
     case showHelp
     case showSettings
 
@@ -109,6 +110,7 @@ public enum Command: String, CaseIterable, Sendable {
         case .laneSizeMedium: return "Lane Size: Medium"
         case .laneSizeLarge: return "Lane Size: Extra Large"
         case .laneSizeCycle: return "Cycle Lane Size"
+        case .toggleMobileLayout: return "Mobile Layout"
         case .showHelp: return "Keyboard Shortcuts"
         case .showSettings: return "Settings…"
         }
@@ -129,7 +131,7 @@ public enum Command: String, CaseIterable, Sendable {
         // session that is already running — and each of them could see a third
         // of the answer. ⌘T stays as an alternate below, because it is a key
         // the README taught and it now opens the same thing. ⌘D was the other
-        // such alternate until bookmarks needed it — see `bookmarkPage`.
+        // such alternate until Split Right took the key outright.
         //
         // ⌘Y and ⌥⌘O open that same picker with its scope already narrowed, so
         // "pages only" costs one key instead of ⌘O and two presses of ⇥. They
@@ -157,12 +159,12 @@ public enum Command: String, CaseIterable, Sendable {
         // `performKeyEquivalent`, and `claims(_:)` below only rescues the
         // chords this file declares.
         case .editAddress:     return ("l", [.command])
-        // ⌘D is two conventions colliding on one key: a browser keeps the
-        // page, a terminal splits. Both keep it, and which one runs is which
-        // pane you are in — `canPerform` enables exactly one of them, and the
-        // menu routes the chord to the enabled item. That is also the bug this
-        // fixed: with only `bookmarkPage` on ⌘D, the item was disabled in a
-        // terminal, the menu declined the key, and Ghostty typed a `d`.
+        // ⌘D splits, in every pane. For a while it was two conventions on one
+        // key — a browser keeps the page, a terminal splits — with `canPerform`
+        // picking whichever fit the focused pane. That meant a web pane could
+        // not be split from the keyboard, and the owner never once used ⌘D to
+        // keep a page: history search is how a page comes back. So the split
+        // owns the key and the ★ in the chrome bar is how a page is kept.
         case .splitRight:      return ("d", [.command])
         case .splitDown:       return ("d", [.command, .shift])
         case .closePane:       return ("w", [.command])
@@ -242,12 +244,13 @@ public enum Command: String, CaseIterable, Sendable {
         // one of them in their fingers should find the other by holding one
         // more key rather than by reading the help sheet.
         case .showHistory:     return ("y", [.command, .shift])
-        // ⌘D, the way it is in every browser, and it cost something: ⌘D was an
-        // alternate for ⌘O. That was defensible while there was nothing else
-        // for the key to mean — it is the key a `⌘D` muscle reaches for to
-        // *keep a page*, and a door that already answers to ⌘O and ⌘T did not
-        // need a third name as much as this needs its first.
-        case .bookmarkPage:    return ("d", [.command])
+        // No key. It had ⌘D, the way every browser does, and shared the chord
+        // with Split Right on the grounds that a page and a terminal never
+        // offer both. But the split is the thing reached for in every pane,
+        // and the owner keeps pages by clicking the ★ — if at all — and finds
+        // them again by history search. The menu item and the star remain; a
+        // `keys` entry binds this for anyone who wants it on a key.
+        case .bookmarkPage:    return nil
         // ⌘L is the address; ⌥⌘L is the other thing at the top of a page you
         // have to type into. One key, pressed while looking at the form, is
         // the whole of what makes filling safe — see `PasswordFill` — so it is
@@ -273,6 +276,10 @@ public enum Command: String, CaseIterable, Sendable {
         // A command of its own rather than the chord on the three: a chord runs
         // one command, and which preset comes next depends on the lane.
         case .laneSizeCycle:   return ("\\", [.command])
+        // No key. It is a per-lane setting you flip once for Discord and leave,
+        // not a thing you do all day, and every unclaimed ⌘ chord left is one
+        // a page might want. `keys` binds it for anyone who disagrees.
+        case .toggleMobileLayout: return nil
         // The one everybody reaches for when they do not know the others.
         case .showHelp:        return ("/", [.command])
         // ⌘, is Settings in every Mac app, which is the whole argument.
@@ -293,9 +300,8 @@ public enum Command: String, CaseIterable, Sendable {
         // picker that looks like the first and behaves slightly differently is
         // worse than the three honest ones this replaced.
         //
-        // ⌘D was the other such alternate until bookmarks needed it, which is
-        // the first thing that has ever wanted that key here. See
-        // `bookmarkPage` above.
+        // ⌘D was the other such alternate, until Split Right took the key for
+        // itself — see `splitRight` above.
         case .openAnything: return [("t", [.command])]
         default: return []
         }
@@ -304,17 +310,16 @@ public enum Command: String, CaseIterable, Sendable {
     /// The one command this is allowed to hold a chord alongside.
     ///
     /// Two commands may share a key only when they can never both be offered,
-    /// because then there is no ambiguity to resolve: ⌘D keeps the page in a
-    /// web pane and splits to the right in a terminal, `canPerform` enables
+    /// because then there is no ambiguity to resolve: `canPerform` enables
     /// exactly one of the two, and the menu routes the chord to whichever item
-    /// is live. Every *other* collision stays an error the keymap reports —
-    /// this is a declared exception, not a hole.
+    /// is live. Every *other* collision stays an error the keymap reports.
+    ///
+    /// Nothing declares a pair today. ⌘D once did — Keep This Page in a web
+    /// pane, Split Right in a terminal — until the split took the key for
+    /// every pane. The mechanism stays, because the next such pair will want
+    /// it and the keymap and its tests already understand it.
     public var sharesChordWith: Command? {
-        switch self {
-        case .bookmarkPage: return .splitRight
-        case .splitRight: return .bookmarkPage
-        default: return nil
-        }
+        return nil
     }
 
     /// The keys that actually run this command, after the config file has had
@@ -389,12 +394,14 @@ public enum Command: String, CaseIterable, Sendable {
         // are the same thought about the same corpus, and the File menu is
         // where panes are made.
         case .bookmarkPage: return .navigate
-        // Fill and save sit under Navigate with ⌘L and ⌘D: they are things you
+        // Fill and save sit under Navigate with ⌘L and Keep This Page: they are things you
         // do to the page in front of you. The import is a File-menu act, with
         // the other import.
         case .fillPassword, .savePassword: return .navigate
         case .importBrowserPasswords: return .file
         case .laneSizeSmall, .laneSizeMedium, .laneSizeLarge, .laneSizeCycle: return .view
+        // With the size presets, which it is the fourth of: a lane's shape.
+        case .toggleMobileLayout: return .view
         // In the app menu, under About, where a Mac user reaches for it.
         case .showSettings: return .app
         }

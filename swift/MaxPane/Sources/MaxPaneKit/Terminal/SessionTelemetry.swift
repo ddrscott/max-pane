@@ -57,16 +57,17 @@ public enum AgentState: String, Sendable {
 
     /// The chip's text, or empty where there should be no chip.
     ///
-    /// RelayTTY renders nothing at all for idle and unknown, and it is right to:
-    /// a chip on every row is a chip that means nothing. Only the three states
-    /// worth interrupting someone for get one.
+    /// Only a state worth interrupting someone for gets one: the agent needs
+    /// an answer, or it finished and is waiting to be read. WORKING has no
+    /// chip — the green mark and the moving rate already say it, and a chip
+    /// under every busy row was one more green word to read past to find the
+    /// one that mattered. Idle and unknown show nothing, as RelayTTY does.
     public var chipText: String {
         switch self {
         case .blocked: return "BLOCKED"
-        case .working: return "WORKING"
         case .done: return "DONE"
         case .exited: return "EXITED"
-        case .idle, .unknown: return ""
+        case .working, .idle, .unknown: return ""
         }
     }
 
@@ -127,10 +128,25 @@ public struct SessionTelemetry: Sendable, Equatable {
     public var command: String
     /// pty-host's verdict, as the file has it. Shown nowhere directly.
     public var relayState: AgentState
+    /// When the registry saw this session finish — go from WORKING to idle —
+    /// and nobody has looked at it since. `nil` when it is not DONE.
+    ///
+    /// Ours, not pty-host's. Its DONE exists only while no client is attached,
+    /// and a lane is a client, so for anything on the strip the file goes
+    /// WORKING → idle with nothing in between. See `SessionRegistry.adopt`.
+    public var doneSince: Date?
+    /// pty-host says DONE but the user has looked, or the hold ran out. Its
+    /// file keeps saying `done` until something attaches, which nothing may.
+    public var doneDismissed = false
     /// What the session is doing, and the only state any surface reads:
     /// sidebar rows and chips, lane headers, gallery tiles, ⌘P, the status bar.
-    /// See `AgentState.derived`.
-    public var state: AgentState { AgentState.derived(title: title, relay: relayState) }
+    /// See `AgentState.derived`, then `doneSince` laid over it.
+    public var state: AgentState {
+        let derived = AgentState.derived(title: title, relay: relayState)
+        if doneSince != nil, derived == .idle || derived == .done { return .done }
+        if doneDismissed, derived == .done { return .idle }
+        return derived
+    }
     /// Bytes per second over the last minute. The bar's "1.7KB/s".
     public var bytesPerSecond: Double
     /// When output was last seen. The bar's "6s ago".
@@ -239,6 +255,18 @@ public final class SessionRegistry {
     private var observers: [UUID: ([String: SessionTelemetry]) -> Void] = [:]
     /// Session ids a lane is currently attached to.
     private var attached: Set<String> = []
+    /// Sessions that finished and have not been looked at since, by when.
+    private var doneSince: [String: Date] = [:]
+    /// Sessions whose DONE — ours or pty-host's — was looked at or lapsed,
+    /// so a file still saying `done` reads idle until the state moves on.
+    private var dismissed: Set<String> = []
+    /// How long DONE is held before it lapses to idle on its own. Set from
+    /// `Config.doneHoldSeconds`; a hold of zero or less never lapses.
+    public var doneHold: TimeInterval = 1800
+    /// Called on every change of a session's shown state, old then new, after
+    /// the sessions have been updated. Alerts hang off this: a Dock bounce, a
+    /// sound. Not called for a session's first reading.
+    public var onStateChange: ((SessionTelemetry, AgentState, AgentState) -> Void)?
     /// A ticker, so "6s ago" becomes "7s ago" without anything else changing.
     private var tick: Timer?
 
@@ -249,7 +277,10 @@ public final class SessionRegistry {
         // One second, because the bar's smallest unit is a second and a stale
         // age is worse than no age.
         tick = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.notify() }
+            Task { @MainActor in
+                guard let self else { return }
+                if !self.lapseDone(now: Date()) { self.notify() }
+            }
         }
         adopt(RelaySessionDirectory().live())
     }
@@ -295,6 +326,9 @@ public final class SessionRegistry {
     /// Sessions waiting on a human right now.
     public var blockedCount: Int { sessions.values.filter { $0.isRunning && $0.needsAttention }.count }
 
+    /// Sessions that finished and have not been looked at since.
+    public var doneCount: Int { sessions.values.filter { $0.isRunning && $0.state == .done }.count }
+
     /// Every session, blocked first. For anything that shows one flat list.
     public var byUrgency: [SessionTelemetry] {
         sessions.values.sorted {
@@ -324,14 +358,84 @@ public final class SessionRegistry {
     /// up: the wire's SESSION_METRICS frame carries the same sixty-second
     /// `bps1` the file does, so it would only have been ≤5 s sooner, at the
     /// cost of a freshness clock to stop it doing this again.
-    func adopt(_ infos: [RelaySessionInfo]) {
+    ///
+    /// **DONE is decided here, not by the file.** A session whose shown state
+    /// was WORKING and whose file now says idle has finished a turn; it is
+    /// marked DONE and stays so until `acknowledge` — the user focused its
+    /// pane — or `doneHold` runs out. The moment it works again, is blocked,
+    /// or exits, DONE goes with no hold. The title rule makes this sharp for
+    /// Claude Code: the spinner becomes `✳` on the turn's last frame, not
+    /// between tool calls, so there is nothing to debounce.
+    func adopt(_ infos: [RelaySessionInfo], now: Date = Date()) {
         var next: [String: SessionTelemetry] = [:]
+        var changes: [(SessionTelemetry, AgentState, AgentState)] = []
         for info in infos {
-            next[info.id] = SessionTelemetry(info, isAttached: attached.contains(info.id))
+            var t = SessionTelemetry(info, isAttached: attached.contains(info.id))
+            let fresh = t.state
+            let previous = sessions[info.id]?.state
+            switch fresh {
+            case .idle:
+                if previous == .working { doneSince[info.id] = now }
+                dismissed.remove(info.id)
+            case .done:
+                // pty-host's own verdict, for a session with no lane. Keep a
+                // start so the hold can lapse it the same as ours.
+                if doneSince[info.id] == nil, !dismissed.contains(info.id) { doneSince[info.id] = now }
+            case .working, .blocked, .exited, .unknown:
+                doneSince.removeValue(forKey: info.id)
+                dismissed.remove(info.id)
+            }
+            t.doneSince = doneSince[info.id]
+            t.doneDismissed = dismissed.contains(info.id)
+            next[info.id] = t
+            if let previous, previous != t.state { changes.append((t, previous, t.state)) }
         }
+        doneSince = doneSince.filter { next[$0.key] != nil }
+        dismissed = dismissed.filter { next[$0] != nil }
         guard next != sessions else { return }
         sessions = next
         notify()
+        for (t, from, to) in changes { onStateChange?(t, from, to) }
+    }
+
+    /// The user looked at a session: its DONE, if any, becomes idle.
+    ///
+    /// Focusing the pane is what counts, from a click, the sidebar, ⌘P or the
+    /// keyboard alike. Merely having the lane on screen does not, because in
+    /// the gallery every lane is on screen and the chip would never survive.
+    public func acknowledge(_ sessionId: String) {
+        guard doneSince.removeValue(forKey: sessionId) != nil,
+              var t = sessions[sessionId] else { return }
+        let from = t.state
+        dismissed.insert(sessionId)
+        t.doneSince = nil
+        t.doneDismissed = true
+        sessions[sessionId] = t
+        notify()
+        if from != t.state { onStateChange?(t, from, t.state) }
+    }
+
+    /// Drop every DONE older than `doneHold`. Returns whether anything changed,
+    /// in which case observers have already been told.
+    @discardableResult
+    func lapseDone(now: Date) -> Bool {
+        guard doneHold > 0 else { return false }
+        let lapsed = doneSince.filter { now.timeIntervalSince($0.value) >= doneHold }.map(\.key)
+        guard !lapsed.isEmpty else { return false }
+        var changes: [(SessionTelemetry, AgentState, AgentState)] = []
+        for id in lapsed {
+            doneSince.removeValue(forKey: id)
+            dismissed.insert(id)
+            guard var t = sessions[id] else { continue }
+            let from = t.state
+            t.doneSince = nil
+            t.doneDismissed = true
+            sessions[id] = t
+            if from != t.state { changes.append((t, from, t.state)) }
+        }
+        notify()
+        for (t, from, to) in changes { onStateChange?(t, from, to) }
+        return true
     }
 
     private func notify() {

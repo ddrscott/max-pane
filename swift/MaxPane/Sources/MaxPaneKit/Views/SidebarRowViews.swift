@@ -102,9 +102,11 @@ final class SidebarEntryView: NSTableCellView {
         }
 
         // Kind first, then state: a terminal, a page, or a session that is not
-        // on the strip yet. Green means "live, and on the strip" — a lane whose
-        // session has died is neither, so it goes grey with the rest of the row.
-        let markerInk = (attached && entry.isRunning && !isWeb) ? Theme.working : SidebarInk.gone
+        // on the strip yet. The icon takes the state's colour along with the
+        // square, so a row's left edge is one mark in one colour: grey at
+        // rest, green working, orange done. A lane whose session has died, or
+        // a session not on the strip yet, is grey with the rest of the row.
+        let markerInk = (attached && entry.isRunning && !isWeb) ? tint : SidebarInk.gone
         let markerIsFor: LucideIcon = isWeb ? .globe : (attached ? .squareTerminal : .plus)
         markerIcon.image = IconImage.make(markerIsFor, points: 12, colour: markerInk)
         markerIcon.imageScaling = .scaleProportionallyDown
@@ -115,7 +117,7 @@ final class SidebarEntryView: NSTableCellView {
         glyph.alignment = .center
 
         // The chip only exists for the states worth interrupting someone for —
-        // blocked, working, done. An ordinary shell shows nothing here, which is
+        // blocked, done. A busy agent shows nothing here, which is
         // exactly what makes the chips that do appear worth looking at.
         let chipInk = Theme.agentStateColor(entry.state)
         chip.stringValue = entry.chip.isEmpty ? "" : " \(entry.chip) "
@@ -243,6 +245,11 @@ final class SidebarEntryView: NSTableCellView {
     /// "what is it doing". So a running session with nothing else known is
     /// green: alive is the fact the dot exists to carry, and an ordinary shell
     /// is not a problem.
+    ///
+    /// Colour is for a change of state and nothing else. A column of sessions
+    /// that are merely alive used to be a column of green squares, which is
+    /// the same as no green at all; at rest a row is grey, and the eye goes to
+    /// the few that are not.
     private static func statusColor(_ entry: SidebarModel.Entry) -> NSColor {
         guard entry.isRunning else { return SidebarInk.gone }
         switch entry.kind {
@@ -251,8 +258,8 @@ final class SidebarEntryView: NSTableCellView {
             switch entry.state {
             case .blocked: return Theme.blocked
             case .working: return Theme.working
-            case .idle, .done, .unknown: return SidebarInk.live
-            case .exited: return SidebarInk.gone
+            case .done: return Theme.done
+            case .idle, .unknown, .exited: return SidebarInk.gone
             }
         }
     }

@@ -729,7 +729,7 @@ final class OmniPicker: PaletteController {
         guard row >= 0, row < rows.count, let candidate = rows[row].candidate else { return }
         // A kept page is not a memory of having been somewhere; ⌘⌫ on one
         // stops keeping it and leaves the visit alone. Without asking, because
-        // unlike forgetting a page this is undone by ⌘D on the same address —
+        // unlike forgetting a page this is undone by the ★ on the same address —
         // and the confirmation exists for the delete that cannot be.
         if let id = candidate.bookmarkId {
             try? store.removeBookmark(id)

@@ -71,7 +71,7 @@ final class HelpPanel: Popup {
 
     /// A `Command`'s shortcut as a human reads it: ⇧⌘T, not `("t", [.command, .shift])`.
     ///
-    /// A command with a second key shows both — `⌘T ⌘D` — because a shortcut
+    /// A command with a second key shows both — `⌘O ⌘T` — because a shortcut
     /// nobody can see is a shortcut nobody uses.
     ///
     /// It reads the **effective** keys, not the shipped ones. A sheet that

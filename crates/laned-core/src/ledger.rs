@@ -29,6 +29,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ),
     ("0010_bookmarks", include_str!("../migrations/0010_bookmarks.sql")),
     ("0011_history_edges", include_str!("../migrations/0011_history_edges.sql")),
+    ("0012_pane_mobile", include_str!("../migrations/0012_pane_mobile.sql")),
 ];
 
 /// A needle as an FTS5 query: one quoted phrase, nothing else.
@@ -168,7 +169,7 @@ impl Ledger {
         // One pass over every pane beats one query per lane at 150 lanes.
         let mut stmt = self.conn.prepare(
             "SELECT id, lane_id, position, kind, relay_session_id, url, scroll_y,
-                    data_store_id, snapshot_path, state, height_weight, zoom
+                    data_store_id, snapshot_path, state, height_weight, zoom, mobile
              FROM pane ORDER BY lane_id, position ASC",
         )?;
         let panes: Vec<Pane> = stmt.query_map([], row_to_pane)?.collect::<rusqlite::Result<_>>()?;
@@ -199,7 +200,7 @@ impl Ledger {
             .ok_or_else(|| CoreError::NotFound { kind: "lane".into(), id: id.into() })?;
         let mut stmt = self.conn.prepare(
             "SELECT id, lane_id, position, kind, relay_session_id, url, scroll_y,
-                    data_store_id, snapshot_path, state, height_weight, zoom
+                    data_store_id, snapshot_path, state, height_weight, zoom, mobile
              FROM pane WHERE lane_id = ?1 ORDER BY position ASC",
         )?;
         lane.panes = stmt.query_map([id], row_to_pane)?.collect::<rusqlite::Result<_>>()?;
@@ -210,7 +211,7 @@ impl Ledger {
         self.conn
             .query_row(
                 "SELECT id, lane_id, position, kind, relay_session_id, url, scroll_y,
-                        data_store_id, snapshot_path, state, height_weight, zoom FROM pane WHERE id = ?1",
+                        data_store_id, snapshot_path, state, height_weight, zoom, mobile FROM pane WHERE id = ?1",
                 [id],
                 row_to_pane,
             )
@@ -300,8 +301,8 @@ impl Ledger {
     pub fn insert_pane(&self, pane: &Pane) -> Result<()> {
         self.conn.execute(
             "INSERT INTO pane (id, lane_id, position, kind, relay_session_id, url, scroll_y,
-                               data_store_id, snapshot_path, state, height_weight, zoom)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                               data_store_id, snapshot_path, state, height_weight, zoom, mobile)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 pane.id,
                 pane.lane_id,
@@ -315,6 +316,7 @@ impl Ledger {
                 state_str(pane.state),
                 pane.height_weight,
                 pane.zoom,
+                pane.mobile,
             ],
         )?;
         Ok(())
@@ -1978,6 +1980,18 @@ impl Ledger {
         Ok(())
     }
 
+    /// Whether one pane asks sites for their phone layout. A bool has no bad
+    /// value to reject, but a pane that is not there is still an error: a
+    /// toggle that wrote nothing and said nothing would look exactly like a
+    /// toggle that did not stick.
+    pub fn update_pane_mobile(&self, pane_id: &str, mobile: bool) -> Result<()> {
+        let n = self.conn.execute("UPDATE pane SET mobile = ?2 WHERE id = ?1", params![pane_id, mobile])?;
+        if n == 0 {
+            return Err(CoreError::NotFound { kind: "pane".into(), id: pane_id.into() });
+        }
+        Ok(())
+    }
+
     pub fn height_weights(&self, lane_id: &str) -> Result<Vec<f64>> {
         let mut stmt = self
             .conn
@@ -2089,6 +2103,7 @@ fn row_to_pane(r: &Row) -> rusqlite::Result<Pane> {
         state: parse_state(&r.get::<_, String>(9)?),
         height_weight: r.get(10)?,
         zoom: r.get(11)?,
+        mobile: r.get::<_, i64>(12)? != 0,
     })
 }
 

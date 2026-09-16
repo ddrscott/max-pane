@@ -96,6 +96,11 @@ final class LaneView: NSView {
     /// The header's `s | m | xl` switch and the menu's Small / Medium / Extra
     /// Large. The strip does the work; see `StripViewController.applySizePreset`.
     var onSizePreset: ((LaneSizePreset) -> Void)?
+    /// The menu's Mobile Layout: every page in the lane asks its site for the
+    /// phone layout, or stops. See `WebPaneController.setMobile`.
+    var onToggleMobileLayout: (() -> Void)?
+    /// What the tick beside it shows. Nil for a lane with no page.
+    var mobileLayout: (() -> Bool?)?
 
     /// The preset this lane is at, lit in the header; nil when it has been
     /// dragged or zoomed off all three. Derived by the strip, never stored.
@@ -946,6 +951,11 @@ protocol LaneHeaderActions: AnyObject {
     var onClaimSession: (() -> Void)? { get }
     var onCloseLane: (() -> Void)? { get }
     var onSizePreset: ((LaneSizePreset) -> Void)? { get }
+    var onToggleMobileLayout: (() -> Void)? { get }
+    /// Whether the lane's pages are on their phone layout, or nil for a lane
+    /// with no page to ask. Asked when the menu opens, like `sizePreset`,
+    /// because the toggle writes no snapshot.
+    var mobileLayout: (() -> Bool?)? { get }
 }
 
 extension LaneView: LaneHeaderActions {}
@@ -1399,6 +1409,16 @@ final class LaneHeaderView: NSView {
                 state: sizePreset == preset ? .on : .off)
             item.representedObject = preset.rawValue
         }
+        // The fourth shape a lane can take: the site's phone layout, which is
+        // what a portrait column is to a site that draws one layout per device.
+        // Greyed out, not hidden, on a terminal lane — the menu keeps its
+        // shape from lane to lane, and grey says why the item is not for this
+        // one. Ticked from the panes, which are the only ones who know.
+        let mobile = actions?.mobileLayout?()
+        add(to: menu, Command.toggleMobileLayout.title,
+            command: .toggleMobileLayout, action: #selector(menuToggleMobileLayout),
+            enabled: mobile != nil && actions?.onToggleMobileLayout != nil,
+            state: mobile == true ? .on : .off)
 
         menu.addItem(.separator())
         // Checkmarks rather than three verbs. Docking is a toggle on the keys,
@@ -1465,6 +1485,7 @@ final class LaneHeaderView: NSView {
         guard let raw = sender.representedObject as? String, let preset = LaneSizePreset(rawValue: raw) else { return }
         actions?.onSizePreset?(preset)
     }
+    @objc private func menuToggleMobileLayout() { actions?.onToggleMobileLayout?() }
     @objc private func menuDockLeft() { actions?.onDockLeft?() }
     @objc private func menuDockRight() { actions?.onDockRight?() }
     @objc private func menuToggleDockMode() { actions?.onToggleDockMode?() }

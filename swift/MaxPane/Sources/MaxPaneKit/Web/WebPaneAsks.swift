@@ -354,9 +354,18 @@ extension WebPaneController {
     /// A second `decidePolicyFor navigationAction` in another extension of this
     /// class compiles and then silently wins or loses at runtime depending on
     /// nothing you can see, taking downloads or ⌘-click with it.
+    ///
+    /// The `preferences:` form of the one, for the same reason: WebKit calls
+    /// this variant *instead of* the plain one when both exist, and the mobile
+    /// layout needs the preferences. `WebDelegateSelectorTests` pins the
+    /// selector, because a near-miss here is the plain variant silently back.
     func webView(_ webView: WKWebView,
                        decidePolicyFor navigationAction: WKNavigationAction,
-                       decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+                       preferences: WKWebpagePreferences,
+                       decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
+        // Every navigation, frames included: the mode is what WebKit lays a
+        // document out in, and an embed inside a phone page is a phone embed.
+        preferences.preferredContentMode = mobile ? .mobile : .recommended
         // Main frame only: a navigation inside an iframe is not the pane going
         // anywhere, and counting one would make every ad frame a redirect hop.
         if navigationAction.targetFrame?.isMainFrame == true {
@@ -378,9 +387,9 @@ extension WebPaneController {
             // Cancelled, not allowed: allowing it is what made ⌘-click navigate
             // in place — the lane opened *and* the page you were reading was
             // replaced, which is both halves of the bug at once.
-            return decisionHandler(.cancel)
+            return decisionHandler(.cancel, preferences)
         }
-        decisionHandler(navigationAction.shouldPerformDownload ? .download : .allowWithoutAppLink)
+        decisionHandler(navigationAction.shouldPerformDownload ? .download : .allowWithoutAppLink, preferences)
     }
 
     /// A new web lane right of this one, by the same path `target=_blank`

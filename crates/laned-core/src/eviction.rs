@@ -352,6 +352,7 @@ mod tests {
             state,
             height_weight: 1.0,
             zoom: 1.0,
+            mobile: false,
         }
     }
 

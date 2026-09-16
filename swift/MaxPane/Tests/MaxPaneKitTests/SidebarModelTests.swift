@@ -32,7 +32,7 @@ struct SidebarModelTests {
             panes: [Pane(
                 id: "p-" + id, laneId: id, position: 0, kind: kind,
                 relaySessionId: session, url: url, scrollY: nil,
-                dataStoreId: nil, snapshotPath: nil, state: state, heightWeight: 1, zoom: 1)])
+                dataStoreId: nil, snapshotPath: nil, state: state, heightWeight: 1, zoom: 1, mobile: false)])
     }
 
     private func entries(_ rows: [SidebarModel.Row]) -> [SidebarModel.Entry] {
@@ -225,7 +225,7 @@ struct SidebarModelTests {
         let moving = ["s": telemetry("s", title: "building", cwd: home, state: .working, bps: 1740)]
         let busy = entries(SidebarModel.rows(lanes: [], telemetry: moving)).first!
         #expect(busy.badge == "1.7KB/s")
-        #expect(busy.chip == "WORKING")
+        #expect(busy.chip == "")
 
         // Idle and unknown get no chip at all, so the chips that appear mean
         // something.
@@ -268,7 +268,7 @@ struct SidebarModelTests {
         let spinning = telemetry("s", title: "◑ Pane terminal size", cwd: NSHomeDirectory(), state: .unknown)
         let working = entries(SidebarModel.rows(lanes: [], telemetry: ["s": spinning])).first!
         #expect(working.glyph == AgentState.working.glyph)
-        #expect(working.chip == "WORKING")
+        #expect(working.chip == "")
 
         // Any other mark with no opinion from pty-host fills the column, but
         // never the chip.
@@ -345,7 +345,7 @@ struct SidebarModelTests {
                 Pane(
                     id: "\(id)-p\(position)", laneId: id, position: UInt32(position), kind: .pty,
                     relaySessionId: session, url: nil, scrollY: nil,
-                    dataStoreId: nil, snapshotPath: nil, state: .live, heightWeight: 1, zoom: 1)
+                    dataStoreId: nil, snapshotPath: nil, state: .live, heightWeight: 1, zoom: 1, mobile: false)
             })
     }
 

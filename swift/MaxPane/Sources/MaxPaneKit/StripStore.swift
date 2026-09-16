@@ -111,7 +111,7 @@ public final class StripStore {
             placement: .end, kind: .pty, relaySessionId: relaySessionId, url: nil, inheritTagFromLane: nil))
     }
 
-    /// Split down (⌘D): another pane in the same lane's stack.
+    /// Split down (⇧⌘D): another pane in the same lane's stack.
     func addPane(to laneId: String, kind: PaneKind, relaySessionId: String?, url: String?) throws {
         publish(try core.addPane(laneId: laneId, kind: kind, relaySessionId: relaySessionId, url: url))
     }
@@ -323,6 +323,9 @@ public final class StripStore {
     /// How far a pane's contents are scaled. Not published as a snapshot: zoom
     /// changes what a pane draws, not the shape of the strip.
     func setPaneZoom(_ paneId: String, _ zoom: Double) { try? core.setPaneZoom(paneId: paneId, zoom: zoom) }
+    /// Whether a page asks its site for the phone layout. Not published either:
+    /// the pane that flipped it reloads itself, and the strip's shape is untouched.
+    func setPaneMobile(_ paneId: String, _ mobile: Bool) { try? core.setPaneMobile(paneId: paneId, mobile: mobile) }
     func setPaneDataStore(_ paneId: String, _ id: String) { try? core.setPaneDataStore(paneId: paneId, dataStoreId: id) }
 
     /// A web pane's whole session — history, scroll, form state — as WebKit's

@@ -19,11 +19,18 @@ public struct RelaySessionSpawner {
         var errorDescription: String? {
             switch self {
             case .binaryNotFound:
-                // Name the file that is actually read. This said
-                // `~/.config/maxpane/config.json` long after the profiles work
-                // moved it, so following the advice did nothing at all.
+                // First sentence for the stranger who has never heard of
+                // relay-tty: what to install, and the command. Second for the
+                // person who installed it somewhere unusual, naming the file
+                // that is actually read. This said `~/.config/maxpane/config.json`
+                // long after the profiles work moved it, so following the
+                // advice did nothing at all.
                 return """
-                    Could not find relay-pty-host. \
+                    Max Pane needs relay-tty, which owns the terminal sessions. Install it: \
+                    curl -fsSL https://raw.githubusercontent.com/ddrscott/relay-tty/main/install.sh | bash \
+                    (or: npm i -g relay-tty), then open a new lane again.
+
+                    Installed somewhere Max Pane cannot see? \
                     Set relay_pty_host_path in \(Config.path.path), or in Settings (⌘,).
                     """
             case .notAProgram(let command):
@@ -102,7 +109,7 @@ public struct RelaySessionSpawner {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = argv
-        var env = ProcessInfo.processInfo.environment
+        var env = Self.scrubClaudeMarkers(ProcessInfo.processInfo.environment)
         env["RELAY_SESSION_ID"] = id
         env["RELAY_ORIG_COMMAND"] = cmd
         env["RELAY_ORIG_ARGS"] = (try? String(data: JSONEncoder().encode(args), encoding: .utf8)) ?? "[]"
@@ -130,6 +137,25 @@ public struct RelaySessionSpawner {
 
         try Self.waitForSocket(id: id, pid: process.processIdentifier)
         return id
+    }
+
+    // MARK: - environment
+
+    /// Drops the markers Claude Code stamps on every process it spawns.
+    ///
+    /// If the app was launched from inside a Claude session (`build-app.sh
+    /// release run` from the Bash tool does exactly that) it inherits
+    /// `CLAUDE_CODE_CHILD_SESSION=1`, and so would every pane. A `claude`
+    /// started in that pane then believes it is a nested child of another
+    /// session and stops saving its transcript, with nothing in any dotfile to
+    /// explain why. The panes are the user's terminals, not Claude's children,
+    /// so the markers stop here. `ANTHROPIC_API_KEY` is deliberately left
+    /// alone: it comes from the user's own rc file, not from Claude.
+    static func scrubClaudeMarkers(_ env: [String: String]) -> [String: String] {
+        env.filter { key, _ in
+            !(key == "CLAUDECODE" || key == "CLAUDE_PID" || key == "CLAUDE_EFFORT"
+                || key.hasPrefix("CLAUDE_CODE_"))
+        }
     }
 
     // MARK: - argv

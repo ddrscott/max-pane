@@ -801,6 +801,50 @@ fn a_size_preset_is_one_write_and_survives_a_restart() {
     assert_eq!(after.revision, before.revision);
 }
 
+/// A pane asked for its phone layout stays on it across a relaunch, and only
+/// that pane: the flag is per pane, off by default, and off again when told.
+/// No revision moves, as with zoom — the shell reloads the page itself.
+#[test]
+fn a_mobile_layout_survives_a_restart_and_is_per_pane() {
+    let dir = tempfile::tempdir().unwrap();
+    let (top, bottom) = {
+        let core = Core::open(db(&dir)).unwrap();
+        let st = core.create_lane(Placement::End, PaneKind::Web, None, Some("https://discord.com".into()), None).unwrap();
+        let lane = st.lanes[0].id.clone();
+        let st = core.add_pane(lane, PaneKind::Web, None, Some("https://docs.rs".into())).unwrap();
+        let top = st.lanes[0].panes[0].id.clone();
+        let bottom = st.lanes[0].panes[1].id.clone();
+        assert!(!st.lanes[0].panes[0].mobile && !st.lanes[0].panes[1].mobile, "off by default");
+
+        let before = core.revision();
+        core.set_pane_mobile(top.clone(), true).unwrap();
+        assert_eq!(core.revision(), before, "no snapshot: the shell reloads the page itself");
+        assert!(core.set_pane_mobile("no-such-pane".into(), true).is_err(), "a missing pane is an error, not silence");
+        (top, bottom)
+    };
+
+    let core = Core::open(db(&dir)).unwrap();
+    let st = core.state().unwrap();
+    assert!(st.lanes[0].panes[0].mobile, "top asked for the phone layout and kept it");
+    assert!(!st.lanes[0].panes[1].mobile, "bottom was never asked");
+    assert_eq!(st.lanes[0].panes[0].id, top);
+    assert_eq!(st.lanes[0].panes[1].id, bottom);
+
+    // Off again is a write too.
+    core.set_pane_mobile(top.clone(), false).unwrap();
+    drop(core);
+    let core = Core::open(db(&dir)).unwrap();
+    assert!(!core.state().unwrap().lanes[0].panes[0].mobile);
+
+    // The flag travels with an export, so a strip put back on another machine
+    // keeps the layout it was arranged with.
+    core.set_pane_mobile(top, true).unwrap();
+    let json = core.export_strip().unwrap();
+    assert!(json.contains("\"mobile\": true"), "export carries it: {json}");
+    let imported = laned_core::portable::import(&json).unwrap();
+    assert_eq!(imported[0].panes.iter().map(|p| p.mobile).collect::<Vec<_>>(), vec![true, false]);
+}
+
 /// §13 Phase 3 — lane spanning. A deliberate, bounded exception to §1's
 /// portrait invariant, so the thing to prove is that it stays bounded.
 #[test]

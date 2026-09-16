@@ -20,6 +20,16 @@ public final class StripViewController: NSViewController {
 
     private let scrollView = NSScrollView()
     private let content = StripContentView()
+    /// The scroll view's document: `content` plus the carousel's margins on
+    /// either side. Padding lives here and not in `contentInsets` because
+    /// AppKit floats a private `NSVisualEffectView` over an inset region, and
+    /// it takes the clicks — a lane header centred inside a margin lost its
+    /// `s | m | xl` and `⋯` to it (2026-09-15). Everything that reasons in
+    /// content coordinates — drop boxes, lane frames, `content.frame.width` —
+    /// is untouched by the wrapper; only the offset ↔ clip mapping shifts.
+    private let document = StripDocumentView()
+    /// The margins `document` currently pads with. `(0, 0)` outside a carousel.
+    private var stripMargins: (left: CGFloat, right: CGFloat) = (0, 0)
 
     /// Lane id → its view, for lanes that currently have one.
     private var laneViews: [String: LaneView] = [:]
@@ -179,7 +189,8 @@ public final class StripViewController: NSViewController {
         view.layerBackgroundColor = Theme.stripBackground
 
         content.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.documentView = content
+        scrollView.documentView = document
+        document.addSubview(content)
         scrollView.hasHorizontalScroller = true
         scrollView.hasVerticalScroller = false
         scrollView.horizontalScrollElasticity = .allowed
@@ -338,8 +349,11 @@ public final class StripViewController: NSViewController {
             // Trackpads report points; a mouse wheel reports lines.
             let step = event.hasPreciseScrollingDeltas ? event.scrollingDeltaX : event.scrollingDeltaX * 16
             let strip = self.viewport
-            let maxX = max(0, self.content.frame.width - strip.width)
-            let next = min(max(0, strip.offset - step), maxX)
+            // The margins are scrollable strip too: a wheel can rest where a
+            // focus would, with the end lane centred and empty strip beyond it.
+            let minX = -self.stripMargins.left
+            let maxX = max(0, self.content.frame.width - strip.width) + self.stripMargins.right
+            let next = min(max(minX, strip.offset - step), maxX)
             clip.setBoundsOrigin(
                 NSPoint(x: self.clipOrigin(forVisible: next), y: clip.bounds.origin.y))
             self.scrollView.reflectScrolledClipView(clip)
@@ -880,6 +894,13 @@ public final class StripViewController: NSViewController {
             self?.applySizePreset(preset, toLane: lane.id)
         }
         laneView.sizePreset = sizePreset(of: lane)
+        laneView.onToggleMobileLayout = { [weak self] in
+            self?.toggleMobileLayout(ofLane: lane.id)
+        }
+        laneView.mobileLayout = { [weak self] in
+            guard let self, let lane = self.store.lane(lane.id) else { return nil }
+            return self.mobileLayout(of: lane)
+        }
         laneView.onCloseLane = { [weak self] in
             try? self?.store.closeLane(lane.id)
         }
@@ -1005,8 +1026,21 @@ public final class StripViewController: NSViewController {
             width: max(0, view.bounds.width - rail * 2 - dockLayout.insetLeft - dockLayout.insetRight),
             height: view.bounds.height)
         if scrollView.frame != strip { scrollView.frame = strip }
+        // Past the overlay, the carousel's margins: the room the first and
+        // last lanes need to centre, as empty strip beyond them. `viewport`
+        // already subtracts the overlay, and the margins are measured in that
+        // window, so they stack on it here. Not in the gallery, where every
+        // tile is on screen and there is nothing to centre.
+        // They pad `document` (see `relayout`), never `contentInsets`: an inset
+        // region carries AppKit's own overlay view, which swallows every click
+        // on a lane header drawn under it. The overlay dock's inset is fine
+        // because the dock itself covers it.
+        let visibleWidth = max(0, strip.width - dockLayout.overlayLeft - dockLayout.overlayRight)
+        stripMargins = isGallery ? (left: CGFloat(0), right: CGFloat(0))
+            : StripReveal.margins(lanes: store.stripLanes, viewport: visibleWidth)
         let insets = NSEdgeInsets(
-            top: 0, left: dockLayout.overlayLeft, bottom: 0, right: dockLayout.overlayRight)
+            top: 0, left: dockLayout.overlayLeft,
+            bottom: 0, right: dockLayout.overlayRight)
         if scrollView.contentInsets.left != insets.left
             || scrollView.contentInsets.right != insets.right {
             scrollView.contentInsets = insets
@@ -1409,6 +1443,12 @@ public final class StripViewController: NSViewController {
     /// Position every lane. The one place that lays the strip out, so every
     /// caller gets the ghosts and the in-flight offsets for free.
     private func relayout(lanes: [Lane]? = nil) {
+        // What the user sees now, in strip offsets, measured with the margins
+        // the document is padded with *now*: when `layoutDocks` changes them
+        // the same clip origin would mean a different offset, and the strip
+        // would jump by the difference.
+        let keep = isGallery ? nil : viewport.offset
+        let before = stripMargins
         // Before the strip: an inset dock changes how wide the clip view is,
         // and a layout pass that ran first would be measured against the old
         // one for exactly one frame — which is the frame the eye catches.
@@ -1428,7 +1468,14 @@ public final class StripViewController: NSViewController {
                 return self.laneViews[lane.id]
             },
             overrides: laneOverrides,
-            xOffsets: xOffsets)
+            xOffsets: xOffsets,
+            height: scrollView.contentView.bounds.height)
+        document.layOut(content: content, margins: stripMargins)
+        if let keep, before != stripMargins {
+            let clip = scrollView.contentView
+            clip.setBoundsOrigin(NSPoint(x: clipOrigin(forVisible: keep), y: clip.bounds.origin.y))
+            scrollView.reflectScrolledClipView(clip)
+        }
     }
 
     /// Whether a change at this index is worth animating.
@@ -1730,6 +1777,28 @@ public final class StripViewController: NSViewController {
             config: config, backingScale: backingScale)
     }
 
+    /// Whether a lane's pages are on their phone layout: true when every web
+    /// pane is, false when any is not, nil when there is no web pane to ask.
+    /// Each pane's controller is asked first, for `sizePreset`'s reason — the
+    /// toggle writes no snapshot, so the snapshot's copy is stale until
+    /// something else publishes one.
+    func mobileLayout(of lane: Lane) -> Bool? {
+        let pages = lane.panes.filter { $0.kind == .web }
+        guard !pages.isEmpty else { return nil }
+        return pages.allSatisfy { (paneControllers[$0.id] as? WebPaneController)?.mobile ?? $0.mobile }
+    }
+
+    /// Mobile Layout, from the lane's menu or the View menu: every page in
+    /// the lane to the phone layout, or every one back. One flag for the lane,
+    /// because it is the lane's *shape* the toggle answers to, not a page's —
+    /// and a lane half on it would be a tick that means nothing.
+    func toggleMobileLayout(ofLane laneId: String) {
+        guard let lane = store.lane(laneId), let current = mobileLayout(of: lane) else { return }
+        for pane in lane.panes where pane.kind == .web {
+            (paneControllers[pane.id] as? WebPaneController)?.setMobile(!current)
+        }
+    }
+
     private func refreshSizePreset(_ laneId: String) {
         guard let lane = store.lane(laneId) else { return }
         laneViews[laneId]?.sizePreset = sizePreset(of: lane)
@@ -1858,8 +1927,8 @@ public final class StripViewController: NSViewController {
         paneControllers[paneId]?.editAddress()
     }
 
-    /// ⌘D. The editor it opens is anchored to the pane's own star, so it has to
-    /// be the pane that opens it.
+    /// Keep This Page. The editor it opens is anchored to the pane's own star,
+    /// so it has to be the pane that opens it.
     public func keepFocusedPage() {
         guard let paneId = store.state.focusedPaneId else { return }
         paneControllers[paneId]?.keepPage()
@@ -2238,14 +2307,21 @@ public final class StripViewController: NSViewController {
     /// about docks, and cannot be the call site that forgot.
     private var viewport: (offset: CGFloat, width: CGFloat) {
         let clip = scrollView.contentView
-        return DockGeometry.visible(
-            clipOffset: clip.bounds.origin.x, clipWidth: clip.bounds.width, layout: dockLayout)
+        // Lane 0 sits `stripMargins.left` into the document, so a clip origin
+        // of 0 is a strip offset of `-margins.left`: the end lane centred with
+        // empty strip before it, which is where `StripReveal` sends a carousel.
+        let visible = DockGeometry.visible(
+            clipOffset: clip.bounds.origin.x - stripMargins.left,
+            clipWidth: clip.bounds.width, layout: dockLayout)
+        return visible
     }
 
     /// Where the clip view has to sit for the strip's visible window to start
     /// at `x`. The inverse of `viewport.offset`, and the only other place the
-    /// overlay inset appears.
-    private func clipOrigin(forVisible x: CGFloat) -> CGFloat { x - dockLayout.overlayLeft }
+    /// overlay inset and the document's padding appear.
+    private func clipOrigin(forVisible x: CGFloat) -> CGFloat {
+        x - dockLayout.overlayLeft + stripMargins.left
+    }
 
     /// How many lanes `laneId` is from the visible range. 0 when on screen,
     /// `.max` when it is not on the strip at all.
@@ -2741,13 +2817,14 @@ final class StripContentView: NSView {
     func layOut(
         lanes: [Lane], viewFor: (Lane) -> LaneView?,
         overrides: [String: LaneOverride] = [:],
-        xOffsets: [String: CGFloat] = [:]
+        xOffsets: [String: CGFloat] = [:],
+        height: CGFloat
     ) {
         var x: CGFloat = 0
-        // The clip view's height, not our own: our height is what we are about
-        // to set, so reading it here would latch whatever it was last frame —
-        // zero, on the first pass.
-        let height = superview?.bounds.height ?? bounds.height
+        // The clip view's height, handed in: our own height is what we are
+        // about to set, so reading it here would latch whatever it was last
+        // frame — zero, on the first pass — and our superview is the padded
+        // document, which sizes itself from us.
         guard height > 0 else { return }
         for lane in lanes {
             let override = overrides[lane.id]
@@ -2765,8 +2842,35 @@ final class StripContentView: NSView {
         }
         totalWidth = x
         if frame.width != totalWidth || frame.height != height {
-            frame = NSRect(x: 0, y: 0, width: totalWidth, height: height)
+            frame = NSRect(x: frame.origin.x, y: 0, width: totalWidth, height: height)
         }
+    }
+}
+
+/// The scroll view's document: the strip's content with the carousel margins
+/// as real, empty document on either side of it.
+///
+/// A margin is strip the user can scroll into, so it has to be document, not
+/// `contentInsets`. AppKit places its own `NSVisualEffectView` over an inset
+/// region — the translucent-toolbar backdrop — and that view answers
+/// `hitTest` for everything drawn beneath it. The first time the carousel
+/// margins were insets, a lane centred in one lost its header buttons to a
+/// view nobody could see. Padding the document gives the clip the same range
+/// with nothing between the pointer and the lane.
+@MainActor
+final class StripDocumentView: NSView {
+    override var isFlipped: Bool { true }
+
+    /// Place `content` `margins.left` in and size ourselves to hold it plus
+    /// both margins, at the content's height.
+    func layOut(content: StripContentView, margins: (left: CGFloat, right: CGFloat)) {
+        let contentFrame = NSRect(
+            x: margins.left, y: 0, width: content.frame.width, height: content.frame.height)
+        if content.frame != contentFrame { content.frame = contentFrame }
+        let size = NSSize(
+            width: content.frame.width + margins.left + margins.right,
+            height: content.frame.height)
+        if frame.size != size { setFrameSize(size) }
     }
 }
 
@@ -2774,8 +2878,9 @@ final class StripContentView: NSView {
 /// Where a horizontal scroll should come to rest.
 ///
 /// Separated from the view because it is all arithmetic, and because clamping
-/// is where an off-by-a-lane hides: the first and last lanes cannot be centred,
-/// and pretending otherwise scrolls past the end of the strip.
+/// is where an off-by-a-lane hides: outside a carousel the first and last lanes
+/// cannot be centred, and pretending otherwise scrolls past the end of the
+/// strip. In a carousel they can, by exactly `StripReveal.margins`.
 enum LaneSnap {
     /// The scroll offset that centres whichever lane is nearest `centre`, or
     /// nil when there are no lanes.
@@ -2802,27 +2907,29 @@ enum LaneSnap {
         guard let best else { return nil }
 
         let centred = best.origin - (viewport - best.width) / 2
-        let clamped = min(max(0, centred), max(0, x - viewport))
+        let limit = max(0, x - viewport)
         // A carousel settles exactly centred, the same place focus puts it, so
         // a drag pages to the nearest lane and a snap never pulls a centred
-        // lane 28 pt toward one neighbour.
+        // lane 28 pt toward one neighbour. At the ends that is past the strip,
+        // into the margin the view keeps for exactly this.
         if StripReveal.isCarousel(
             around: best.index, slots: StripEdges.slots(of: lanes), viewport: viewport) {
-            return clamped
+            let margins = StripReveal.margins(lanes: lanes, viewport: viewport)
+            return min(max(-margins.left, centred), limit + margins.right)
         }
         return LanePeek.adjust(
-            offset: clamped, viewport: viewport, lanes: lanes, minimum: minPeek)
+            offset: min(max(0, centred), limit), viewport: viewport, lanes: lanes, minimum: minPeek)
     }
 
     /// Where a scroll that has stopped at `offset` settles, given the lane that
     /// has focus.
     ///
     /// One case ahead of `offset(forCentre:)`: a strip already resting where
-    /// the carousel centres the focused lane stays put. At the two ends the
-    /// focused lane is clamped rather than centred, and with mixed widths the
-    /// lane nearest the middle of the screen can then be its neighbour — a snap
-    /// asked only about the middle would pull the strip off the lane focus just
-    /// put there.
+    /// the carousel centres the focused lane stays put. The two used to
+    /// disagree at the ends, where the focused lane was clamped rather than
+    /// centred and with mixed widths the lane nearest the middle of the screen
+    /// could be its neighbour. The margins ended that, but a strip resting on
+    /// its focused lane is still not something a snap should argue with.
     static func settle(
         from offset: CGFloat, viewport: CGFloat, lanes: [Lane], minPeek: CGFloat = 0,
         focused laneId: String?

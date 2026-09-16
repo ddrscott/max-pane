@@ -1360,6 +1360,13 @@ public protocol CoreProtocol: AnyObject, Sendable {
      */
     func setPaneInteractionState(paneId: String, state: Data?) throws 
     
+    /**
+     * Remember whether a pane asks sites for their phone layout. No snapshot
+     * is published, as with zoom: the shell that flipped it reloads the page
+     * itself, and the strip's shape is untouched.
+     */
+    func setPaneMobile(paneId: String, mobile: Bool) throws 
+    
     func setPaneScroll(paneId: String, scrollY: Double) throws 
     
     /**
@@ -2817,6 +2824,21 @@ open func setPaneInteractionState(paneId: String, state: Data?)throws   {try rus
             self.uniffiCloneHandle(),
         FfiConverterString.lower(paneId),
         FfiConverterOptionData.lower(state),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Remember whether a pane asks sites for their phone layout. No snapshot
+     * is published, as with zoom: the shell that flipped it reloads the page
+     * itself, and the strip's shape is untouched.
+     */
+open func setPaneMobile(paneId: String, mobile: Bool)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_set_pane_mobile(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(paneId),
+        FfiConverterBool.lower(mobile),uniffiCallStatus
     )
 }
 }
@@ -4367,6 +4389,12 @@ public struct Pane: Equatable, Hashable {
      * reads it as a font size and a page as a page zoom.
      */
     public var zoom: Double
+    /**
+     * `web` only: ask sites for the layout an iPhone would get, because a
+     * portrait lane is a phone's shape. The shell sends a mobile user agent
+     * and WebKit's mobile content mode; a terminal ignores it.
+     */
+    public var mobile: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -4400,7 +4428,12 @@ public struct Pane: Equatable, Hashable {
         /**
          * How far the pane's contents are scaled; 1.0 is actual size. A terminal
          * reads it as a font size and a page as a page zoom.
-         */zoom: Double) {
+         */zoom: Double, 
+        /**
+         * `web` only: ask sites for the layout an iPhone would get, because a
+         * portrait lane is a phone's shape. The shell sends a mobile user agent
+         * and WebKit's mobile content mode; a terminal ignores it.
+         */mobile: Bool) {
         self.id = id
         self.laneId = laneId
         self.position = position
@@ -4413,6 +4446,7 @@ public struct Pane: Equatable, Hashable {
         self.state = state
         self.heightWeight = heightWeight
         self.zoom = zoom
+        self.mobile = mobile
     }
 
     
@@ -4442,7 +4476,8 @@ public struct FfiConverterTypePane: FfiConverterRustBuffer {
                 snapshotPath: FfiConverterOptionString.read(from: &buf), 
                 state: FfiConverterTypePaneState.read(from: &buf), 
                 heightWeight: FfiConverterDouble.read(from: &buf), 
-                zoom: FfiConverterDouble.read(from: &buf)
+                zoom: FfiConverterDouble.read(from: &buf), 
+                mobile: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -4459,6 +4494,7 @@ public struct FfiConverterTypePane: FfiConverterRustBuffer {
         FfiConverterTypePaneState.write(value.state, into: &buf)
         FfiConverterDouble.write(value.heightWeight, into: &buf)
         FfiConverterDouble.write(value.zoom, into: &buf)
+        FfiConverterBool.write(value.mobile, into: &buf)
     }
 }
 
@@ -4829,6 +4865,11 @@ public struct PortablePane: Equatable, Hashable {
      */
     public var heightWeight: Double
     public var zoom: Double
+    /**
+     * Whether the pane asks for the phone layout. False for a file written
+     * before the field existed.
+     */
+    public var mobile: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -4836,13 +4877,18 @@ public struct PortablePane: Equatable, Hashable {
         /**
          * This pane's share of its lane's height. 1 for a file written before the
          * field existed, or hand-edited to drop it.
-         */heightWeight: Double, zoom: Double) {
+         */heightWeight: Double, zoom: Double, 
+        /**
+         * Whether the pane asks for the phone layout. False for a file written
+         * before the field existed.
+         */mobile: Bool) {
         self.kind = kind
         self.relaySessionId = relaySessionId
         self.url = url
         self.scrollY = scrollY
         self.heightWeight = heightWeight
         self.zoom = zoom
+        self.mobile = mobile
     }
 
     
@@ -4866,7 +4912,8 @@ public struct FfiConverterTypePortablePane: FfiConverterRustBuffer {
                 url: FfiConverterOptionString.read(from: &buf), 
                 scrollY: FfiConverterOptionDouble.read(from: &buf), 
                 heightWeight: FfiConverterDouble.read(from: &buf), 
-                zoom: FfiConverterDouble.read(from: &buf)
+                zoom: FfiConverterDouble.read(from: &buf), 
+                mobile: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -4877,6 +4924,7 @@ public struct FfiConverterTypePortablePane: FfiConverterRustBuffer {
         FfiConverterOptionDouble.write(value.scrollY, into: &buf)
         FfiConverterDouble.write(value.heightWeight, into: &buf)
         FfiConverterDouble.write(value.zoom, into: &buf)
+        FfiConverterBool.write(value.mobile, into: &buf)
     }
 }
 
@@ -7364,6 +7412,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_set_pane_interaction_state() != 65254) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_set_pane_mobile() != 10243) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_set_pane_scroll() != 54727) {

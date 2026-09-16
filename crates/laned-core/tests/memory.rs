@@ -97,6 +97,9 @@ fn the_session_blob_stays_out_of_the_layout_snapshot() {
         // and one that comes back at the wrong size is one you fix by hand on
         // every launch.
         zoom: _,
+        // One byte, for the same reason again: the user agent is set before
+        // the first request, so the shell has to know at build time.
+        mobile: _,
     } = pane.clone();
 }
 

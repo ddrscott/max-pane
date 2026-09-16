@@ -202,6 +202,8 @@ public struct ConfigField {
                    "The terminal font size, in points. ⌘= and ⌘- zoom a pane from here."),
             double("sessionPollSeconds", \.sessionPollSeconds, .terminals, 1...120, step: 1,
                    "How often RelayTTY's session files are read. pty-host writes every 5 s."),
+            double("doneHoldSeconds", \.doneHoldSeconds, .terminals, 0...86_400, step: 60,
+                   "How long DONE stays on a finished session before it lapses to idle. Focusing the pane clears it; 0 holds it until then."),
             optionalString("relayPtyHostPath", \.relayPtyHostPath, .terminals,
                            unset: "found next to relay on PATH",
                            "Where relay-pty-host lives, when it is not next to relay."),

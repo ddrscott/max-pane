@@ -81,7 +81,11 @@ pub fn export(lanes: &[Lane]) -> String {
             // Zoom travels with the split for the same reason: how big you made
             // the text is part of how you arranged the strip, not a property of
             // the machine you arranged it on.
-            out.push_str(&format!("          \"zoom\": {}\n", pane.zoom));
+            out.push_str(&format!("          \"zoom\": {},\n", pane.zoom));
+            // And the layout you asked the site for: a lane kept on the phone
+            // page is a lane you arranged that way. A file from before the
+            // field existed reads back as the desktop page it was showing.
+            out.push_str(&format!("          \"mobile\": {}\n", pane.mobile));
             out.push_str(if j + 1 == lane.panes.len() { "        }\n" } else { "        },\n" });
         }
         out.push_str("      ]\n");
@@ -117,6 +121,9 @@ pub struct PortablePane {
     /// field existed, or hand-edited to drop it.
     pub height_weight: f64,
     pub zoom: f64,
+    /// Whether the pane asks for the phone layout. False for a file written
+    /// before the field existed.
+    pub mobile: bool,
 }
 
 /// Parse an exported strip.
@@ -231,6 +238,7 @@ fn parse_pane(fields: &[(String, mini_json::Value)]) -> PortablePane {
             .and_then(|v| v.number())
             .filter(|z| z.is_finite() && *z > 0.0)
             .unwrap_or(1.0),
+        mobile: get("mobile").and_then(|v| v.boolean()).unwrap_or(false),
     }
 }
 
@@ -475,6 +483,7 @@ mod tests {
             state: PaneState::Live,
             height_weight: 1.0,
             zoom: 1.0,
+            mobile: false,
         }
     }
 

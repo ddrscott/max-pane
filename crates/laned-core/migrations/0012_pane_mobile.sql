@@ -1,0 +1,13 @@
+-- Whether a web pane asks sites for their phone layout: 0 is the desktop
+-- page, 1 is the page an iPhone would get.
+--
+-- A portrait lane is a phone's shape, and a site that serves one layout per
+-- device is cramped in it: Discord at 656 pt is a desktop app squeezed until
+-- its sidebars overlap, while its phone layout was drawn for exactly that
+-- column. The shell asks for it with an iPhone user agent and WebKit's mobile
+-- content mode, and the pane reloads.
+--
+-- In `Pane` beside `zoom`, for zoom's reason: the shell needs it to build the
+-- web view — the user agent is set before the first request — and a pane that
+-- comes back with the wrong layout is a pane you fix by hand every launch.
+ALTER TABLE pane ADD COLUMN mobile INTEGER NOT NULL DEFAULT 0;

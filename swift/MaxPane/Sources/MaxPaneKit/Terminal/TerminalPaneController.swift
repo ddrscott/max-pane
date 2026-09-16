@@ -1039,7 +1039,7 @@ enum TerminalControllerPool {
                 })
     }
 
-    /// Afterglow and Alabaster, with the two colours that are ours.
+    /// Afterglow and Alabaster, with the three colours that are ours.
     ///
     /// The theme is rendered *after* the configuration, so a colour set in the
     /// config is overwritten by whatever the theme says — which is why these
@@ -1047,16 +1047,37 @@ enum TerminalControllerPool {
     /// keeps a full, legible ANSI palette; overriding the background makes the
     /// pane the same colour as the lane around it, and the cursor is the
     /// accent because a cursor marks where the focus is.
+    ///
+    /// A selection is a faint accent wash under text that keeps its own
+    /// colour. The stock themes paint selected text in one flat grey on
+    /// another, which on the lane background came out as text and band the
+    /// same shade — a selection you could make but not read. `cell-foreground`
+    /// leaves every cell's colour alone, so a selected `ls` still shows its
+    /// directories in blue; the wash is light enough that both the dark and
+    /// the light palettes stay legible over it.
     static var theme: TerminalTheme {
         TerminalTheme(
             light: TerminalConfiguration(startingFrom: .alabaster) { builder in
                 builder.withBackground(hex(Theme.laneBackground, in: .aqua))
                 builder.withCursorColor(hex(Theme.accent, in: .aqua))
+                builder.withSelectionBackground(hex(selectionWash, in: .aqua))
+                builder.withSelectionForeground("cell-foreground")
             },
             dark: TerminalConfiguration(startingFrom: .afterglow) { builder in
                 builder.withBackground(hex(Theme.laneBackground, in: .darkAqua))
                 builder.withCursorColor(hex(Theme.accent, in: .darkAqua))
+                builder.withSelectionBackground(hex(selectionWash, in: .darkAqua))
+                builder.withSelectionForeground("cell-foreground")
             })
+    }
+
+    /// The accent, laid over the lane background at the same strength the
+    /// sidebar uses for its selected row, then flattened: Ghostty takes an
+    /// opaque colour, and an alpha in the hex would be dropped.
+    static var selectionWash: NSColor {
+        NSColor(name: nil) { _ in
+            Theme.accent.blended(withFraction: 0.84, of: Theme.laneBackground) ?? Theme.laneBackground
+        }
     }
 
     /// `#rrggbb`, which is how Ghostty takes colours — so the theme is

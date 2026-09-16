@@ -81,6 +81,11 @@ public struct Config: Codable, Equatable {
     /// on a 5 s cadence, so polling faster buys nothing.
     public var sessionPollSeconds: Double = 5
 
+    /// How long a session's DONE chip is held before it lapses to idle on its
+    /// own, in seconds. Focusing the pane clears it sooner; zero holds it
+    /// until then.
+    public var doneHoldSeconds: Double = 1800
+
     /// Where `relay-pty-host` lives. `nil` means "find it next to `relay` on
     /// PATH", which is right on this machine and wrong on someone else's.
     public var relayPtyHostPath: String?
@@ -200,6 +205,7 @@ public struct Config: Codable, Equatable {
         webMemoryTargetFraction = read(.webMemoryTargetFraction, d.webMemoryTargetFraction)
         memorySampleSeconds = read(.memorySampleSeconds, d.memorySampleSeconds)
         sessionPollSeconds = read(.sessionPollSeconds, d.sessionPollSeconds)
+        doneHoldSeconds = read(.doneHoldSeconds, d.doneHoldSeconds)
         relayPtyHostPath = read(.relayPtyHostPath, d.relayPtyHostPath)
         fontName = read(.fontName, d.fontName)
         fontSize = read(.fontSize, d.fontSize)

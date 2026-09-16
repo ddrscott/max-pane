@@ -59,8 +59,8 @@ struct AddressBarTests {
             for (key, modifiers) in command.chords.map(\.pair) {
                 let id = "\(modifiers.intersection(.deviceIndependentFlagsMask).rawValue):\(key)"
                 if let held = seen[id], held == command.sharesChordWith {
-                    // Declared pair: ⌘D keeps a page or splits a terminal, and
-                    // `canPerform` enables exactly one of them.
+                    // A declared pair, where `canPerform` enables exactly one
+                    // of the two. None ships today; the rule outlives them.
                     #expect(held.sharesChordWith == command, "the pairing is not mutual")
                     continue
                 }
@@ -71,7 +71,7 @@ struct AddressBarTests {
     }
 
     /// The exception has to stay an exception: a pair that could both be live
-    /// at once would make ⌘D mean whichever item the menu happened to reach.
+    /// at once would make the key mean whichever item the menu happened to reach.
     @Test("a shared chord is only allowed where the two can never both be live")
     func sharedChordsAreMutuallyExclusive() {
         for command in Command.allCases {

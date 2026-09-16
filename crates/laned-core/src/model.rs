@@ -151,6 +151,10 @@ pub struct Pane {
     /// How far the pane's contents are scaled; 1.0 is actual size. A terminal
     /// reads it as a font size and a page as a page zoom.
     pub zoom: f64,
+    /// `web` only: ask sites for the layout an iPhone would get, because a
+    /// portrait lane is a phone's shape. The shell sends a mobile user agent
+    /// and WebKit's mobile content mode; a terminal ignores it.
+    pub mobile: bool,
 }
 
 /// Which edge of the window a docked lane holds.

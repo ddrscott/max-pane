@@ -46,6 +46,13 @@ enum Theme {
     /// `working`, so a session actually producing output still reads louder.
     static let alive = green(dark: 0x2E8C4F, light: 0x6B9A7A)
 
+    /// The one colour outside the green family that marks a state: DONE, the
+    /// agent finished and is waiting to be read. Signal Orange, dark
+    /// (5.0:1 on a lane), a deeper cut of it light (5.1:1 on white). Orange because in
+    /// a gallery of ten green-or-grey lanes the ones that need a decision
+    /// have to be findable without reading a word.
+    static let done = green(dark: 0xE85D00, light: 0xB84800)
+
     private static func green(dark: UInt32, light: UInt32) -> NSColor {
         NSColor(name: nil) { appearance in
             let hex = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
@@ -152,7 +159,7 @@ enum Theme {
         switch state {
         case .blocked: return blocked
         case .working: return working
-        case .done: return NSColor(srgbRed: 0x94 / 255, green: 0xa3 / 255, blue: 0xb8 / 255, alpha: 1)
+        case .done: return done
         case .exited: return dimText
         case .idle, .unknown: return .clear
         }

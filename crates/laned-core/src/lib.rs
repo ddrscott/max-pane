@@ -259,6 +259,7 @@ impl Core {
             state: PaneState::Live,
             height_weight: 1.0,
             zoom: 1.0,
+            mobile: false,
         };
         inner.ledger.insert_lane(&lane)?;
         inner.ledger.insert_pane(&pane)?;
@@ -297,6 +298,7 @@ impl Core {
             // singled out to pay for the newcomer.
             height_weight: mean_weight(&inner.ledger.height_weights(&lane_id)?),
             zoom: 1.0,
+            mobile: false,
         };
         inner.ledger.insert_pane(&pane)?;
         inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane.id)?;
@@ -1440,6 +1442,14 @@ impl Core {
         inner.ledger.update_pane_zoom(&pane_id, zoom)
     }
 
+    /// Remember whether a pane asks sites for their phone layout. No snapshot
+    /// is published, as with zoom: the shell that flipped it reloads the page
+    /// itself, and the strip's shape is untouched.
+    pub fn set_pane_mobile(&self, pane_id: String, mobile: bool) -> Result<()> {
+        let inner = self.inner.lock();
+        inner.ledger.update_pane_mobile(&pane_id, mobile)
+    }
+
     pub fn set_pane_data_store(&self, pane_id: String, data_store_id: String) -> Result<()> {
         let inner = self.inner.lock();
         inner.ledger.set_pane_data_store(&pane_id, &data_store_id)
@@ -1696,6 +1706,7 @@ impl Core {
                     state: PaneState::Live,
                     height_weight: p.height_weight,
                     zoom: p.zoom,
+                    mobile: p.mobile,
                 })?;
             }
         }

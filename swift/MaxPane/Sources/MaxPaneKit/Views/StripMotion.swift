@@ -354,7 +354,35 @@ enum StripReveal {
     }
 
     private static func exactCentre(_ slot: StripEdges.Slot, lanes: [Lane], viewport: CGFloat) -> CGFloat {
-        clamp(slot.origin - (viewport - slot.width) / 2, lanes: lanes, viewport: viewport)
+        let margins = margins(lanes: lanes, viewport: viewport)
+        let limit = max(0, StripEdges.contentWidth(of: lanes) - viewport)
+        return min(max(-margins.left, slot.origin - (viewport - slot.width) / 2), limit + margins.right)
+    }
+
+    /// How far past each end the strip may rest, so the first and last lanes
+    /// centre like every other lane instead of stopping at the wall.
+    ///
+    /// A carousel centres the focused lane, and an end lane that could not be
+    /// centred sat flush against its edge with a whole neighbour showing on
+    /// the other side — which reads exactly like a middle lane, so nothing
+    /// said *this is the end*. Empty strip past the lane says it. The margin
+    /// is what centring the end lane needs and nothing more, per end, and it
+    /// is zero when the whole strip fits (nothing scrolls) or when the strip
+    /// is not a carousel around that lane (focus moves as little as it can,
+    /// and the end of the strip is where it stops).
+    ///
+    /// The view turns these into content insets, so a drag can reach the same
+    /// empty space a focus does and the snap settles there.
+    static func margins(lanes: [Lane], viewport: CGFloat) -> (left: CGFloat, right: CGFloat) {
+        guard viewport > 0, !lanes.isEmpty,
+              StripEdges.contentWidth(of: lanes) > viewport
+        else { return (0, 0) }
+        let slots = StripEdges.slots(of: lanes)
+        func margin(_ index: Int) -> CGFloat {
+            guard isCarousel(around: index, slots: slots, viewport: viewport) else { return 0 }
+            return max(0, (viewport - slots[index].width) / 2)
+        }
+        return (margin(0), margin(slots.count - 1))
     }
 
     /// The least movement that brings `laneId` fully on screen, and no peek.
@@ -397,7 +425,8 @@ enum StripReveal {
         return lanes[index + 1].id
     }
 
-    /// Inside the strip, measured from the lanes rather than from a view.
+    /// Inside the strip, measured from the lanes rather than from a view. The
+    /// least-movement paths use this; a carousel centre uses `margins` too.
     private static func clamp(_ x: CGFloat, lanes: [Lane], viewport: CGFloat) -> CGFloat {
         min(max(0, x), max(0, StripEdges.contentWidth(of: lanes) - viewport))
     }

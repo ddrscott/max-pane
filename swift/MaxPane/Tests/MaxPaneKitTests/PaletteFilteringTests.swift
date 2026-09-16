@@ -229,7 +229,7 @@ struct PaletteFilteringTests {
 
     @Test("only the three states worth interrupting someone for get a chip")
     func chipsOnlyWhereTheyMean() {
-        #expect(AgentState.blocked.hasChip && AgentState.working.hasChip && AgentState.done.hasChip)
+        #expect(AgentState.blocked.hasChip && !AgentState.working.hasChip && AgentState.done.hasChip)
         #expect(!AgentState.idle.hasChip && !AgentState.unknown.hasChip)
     }
 

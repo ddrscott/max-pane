@@ -37,7 +37,11 @@ struct PaletteTests {
 
     // MARK: - no orange
 
-    @Test("no orange literal is left anywhere in the app's source")
+    /// One exception, by name: `Theme.done` is Signal Orange, the single hue
+    /// outside the family, so a finished agent is findable across a gallery
+    /// of green-or-grey lanes. Everything else — focus, buttons, headers,
+    /// alarms — stays green, and this scan keeps it so.
+    @Test("no orange literal is left anywhere in the app's source, except Theme.done")
     func noOrangeInSource() throws {
         let sources = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -45,8 +49,12 @@ struct PaletteTests {
         let files = try #require(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))
         var scanned = 0
         for case let url as URL in files where url.pathExtension == "swift" {
-            let text = try String(contentsOf: url, encoding: .utf8).lowercased()
+            var text = try String(contentsOf: url, encoding: .utf8).lowercased()
             scanned += 1
+            if url.lastPathComponent == "Theme.swift" {
+                // Only the `done` line may carry the literal.
+                text = text.split(separator: "\n").filter { !$0.contains("static let done =") }.joined(separator: "\n")
+            }
             // Assembled rather than written out, so the acceptance grep
             // (`rg -i 'e85d00|0xE8 / 255' swift/`) does not find this list.
             for needle in ["e85" + "d00", "0xe8" + " / 255", "system" + "orange", "nscolor." + "orange"] {
@@ -54,6 +62,15 @@ struct PaletteTests {
             }
         }
         #expect(scanned > 50, "the scan found the source tree")
+    }
+
+    @Test("DONE is orange, in both appearances, and reads on a lane")
+    func doneIsOrange() {
+        for mode in modes {
+            let hue = srgb(Theme.done, mode).hueComponent * 360
+            #expect((15...35).contains(hue), "done in \(mode.rawValue) has hue \(hue)")
+            #expect(contrast(Theme.done, Theme.laneBackground, mode) >= 4.5)
+        }
     }
 
     @Test("every role is a green, in both appearances")
@@ -257,6 +274,6 @@ struct PaletteTests {
              projectSource: .cwd, createdAt: 0, lastFocusAt: 0, keepLive: false, dock: nil, span: 1,
              panes: [Pane(id: "p", laneId: "l", position: 0, kind: .pty,
                           relaySessionId: "a", url: nil, scrollY: nil, dataStoreId: nil,
-                          snapshotPath: nil, state: .live, heightWeight: 1, zoom: 1)])
+                          snapshotPath: nil, state: .live, heightWeight: 1, zoom: 1, mobile: false)])
     }
 }

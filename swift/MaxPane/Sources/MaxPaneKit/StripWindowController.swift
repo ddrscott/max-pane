@@ -213,7 +213,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     /// Every key the menu cannot carry.
     ///
     /// Two kinds land here. A menu item holds exactly one key equivalent, and
-    /// ⌘O, ⌘T and ⌘D are one thought — so the other two are matched here, ahead
+    /// ⌘O and ⌘T are one thought — so the second is matched here, ahead
     /// of the responder chain. And a chord with no ⌘ in it cannot be a key
     /// equivalent at all without being taken from every text field in the
     /// window, which is why Esc spent so long declared and unlistened-for:
@@ -224,7 +224,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private func installAlternateShortcuts() {
         alternateMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.window?.isKeyWindow == true else { return event }
-            // A palette on screen owns the keyboard; ⌘D while typing a command
+            // A palette on screen owns the keyboard; ⌘T while typing a command
             // into the picker must not open a second picker.
             guard NSApp.keyWindow === self.window else { return event }
             let typed = KeyChord(key: event.charactersIgnoringModifiers ?? "",
@@ -285,9 +285,20 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             FileHandle.standardError.write(Data("maxpane: open socket unavailable: \(error)\n".utf8))
         }
 
-        store.observe { [weak self] _ in
-            self?.syncAttachedSessions()
-            self?.refreshStatus()
+        store.observe { [weak self] state in
+            guard let self else { return }
+            self.syncAttachedSessions()
+            self.refreshStatus()
+            // Focusing a session's pane is what clears its DONE — a click, the
+            // sidebar, ⌘P or the keyboard, they all land here.
+            if let paneId = state.focusedPaneId,
+               let sessionId = self.store.pane(paneId)?.relaySessionId {
+                self.sessions.acknowledge(sessionId)
+            }
+        }
+        sessions.doneHold = config.doneHoldSeconds
+        sessions.onStateChange = { [weak self] telemetry, _, to in
+            self?.alert(telemetry, became: to)
         }
         sessions.observe { [weak self] telemetry in
             guard let self else { return }
@@ -476,11 +487,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         case .pairWithNext:
             return pairCandidates() != nil
         case .splitRight:
-            // The mirror of `bookmarkPage`, which holds the same chord: a
-            // terminal splits, a page is kept, and only one of the two is ever
-            // enabled. A lane is needed to put the new one beside.
+            // Any pane. It was terminals only while ⌘D was shared with Keep
+            // This Page and exactly one of the two had to be live; now the
+            // split owns the key, and a terminal beside a page is as useful as
+            // one beside a terminal — it starts in `$HOME`, a page having no
+            // cwd to inherit. A lane is needed to put the new one beside.
             return store.focusedLane != nil
-                && store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .pty
         case .closePane, .closeLane, .splitDown, .toggleKeepLive,
              .moveLaneLeft, .moveLaneRight, .widenLane, .narrowLane,
              .dockLaneLeft, .dockLaneRight:
@@ -495,6 +507,10 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             // its own bounds. Not in the gallery, which writes nothing but the
             // layout and focus.
             return store.focusedLane != nil && !strip.isGallery
+        case .toggleMobileLayout:
+            // A lane with a page in it. The pages are asked, not the snapshot,
+            // for the same reason the lane's menu asks them.
+            return store.focusedLane.flatMap { strip.mobileLayout(of: $0) } != nil
         case .focusDockLeft:
             return store.dockedLane(.left) != nil
         case .focusDockRight:
@@ -676,6 +692,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .laneSizeCycle:
                 if let lane = focusedLane { strip.cycleSizePreset(ofLane: lane.id) }
+
+            case .toggleMobileLayout:
+                if let lane = focusedLane { strip.toggleMobileLayout(ofLane: lane.id) }
             }
         } catch {
             showError(error)
@@ -742,7 +761,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         try store.newTerminalLane(relaySessionId: session, near: lane?.id)
     }
 
-    /// ⌘O (and ⌘T, ⌘D, ⌘Y, ⌥⌘O) — the picker, and what to do with what it
+    /// ⌘O (and ⌘T, ⌘Y, ⌥⌘O) — the picker, and what to do with what it
     /// hands back.
     ///
     /// `into` is the only thing that differs between the keys, and it is not a
@@ -849,6 +868,16 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             telemetry: sessions.sessions,
             webBytes: WebProcessMemory.currentBytes(),
             asking: WebAskCenter.shared.count)
+    }
+
+    /// A session needs a human — it finished, or it is asking — and the human
+    /// may be elsewhere. Bounce the Dock icon once when the app is not in
+    /// front; when it is, the sidebar chip is the alert and a bounce would
+    /// be noise. `.informationalRequest` bounces once and stops; the
+    /// critical kind keeps going until the app is activated.
+    private func alert(_ telemetry: SessionTelemetry, became state: AgentState) {
+        guard state == .done || state == .blocked, !NSApp.isActive else { return }
+        NSApp.requestUserAttention(.informationalRequest)
     }
 
     /// Tell the registry which sessions have lanes, so the picker can hide them

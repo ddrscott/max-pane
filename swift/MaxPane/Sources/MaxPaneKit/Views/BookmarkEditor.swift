@@ -1,20 +1,21 @@
 import AppKit
 import LanedCore
 
-/// The little sheet ⌘D opens: what this page is called, and which folder it is
-/// in.
+/// The little sheet the ★ opens: what this page is called, and which folder it
+/// is in.
 ///
 /// ## Why keeping is one press and editing is the panel
 ///
-/// ⌘D keeps the page *before* this opens, and this opens on the page that is
-/// now kept. That is Chrome's shape and it is right for the same reason: the
+/// The star keeps the page *before* this opens, and this opens on the page
+/// that is now kept. That is Chrome's shape and it is right for the same reason: the
 /// common case is "keep this", the uncommon one is "keep this, but call it
 /// something and put it somewhere", and a dialog that stood between the press
 /// and the keeping would tax the common case to serve the rare one. Nothing
 /// here is a commit button — every control writes as it is used — so dismissing
 /// it with esc or by clicking away leaves the page kept, which is what was
 /// asked for. **Remove** is the undo, and it is on the panel because "I meant
-/// to press ⌘W" is the other thing that happens a second after ⌘D.
+/// to press something else" is the other thing that happens a second after
+/// the star.
 ///
 /// ## Why a popover and not a fourth palette
 ///
@@ -52,7 +53,7 @@ final class BookmarkEditor: NSViewController {
     required init?(coder: NSCoder) { fatalError("not a nib") }
 
     /// Open centred over `anchor`'s window, with the name field selected so the
-    /// second thing anyone does after ⌘D — rename it — costs no click.
+    /// second thing anyone does after keeping — rename it — costs no click.
     static func show(
         over anchor: NSView, store: StripStore, bookmark: Bookmark, onClose: @escaping () -> Void
     ) {
@@ -62,7 +63,7 @@ final class BookmarkEditor: NSViewController {
         // Centred like every other dialog rather than hung off the ★ — the owner
         // asked for one frame for all of them. A click away still closes it, the
         // way the transient popover did, and nothing is lost by closing: the page
-        // was kept the moment ⌘D was pressed.
+        // was kept the moment the star was clicked.
         popup.present(over: anchor.window)
     }
 

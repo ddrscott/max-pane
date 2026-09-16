@@ -149,6 +149,7 @@ final class WebPaneController: NSObject, PaneController {
         showAddress(pane.url)
         zoom = pane.zoom
         chrome.setZoom(zoom)
+        mobile = pane.mobile
 
         // A pane that is already evicted comes back as a placeholder, not as a
         // web view that immediately gets torn down again.
@@ -668,7 +669,7 @@ final class WebPaneController: NSObject, PaneController {
         return (live?.isEmpty == false) ? live : pane.url
     }
 
-    /// ⌘D, and the star. Keep the page if it is not kept, then open the editor
+    /// Keep This Page, and the star. Keep the page if it is not kept, then open the editor
     /// on it either way — see `BookmarkEditor` for why the keeping does not
     /// wait for the panel.
     func keepPage() {
@@ -720,6 +721,29 @@ final class WebPaneController: NSObject, PaneController {
         webView?.pageZoom = CGFloat(zoom)
         chrome.setZoom(zoom)
         store.setPaneZoom(paneId, zoom)
+    }
+
+    // MARK: - mobile layout
+
+    /// Whether this page is asked for as a phone would ask for it.
+    ///
+    /// A portrait lane is a phone's shape, and a site that draws one layout per
+    /// device — Discord, at 656 pt, with its sidebars folded over its channel —
+    /// is cramped in it while its phone layout was drawn for exactly that
+    /// column. Two things make a site serve that layout, and both are needed:
+    /// the user agent, which is what a server and most scripts read, and
+    /// WebKit's mobile content mode on every navigation, which is what the
+    /// engine itself reads for `<meta viewport>` and its touch-ish quirks. The
+    /// first is set on the view, the second in `decidePolicyFor`, and a page is
+    /// only asked again when it is reloaded — so flipping this reloads.
+    private(set) var mobile = false
+
+    func setMobile(_ next: Bool) {
+        guard next != mobile else { return }
+        mobile = next
+        store.setPaneMobile(paneId, mobile)
+        webView?.customUserAgent = mobile ? BrowserUserAgent.mobile : nil
+        reload(fromOrigin: false)
     }
 
     // MARK: - size presets
@@ -1160,6 +1184,9 @@ final class WebPaneController: NSObject, PaneController {
 
         self.webView = webView
         webView.pageZoom = CGFloat(zoom)
+        // Before the first request, which is the one a site decides the layout
+        // on. Nil is the desktop string `buildWebView` configured; see `mobile`.
+        webView.customUserAgent = mobile ? BrowserUserAgent.mobile : nil
         // Weak, and that matters: `WKUserContentController` holds its message
         // handlers for the life of the configuration, which this pane owns.
         let relay = ScriptMessageRelay { [weak self] body in

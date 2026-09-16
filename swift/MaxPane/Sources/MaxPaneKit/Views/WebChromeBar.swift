@@ -58,8 +58,8 @@ final class WebChromeBar: NSView {
     var onReloadOrStop: (() -> Void)?
     var onFind: (() -> Void)?
     /// The star. Keep this page if it is not kept, and open the editor either
-    /// way — the same thing ⌘D does, because they are one action with two
-    /// doors.
+    /// way — the same thing the Keep This Page menu item does, because they
+    /// are one action with two doors. There is no default key: ⌘D splits.
     var onStar: (() -> Void)?
     /// The key. Opens the password menu for this page — fill, or save.
     ///
@@ -141,7 +141,7 @@ final class WebChromeBar: NSView {
         forward.toolTip = "Forward"
         reload.toolTip = "Reload (⌘R)"
         find.toolTip = "Find in page (⌘F)"
-        star.toolTip = "Keep this page (⌘D)"
+        star.toolTip = "Keep this page"
         key.toolTip = "Passwords for this site (⌥⌘L fills)"
         key.isHidden = true
         zoom.toolTip = "Zoom — click for actual size (⌘0)"
@@ -278,7 +278,7 @@ final class WebChromeBar: NSView {
     func setKept(_ kept: Bool) {
         star.icon = kept ? .starFilled : .star
         star.tint = kept ? Theme.accent : nil
-        star.toolTip = kept ? "Kept — click to edit or remove (⌘D)" : "Keep this page (⌘D)"
+        star.toolTip = kept ? "Kept — click to edit or remove" : "Keep this page"
     }
 
     func setZoom(_ level: Double) {

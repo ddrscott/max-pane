@@ -26,7 +26,10 @@ struct WebDelegateSelectorTests {
             "webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:",
             "webView:requestMediaCapturePermissionForOrigin:initiatedByFrame:type:decisionHandler:",
             "webView:didReceiveAuthenticationChallenge:completionHandler:",
-            "webView:decidePolicyForNavigationAction:decisionHandler:",
+            // The `preferences:` variant, which carries the mobile layout's
+            // content mode. WebKit prefers it when both exist, so this is the
+            // one that has to be there.
+            "webView:decidePolicyForNavigationAction:preferences:decisionHandler:",
             "webView:decidePolicyForNavigationResponse:decisionHandler:",
             "webView:navigationAction:didBecomeDownload:",
             "webView:navigationResponse:didBecomeDownload:",

@@ -619,6 +619,11 @@ RustBuffer uniffi_laned_core_fn_method_core_set_pane_heights(uint64_t ptr, RustB
 void uniffi_laned_core_fn_method_core_set_pane_interaction_state(uint64_t ptr, RustBuffer pane_id, RustBuffer state, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PANE_MOBILE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PANE_MOBILE
+void uniffi_laned_core_fn_method_core_set_pane_mobile(uint64_t ptr, RustBuffer pane_id, int8_t mobile, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PANE_SCROLL
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PANE_SCROLL
 void uniffi_laned_core_fn_method_core_set_pane_scroll(uint64_t ptr, RustBuffer pane_id, double scroll_y, RustCallStatus *_Nonnull out_status
@@ -1352,6 +1357,12 @@ uint16_t uniffi_laned_core_checksum_method_core_set_pane_heights(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_PANE_INTERACTION_STATE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_PANE_INTERACTION_STATE
 uint16_t uniffi_laned_core_checksum_method_core_set_pane_interaction_state(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_PANE_MOBILE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_PANE_MOBILE
+uint16_t uniffi_laned_core_checksum_method_core_set_pane_mobile(void
     
 );
 #endif

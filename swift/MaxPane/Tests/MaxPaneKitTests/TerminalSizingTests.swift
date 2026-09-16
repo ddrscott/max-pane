@@ -104,7 +104,7 @@ struct AgentStateTests {
     @Test("only the three states worth interrupting someone for get a chip")
     func onlyUrgentStatesGetChips() {
         #expect(AgentState.blocked.chipText == "BLOCKED")
-        #expect(AgentState.working.chipText == "WORKING")
+        #expect(AgentState.working.chipText == "", "the green mark and the rate carry WORKING")
         #expect(AgentState.done.chipText == "DONE")
         // A chip on every row is a chip that means nothing.
         #expect(!AgentState.idle.hasChip)

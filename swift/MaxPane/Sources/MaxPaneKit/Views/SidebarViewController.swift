@@ -494,7 +494,7 @@ final class SidebarViewController: NSViewController {
         NSPasteboard.general.setString(url, forType: .string)
     }
 
-    /// A page goes without asking — ⌘D on the same address puts it back, and
+    /// A page goes without asking — the ★ on the same address puts it back, and
     /// the confirmation belongs to the delete that cannot be undone. A folder
     /// asks, because it takes everything inside it and nothing puts that back.
     @objc private func removeBookmarkClicked() {
