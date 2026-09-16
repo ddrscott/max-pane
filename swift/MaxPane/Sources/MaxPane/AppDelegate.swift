@@ -98,6 +98,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         blocker.persistExemption = { [weak store] domain, exempt in store?.setBlockingExempt(domain, exempt) }
         blocker.start(source: config.blockingListUrl)
 
+        // Web pages' notifications: this app is the centre's delegate, so a
+        // banner shows while the app is frontmost (the pane may be fifteen
+        // lanes away) and a click comes back to the pane that posted it.
+        // macOS itself is not asked for permission here — that happens the
+        // first time a site is allowed, when the question is about something.
+        WebNotificationCenter.shared.installSystemDelegate()
+
         windowController = StripWindowController(store: store, config: config)
         windowController.configStore = configStore
         buildMenu()

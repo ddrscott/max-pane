@@ -35,6 +35,17 @@ pub enum ProjectSource {
 pub enum SiteFeature {
     Camera,
     Microphone,
+    /// The Notification API. WebKit does not implement it on macOS, so the
+    /// shell does, and this is the answer to its `requestPermission()`.
+    Notifications,
+}
+
+/// One remembered answer, for the listing a pane embeds into its page so
+/// `Notification.permission` can be read synchronously before the page runs.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SiteGrant {
+    pub origin: String,
+    pub allowed: bool,
 }
 
 /// What a remembered entry launches.

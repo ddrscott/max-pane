@@ -246,6 +246,19 @@ per-site switch, flipped through the same method the menu calls, lets the
 blocked image through on a reload and stops it again on the next. The real
 EasyList is a 9 MB download and is not fetched by any test.
 
+`WebNotificationTests` serves one loopback page that uses the Notification API
+the way a chat app does, against a `WebNotificationCenter` whose poster is a
+recorder — `UNUserNotificationCenter.current()` traps in a process that is not
+an app bundle, which the runner is not. It checks the shape a site's feature
+detection reads, `permission` going `default` → `denied` after a remembered
+BLOCK and `granted` after a remembered ALLOW, each surviving a reload; that Esc
+settles `default` and remembers nothing; that macOS is asked exactly once, at
+the first grant; that `new Notification()` reaches the recorder with the site's
+title and body and the page hears `show`; that a click focuses the pane and
+fires the page's `click`; that a repeated `tag` replaces; and that a click on a
+banner from a pane that has since closed does nothing. The real banners are
+checked by hand: Slack in a lane, the app in the background.
+
 `WebFullscreenTests` uses the same two-origin setup for full screen: a host page
 with a box inside a transformed card and two iframes from the other origin, one
 allowed full screen and one not, in a split lane. It checks the box's size
@@ -422,6 +435,33 @@ greyed out on a terminal lane and when `blocking = false` has turned the
 blocker off everywhere. A popup follows its opener's site, because WebKit
 keeps the opener's `WKUserContentController` for the popup's view. No key by
 default; `keys` binds `toggleBlocking`.
+
+**Web notifications.** WebKit has no `window.Notification` on macOS, so Slack,
+Gmail, Linear and every chat app in a pane could neither ask nor notify, and
+their own feature detection turned the feature off without a word. The API is
+the app's: a script in every frame of every page defines `Notification` before
+the page runs, and the pane is the notification centre behind it. A site's
+`requestPermission()` is the same question the camera asks — `example.com
+WANTS TO SEND NOTIFICATIONS`, drawn in the pane, BLOCK or ALLOW, with a box to
+remember the answer for that site in that cookie jar — and a remembered answer
+is written into the script for the next page, since `Notification.permission`
+is a read the page makes with no chance to ask back. Esc is *not now*: the
+page's promise settles `default` and it may ask again on a later click. A
+granted `new Notification()` goes through macOS's Notification Center with the
+site's title, body and icon (fetched with a short deadline and dropped if it
+is late), shows as a banner even while the app is in front, and a click on it
+brings the app, the lane and the pane forward and fires the page's `click`;
+`show`, `close` and `error` arrive as they do in a browser, a repeated `tag`
+replaces the banner rather than stacking, and `close()` takes it down. Nothing
+is posted for the pane you are looking at — the focused pane in the key window
+of the active app — because a banner about the thing under the pointer is
+noise; the page still hears `show` and `close`. macOS itself is asked whether
+the app may notify the first time a site is allowed, not at launch. Two limits,
+on purpose: only a page that is alive can notify, so a pane the memory policy
+has evicted is quiet until it is back on screen and reloaded; and a service
+worker's `showNotification` is not supported, so a site that notifies only
+from its worker — with no page open — will not. A popup's page asks in its
+dialog and notifies as its opener.
 
 The default list is Adblock Plus's published WebKit conversion of EasyList,
 which is the one maintained conversion of a list people actually use that is

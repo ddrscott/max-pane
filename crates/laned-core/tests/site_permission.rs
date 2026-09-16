@@ -124,3 +124,36 @@ fn a_decision_survives_an_unclean_exit() {
         Some(true)
     );
 }
+
+/// The listing a web pane embeds into its pages, so `Notification.permission`
+/// can be read before the page runs. Filtered by jar and by feature: a camera
+/// grant is not a notification grant, and another jar's answers are another
+/// person's.
+#[test]
+fn notification_answers_are_listed_per_jar_and_feature() {
+    let core = Core::open_in_memory().unwrap();
+    core.set_site_permission("shard-0".into(), "https://slack.example".into(), SiteFeature::Notifications, true)
+        .unwrap();
+    core.set_site_permission("shard-0".into(), "https://ads.example".into(), SiteFeature::Notifications, false)
+        .unwrap();
+    core.set_site_permission("shard-0".into(), "https://meet.example".into(), SiteFeature::Camera, true)
+        .unwrap();
+    core.set_site_permission("shard-1".into(), "https://mail.example".into(), SiteFeature::Notifications, true)
+        .unwrap();
+
+    let listed = core.site_permissions("shard-0".into(), SiteFeature::Notifications).unwrap();
+    assert_eq!(
+        listed,
+        vec![
+            SiteGrant { origin: "https://ads.example".into(), allowed: false },
+            SiteGrant { origin: "https://slack.example".into(), allowed: true },
+        ]
+    );
+    assert!(core.site_permissions("shard-2".into(), SiteFeature::Notifications).unwrap().is_empty());
+    // And the single read agrees with the listing, under the new feature string.
+    assert_eq!(
+        core.site_permission("shard-0".into(), "https://slack.example".into(), SiteFeature::Notifications)
+            .unwrap(),
+        Some(true)
+    );
+}

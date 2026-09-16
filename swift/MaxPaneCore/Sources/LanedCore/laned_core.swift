@@ -1421,6 +1421,12 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func sitePermission(dataStoreId: String, origin: String, feature: SiteFeature) throws  -> Bool?
     
     /**
+     * Every remembered answer about `feature` in one cookie jar, so a pane can
+     * hand the page its `Notification.permission` before the page asks.
+     */
+    func sitePermissions(dataStoreId: String, feature: SiteFeature) throws  -> [SiteGrant]
+    
+    /**
      * The current strip. Call this on launch and render whatever comes back.
      */
     func state() throws  -> StripState
@@ -2972,6 +2978,21 @@ open func sitePermission(dataStoreId: String, origin: String, feature: SiteFeatu
             self.uniffiCloneHandle(),
         FfiConverterString.lower(dataStoreId),
         FfiConverterString.lower(origin),
+        FfiConverterTypeSiteFeature_lower(feature),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Every remembered answer about `feature` in one cookie jar, so a pane can
+     * hand the page its `Notification.permission` before the page asks.
+     */
+open func sitePermissions(dataStoreId: String, feature: SiteFeature)throws  -> [SiteGrant]  {
+    return try  FfiConverterSequenceTypeSiteGrant.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_site_permissions(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(dataStoreId),
         FfiConverterTypeSiteFeature_lower(feature),uniffiCallStatus
     )
 })
@@ -5170,6 +5191,64 @@ public func FfiConverterTypeSearchHit_lower(_ value: SearchHit) -> RustBuffer {
 
 
 /**
+ * One remembered answer, for the listing a pane embeds into its page so
+ * `Notification.permission` can be read synchronously before the page runs.
+ */
+public struct SiteGrant: Equatable, Hashable {
+    public var origin: String
+    public var allowed: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(origin: String, allowed: Bool) {
+        self.origin = origin
+        self.allowed = allowed
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension SiteGrant: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSiteGrant: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SiteGrant {
+        return
+            try SiteGrant(
+                origin: FfiConverterString.read(from: &buf), 
+                allowed: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SiteGrant, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.origin, into: &buf)
+        FfiConverterBool.write(value.allowed, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSiteGrant_lift(_ buf: RustBuffer) throws -> SiteGrant {
+    return try FfiConverterTypeSiteGrant.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSiteGrant_lower(_ value: SiteGrant) -> RustBuffer {
+    return FfiConverterTypeSiteGrant.lower(value)
+}
+
+
+/**
  * One saved login, with the password still sealed.
  *
  * `secret` is the raw `password_value` blob exactly as Chromium wrote it,
@@ -6496,6 +6575,11 @@ public enum SiteFeature: Equatable, Hashable {
     
     case camera
     case microphone
+    /**
+     * The Notification API. WebKit does not implement it on macOS, so the
+     * shell does, and this is the answer to its `requestPermission()`.
+     */
+    case notifications
 
 
 
@@ -6521,6 +6605,8 @@ public struct FfiConverterTypeSiteFeature: FfiConverterRustBuffer {
         
         case 2: return .microphone
         
+        case 3: return .notifications
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -6535,6 +6621,10 @@ public struct FfiConverterTypeSiteFeature: FfiConverterRustBuffer {
         
         case .microphone:
             writeInt(&buf, Int32(2))
+        
+        
+        case .notifications:
+            writeInt(&buf, Int32(3))
         
         }
     }
@@ -7209,6 +7299,31 @@ fileprivate struct FfiConverterSequenceTypeSearchHit: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeSiteGrant: FfiConverterRustBuffer {
+    typealias SwiftType = [SiteGrant]
+
+    public static func write(_ value: [SiteGrant], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSiteGrant.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SiteGrant] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SiteGrant]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSiteGrant.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeSourceLogin: FfiConverterRustBuffer {
     typealias SwiftType = [SourceLogin]
 
@@ -7484,6 +7599,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_site_permission() != 2813) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_site_permissions() != 49308) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_state() != 13882) {

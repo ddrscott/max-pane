@@ -947,6 +947,17 @@ impl Core {
             .set_site_permission(&data_store_id, &origin, feature, allowed, now_ms())
     }
 
+    /// Every remembered answer about `feature` in one cookie jar, so a pane can
+    /// hand the page its `Notification.permission` before the page asks.
+    pub fn site_permissions(
+        &self,
+        data_store_id: String,
+        feature: SiteFeature,
+    ) -> Result<Vec<SiteGrant>> {
+        let inner = self.inner.lock();
+        inner.ledger.site_permissions(&data_store_id, feature)
+    }
+
     pub fn forget_site_permissions(&self, data_store_id: String, origin: String) -> Result<()> {
         let inner = self.inner.lock();
         inner.ledger.forget_site_permissions(&data_store_id, &origin)

@@ -354,6 +354,13 @@ public final class StripStore {
             dataStoreId: dataStoreId, origin: origin, feature: feature, allowed: allowed)
     }
 
+    /// Every remembered answer about one feature in one cookie jar. A web pane
+    /// embeds the notification ones into its pages before they run, because
+    /// `Notification.permission` is a synchronous read.
+    func sitePermissions(dataStoreId: String, feature: SiteFeature) -> [SiteGrant] {
+        (try? core.sitePermissions(dataStoreId: dataStoreId, feature: feature)) ?? []
+    }
+
     func forgetSitePermissions(dataStoreId: String, origin: String) {
         try? core.forgetSitePermissions(dataStoreId: dataStoreId, origin: origin)
     }

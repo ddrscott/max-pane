@@ -518,7 +518,10 @@ extension WebPaneController {
     /// call* rather than the pane's own URL. An ad iframe calling `alert()`
     /// must say it is the ad iframe asking; attributing it to the page around
     /// it is how a dialog becomes a phishing surface.
-    private func ask(_ prompt: AskPrompt,
+    ///
+    /// Internal: the Notification API's `requestPermission()` asks through it
+    /// from `WebPaneNotifications.swift`.
+    func ask(_ prompt: AskPrompt,
                      from frame: WKFrameInfo?,
                      originOverride: String? = nil,
                      answer: @escaping (AskOutcome) -> Void) {
@@ -610,7 +613,8 @@ extension WebPaneController {
         sheet.takeFocus()
     }
 
-    private func finishAsk(with outcome: AskOutcome) {
+    /// Internal so a real-WebKit test can answer the sheet the way a button does.
+    func finishAsk(with outcome: AskOutcome) {
         askSheet = nil
         guard let pending = askQueue.current else { return }
         // The page first, the bookkeeping after. If anything below were to

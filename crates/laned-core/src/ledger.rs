@@ -715,6 +715,27 @@ impl Ledger {
         Ok(())
     }
 
+    /// Every remembered answer about one feature in one cookie jar. A web pane
+    /// embeds these into the page before it runs, because the Notification
+    /// API's `permission` is a synchronous read and there is no asking back.
+    pub fn site_permissions(
+        &self,
+        data_store_id: &str,
+        feature: SiteFeature,
+    ) -> Result<Vec<SiteGrant>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT origin, allowed FROM site_permission
+             WHERE data_store_id = ?1 AND feature = ?2 ORDER BY origin",
+        )?;
+        let rows = stmt.query_map(params![data_store_id, site_feature_str(feature)], |r| {
+            Ok(SiteGrant {
+                origin: r.get(0)?,
+                allowed: r.get::<_, i64>(1)? != 0,
+            })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     /// Undo every remembered decision for a site, so it is asked again next
     /// time. The only way back from a `Block` the user regrets — a permission
     /// that cannot be revoked is worse than one that is never remembered.
@@ -2157,6 +2178,7 @@ pub fn site_feature_str(f: SiteFeature) -> &'static str {
     match f {
         SiteFeature::Camera => "camera",
         SiteFeature::Microphone => "microphone",
+        SiteFeature::Notifications => "notifications",
     }
 }
 

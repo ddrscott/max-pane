@@ -95,6 +95,12 @@ final class WebPaneController: NSObject, PaneController {
     private var bookmarkToken: UUID?
     private var hoverRelay: ScriptMessageRelay?
     private var fullScreenRelay: FullScreenMessageRelay?
+    /// The Notification API's handler; the same whole-message relay as full
+    /// screen, because a popup's page speaks through this pane's controller too.
+    private var notificationRelay: FullScreenMessageRelay?
+    /// Where this pane's notifications are posted and clicks come back from.
+    /// The app's one, unless a test hands over its own with a recorder behind it.
+    let notifications: WebNotificationCenter
     private var keyWindowObserver: (any NSObjectProtocol)?
 
     /// True while an element of this pane's page fills the pane. See
@@ -136,12 +142,13 @@ final class WebPaneController: NSObject, PaneController {
     /// strip that built every one of them at launch would spend gigabytes before
     /// the window appeared.
     init(pane: Pane, lane: Lane, store: StripStore, config: Config, deferLoad: Bool = false,
-         blocker: ContentBlocker = .shared) {
+         blocker: ContentBlocker = .shared, notifications: WebNotificationCenter = .shared) {
         self.paneId = pane.id
         self.pane = pane
         self.store = store
         self.config = config
         self.blocker = blocker
+        self.notifications = notifications
         self.laneWidth = CGFloat(lane.widthPt)
         self.dataStoreId = pane.dataStoreId ?? Self.shard(for: lane.projectRoot, of: config)
         super.init()
@@ -1000,6 +1007,9 @@ final class WebPaneController: NSObject, PaneController {
         hoverRelay = nil
         webView.map(PaneFullscreen.remove(from:))
         fullScreenRelay = nil
+        webView.map(WebNotifications.remove(from:))
+        notificationRelay = nil
+        notifications.unregister(paneId: paneId)
         webView.map { blocker.detach($0.configuration.userContentController) }
         setPaneFullscreen(false)
         webView?.stopLoading()
@@ -1247,6 +1257,10 @@ final class WebPaneController: NSObject, PaneController {
         let fullScreen = FullScreenMessageRelay { [weak self] message in self?.fullScreenMessage(message) }
         fullScreenRelay = fullScreen
         PaneFullscreen.install(on: webView, handler: fullScreen)
+        let notify = FullScreenMessageRelay { [weak self] message in self?.notificationMessage(message) }
+        notificationRelay = notify
+        WebNotifications.install(on: webView, handler: notify, grants: notificationGrants())
+        notifications.register(self)
         observeChrome(webView)
         // `webView.title` is usually still empty when `didFinish` fires — the
         // document's <title> often lands a beat later — so observe it rather
@@ -1258,6 +1272,23 @@ final class WebPaneController: NSObject, PaneController {
         }
         store.setPaneDataStore(paneId, dataStoreId)
         install(webView)
+    }
+
+    /// Rewrite the user scripts for this view's next document.
+    ///
+    /// Only the Notification API's script changes — a remembered answer is
+    /// written into its source, because `Notification.permission` cannot be
+    /// fetched — but `WKUserContentController` removes user scripts all or
+    /// none, so the other two go and come back with it. Each install is
+    /// idempotent, so on an already-current controller this does nothing.
+    func refreshUserScripts() {
+        guard let webView, let hoverRelay, let fullScreenRelay, let notificationRelay else { return }
+        let grants = notificationGrants()
+        guard WebNotifications.isStale(on: webView, grants: grants) else { return }
+        webView.configuration.userContentController.removeAllUserScripts()
+        LinkHoverProbe.install(on: webView, handler: hoverRelay)
+        PaneFullscreen.install(on: webView, handler: fullScreenRelay)
+        WebNotifications.install(on: webView, handler: notificationRelay, grants: grants)
     }
 
     /// Constraints rather than an autoresizing mask, and that is not a taste
@@ -1300,6 +1331,11 @@ final class WebPaneController: NSObject, PaneController {
         hoverRelay = nil
         webView.map(PaneFullscreen.remove(from:))
         fullScreenRelay = nil
+        // A page that is gone cannot notify; a click on a banner it posted
+        // finds no pane registered and says so on the debug log.
+        webView.map(WebNotifications.remove(from:))
+        notificationRelay = nil
+        notifications.unregister(paneId: paneId)
         // The snapshot standing in for the page has an address to show.
         setPaneFullscreen(false)
         chrome.setHoveredLink(nil)
@@ -1638,7 +1674,9 @@ extension WebPaneController: WKUIDelegate {
         takeFocus()
     }
 
-    private func revealLane(holding paneId: String?) {
+    /// Internal: a notification click (`WebPaneNotifications.swift`) brings the
+    /// pane's lane on screen the same way.
+    func revealLane(holding paneId: String?) {
         guard let paneId, let laneId = store.lane(containing: paneId)?.id else { return }
         onRevealLane?(laneId)
     }

@@ -664,6 +664,11 @@ void uniffi_laned_core_fn_method_core_set_site_permission(uint64_t ptr, RustBuff
 RustBuffer uniffi_laned_core_fn_method_core_site_permission(uint64_t ptr, RustBuffer data_store_id, RustBuffer origin, RustBuffer feature, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SITE_PERMISSIONS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SITE_PERMISSIONS
+RustBuffer uniffi_laned_core_fn_method_core_site_permissions(uint64_t ptr, RustBuffer data_store_id, RustBuffer feature, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_STATE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_STATE
 RustBuffer uniffi_laned_core_fn_method_core_state(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -1421,6 +1426,12 @@ uint16_t uniffi_laned_core_checksum_method_core_set_site_permission(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SITE_PERMISSION
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SITE_PERMISSION
 uint16_t uniffi_laned_core_checksum_method_core_site_permission(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SITE_PERMISSIONS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SITE_PERMISSIONS
+uint16_t uniffi_laned_core_checksum_method_core_site_permissions(void
     
 );
 #endif
