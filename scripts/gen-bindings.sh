@@ -15,6 +15,18 @@ CARGO_FLAG=""
 
 cargo build $CARGO_FLAG -p laned-core
 
+# The Swift package links laned-core from swift/MaxPaneCore/lib, which holds
+# ONLY the static archive. It must not point at target/: cargo emits a .dylib
+# next to the .a there (uniffi-bindgen needs it), ld prefers a .dylib over a .a
+# in the same search path, and the app then loads target/.../liblaned_core.dylib
+# by absolute path at runtime. Every later `cargo build` silently swaps the
+# core under an installed app, and the next launch dies in uniffi's checksum
+# check ("UniFFI API checksum mismatch") before the first window appears.
+LIB="swift/MaxPaneCore/lib"
+mkdir -p "$LIB"
+rm -f "$LIB"/liblaned_core.*
+cp "target/$PROFILE/liblaned_core.a" "$LIB/liblaned_core.a"
+
 OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT
 cargo run $CARGO_FLAG --bin uniffi-bindgen -- generate \

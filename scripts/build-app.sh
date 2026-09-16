@@ -68,8 +68,15 @@ if [ "$APP" != "build/MaxPane.app" ]; then
   echo "==> bundle id app.ljs.maxpane.$SUFFIX (throwaway; keeps UserDefaults separate)"
 fi
 
-# laned-core is linked statically, so nothing to copy — but the dylib would land
-# in Frameworks/ with an @rpath fixup if that ever changes.
+# laned-core must be linked statically. If ld ever finds the .dylib instead, the
+# app loads target/release/deps/liblaned_core.dylib from this checkout at
+# runtime, and the next `cargo build` that touches the FFI kills every launch
+# with a uniffi checksum trap in Core.open. Refuse to ship that.
+if otool -L "$APP/Contents/MacOS/MaxPane" | grep -q laned_core; then
+  echo "MaxPane links liblaned_core dynamically; see swift/MaxPaneCore/Package.swift" >&2
+  otool -L "$APP/Contents/MacOS/MaxPane" | grep laned_core >&2
+  exit 1
+fi
 
 echo "==> maxpane-open (the BROWSER shim)"
 cargo build --release -p maxpane-open
@@ -95,12 +102,43 @@ fi
 # and the only symptom is `codesign --verify` saying "a sealed resource is
 # missing or invalid" — which nothing checks unless you ask it to. So we ask.
 #
-# No hardened runtime: it is only required for notarisation, and turning it on
-# without the matching entitlements is how WebKit loses its content processes
-# and Ghostty loses its renderer — both of which fail at runtime, not here.
-codesign --force --sign "$IDENTITY" --timestamp=none "$APP/Contents/Helpers/maxpane-open" >/dev/null
-codesign --force --sign "$IDENTITY" --timestamp=none "$APP/Contents/Helpers/maxpane" >/dev/null
-codesign --force --sign "$IDENTITY" --timestamp=none "$APP" >/dev/null
+# Hardened runtime is on (`--options runtime`), because Apple's notary service
+# rejects a bundle without it, and a stranger's Mac warns on an un-notarised
+# download. It used to be off for fear that WebKit would lose its content
+# processes and libghostty its renderer; neither needs an exception. WebKit's
+# helpers are Apple's own XPC services with their own entitlements, and
+# libghostty is linked statically with no JIT. The only entitlements the app
+# carries are the two device ones in MaxPane.entitlements, so a web page can
+# be granted the camera or microphone it asked for (see the comment there).
+# The helper CLIs get the runtime with no entitlements: they open sockets and
+# talk to the app, nothing more.
+#
+# `--timestamp` asks Apple's timestamp server to countersign, which the notary
+# service also requires. It needs the network; offline, sign without it and say
+# so, because a build that dies for want of a timestamp is worse than a build
+# that cannot be notarised yet. Ad-hoc signatures take the runtime flag too, so
+# a local build exercises the same runtime a shipped one does.
+ENTITLEMENTS="swift/MaxPane/Resources/MaxPane.entitlements"
+TIMESTAMP="--timestamp"
+if [ "$IDENTITY" = "-" ]; then
+  # Timestamps are meaningless on an ad-hoc signature; codesign ignores the
+  # request, but asking for one still costs a round-trip to Apple.
+  TIMESTAMP="--timestamp=none"
+elif ! PROBE_ERR="$(codesign --force --sign "$IDENTITY" --options runtime --timestamp \
+       "$APP/Contents/Helpers/maxpane-open" 2>&1 >/dev/null)"; then
+  # The probe fails for more reasons than a missing network: a locked keychain,
+  # an expired certificate, a revoked identity. codesign names which on stderr,
+  # so it is shown rather than guessed at as "unreachable".
+  echo "WARNING: the timestamped signing probe failed; signing without a secure timestamp." >&2
+  echo "         codesign said:" >&2
+  sed 's/^/           /' <<<"${PROBE_ERR:-(no output)}" >&2
+  echo "         This build cannot be notarised. Fix the cause above (offline? rebuild online;" >&2
+  echo "         keychain or certificate? see the message) before make-dmg.sh." >&2
+  TIMESTAMP="--timestamp=none"
+fi
+codesign --force --sign "$IDENTITY" --options runtime $TIMESTAMP "$APP/Contents/Helpers/maxpane-open" >/dev/null
+codesign --force --sign "$IDENTITY" --options runtime $TIMESTAMP "$APP/Contents/Helpers/maxpane" >/dev/null
+codesign --force --sign "$IDENTITY" --options runtime $TIMESTAMP --entitlements "$ENTITLEMENTS" "$APP" >/dev/null
 codesign --verify --deep --strict "$APP"
 
 echo "built $APP"
@@ -109,5 +147,11 @@ echo "  CLI:      $PWD/$APP/Contents/Helpers/maxpane"
 echo "  BROWSER:  $PWD/$APP/Contents/Helpers/maxpane-open  (set automatically in panes it starts)"
 
 if [ "$RUN" = "run" ]; then
-  open "$APP"
+  # `open` hands our environment to the app, and the app hands it to every
+  # pane. Run from a Claude session, that carries CLAUDE_CODE_CHILD_SESSION into
+  # each pane and every `claude` started there stops saving its transcript.
+  # The spawner scrubs these too; this keeps the app process itself clean.
+  env -u CLAUDECODE -u CLAUDE_PID -u CLAUDE_EFFORT \
+    $(env | sed -n 's/^\(CLAUDE_CODE_[A-Z_]*\)=.*/-u \1/p') \
+    open "$APP"
 fi

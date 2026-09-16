@@ -20,9 +20,13 @@ let package = Package(
             path: "Sources/laned_coreFFI",
             publicHeadersPath: "include",
             linkerSettings: [
-                // Resolved relative to the package root; ../../../target is the
-                // cargo workspace's output directory.
-                .unsafeFlags(["-L", "../../target/release"]),
+                // gen-bindings.sh puts the static archive, and nothing else,
+                // in lib/. Do not point this at target/: cargo leaves a .dylib
+                // beside the .a there, ld picks the .dylib, and the app ends up
+                // loading the core from the repo by absolute path at runtime.
+                // Absolute, because ld resolves -L against whichever directory
+                // `swift build` was run from, not the package root.
+                .unsafeFlags(["-L", "\(Context.packageDirectory)/lib"]),
                 .linkedLibrary("laned_core"),
             ]
         ),

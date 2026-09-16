@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for the hardened runtime, which notarisation requires.
+
+  The set is deliberately small. Ghostty ships with no `com.apple.security.cs.*`
+  exceptions at all, and libghostty is linked into MaxPane statically, so the
+  terminal needs none here either. WKWebView's content, network and GPU
+  processes are Apple's own XPC services with their own entitlements; the host
+  app does not need allow-jit, allow-unsigned-executable-memory or
+  disable-library-validation for them to spawn. Each of those would weaken the
+  bundle, so they stay out until something demonstrably fails without one.
+
+  The two below exist because the app forwards a page's camera and microphone
+  requests (WebPaneAsks, the NSCameraUsageDescription and
+  NSMicrophoneUsageDescription strings in Info.plist). Under the hardened
+  runtime a process without these entitlements is refused the device outright
+  — no prompt, just a silent denial the site reports as "permission denied".
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.security.device.camera</key>
+	<true/>
+</dict>
+</plist>

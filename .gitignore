@@ -1,4 +1,6 @@
 target/
+# The static archive gen-bindings.sh stages for the Swift linker.
+/swift/MaxPaneCore/lib/
 .build/
 .DS_Store
 *.xcodeproj
