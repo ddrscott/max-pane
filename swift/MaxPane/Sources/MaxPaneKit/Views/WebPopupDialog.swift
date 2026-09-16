@@ -313,6 +313,9 @@ final class WebPopupDialog: Popup {
         /// ⌥⌘L: this page's form, not the one behind it.
         case fill
         case reload
+        /// ⌃⌘P: the dialog's page is the one in front, so it is the one that
+        /// prints — a receipt is as likely to be in a popup as behind it.
+        case print
         /// Menu actions aimed at "the focused page", which here would be the
         /// opener behind the dialog — reloading it, zooming it, closing its
         /// lane or saving a password for it, in the middle of its own sign-in.
@@ -326,7 +329,8 @@ final class WebPopupDialog: Popup {
         case .closePane: return .close
         case .fillPassword: return .fill
         case .reload, .hardReload: return .reload
-        case .editAddress, .zoomIn, .zoomOut, .zoomReset, .bookmarkPage, .savePassword, .closeLane:
+        case .printPage: return .print
+        case .editAddress, .zoomIn, .zoomOut, .zoomReset, .bookmarkPage, .savePassword, .closeLane, .savePDF:
             return .ignore
         default: return .app
         }
@@ -345,6 +349,7 @@ final class WebPopupDialog: Popup {
         case .fill: fillPassword()
         case .reload:
             if command == .hardReload { webView.reloadFromOrigin() } else { webView.reload() }
+        case .print: WebPrinting.print(webView, over: window)
         case .ignore: break
         // Back to the menu before the web view can claim it, exactly as
         // `WebPaneContainer` does for a pane.

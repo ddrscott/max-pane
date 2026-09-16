@@ -476,13 +476,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         case .claimSession:
             // Only meaningful for a terminal pane.
             return store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .pty
-        case .editAddress, .bookmarkPage, .fillPassword, .savePassword:
-            // The mirror of `claimSession`: only a page has an address. Greyed
-            // out rather than beeping, because the menu can say which panes it
-            // is for and a beep cannot. Fill and save are here for the same
-            // reason and a sharper one — there is no form in a terminal, and a
-            // key that could put a password somewhere unexpected should be
-            // dead everywhere it does not mean anything.
+        case _ where command.needsWebPane:
+            // The mirror of `claimSession`: only a page has an address, a form
+            // or a document to print. Greyed out rather than beeping, because
+            // the menu can say which panes it is for and a beep cannot — see
+            // `Command.needsWebPane` for the list and the sharper reason the
+            // password keys are on it.
             return store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .web
         case .pairWithNext:
             return pairCandidates() != nil
@@ -553,6 +552,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .savePassword:
                 strip.saveFocusedPagePassword()
+
+            case .printPage:
+                strip.printFocusedPage()
+
+            case .savePDF:
+                strip.saveFocusedPageAsPDF()
 
             case .newTerminalLane:
                 try newTerminal(near: focusedLane)

@@ -106,8 +106,26 @@ final class DownloadJob: NSObject, WKDownloadDelegate {
     /// redraws its bar from it.
     var onChange: (() -> Void)?
 
-    private let download: WKDownload
+    /// Nil for a file the pane wrote itself — a saved PDF — which has no
+    /// transfer to observe or cancel and starts out finished.
+    private let download: WKDownload?
     private var observations: [NSKeyValueObservation] = []
+
+    /// A row for a file that is already on disk, or that failed to get there:
+    /// Save as PDF… lands here so it appears where a download would.
+    init(saved url: URL, failed why: String? = nil) {
+        download = nil
+        super.init()
+        name = url.lastPathComponent
+        destination = url
+        if let why {
+            state = .failed(why)
+        } else {
+            state = .finished
+            received = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
+            expected = received
+        }
+    }
 
     init(_ download: WKDownload) {
         self.download = download
@@ -157,7 +175,7 @@ final class DownloadJob: NSObject, WKDownloadDelegate {
     func cancel() {
         observations = []
         guard state == .running else { return }
-        download.cancel { _ in }
+        download?.cancel { _ in }
         state = .failed("cancelled")
         onChange?()
     }

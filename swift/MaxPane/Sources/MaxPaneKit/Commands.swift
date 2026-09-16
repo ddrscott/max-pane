@@ -57,6 +57,8 @@ public enum Command: String, CaseIterable, Sendable {
     case laneSizeCycle
     case toggleMobileLayout
     case toggleBlocking
+    case printPage
+    case savePDF
     case showHelp
     case showSettings
 
@@ -113,6 +115,8 @@ public enum Command: String, CaseIterable, Sendable {
         case .laneSizeCycle: return "Cycle Lane Size"
         case .toggleMobileLayout: return "Mobile Layout"
         case .toggleBlocking: return "Block Ads on This Site"
+        case .printPage: return "Print…"
+        case .savePDF: return "Save as PDF…"
         case .showHelp: return "Keyboard Shortcuts"
         case .showSettings: return "Settings…"
         }
@@ -285,6 +289,16 @@ public enum Command: String, CaseIterable, Sendable {
         // No key either, for the same reason: it is flipped once for the one
         // site whose page a rule breaks, and then left. `keys` binds it.
         case .toggleBlocking: return nil
+        // ⌃⌘P, not ⌘P: ⌘P is the palette here, the key the owner presses
+        // more than any other, and the keymap refuses two commands on one
+        // chord. ⇧⌘P and ⌥⌘P were taken long before printing was. The
+        // system print panel this opens already has Save as PDF in its PDF
+        // menu, so the print key is also the PDF key.
+        case .printPage:       return ("p", [.command, .control])
+        // No key. The print panel's PDF menu is the everyday route; this is
+        // the one for a whole page in one file, chosen through a save panel,
+        // and `keys` binds it for anyone who wants that on a key.
+        case .savePDF:         return nil
         // The one everybody reaches for when they do not know the others.
         case .showHelp:        return ("/", [.command])
         // ⌘, is Settings in every Mac app, which is the whole argument.
@@ -371,6 +385,20 @@ public enum Command: String, CaseIterable, Sendable {
             KeyChord(key: typed, modifiers: event.modifierFlags))
     }
 
+    /// Commands only a page can answer: an address, a form, a document to
+    /// print. `canPerform` greys these out on a terminal pane rather than
+    /// beeping, because the menu can say which panes an item is for and a
+    /// beep cannot; a key that could put a password somewhere unexpected is
+    /// dead everywhere it does not mean anything.
+    public var needsWebPane: Bool {
+        switch self {
+        case .editAddress, .bookmarkPage, .fillPassword, .savePassword, .printPage, .savePDF:
+            return true
+        default:
+            return false
+        }
+    }
+
     /// Which menu this belongs under.
     public var menu: MenuSection {
         switch self {
@@ -404,6 +432,9 @@ public enum Command: String, CaseIterable, Sendable {
         // the other import.
         case .fillPassword, .savePassword: return .navigate
         case .importBrowserPasswords: return .file
+        // Under File, where every Mac app keeps Print: the two produce a
+        // document out of the pane rather than acting on the site.
+        case .printPage, .savePDF: return .file
         case .laneSizeSmall, .laneSizeMedium, .laneSizeLarge, .laneSizeCycle: return .view
         // With the size presets, which it is the fourth of: a lane's shape.
         case .toggleMobileLayout: return .view

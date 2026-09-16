@@ -1976,6 +1976,19 @@ public final class StripViewController: NSViewController {
         paneControllers[paneId]?.savePassword()
     }
 
+    /// ⌃⌘P. The pane's own window is where the print sheet hangs, so it has
+    /// to be the pane that runs it.
+    public func printFocusedPage() {
+        guard let paneId = store.state.focusedPaneId else { return }
+        paneControllers[paneId]?.printPage()
+    }
+
+    /// Save as PDF…, into the pane's download bar when it lands.
+    public func saveFocusedPageAsPDF() {
+        guard let paneId = store.state.focusedPaneId else { return }
+        paneControllers[paneId]?.savePDF()
+    }
+
     /// Ask every live pane to write down what it would otherwise lose.
     ///
     /// Only web panes have anything to say — their history and scroll live in

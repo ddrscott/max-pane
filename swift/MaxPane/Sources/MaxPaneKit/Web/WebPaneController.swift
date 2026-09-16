@@ -68,6 +68,8 @@ final class WebPaneController: NSObject, PaneController {
     /// picker open closes it and answers `nil` rather than leaving a panel with
     /// nothing behind it.
     var openPanels: [NSOpenPanel] = []
+    /// The Save as PDF… panel, while it is up — see `WebPrint.swift`.
+    var savePanel: NSSavePanel?
 
     /// Every address this pane passed through on the way to the one it is
     /// showing. Internal: the navigation-policy delegate lives in
@@ -884,7 +886,7 @@ final class WebPaneController: NSObject, PaneController {
     }
 
     /// Put the bars back and tell the page, for a pane key that needs the bar.
-    private func leavePaneFullscreen() {
+    func leavePaneFullscreen() {
         guard isPaneFullscreen else { return }
         webView?.evaluateJavaScript(PaneFullscreen.exitScript)
         setPaneFullscreen(false)
@@ -985,6 +987,7 @@ final class WebPaneController: NSObject, PaneController {
         // closing pane is exactly when it is easiest to forget.
         drainAsks()
         cancelDownloads()
+        cancelSavePanel()
         // A popup belongs to the page that opened it, and that page is going
         // away. There is nothing to give the keyboard back to.
         popupDialog?.dismiss(returningFocus: false)

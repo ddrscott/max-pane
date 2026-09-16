@@ -436,6 +436,19 @@ blocker off everywhere. A popup follows its opener's site, because WebKit
 keeps the opener's `WKUserContentController` for the popup's view. No key by
 default; `keys` binds `toggleBlocking`.
 
+**Print, and Save as PDF.** ⌃⌘P, or File › Print…, runs the system print
+panel over the pane as a sheet — the standard one, whose PDF menu already has
+Save as PDF, so the print key is also the everyday PDF key. It is ⌃⌘P rather
+than ⌘P because ⌘P is the palette here and the keymap refuses two commands on
+one chord; `keys` moves it. The page is fitted to the paper's width, and a
+receipt in a sign-in popup prints from inside the popup. **Save as PDF…**, also
+under File, is for the whole page in one file: a save panel named after the
+page in `~/Downloads`, WebKit's own PDF of every fold rather than the one on
+screen, and the result lands as a finished row in the pane's download bar, so it
+appears where a download would and a click shows it in the Finder. Both are
+greyed out on a terminal lane. Save as PDF ships without a key; `keys` binds
+`savePDF`.
+
 **Web notifications.** WebKit has no `window.Notification` on macOS, so Slack,
 Gmail, Linear and every chat app in a pane could neither ask nor notify, and
 their own feature detection turned the feature off without a word. The API is

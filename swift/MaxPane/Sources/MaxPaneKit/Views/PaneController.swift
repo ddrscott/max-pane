@@ -62,6 +62,12 @@ protocol PaneController: AnyObject {
     func fillPassword()
     func savePassword()
 
+    /// ⌃⌘P — the system print panel over this page, and Save as PDF… — the
+    /// whole page as one PDF file. Greyed out for a terminal, which has no
+    /// document to print; see `WebPrint.swift`.
+    func printPage()
+    func savePDF()
+
     /// Write anything the pane would otherwise lose, without tearing it down.
     ///
     /// Called on quit. A terminal has nothing to save — the session lives in
@@ -118,6 +124,10 @@ extension PaneController {
     /// silently" is the only acceptable default.
     func fillPassword() {}
     func savePassword() {}
+
+    /// As `keepPage`: greyed already, so arriving here is a key on a moved focus.
+    func printPage() {}
+    func savePDF() {}
 }
 
 /// The rungs ⌘= and ⌘- climb.
