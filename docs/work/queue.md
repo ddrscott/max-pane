@@ -1,6 +1,6 @@
 # Work Queue
 
-- [ ] Ad and tracker blocking in web panes: a `WKContentRuleList` compiled from a configurable EasyList-format source, on every pane and popup, with a per-site off switch — [detail](web-content-blocking.md)
+- [-] Ad and tracker blocking in web panes: a `WKContentRuleList` compiled from a configurable EasyList-format source, on every pane and popup, with a per-site off switch — [detail](web-content-blocking.md)
 - [ ] Web notifications: a page-world `Notification` shim over the per-origin ask, posting through `UNUserNotificationCenter`, click focuses the pane — [detail](web-notifications.md)
 - [ ] Print and Save as PDF for a web pane: ⌘P runs the system print panel, a `savePDF` command writes `createPDF` — [detail](web-print-pdf.md)
 - [ ] Two WebKit one-liners: `allowsMagnification` for trackpad pinch (tied to the persisted zoom ladder) and `upgradeKnownHostsToHTTPS` — [detail](web-one-liners.md)
