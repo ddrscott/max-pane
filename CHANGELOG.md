@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Web Inspector on every web pane: right-click, Inspect Element, or attach from Safari's Develop menu. Always on, since the app is for people who build pages
+
 ## [0.6.0] - 2026-09-16
 
 ### Added

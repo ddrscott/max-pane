@@ -412,4 +412,14 @@ struct WebContextMenuTests {
         #expect(pane.components(separatedBy: "ChromeWebView(frame:").count - 1 == 1)
         #expect(popup.components(separatedBy: "ChromeWebView(frame:").count - 1 == 2)
     }
+
+    /// Web Inspector rides on the same class, for the same reason: set in the
+    /// pane's `wire` it would miss the popup, which builds its own views.
+    @Test("every one of our web views is inspectable, popups included")
+    @MainActor
+    func ourWebViewsAreInspectable() {
+        let view = ChromeWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        #expect(view.isInspectable)
+        #expect(!WKWebView(frame: .zero, configuration: WKWebViewConfiguration()).isInspectable)
+    }
 }

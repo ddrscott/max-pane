@@ -1564,6 +1564,11 @@ you almost always mean, which is all of them at once.
 script refuses to rebuild a bundle that has a live process, because `rm -rf`-ing
 a bundle out from under a running app kills it with no message at all.
 
+Every web pane is inspectable: right-click a page and choose **Inspect
+Element**, or pick the pane from Safari's Develop menu. It is always on, not
+behind a switch, because the question "is that thing ours or the site's" has no
+answer without it.
+
 `MAXPANE_WINDOWED=1` skips fullscreen and `MAXPANE_DEBUG=1` turns on the chatty
 logging. Both write to stderr, which you only see by running the executable
 inside the bundle directly rather than through `open`:

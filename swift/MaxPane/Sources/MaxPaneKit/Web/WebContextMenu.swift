@@ -116,6 +116,24 @@ enum WebContextMenu {
 /// popup built from WebKit's configuration keeps `window.opener` whatever class
 /// it is; see `WebContextMenu`.
 final class ChromeWebView: WKWebView {
+    /// Web Inspector, on every view of this class — a pane's and a popup's.
+    ///
+    /// Always on, not behind a Develop menu: this is a browser for someone who
+    /// builds pages, and the question "is that glyph ours or the site's" has no
+    /// answer without it. It adds **Inspect Element** to the context menu and
+    /// lets Safari's Develop menu attach. It costs nothing until an inspector is
+    /// opened. Here rather than in `wire`, because `WebPopupDialog` builds its
+    /// views itself and never passes through `wire`.
+    override init(frame: CGRect, configuration: WKWebViewConfiguration) {
+        super.init(frame: frame, configuration: configuration)
+        isInspectable = true
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        isInspectable = true
+    }
+
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
         super.willOpenMenu(menu, with: event)
         WebContextMenu.rename(in: menu)
