@@ -5,7 +5,7 @@
 - [x] Print and Save as PDF for a web pane: ⌘P runs the system print panel, a `savePDF` command writes `createPDF` — [detail](web-print-pdf.md)
 - [x] Two WebKit one-liners: `allowsMagnification` for trackpad pinch (tied to the persisted zoom ladder) and `upgradeKnownHostsToHTTPS` — [detail](web-one-liners.md)
 - [x] A private web lane on a non-persistent data store, marked `PRIVATE`, recorded nowhere, gone on close — [detail](web-private-pane.md)
-- [ ] Geolocation: usage string, per-origin ask, and whatever WebKit needs to answer `navigator.geolocation` — [detail](web-geolocation.md)
+- [-] Geolocation: usage string, per-origin ask, and whatever WebKit needs to answer `navigator.geolocation` — [detail](web-geolocation.md)
 - [ ] Verify in a throwaway instance: passkeys / WebAuthn (likely needs the browser public-key-credential entitlement) and picture-in-picture under `PaneFullscreen` — [detail](web-verify-passkeys-pip.md)
 - [ ] Spike: WebExtension support via `WKWebExtension` (macOS 15.4+) against the macOS 14 floor — load one real extension, measure, recommend — [detail](web-extensions.md)
 - [ ] An expanded gallery tile's stacked panes resize by dragging their seam, exactly as on the strip; unexpanded tiles stay handle-free — [detail](gallery-expanded-seam-drag.md)
