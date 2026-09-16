@@ -952,6 +952,25 @@ impl Core {
         inner.ledger.forget_site_permissions(&data_store_id, &origin)
     }
 
+    // ---- content blocking ------------------------------------------------
+
+    /// The sites the ad and tracker blocker is switched off for: registrable
+    /// domains, lowercased. The shell reads this once and applies it on every
+    /// navigation itself; the rule list the blocker compiles is the shell's
+    /// own cache and never reaches the ledger.
+    pub fn blocking_exempt_domains(&self) -> Result<Vec<String>> {
+        let inner = self.inner.lock();
+        inner.ledger.blocking_exempt_domains()
+    }
+
+    /// Switch the blocker off for one site, or back on. A person's decision,
+    /// like a site permission; nothing infers one. No snapshot is published:
+    /// the strip's shape is untouched, and the pane that flipped it reloads.
+    pub fn set_blocking_exempt(&self, domain: String, exempt: bool) -> Result<()> {
+        let inner = self.inner.lock();
+        inner.ledger.set_blocking_exempt(&domain, exempt, now_ms())
+    }
+
     // ---- history -----------------------------------------------------------
 
     /// A web pane settled on a page. One call, from wherever the shell learns a

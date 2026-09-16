@@ -101,6 +101,12 @@ final class LaneView: NSView {
     var onToggleMobileLayout: (() -> Void)?
     /// What the tick beside it shows. Nil for a lane with no page.
     var mobileLayout: (() -> Bool?)?
+    /// The menu's Block Ads on This Site: the blocker off for the site the
+    /// lane's page is on, or on again. See `WebPaneController.toggleBlocking`.
+    var onToggleBlocking: (() -> Void)?
+    /// Its tick: true while ads are blocked on that site, false while they are
+    /// let through, nil for a lane with no page or a blocker switched off.
+    var blocking: (() -> Bool?)?
 
     /// The preset this lane is at, lit in the header; nil when it has been
     /// dragged or zoomed off all three. Derived by the strip, never stored.
@@ -956,6 +962,8 @@ protocol LaneHeaderActions: AnyObject {
     /// with no page to ask. Asked when the menu opens, like `sizePreset`,
     /// because the toggle writes no snapshot.
     var mobileLayout: (() -> Bool?)? { get }
+    var onToggleBlocking: (() -> Void)? { get }
+    var blocking: (() -> Bool?)? { get }
 }
 
 extension LaneView: LaneHeaderActions {}
@@ -1419,6 +1427,14 @@ final class LaneHeaderView: NSView {
             command: .toggleMobileLayout, action: #selector(menuToggleMobileLayout),
             enabled: mobile != nil && actions?.onToggleMobileLayout != nil,
             state: mobile == true ? .on : .off)
+        // The blocker, for the site this lane's page is on. Ticked while it
+        // blocks, so the common state reads as a tick and the exception as its
+        // absence — the chrome bar's chip carries the exception too.
+        let blocking = actions?.blocking?()
+        add(to: menu, Command.toggleBlocking.title,
+            command: .toggleBlocking, action: #selector(menuToggleBlocking),
+            enabled: blocking != nil && actions?.onToggleBlocking != nil,
+            state: blocking == true ? .on : .off)
 
         menu.addItem(.separator())
         // Checkmarks rather than three verbs. Docking is a toggle on the keys,
@@ -1486,6 +1502,7 @@ final class LaneHeaderView: NSView {
         actions?.onSizePreset?(preset)
     }
     @objc private func menuToggleMobileLayout() { actions?.onToggleMobileLayout?() }
+    @objc private func menuToggleBlocking() { actions?.onToggleBlocking?() }
     @objc private func menuDockLeft() { actions?.onDockLeft?() }
     @objc private func menuDockRight() { actions?.onDockRight?() }
     @objc private func menuToggleDockMode() { actions?.onToggleDockMode?() }

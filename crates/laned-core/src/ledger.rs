@@ -30,6 +30,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("0010_bookmarks", include_str!("../migrations/0010_bookmarks.sql")),
     ("0011_history_edges", include_str!("../migrations/0011_history_edges.sql")),
     ("0012_pane_mobile", include_str!("../migrations/0012_pane_mobile.sql")),
+    (
+        "0013_blocking_exempt",
+        include_str!("../migrations/0013_blocking_exempt.sql"),
+    ),
 ];
 
 /// A needle as an FTS5 query: one quoted phrase, nothing else.
@@ -719,6 +723,38 @@ impl Ledger {
             "DELETE FROM site_permission WHERE data_store_id = ?1 AND origin = ?2",
             params![data_store_id, origin],
         )?;
+        Ok(())
+    }
+
+    // ---- content blocking ------------------------------------------------
+
+    /// Every site the blocker is switched off for, as registrable domains.
+    /// Read once when the shell starts and kept in memory there, because it is
+    /// consulted on every navigation.
+    pub fn blocking_exempt_domains(&self) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT domain FROM blocking_exempt ORDER BY domain")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// Switch the blocker off (`exempt`) or back on for one site. Idempotent
+    /// in both directions: exempting twice is one row, and turning on a site
+    /// that was never off is not an error, since "on" is what the absence of
+    /// a row already means.
+    pub fn set_blocking_exempt(&self, domain: &str, exempt: bool, now_ms: i64) -> Result<()> {
+        let domain = domain.trim().to_ascii_lowercase();
+        if exempt {
+            self.conn.execute(
+                "INSERT INTO blocking_exempt (domain, decided_at) VALUES (?1, ?2)
+                 ON CONFLICT(domain) DO UPDATE SET decided_at = excluded.decided_at",
+                params![domain, now_ms],
+            )?;
+        } else {
+            self.conn
+                .execute("DELETE FROM blocking_exempt WHERE domain = ?1", params![domain])?;
+        }
         Ok(())
     }
 

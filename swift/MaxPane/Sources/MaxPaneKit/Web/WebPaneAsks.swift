@@ -369,6 +369,10 @@ extension WebPaneController {
         // Main frame only: a navigation inside an iframe is not the pane going
         // anywhere, and counting one would make every ad frame a redirect hop.
         if navigationAction.targetFrame?.isMainFrame == true {
+            // Before the request: the rule list has to be on or off the
+            // controller for the document that is about to load, and for the
+            // first thing it asks for.
+            blocker.willNavigate(webView.configuration.userContentController, toHost: navigationAction.request.url?.host)
             trail.willNavigate(
                 to: navigationAction.request.url?.absoluteString,
                 type: navigationAction.navigationType,

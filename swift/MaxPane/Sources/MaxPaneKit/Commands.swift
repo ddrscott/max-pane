@@ -56,6 +56,7 @@ public enum Command: String, CaseIterable, Sendable {
     case laneSizeLarge
     case laneSizeCycle
     case toggleMobileLayout
+    case toggleBlocking
     case showHelp
     case showSettings
 
@@ -111,6 +112,7 @@ public enum Command: String, CaseIterable, Sendable {
         case .laneSizeLarge: return "Lane Size: Extra Large"
         case .laneSizeCycle: return "Cycle Lane Size"
         case .toggleMobileLayout: return "Mobile Layout"
+        case .toggleBlocking: return "Block Ads on This Site"
         case .showHelp: return "Keyboard Shortcuts"
         case .showSettings: return "Settings…"
         }
@@ -280,6 +282,9 @@ public enum Command: String, CaseIterable, Sendable {
         // not a thing you do all day, and every unclaimed ⌘ chord left is one
         // a page might want. `keys` binds it for anyone who disagrees.
         case .toggleMobileLayout: return nil
+        // No key either, for the same reason: it is flipped once for the one
+        // site whose page a rule breaks, and then left. `keys` binds it.
+        case .toggleBlocking: return nil
         // The one everybody reaches for when they do not know the others.
         case .showHelp:        return ("/", [.command])
         // ⌘, is Settings in every Mac app, which is the whole argument.
@@ -402,6 +407,9 @@ public enum Command: String, CaseIterable, Sendable {
         case .laneSizeSmall, .laneSizeMedium, .laneSizeLarge, .laneSizeCycle: return .view
         // With the size presets, which it is the fourth of: a lane's shape.
         case .toggleMobileLayout: return .view
+        // Under Navigate with Keep This Page and Fill Password: a thing you do
+        // to the site in front of you, not to the lane's shape.
+        case .toggleBlocking: return .navigate
         // In the app menu, under About, where a Mac user reaches for it.
         case .showSettings: return .app
         }

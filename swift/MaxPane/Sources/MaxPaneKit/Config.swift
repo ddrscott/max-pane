@@ -156,6 +156,25 @@ public struct Config: Codable, Equatable {
     /// says why it is only this one, for now.
     public var theme: ThemeChoice = .system
 
+    /// Block ads and trackers in web panes, with WebKit's own content blocker
+    /// running the list `blockingListUrl` names. On by default: YouTube and
+    /// most of the news is unreadable for long without it, and that was the
+    /// single biggest reason a web pane sent its owner back to another
+    /// browser. Off for one site from the lane's ⋯ menu; off everywhere here.
+    /// See `ContentBlocker`.
+    public var blocking: Bool = true
+
+    /// Where the rule list comes from: WebKit content-blocker JSON, the format
+    /// a Safari content blocker ships, fetched and compiled once a day. More
+    /// than one URL, separated by spaces, is joined into one list.
+    ///
+    /// The default is Adblock Plus's published conversion of EasyList. It is
+    /// the one maintained conversion of a list people actually use that is
+    /// served in this format; EasyPrivacy has no such conversion, and a
+    /// converter from the ABP filter syntax is a project of its own. Anyone
+    /// who has one puts its URL here.
+    public var blockingListUrl: String = "https://easylist-downloads.adblockplus.org/easylist_content_blocker.json"
+
     /// `$XDG_CONFIG_HOME/maxpane/config.toml` for the default profile,
     /// `…/maxpane/profiles/<profile>/config.toml` for any other.
     ///
@@ -215,6 +234,8 @@ public struct Config: Codable, Equatable {
         snapSeconds = read(.snapSeconds, d.snapSeconds)
         keys = read(.keys, d.keys)
         theme = read(.theme, d.theme)
+        blocking = read(.blocking, d.blocking)
+        blockingListUrl = read(.blockingListUrl, d.blockingListUrl)
     }
 
     /// The lane width bounds, already ordered, so a config with min > max does

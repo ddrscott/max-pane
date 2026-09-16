@@ -237,6 +237,15 @@ opened from the popup, a `target=_blank` click. It writes a cookie, so it skips
 itself without a named profile. LinkedIn's "Sign in with Google" needs a real
 account and is not driven from a test; this suite is its local reproduction.
 
+`WebContentBlockingTests` is the same two-origin setup for the ad blocker,
+over a blocker of its own with a one-rule list in a temporary store: a page on
+one site asks the other for two images, and the second site's request log —
+which is what `LocalSite` keeps for it — has the one no rule matched and not
+the other; a `window.open` popup does the same on the opener's list, and the
+per-site switch, flipped through the same method the menu calls, lets the
+blocked image through on a reload and stops it again on the next. The real
+EasyList is a 9 MB download and is not fetched by any test.
+
 `WebFullscreenTests` uses the same two-origin setup for full screen: a host page
 with a box inside a transformed card and two iframes from the other origin, one
 allowed full screen and one not, in a split lane. It checks the box's size
@@ -384,6 +393,41 @@ a Mac it changes nothing a page can see — a page with no viewport still lays
 out at the lane's width, not a phone's 980 — so what you get is what a site
 serves to that user agent, which is what the ones that matter decide on. No
 key by default; `keys` binds `toggleMobileLayout`.
+
+**Ads and trackers are blocked**, in every web pane and in the popups over
+them, by WebKit's own content blocker: a rule list compiled once into bytecode
+the network process runs on every request, with no script in the page and no
+work per load. The list comes from `blocking_list_url` — WebKit
+content-blocker JSON, the format a Safari content blocker ships — and is
+compiled into the profile's rule-list store under Application Support, which
+is the cache: the next launch looks the compiled list up by name and only
+fetches again when the cache is missing, was built from another source, or is
+a day old. A first launch with nothing cached opens its window at once and
+adds the list to every open page when the compile lands; when the network is
+down, the last compiled list stays. WebKit refuses a list past 150 000 rules
+with an error that does not say so, so a bigger source is cut into several
+lists, each carrying every exception rule, since an exception only reaches the
+rules before it in its own list. The rule count and compile time are on the
+debug log.
+
+**Block Ads on This Site**, in the lane's `⋯` menu and the Navigate menu,
+switches the blocker off for the site the page is on — by registrable domain,
+so `youtube.com` covers `www.` and `m.` — and reloads. It is a decision like a
+camera grant and is kept in the ledger, so a throwaway profile starts blocking
+everywhere. On such a site the chrome bar wears an outlined `unblocked` chip
+beside the address, which fades in and out with the rest of the row; a click
+on it turns blocking back on. The tick in the menu means *blocking*, so the
+common state reads as a tick and the exception as its absence; the item is
+greyed out on a terminal lane and when `blocking = false` has turned the
+blocker off everywhere. A popup follows its opener's site, because WebKit
+keeps the opener's `WKUserContentController` for the popup's view. No key by
+default; `keys` binds `toggleBlocking`.
+
+The default list is Adblock Plus's published WebKit conversion of EasyList,
+which is the one maintained conversion of a list people actually use that is
+served in this format; EasyPrivacy has none, and a converter from the ABP
+filter syntax is a project of its own. `blocking_list_url` takes more than one
+URL, separated by spaces, and joins them.
 
 A load that fails says so where the address was — `⚠ server not found —
 example.com`, for five seconds — and takes the hairline down with it. Stopping a
@@ -1401,6 +1445,10 @@ not read after that, and the window says so. A value the JSON could not use
 either comes across as a comment.
 
 `theme` is `system`, `light` or `dark`. See [Light and dark](#light-and-dark).
+
+`blocking` turns the ad and tracker blocker off everywhere when `false`, and
+`blocking_list_url` is where its rules come from. See
+[A web lane](#a-web-lane).
 
 `search_url` is where a web pane's address bar sends something that is not an
 address — `%s` is the query. A portrait lane has room for one text field, so the

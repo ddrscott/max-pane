@@ -21,6 +21,9 @@ final class WebPaneController: NSObject, PaneController {
     let paneId: String
     let store: StripStore
     private let config: Config
+    /// The ad and tracker blocker every pane's view is attached to. The app's
+    /// one, unless a test hands over its own with its own list.
+    let blocker: ContentBlocker
     private let container = WebPaneContainer()
 
     /// Everything above the chrome: the web view, or the placeholder standing
@@ -132,11 +135,13 @@ final class WebPaneController: NSObject, PaneController {
     /// priced a web pane at 27–95 MB and at least one OS process, so a 150-lane
     /// strip that built every one of them at launch would spend gigabytes before
     /// the window appeared.
-    init(pane: Pane, lane: Lane, store: StripStore, config: Config, deferLoad: Bool = false) {
+    init(pane: Pane, lane: Lane, store: StripStore, config: Config, deferLoad: Bool = false,
+         blocker: ContentBlocker = .shared) {
         self.paneId = pane.id
         self.pane = pane
         self.store = store
         self.config = config
+        self.blocker = blocker
         self.laneWidth = CGFloat(lane.widthPt)
         self.dataStoreId = pane.dataStoreId ?? Self.shard(for: lane.projectRoot, of: config)
         super.init()
@@ -245,6 +250,7 @@ final class WebPaneController: NSObject, PaneController {
         chrome.onStar = { [weak self] in self?.keepPage() }
         chrome.onKeyMenu = { [weak self] in self?.passwordMenu() }
         chrome.onZoomReset = { [weak self] in self?.setZoom(1) }
+        chrome.onBlockingChip = { [weak self] in self?.toggleBlocking() }
         chrome.onNavigate = { [weak self] typed in self?.navigate(typed) }
         chrome.onBackMenu = { [weak self] in self?.historyMenu(back: true) }
         chrome.onForwardMenu = { [weak self] in self?.historyMenu(back: false) }
@@ -695,6 +701,7 @@ final class WebPaneController: NSObject, PaneController {
     private func showAddress(_ url: String?) {
         chrome.setURL(url)
         refreshKept()
+        refreshBlockingChip()
     }
 
     private func refreshKept() {
@@ -744,6 +751,42 @@ final class WebPaneController: NSObject, PaneController {
         store.setPaneMobile(paneId, mobile)
         webView?.customUserAgent = mobile ? BrowserUserAgent.mobile : nil
         reload(fromOrigin: false)
+    }
+
+    // MARK: - blocking
+
+    /// The host the page is on, or the one the ledger says it is going to,
+    /// for a pane with no view yet.
+    private var blockingHost: String? {
+        (webView?.url ?? pane.url.flatMap(URL.init(string:)))?.host
+    }
+
+    /// Whether ads are blocked on this pane's site: nil when the blocker is off
+    /// in the config or the pane is on no site, which is what greys the menu
+    /// item out. The tick reads *on*, so a site switched off is `false`.
+    var blockingState: Bool? {
+        guard blocker.isEnabled, let host = blockingHost, ContentBlocker.domain(of: host) != nil else { return nil }
+        return !blocker.isExempt(host: host)
+    }
+
+    /// Block Ads on This Site, from the lane's menu, the Navigate menu or the
+    /// chip: the site's registrable domain goes on or off the exempt list —
+    /// every pane on that site at once — and this page reloads, because a rule
+    /// list only speaks to requests that have not been made yet.
+    func toggleBlocking() {
+        guard blocker.isEnabled, let domain = ContentBlocker.domain(of: blockingHost) else { return }
+        let exempt = !blocker.exemptDomains.contains(domain)
+        blocker.setExempt(domain, exempt)
+        Log.debug("pane \(paneId) blocking \(exempt ? "off" : "on") for \(domain)")
+        refreshBlockingChip()
+        reload(fromOrigin: false)
+    }
+
+    /// The chip that says a site is unblocked. Shown for that one state and
+    /// hidden otherwise, like the key: the fact worth a glyph is the exception.
+    private func refreshBlockingChip() {
+        let off = blocker.isEnabled && blocker.isExempt(host: blockingHost)
+        chrome.setBlockingOff(off, domain: ContentBlocker.domain(of: blockingHost))
     }
 
     // MARK: - size presets
@@ -957,6 +1000,7 @@ final class WebPaneController: NSObject, PaneController {
         hoverRelay = nil
         webView.map(PaneFullscreen.remove(from:))
         fullScreenRelay = nil
+        webView.map { blocker.detach($0.configuration.userContentController) }
         setPaneFullscreen(false)
         webView?.stopLoading()
         webView?.navigationDelegate = nil
@@ -1114,6 +1158,12 @@ final class WebPaneController: NSObject, PaneController {
         // for ⇧ and a second request; the first request fills the pane. A
         // popup's configuration is copied from this one and inherits it.
         configuration.preferences.isElementFullscreenEnabled = true
+        // The ad and tracker list, unless this site is switched off. A popup's
+        // configuration is copied from this one and keeps the same controller
+        // object, so the list is on the popup too — `WebContentBlockingTests`
+        // proves that rather than assuming it. `decidePolicyFor` keeps the
+        // blocker told where the pane goes from here.
+        blocker.attach(configuration.userContentController, host: pane.url.flatMap(URL.init(string:))?.host)
 
         // `ChromeWebView`, for the context menu's nouns and nothing else. See
         // `WebContextMenu` for why the subclass is safe on a popup too.

@@ -68,6 +68,9 @@ final class WebChromeBar: NSView {
     /// a button that picks one of someone's two logins for them.
     var onKeyMenu: (() -> NSMenu?)?
     var onZoomReset: (() -> Void)?
+    /// The `unblocked` chip: ads are let through on this site, and a click
+    /// turns the blocker back on for it.
+    var onBlockingChip: (() -> Void)?
     /// A line typed into the address field. Already trimmed; not yet resolved —
     /// the pane decides whether it is an address or a search.
     var onNavigate: ((String) -> Void)?
@@ -88,6 +91,10 @@ final class WebChromeBar: NSView {
     /// glyph size, they exist in every font, and they need no legend.
     private let key = ChromeButton(icon: .keyRound)
     private let zoom = ChromeButton(glyph: "100%")
+    /// Only on a site the blocker is switched off for. A word in an outline,
+    /// not an icon: there is no glyph for "the ads are on" that anyone reads
+    /// without a legend, and the state is rare enough to afford the letters.
+    private let unblocked = ChromeButton(glyph: "unblocked")
     private let security = NSTextField(labelWithString: "")
     private let address = AddressField()
 
@@ -134,6 +141,9 @@ final class WebChromeBar: NSView {
                        in: self.key)
         }
         zoom.onClick = { [weak self] in self?.onZoomReset?() }
+        unblocked.onClick = { [weak self] in self?.onBlockingChip?() }
+        unblocked.isOutlined = true
+        unblocked.isHidden = true
         back.onMenu = { [weak self] in self?.onBackMenu?() }
         forward.onMenu = { [weak self] in self?.onForwardMenu?() }
 
@@ -150,7 +160,7 @@ final class WebChromeBar: NSView {
         // The star sits between the address and find: it is about *this page*,
         // which is what the field to its left says, where find and zoom are
         // about reading whatever is on screen.
-        let row = NSStackView(views: [back, forward, reload, security, address, star, key, find, zoom])
+        let row = NSStackView(views: [back, forward, reload, security, address, unblocked, star, key, find, zoom])
         row.orientation = .horizontal
         row.spacing = 2
         row.alignment = .centerY
@@ -284,21 +294,38 @@ final class WebChromeBar: NSView {
     func setZoom(_ level: Double) {
         let atRest = abs(level - 1) < 0.001
         zoom.glyph = "\(Int((level * 100).rounded()))%"
-        guard zoom.isHidden != atRest else { return }
-        // Fade rather than cut: the row's contents shift when it appears, and a
-        // 120 ms fade is the difference between "something arrived" and "the
-        // address bar just got shorter for no reason".
-        if atRest {
+        Self.reveal(zoom, !atRest)
+    }
+
+    /// Whether the ad blocker is switched off for this page's site.
+    func setBlockingOff(_ off: Bool, domain: String?) {
+        unblocked.toolTip = off
+            ? "Ads and trackers are let through on \(domain ?? "this site") — click to block them again"
+            : nil
+        Self.reveal(unblocked, off)
+    }
+
+    /// For a test: whether the chip is on the row.
+    var isBlockingChipShown: Bool { !unblocked.isHidden }
+
+    /// Show or hide a chip with a fade rather than a cut: the row's contents
+    /// shift when one appears, and the fade is the difference between
+    /// "something arrived" and "the address bar just got shorter for no
+    /// reason". `Motion.pane`, or the final frame at once under Reduce Motion.
+    private static func reveal(_ chip: ChromeButton, _ shown: Bool) {
+        guard chip.isHidden == shown else { return }
+        let duration = Motion.isReduced ? 0 : 0.12
+        if !shown {
             NSAnimationContext.runAnimationGroup({ context in
-                context.duration = 0.12
-                zoom.animator().alphaValue = 0
-            }, completionHandler: { [weak zoom] in zoom?.isHidden = true })
+                context.duration = duration
+                chip.animator().alphaValue = 0
+            }, completionHandler: { [weak chip] in chip?.isHidden = true })
         } else {
-            zoom.alphaValue = 0
-            zoom.isHidden = false
+            chip.alphaValue = 0
+            chip.isHidden = false
             NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.12
-                zoom.animator().alphaValue = 1
+                context.duration = duration
+                chip.animator().alphaValue = 1
             }
         }
     }
@@ -310,7 +337,7 @@ final class WebChromeBar: NSView {
     var isPaneFocused: Bool = false {
         didSet {
             guard isPaneFocused != oldValue else { return }
-            for button in [back, forward, reload, star, key, find, zoom] { button.isDimmed = !isPaneFocused }
+            for button in [back, forward, reload, unblocked, star, key, find, zoom] { button.isDimmed = !isPaneFocused }
             renderAddress()
             needsDisplay = true
         }
@@ -754,6 +781,10 @@ final class ChromeButton: NSView {
     /// than an affordance.
     var tint: NSColor? { didSet { needsDisplay = true } }
     var isDimmed = true { didSet { needsDisplay = true } }
+    /// A hairline around the glyph, for the one control on the row that is a
+    /// state chip rather than an affordance. Square, per the house rule: a
+    /// coloured edge on a rounded box is the tell of a template.
+    var isOutlined = false { didSet { needsDisplay = true } }
 
     private var isHovered = false { didSet { needsDisplay = true } }
     private var holdTimer: Timer?
@@ -858,6 +889,12 @@ final class ChromeButton: NSView {
                     width: points, height: points))
             }
             return
+        }
+        if isOutlined {
+            colour.withAlphaComponent(0.6).setStroke()
+            let path = NSBezierPath(rect: bounds.insetBy(dx: 0.5, dy: 2.5))
+            path.lineWidth = 1
+            path.stroke()
         }
         let text = NSAttributedString(string: glyph, attributes: [
             .font: font, .foregroundColor: colour,

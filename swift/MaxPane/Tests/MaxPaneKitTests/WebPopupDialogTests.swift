@@ -281,20 +281,28 @@ final class PopupFixture {
 final class LocalSite: @unchecked Sendable {
     let port: UInt16
     private let listener: NWListener
+    private let log = RequestLog()
 
     var origin: String { "http://127.0.0.1:\(port)" }
+
+    /// Every path asked for so far, in order. What a blocking test reads: a
+    /// request WebKit's rule list stopped is a request that never got here.
+    var requests: [String] { log.paths }
+    func hits(_ path: String) -> Int { log.paths.filter { $0 == path }.count }
 
     init(pages: [String: String]) async throws {
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
         let listener = try NWListener(using: parameters)
         let queue = DispatchQueue(label: "maxpane.tests.local-site")
+        let log = self.log
         listener.newConnectionHandler = { connection in
             connection.start(queue: queue)
             connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { data, _, _, _ in
                 let request = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
                 let target = request.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
                 let path = target.split(separator: "?", maxSplits: 1).first.map(String.init) ?? "/"
+                log.record(path)
                 let body = pages[path]
                 let bytes = Data((body ?? "not found").utf8)
                 let head = "HTTP/1.1 \(body == nil ? "404 Not Found" : "200 OK")\r\n"
@@ -323,6 +331,23 @@ final class LocalSite: @unchecked Sendable {
     }
 
     func stop() { listener.cancel() }
+}
+
+private final class RequestLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [String] = []
+
+    func record(_ path: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        recorded.append(path)
+    }
+
+    var paths: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recorded
+    }
 }
 
 private final class ResumeOnce: @unchecked Sendable {

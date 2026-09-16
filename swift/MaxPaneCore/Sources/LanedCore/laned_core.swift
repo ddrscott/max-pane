@@ -671,6 +671,14 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func allLanes() throws  -> [Lane]
     
     /**
+     * The sites the ad and tracker blocker is switched off for: registrable
+     * domains, lowercased. The shell reads this once and applies it on every
+     * navigation itself; the rule list the blocker compiles is the shell's
+     * own cache and never reaches the ledger.
+     */
+    func blockingExemptDomains() throws  -> [String]
+    
+    /**
      * How many rows the tree holds, folders included.
      */
     func bookmarkCount() throws  -> UInt32
@@ -1246,6 +1254,13 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func searchBookmarks(query: String, limit: UInt32) throws  -> [BookmarkHit]
     
     /**
+     * Switch the blocker off for one site, or back on. A person's decision,
+     * like a site permission; nothing infers one. No snapshot is published:
+     * the strip's shape is untouched, and the pane that flipped it reloads.
+     */
+    func setBlockingExempt(domain: String, exempt: Bool) throws 
+    
+    /**
      * How wide a lane is born, in points. The shell's config file, arriving.
      *
      * Call it once at launch, before the first `create_lane`. Clamped to the
@@ -1567,6 +1582,21 @@ open func allLanes()throws  -> [Lane]  {
     return try  FfiConverterSequenceTypeLane.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
         uniffiCallStatus in
     uniffi_laned_core_fn_method_core_all_lanes(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The sites the ad and tracker blocker is switched off for: registrable
+     * domains, lowercased. The shell reads this once and applies it on every
+     * navigation itself; the rule list the blocker compiles is the shell's
+     * own cache and never reaches the ledger.
+     */
+open func blockingExemptDomains()throws  -> [String]  {
+    return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_blocking_exempt_domains(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
@@ -2608,6 +2638,21 @@ open func searchBookmarks(query: String, limit: UInt32)throws  -> [BookmarkHit] 
         FfiConverterUInt32.lower(limit),uniffiCallStatus
     )
 })
+}
+    
+    /**
+     * Switch the blocker off for one site, or back on. A person's decision,
+     * like a site permission; nothing infers one. No snapshot is published:
+     * the strip's shape is untouched, and the pane that flipped it reloads.
+     */
+open func setBlockingExempt(domain: String, exempt: Bool)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_set_blocking_exempt(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(domain),
+        FfiConverterBool.lower(exempt),uniffiCallStatus
+    )
+}
 }
     
     /**
@@ -7210,6 +7255,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_all_lanes() != 64277) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_blocking_exempt_domains() != 23383) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_bookmark_count() != 36122) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -7376,6 +7424,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_search_bookmarks() != 17823) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_set_blocking_exempt() != 13479) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_set_default_lane_width() != 59748) {

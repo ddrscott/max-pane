@@ -88,6 +88,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        // The ad and tracker blocker: the ledger's exemptions in, the compiled
+        // list looked up (or fetched and compiled, off the main thread) and
+        // added to every web view as it lands. Before the window, so the first
+        // pane built attaches to a blocker that already knows the exemptions.
+        let blocker = ContentBlocker.shared
+        blocker.isEnabled = config.blocking
+        blocker.loadExemptions(store.blockingExemptDomains())
+        blocker.persistExemption = { [weak store] domain, exempt in store?.setBlockingExempt(domain, exempt) }
+        blocker.start(source: config.blockingListUrl)
+
         windowController = StripWindowController(store: store, config: config)
         windowController.configStore = configStore
         buildMenu()

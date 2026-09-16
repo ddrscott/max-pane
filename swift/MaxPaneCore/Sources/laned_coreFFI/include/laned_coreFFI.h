@@ -279,6 +279,11 @@ RustBuffer uniffi_laned_core_fn_method_core_add_pane(uint64_t ptr, RustBuffer la
 RustBuffer uniffi_laned_core_fn_method_core_all_lanes(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_BLOCKING_EXEMPT_DOMAINS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_BLOCKING_EXEMPT_DOMAINS
+RustBuffer uniffi_laned_core_fn_method_core_blocking_exempt_domains(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_BOOKMARK_COUNT
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_BOOKMARK_COUNT
 uint32_t uniffi_laned_core_fn_method_core_bookmark_count(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -557,6 +562,11 @@ RustBuffer uniffi_laned_core_fn_method_core_search(uint64_t ptr, RustBuffer quer
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SEARCH_BOOKMARKS
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SEARCH_BOOKMARKS
 RustBuffer uniffi_laned_core_fn_method_core_search_bookmarks(uint64_t ptr, RustBuffer query, uint32_t limit, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_BLOCKING_EXEMPT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_BLOCKING_EXEMPT
+void uniffi_laned_core_fn_method_core_set_blocking_exempt(uint64_t ptr, RustBuffer domain, int8_t exempt, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_DEFAULT_LANE_WIDTH
@@ -952,6 +962,12 @@ uint16_t uniffi_laned_core_checksum_method_core_all_lanes(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_BLOCKING_EXEMPT_DOMAINS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_BLOCKING_EXEMPT_DOMAINS
+uint16_t uniffi_laned_core_checksum_method_core_blocking_exempt_domains(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_BOOKMARK_COUNT
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_BOOKMARK_COUNT
 uint16_t uniffi_laned_core_checksum_method_core_bookmark_count(void
@@ -1285,6 +1301,12 @@ uint16_t uniffi_laned_core_checksum_method_core_search(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SEARCH_BOOKMARKS
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SEARCH_BOOKMARKS
 uint16_t uniffi_laned_core_checksum_method_core_search_bookmarks(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_BLOCKING_EXEMPT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_BLOCKING_EXEMPT
+uint16_t uniffi_laned_core_checksum_method_core_set_blocking_exempt(void
     
 );
 #endif

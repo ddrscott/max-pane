@@ -358,6 +358,19 @@ public final class StripStore {
         try? core.forgetSitePermissions(dataStoreId: dataStoreId, origin: origin)
     }
 
+    // MARK: - content blocking
+
+    /// The sites the ad blocker is switched off for, as registrable domains.
+    /// Read once at launch into `ContentBlocker`, which answers from memory.
+    public func blockingExemptDomains() -> [String] {
+        (try? core.blockingExemptDomains()) ?? []
+    }
+
+    /// Off for a site, or on again. Not a snapshot: the pane reloads itself.
+    public func setBlockingExempt(_ domain: String, _ exempt: Bool) {
+        try? core.setBlockingExempt(domain: domain, exempt: exempt)
+    }
+
     // MARK: - recents
 
     /// Remember something the user launched, for the new-pane picker.

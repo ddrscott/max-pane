@@ -901,6 +901,13 @@ public final class StripViewController: NSViewController {
             guard let self, let lane = self.store.lane(lane.id) else { return nil }
             return self.mobileLayout(of: lane)
         }
+        laneView.onToggleBlocking = { [weak self] in
+            self?.toggleBlocking(ofLane: lane.id)
+        }
+        laneView.blocking = { [weak self] in
+            guard let self, let lane = self.store.lane(lane.id) else { return nil }
+            return self.blocking(of: lane)
+        }
         laneView.onCloseLane = { [weak self] in
             try? self?.store.closeLane(lane.id)
         }
@@ -1797,6 +1804,27 @@ public final class StripViewController: NSViewController {
         for pane in lane.panes where pane.kind == .web {
             (paneControllers[pane.id] as? WebPaneController)?.setMobile(!current)
         }
+    }
+
+    /// The web pane a lane's Block Ads item speaks for: the focused pane when
+    /// it is one of this lane's pages, else the lane's first page. Per pane
+    /// rather than per lane, unlike Mobile Layout, because the switch is about
+    /// a *site* and a split lane's two pages can be on two.
+    private func blockingPane(of lane: Lane) -> WebPaneController? {
+        let pages = lane.panes.filter { $0.kind == .web }
+        let chosen = pages.first { $0.id == store.state.focusedPaneId } ?? pages.first
+        return chosen.flatMap { paneControllers[$0.id] as? WebPaneController }
+    }
+
+    /// Whether ads are blocked on the site that pane is on; nil when there is
+    /// no such pane or the blocker is off in the config.
+    func blocking(of lane: Lane) -> Bool? {
+        blockingPane(of: lane)?.blockingState
+    }
+
+    func toggleBlocking(ofLane laneId: String) {
+        guard let lane = store.lane(laneId) else { return }
+        blockingPane(of: lane)?.toggleBlocking()
     }
 
     private func refreshSizePreset(_ laneId: String) {

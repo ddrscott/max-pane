@@ -511,6 +511,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             // A lane with a page in it. The pages are asked, not the snapshot,
             // for the same reason the lane's menu asks them.
             return store.focusedLane.flatMap { strip.mobileLayout(of: $0) } != nil
+        case .toggleBlocking:
+            // A lane with a page on a site, and a blocker that is on at all.
+            return store.focusedLane.flatMap { strip.blocking(of: $0) } != nil
         case .focusDockLeft:
             return store.dockedLane(.left) != nil
         case .focusDockRight:
@@ -695,6 +698,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .toggleMobileLayout:
                 if let lane = focusedLane { strip.toggleMobileLayout(ofLane: lane.id) }
+
+            case .toggleBlocking:
+                if let lane = focusedLane { strip.toggleBlocking(ofLane: lane.id) }
             }
         } catch {
             showError(error)
