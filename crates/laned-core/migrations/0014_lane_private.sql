@@ -1,0 +1,16 @@
+-- A private lane: its pages live in a WKWebsiteDataStore that is never written
+-- to disk, and nothing about them reaches the ledger.
+--
+-- The row itself is here because the shell is a view over `state()`, and a
+-- lane it cannot see is a lane it cannot draw. It is the one row in the ledger
+-- that is not meant to survive a launch: `Core::open` deletes every lane with
+-- this flag before the first read, so a relaunch — or a `kill -9` — never
+-- brings a private page back. `record_visit` and the session blob refuse a
+-- pane in such a lane outright; the current URL is kept on the pane only so an
+-- evicted private pane can be rebuilt while the lane still stands (ADR-0006),
+-- and it goes with the row.
+--
+-- Not a profile: a profile is a whole instance with its own ledger and cookie
+-- jars, chosen at launch and kept forever. This is one column, for "log into
+-- the other account once, then forget it".
+ALTER TABLE lane ADD COLUMN is_private INTEGER NOT NULL DEFAULT 0;

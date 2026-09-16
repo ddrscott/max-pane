@@ -334,6 +334,11 @@ RustBuffer uniffi_laned_core_fn_method_core_close_pane(uint64_t ptr, RustBuffer 
 RustBuffer uniffi_laned_core_fn_method_core_create_lane(uint64_t ptr, RustBuffer placement, RustBuffer kind, RustBuffer relay_session_id, RustBuffer url, RustBuffer inherit_tag_from_lane, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_CREATE_PRIVATE_WEB_LANE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_CREATE_PRIVATE_WEB_LANE
+RustBuffer uniffi_laned_core_fn_method_core_create_private_web_lane(uint64_t ptr, RustBuffer placement, RustBuffer url, RustBuffer inherit_tag_from_lane, RustBuffer data_store_id, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_DOCK_LANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_DOCK_LANE
 RustBuffer uniffi_laned_core_fn_method_core_dock_lane(uint64_t ptr, RustBuffer lane_id, RustBuffer side, RustBuffer mode, RustBuffer width_pt, RustCallStatus *_Nonnull out_status
@@ -1030,6 +1035,12 @@ uint16_t uniffi_laned_core_checksum_method_core_close_pane(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_CREATE_LANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_CREATE_LANE
 uint16_t uniffi_laned_core_checksum_method_core_create_lane(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_CREATE_PRIVATE_WEB_LANE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_CREATE_PRIVATE_WEB_LANE
+uint16_t uniffi_laned_core_checksum_method_core_create_private_web_lane(void
     
 );
 #endif

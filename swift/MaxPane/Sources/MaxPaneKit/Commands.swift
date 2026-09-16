@@ -16,6 +16,7 @@ public enum Command: String, CaseIterable, Sendable {
     case zoomOut
     case zoomReset
     case newTerminalLane
+    case newPrivateWebLane
     case splitRight
     case splitDown
     case closePane
@@ -74,6 +75,7 @@ public enum Command: String, CaseIterable, Sendable {
         case .zoomOut: return "Smaller Text"
         case .zoomReset: return "Actual Size"
         case .newTerminalLane: return "New Terminal Lane"
+        case .newPrivateWebLane: return "New Private Web Lane"
         case .splitRight: return "Split Right"
         case .splitDown: return "Split Down"
         case .closePane: return "Close Pane"
@@ -152,6 +154,11 @@ public enum Command: String, CaseIterable, Sendable {
         case .zoomOut:         return ("-", [.command])
         case .zoomReset:       return ("0", [.command])
         case .newTerminalLane: return ("t", [.command, .shift])
+        // ⇧⌘N, the private window's key in every browser. The lane opens on a
+        // blank page with the cursor in the address, the way that window does,
+        // because what a private lane is for — the other account, once — has
+        // no page to start from that history would know.
+        case .newPrivateWebLane: return ("n", [.command, .shift])
         // ⌘R is reload, the way it is in every browser. Running a command is
         // ⌘O's job now, which is a better door for it than a prompt was.
         case .reload:          return ("r", [.command])
@@ -402,7 +409,7 @@ public enum Command: String, CaseIterable, Sendable {
     /// Which menu this belongs under.
     public var menu: MenuSection {
         switch self {
-        case .openAnything, .openPages, .openSessions, .newTerminalLane,
+        case .openAnything, .openPages, .openSessions, .newTerminalLane, .newPrivateWebLane,
              .splitRight, .splitDown: return .file
         case .closePane, .closeLane: return .file
         case .focusLeft, .focusRight, .focusUp, .focusDown, .search, .gather, .ungather: return .navigate

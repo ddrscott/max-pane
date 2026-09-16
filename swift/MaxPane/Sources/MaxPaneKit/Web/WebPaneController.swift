@@ -152,12 +152,17 @@ final class WebPaneController: NSObject, PaneController {
         self.blocker = blocker
         self.notifications = notifications
         self.laneWidth = CGFloat(lane.widthPt)
-        self.dataStoreId = pane.dataStoreId ?? Self.shard(for: lane.projectRoot, of: config)
+        self.isPrivate = lane.isPrivate
+        // A private pane is born with its jar named (the core sets it), so the
+        // fallback is only for a ledger row older than that promise.
+        self.dataStoreId = pane.dataStoreId
+            ?? (lane.isPrivate ? DataStorePool.privateId(forLane: lane.id) : Self.shard(for: lane.projectRoot, of: config))
         super.init()
 
         container.wantsLayer = true
         container.layerBackgroundColor = Theme.laneBackground
         installChrome()
+        chrome.setPrivate(isPrivate)
         // Before any web view exists, so a deferred or evicted pane's chrome is
         // never blank — the ledger already knows the address.
         showAddress(pane.url)
@@ -184,6 +189,11 @@ final class WebPaneController: NSObject, PaneController {
     /// Internal: the permission store is keyed by the cookie jar, so the ask
     /// handlers in `WebPaneAsks.swift` need it.
     let dataStoreId: String
+    /// A pane in a private lane (⇧⌘N). Its jar is `DataStorePool`'s
+    /// non-persistent one, and nothing about its pages is written: no visit,
+    /// no title correction, no session blob, no saved password. The core
+    /// refuses the first and third on its own; this is the pane not asking.
+    let isPrivate: Bool
 
     /// Build the web view a deferred pane has been waiting to get.
     func loadIfDeferred() {
@@ -1219,7 +1229,10 @@ final class WebPaneController: NSObject, PaneController {
         untitledFallback = nil
         // Before the guards below, which return early once the lane already
         // carries the title and would otherwise swallow it on the way past.
-        store.noteVisitTitle(url: webView?.url?.absoluteString, title: title)
+        // Not from a private pane: the correction is keyed by URL alone, and
+        // a public visit to the same address must not learn what a private
+        // one saw there.
+        if !isPrivate { store.noteVisitTitle(url: webView?.url?.absoluteString, title: title) }
         guard let laneId = store.lane(containing: paneId)?.id else { return }
         guard store.lane(laneId)?.title != title else { return }
         Log.debug("pane \(paneId) title → \(title)")
@@ -1607,6 +1620,9 @@ final class WebPaneController: NSObject, PaneController {
     /// while a load is in flight, because a half-loaded page serialises as a
     /// half-loaded page and that is what would come back.
     private func captureSession() {
+        // A private pane's session is what a private lane exists not to
+        // keep; the core refuses the blob too, and this saves serialising it.
+        guard !isPrivate else { return }
         guard let webView, webView.isLoading == false else { return }
         guard let state = webView.interactionState as? Data else { return }
         guard state != lastSavedSession else { return }
@@ -1661,9 +1677,14 @@ extension WebPaneController: WKNavigationDelegate {
             // holds one address and a chain is a list, and a client-side
             // redirect has already overwritten it by the time we are asked.
             // See `RedirectTrail`.
-            store.recordVisit(
-                paneId: paneId, url: url, title: webView.title,
-                redirectChain: trail.didFinish(at: url, now: CFAbsoluteTimeGetCurrent()))
+            // A private pane leaves no visit. The core refuses one anyway
+            // (`record_visit` checks the lane); this keeps the redirect trail
+            // from being read for a record that will not be made.
+            if !isPrivate {
+                store.recordVisit(
+                    paneId: paneId, url: url, title: webView.title,
+                    redirectChain: trail.didFinish(at: url, now: CFAbsoluteTimeGetCurrent()))
+            }
         }
         if let title = webView.title, !title.isEmpty {
             adoptTitle(title)
@@ -1780,12 +1801,15 @@ extension WebPaneController: WKUIDelegate {
     }
 
     /// A page to read, from this pane's page or from a popup over it: a new web
-    /// lane right of this one, revealed.
+    /// lane right of this one, revealed. From a private pane it is a private
+    /// lane in the same jar, so the sign-in that produced the link is the
+    /// sign-in that opens it — and the profile's own jar never sees it.
     func openLane(_ url: String) {
         guard let laneId = store.lane(containing: paneId)?.id else { return }
         let before = paneIds()
         do {
-            try store.newWebLane(url: url, near: laneId)
+            try store.newWebLane(url: url, near: laneId, private: isPrivate,
+                                 sharingJarWith: isPrivate ? dataStoreId : nil)
         } catch {
             Log.warn("pane \(paneId) could not open a lane for \(url): \(error)")
             return
@@ -1836,8 +1860,23 @@ final class DataStorePool {
     static let shared = DataStorePool()
 
     private var stores: [String: WKWebsiteDataStore] = [:]
+    /// The private lanes' jars, keyed by the `private:` id on their panes.
+    /// `WKWebsiteDataStore.nonPersistent()` each: nothing in one touches the
+    /// disk, and dropping the last reference is what forgets it. Held here
+    /// only while a lane names it — `StripStore.publish` releases it when the
+    /// last such lane leaves the ledger — so the panes of one private lane,
+    /// and the siblings it ⌘-clicks open, share one sign-in.
+    private var privateStores: [String: WKWebsiteDataStore] = [:]
 
     static let defaultShardId = "shard-0"
+    static let privatePrefix = "private:"
+
+    /// The jar id a private lane is born with. The core writes the same
+    /// string onto the lane's first pane (`create_private_web_lane`).
+    static func privateId(forLane laneId: String) -> String { privatePrefix + laneId }
+
+    /// Whether a jar id names a private, non-persistent store.
+    static func isPrivate(_ id: String) -> Bool { id.hasPrefix(privatePrefix) }
 
     /// Stable shard for a project. A project keeps its shard forever, because
     /// moving one means losing the logins in it.
@@ -1854,6 +1893,12 @@ final class DataStorePool {
     }
 
     func store(_ id: String) -> WKWebsiteDataStore {
+        if Self.isPrivate(id) {
+            if let existing = privateStores[id] { return existing }
+            let store = WKWebsiteDataStore.nonPersistent()
+            privateStores[id] = store
+            return store
+        }
         if let existing = stores[id] { return existing }
         // `WKWebsiteDataStore.default()` would hand every shard the same store
         // and quietly undo the sharding. The identifier-based initialiser
@@ -1867,6 +1912,16 @@ final class DataStorePool {
         stores[id] = store
         return store
     }
+
+    /// The lane that named this jar is gone. Nothing is deleted here — a
+    /// non-persistent store has nothing on disk to delete — the pool just
+    /// stops holding it, and WebKit lets it go with the last web view.
+    func releasePrivateStore(_ id: String) {
+        privateStores.removeValue(forKey: id)
+    }
+
+    /// For a test: whether the pool still holds a private jar.
+    func holdsPrivateStore(_ id: String) -> Bool { privateStores[id] != nil }
 
     /// A stable UUID for a shard name.
     ///

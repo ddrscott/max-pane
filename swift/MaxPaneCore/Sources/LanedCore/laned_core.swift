@@ -757,6 +757,22 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func createLane(placement: Placement, kind: PaneKind, relaySessionId: String?, url: String?, inheritTagFromLane: String?) throws  -> StripState
     
     /**
+     * A private web lane (⇧⌘N): one pane on `url`, in a lane the ledger will
+     * forget at the next open (migration 0014). Web only, because a
+     * terminal's session is relay-tty's and outlives any lane; "private" is a
+     * statement about cookie jars and history, which only a page has.
+     *
+     * Otherwise `create_lane` exactly: same placement, same tag inheritance,
+     * same focus. The pane's `data_store_id` names the non-persistent
+     * `WKWebsiteDataStore` the shell keeps for it — `private:<lane id>` for a
+     * fresh one, or `data_store_id` to join the jar of the private pane that
+     * ⌘-clicked this lane into being, so a sign-in there is a sign-in here.
+     * The shell drops the store when no lane names it any more;
+     * `record_visit` and `set_pane_interaction_state` refuse its panes.
+     */
+    func createPrivateWebLane(placement: Placement, url: String, inheritTagFromLane: String?, dataStoreId: String?) throws  -> StripState
+    
+    /**
      * Hold a lane at one edge of the window instead of letting it scroll with
      * the strip.
      *
@@ -1761,6 +1777,33 @@ open func createLane(placement: Placement, kind: PaneKind, relaySessionId: Strin
         FfiConverterOptionString.lower(relaySessionId),
         FfiConverterOptionString.lower(url),
         FfiConverterOptionString.lower(inheritTagFromLane),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * A private web lane (⇧⌘N): one pane on `url`, in a lane the ledger will
+     * forget at the next open (migration 0014). Web only, because a
+     * terminal's session is relay-tty's and outlives any lane; "private" is a
+     * statement about cookie jars and history, which only a page has.
+     *
+     * Otherwise `create_lane` exactly: same placement, same tag inheritance,
+     * same focus. The pane's `data_store_id` names the non-persistent
+     * `WKWebsiteDataStore` the shell keeps for it — `private:<lane id>` for a
+     * fresh one, or `data_store_id` to join the jar of the private pane that
+     * ⌘-clicked this lane into being, so a sign-in there is a sign-in here.
+     * The shell drops the store when no lane names it any more;
+     * `record_visit` and `set_pane_interaction_state` refuse its panes.
+     */
+open func createPrivateWebLane(placement: Placement, url: String, inheritTagFromLane: String?, dataStoreId: String?)throws  -> StripState  {
+    return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_create_private_web_lane(
+            self.uniffiCloneHandle(),
+        FfiConverterTypePlacement_lower(placement),
+        FfiConverterString.lower(url),
+        FfiConverterOptionString.lower(inheritTagFromLane),
+        FfiConverterOptionString.lower(dataStoreId),uniffiCallStatus
     )
 })
 }
@@ -4034,6 +4077,14 @@ public struct Lane: Equatable, Hashable {
      */
     public var span: UInt32
     /**
+     * A lane whose pages live in a cookie jar that is never written to disk,
+     * and whose visits, titles and session are never recorded. The row is
+     * deleted at the next `Core::open`, so a relaunch never brings it back.
+     * Defaults to `false` on both sides of the FFI: nothing that builds a
+     * `Lane` by hand has to know the flag exists.
+     */
+    public var isPrivate: Bool
+    /**
      * Top-to-bottom stack.
      */
     public var panes: [Pane]
@@ -4081,6 +4132,13 @@ public struct Lane: Equatable, Hashable {
          * not deliberately opted out.
          */span: UInt32, 
         /**
+         * A lane whose pages live in a cookie jar that is never written to disk,
+         * and whose visits, titles and session are never recorded. The row is
+         * deleted at the next `Core::open`, so a relaunch never brings it back.
+         * Defaults to `false` on both sides of the FFI: nothing that builds a
+         * `Lane` by hand has to know the flag exists.
+         */isPrivate: Bool = false, 
+        /**
          * Top-to-bottom stack.
          */panes: [Pane]) {
         self.id = id
@@ -4094,6 +4152,7 @@ public struct Lane: Equatable, Hashable {
         self.keepLive = keepLive
         self.dock = dock
         self.span = span
+        self.isPrivate = isPrivate
         self.panes = panes
     }
 
@@ -4124,6 +4183,7 @@ public struct FfiConverterTypeLane: FfiConverterRustBuffer {
                 keepLive: FfiConverterBool.read(from: &buf), 
                 dock: FfiConverterOptionTypeDock.read(from: &buf), 
                 span: FfiConverterUInt32.read(from: &buf), 
+                isPrivate: FfiConverterBool.read(from: &buf), 
                 panes: FfiConverterSequenceTypePane.read(from: &buf)
         )
     }
@@ -4140,6 +4200,7 @@ public struct FfiConverterTypeLane: FfiConverterRustBuffer {
         FfiConverterBool.write(value.keepLive, into: &buf)
         FfiConverterOptionTypeDock.write(value.dock, into: &buf)
         FfiConverterUInt32.write(value.span, into: &buf)
+        FfiConverterBool.write(value.isPrivate, into: &buf)
         FfiConverterSequenceTypePane.write(value.panes, into: &buf)
     }
 }
@@ -7401,6 +7462,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_create_lane() != 9560) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_create_private_web_lane() != 22773) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_dock_lane() != 57766) {

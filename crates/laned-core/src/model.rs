@@ -244,6 +244,13 @@ pub struct Lane {
     /// default of 1 is what keeps §1's invariant true everywhere the user has
     /// not deliberately opted out.
     pub span: u32,
+    /// A lane whose pages live in a cookie jar that is never written to disk,
+    /// and whose visits, titles and session are never recorded. The row is
+    /// deleted at the next `Core::open`, so a relaunch never brings it back.
+    /// Defaults to `false` on both sides of the FFI: nothing that builds a
+    /// `Lane` by hand has to know the flag exists.
+    #[uniffi(default = false)]
+    pub is_private: bool,
     /// Top-to-bottom stack.
     pub panes: Vec<Pane>,
 }

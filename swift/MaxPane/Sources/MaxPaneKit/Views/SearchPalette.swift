@@ -358,16 +358,27 @@ enum PaletteStyle {
     /// means something. The outline is the whole rectangle: a single coloured
     /// edge is the bent-rail tell this project does not use.
     static func chip(_ state: AgentState) -> NSView {
+        guard state.hasChip else {
+            let view = NSView()
+            view.translatesAutoresizingMaskIntoConstraints = false
+            return view
+        }
+        return chip(text: state.chipText, colour: Theme.agentStateColor(state))
+    }
+
+    /// `[PRIVATE]` on a private lane's row, in the resting grey: the same
+    /// chip the header wears, so the picker and the strip agree on the word.
+    static func privateChip() -> NSView { chip(text: "PRIVATE", colour: Theme.dimText) }
+
+    static func chip(text: String, colour: NSColor) -> NSView {
         let view = NSView()
         view.translatesAutoresizingMaskIntoConstraints = false
-        guard state.hasChip else { return view }
-        let colour = Theme.agentStateColor(state)
         view.wantsLayer = true
         view.layer?.cornerRadius = 0
         view.layer?.borderWidth = 1
         view.layerBorderColor = colour.withAlphaComponent(0.55)
         view.layerBackgroundColor = colour.withAlphaComponent(0.14)
-        let text = label(state.chipText, Theme.mono(9, weight: .bold), colour)
+        let text = label(text, Theme.mono(9, weight: .bold), colour)
         text.alignment = .center
         view.addSubview(text)
         NSLayoutConstraint.activate([
@@ -594,7 +605,8 @@ final class PaletteSessionRow: NSTableCellView {
 /// actually matched underneath. A hit in 8 000 lines of scrollback is useless
 /// if you cannot see which lane it came from or whether that lane is alive.
 final class PaletteSearchRow: NSTableCellView {
-    init(hit: SearchHit, laneTitle: String, path: String, telemetry: SessionTelemetry?, isFocused: Bool) {
+    init(hit: SearchHit, laneTitle: String, path: String, telemetry: SessionTelemetry?, isFocused: Bool,
+         isPrivate: Bool = false) {
         super.init(frame: .zero)
 
         let glyph = PaletteStyle.label(
@@ -610,8 +622,8 @@ final class PaletteSearchRow: NSTableCellView {
 
         // A lane the search turned up is only useful if you can see whether it
         // is waiting on you, so the hit row carries the same chip the picker's
-        // rows do.
-        let chip = PaletteStyle.chip(telemetry?.state ?? .unknown)
+        // rows do. A private lane has no session and wears its own word.
+        let chip = isPrivate ? PaletteStyle.privateChip() : PaletteStyle.chip(telemetry?.state ?? .unknown)
 
         let state = PaletteStyle.label(
             telemetry?.badgeText ?? "",
@@ -828,7 +840,8 @@ final class SearchPaletteController: PaletteController {
             laneTitle: name,
             path: path,
             telemetry: telemetry,
-            isFocused: store.state.focusedPaneId == hit.paneId)
+            isFocused: store.state.focusedPaneId == hit.paneId,
+            isPrivate: lane?.isPrivate == true)
     }
 
     override func deliver(selected: Int) {

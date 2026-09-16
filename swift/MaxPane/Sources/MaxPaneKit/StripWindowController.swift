@@ -476,6 +476,11 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         case .claimSession:
             // Only meaningful for a terminal pane.
             return store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .pty
+        case .savePassword:
+            // A page, and not a private one: a private lane fills passwords
+            // and never offers to keep one, so the item says so by being grey.
+            guard let focused = store.state.focusedPaneId, store.pane(focused)?.kind == .web else { return false }
+            return store.lane(containing: focused)?.isPrivate != true
         case _ where command.needsWebPane:
             // The mirror of `claimSession`: only a page has an address, a form
             // or a document to print. Greyed out rather than beeping, because
@@ -561,6 +566,14 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .newTerminalLane:
                 try newTerminal(near: focusedLane)
+
+            case .newPrivateWebLane:
+                // A blank page, then the address: the lane exists before it
+                // is asked where to go, and the ledger holds `about:blank`
+                // for it and nothing else. The edit waits a turn for the
+                // strip to build the pane the snapshot just announced.
+                try store.newWebLane(url: "about:blank", near: focusedLane?.id, private: true)
+                DispatchQueue.main.async { [weak self] in self?.strip.editFocusedPaneAddress() }
 
             case .showHelp:
                 showHelp()

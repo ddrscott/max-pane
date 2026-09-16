@@ -81,11 +81,15 @@ extension WebPaneController {
             for login in saved { menu.addItem(fillItem(for: login)) }
         }
         menu.addItem(.separator())
-        let save = NSMenuItem(
-            title: "Save a Password for This Site…",
-            action: #selector(WebPaneController.savePasswordFromMenu(_:)), keyEquivalent: "")
-        save.target = self
-        menu.addItem(save)
+        // A private pane fills and never keeps: the item is not offered, so
+        // the menu does not promise what `savePassword` would refuse.
+        if !isPrivate {
+            let save = NSMenuItem(
+                title: "Save a Password for This Site…",
+                action: #selector(WebPaneController.savePasswordFromMenu(_:)), keyEquivalent: "")
+            save.target = self
+            menu.addItem(save)
+        }
         let settings = NSMenuItem(
             title: "Open System Settings → Passwords",
             action: #selector(WebPaneController.openPasswordSettings(_:)), keyEquivalent: "")
@@ -147,6 +151,10 @@ extension WebPaneController {
     /// it would buy is worth less than never having written it. The cost is
     /// that saving is a deliberate act, which the README says out loud.
     func savePassword() {
+        // The Keychain is the one store a private lane would otherwise reach.
+        // The menu item is greyed out and left out of the key's menu; this is
+        // for the `keys` binding that reaches here anyway.
+        if isPrivate { return chrome.showFailure("A private lane never saves a password") }
         guard let origin = liveOrigin else {
             return chrome.showFailure("This page has no address to save a password for")
         }

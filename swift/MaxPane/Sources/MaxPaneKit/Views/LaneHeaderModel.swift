@@ -37,6 +37,10 @@ struct LaneHeaderModel: Equatable {
     /// Which edge this lane is held at, and what it does to the strip there.
     /// `nil` for a lane that scrolls with everything else.
     var dock: Dock?
+    /// A private lane (⇧⌘N). The header says `PRIVATE` in the chip column,
+    /// grey and outlined: content, not colour, because the greens are spent
+    /// on focus and state and this is neither — it is what the lane *is*.
+    var isPrivate: Bool = false
     var isTerminal: Bool = false
     /// The long form, for the hover tip — the header is the only place the full
     /// path exists, so truncating it must not destroy it.
@@ -83,6 +87,7 @@ struct LaneHeaderModel: Equatable {
         isTerminal = lane.kind == .pty
         keepLive = lane.keepLive
         dock = lane.dock
+        isPrivate = lane.isPrivate
 
         // The ledger's title is the one the user can rename, so it wins; the
         // session's own name is the fallback for a lane that was just attached
@@ -148,6 +153,12 @@ protocol LaneHeaderSource {
     /// True when a pane on this lane names a Relay session, whether or not
     /// Relay still knows about it.
     var hasRelaySession: Bool { get }
+    var isPrivate: Bool { get }
+}
+
+extension LaneHeaderSource {
+    /// A source that does not say is not private — `Lane` says for itself.
+    var isPrivate: Bool { false }
 }
 
 extension Lane: LaneHeaderSource {

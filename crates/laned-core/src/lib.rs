@@ -148,6 +148,20 @@ impl Core {
     #[uniffi::constructor]
     pub fn open(path: String) -> Result<std::sync::Arc<Self>> {
         let ledger = Ledger::open(Some(&PathBuf::from(path)))?;
+        // A private lane is gone on close, and "close" includes the app
+        // quitting with the lane still up, or dying. This is the only place
+        // that can promise it: before the first `state()` the shell will
+        // render, whatever was left in the file from the last run goes.
+        if ledger.purge_private_lanes()? > 0 {
+            // The keyboard may have been in the lane that just went. Hand it
+            // to the first pane left, the way `close_pane` would have.
+            let focused = ledger.app_state(KEY_FOCUSED_PANE)?;
+            if focused.as_deref().is_some_and(|f| ledger.pane(f).is_err()) {
+                if let Some(first) = ledger.lanes()?.iter().flat_map(|l| &l.panes).next() {
+                    ledger.set_app_state(KEY_FOCUSED_PANE, &first.id)?;
+                }
+            }
+        }
         Ok(std::sync::Arc::new(Core {
             inner: Mutex::new(Inner {
                 ledger,
@@ -216,56 +230,37 @@ impl Core {
         url: Option<String>,
         inherit_tag_from_lane: Option<String>,
     ) -> Result<StripState> {
-        let mut inner = self.inner.lock();
-        Self::refuse_second_pane(&inner.ledger, &kind, relay_session_id.as_deref())?;
-        let ordinal = Self::place(&mut inner.ledger, &placement)?;
+        self.create_lane_impl(placement, kind, relay_session_id, url, inherit_tag_from_lane, false, None)
+    }
 
-        let (project_root, project_source) = match inherit_tag_from_lane {
-            Some(src) => {
-                let l = inner.ledger.lane(&src)?;
-                (l.project_root, ProjectSource::Inherited)
-            }
-            None => (None, ProjectSource::Inherited),
-        };
-
-        let now = now_ms();
-        let lane = Lane {
-            id: new_id(),
-            ordinal,
-            width_pt: inner.default_lane_width,
-            title: None,
-            project_root,
-            project_source,
-            created_at: now,
-            last_focus_at: now,
-            keep_live: false,
-            // A lane is born in the strip. Docking is always something the user
-            // did to a lane that already exists, which is what makes "where
-            // does it go back to" answerable at all.
-            dock: None,
-            span: 1,
-            panes: Vec::new(),
-        };
-        let pane = Pane {
-            id: new_id(),
-            lane_id: lane.id.clone(),
-            position: 0,
-            kind,
-            relay_session_id,
-            url,
-            scroll_y: None,
-            data_store_id: None,
-            snapshot_path: None,
-            state: PaneState::Live,
-            height_weight: 1.0,
-            zoom: 1.0,
-            mobile: false,
-        };
-        inner.ledger.insert_lane(&lane)?;
-        inner.ledger.insert_pane(&pane)?;
-        inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane.id)?;
-        Self::bump(&mut inner);
-        Self::snapshot(&inner)
+    /// A private web lane (⇧⌘N): one pane on `url`, in a lane the ledger will
+    /// forget at the next open (migration 0014). Web only, because a
+    /// terminal's session is relay-tty's and outlives any lane; "private" is a
+    /// statement about cookie jars and history, which only a page has.
+    ///
+    /// Otherwise `create_lane` exactly: same placement, same tag inheritance,
+    /// same focus. The pane's `data_store_id` names the non-persistent
+    /// `WKWebsiteDataStore` the shell keeps for it — `private:<lane id>` for a
+    /// fresh one, or `data_store_id` to join the jar of the private pane that
+    /// ⌘-clicked this lane into being, so a sign-in there is a sign-in here.
+    /// The shell drops the store when no lane names it any more;
+    /// `record_visit` and `set_pane_interaction_state` refuse its panes.
+    pub fn create_private_web_lane(
+        &self,
+        placement: Placement,
+        url: String,
+        inherit_tag_from_lane: Option<String>,
+        data_store_id: Option<String>,
+    ) -> Result<StripState> {
+        self.create_lane_impl(
+            placement,
+            PaneKind::Web,
+            None,
+            Some(url),
+            inherit_tag_from_lane,
+            true,
+            data_store_id,
+        )
     }
 
     /// Append a pane to the bottom of an existing lane's stack (⌘D).
@@ -279,6 +274,14 @@ impl Core {
         let mut inner = self.inner.lock();
         Self::refuse_second_pane(&inner.ledger, &kind, relay_session_id.as_deref())?;
         let position = inner.ledger.next_position(&lane_id)?;
+        // A split in a private lane is private: same jar as the pane above it,
+        // so the stack is one session and not one sign-in per pane.
+        let lane = inner.ledger.lane(&lane_id)?;
+        let data_store_id = if lane.is_private {
+            lane.panes.first().and_then(|p| p.data_store_id.clone())
+        } else {
+            None
+        };
         let pane = Pane {
             id: new_id(),
             lane_id: lane_id.clone(),
@@ -287,7 +290,7 @@ impl Core {
             relay_session_id,
             url,
             scroll_y: None,
-            data_store_id: None,
+            data_store_id,
             snapshot_path: None,
             state: PaneState::Live,
             // The mean of what is already there, which is the one value that
@@ -462,6 +465,7 @@ impl Core {
             keep_live: false,
             dock: None,
             span: 1,
+            is_private: false,
             panes: Vec::new(),
         };
         inner.ledger.insert_lane(&lane)?;
@@ -869,6 +873,12 @@ impl Core {
     /// republishing on every navigation would redraw the strip for a scroll.
     pub fn set_pane_interaction_state(&self, pane_id: String, state: Option<Vec<u8>>) -> Result<()> {
         let inner = self.inner.lock();
+        // A private pane's history, scroll and form state are exactly what a
+        // private lane exists not to keep. Refused here rather than trusted to
+        // the shell, so no caller can write one by forgetting to check.
+        if state.is_some() && inner.ledger.pane_is_private(&pane_id)? {
+            return Ok(());
+        }
         inner.ledger.update_pane_interaction_state(&pane_id, state.as_deref())
     }
 
@@ -1018,6 +1028,11 @@ impl Core {
         let Some(url) = history::normalize_url(&url) else { return Ok(()) };
         let now = now_ms();
         let mut inner = self.inner.lock();
+        // A visit from a private lane is not history. Before the memo, so a
+        // private pane leaves no trace even in the per-launch burst filter.
+        if inner.ledger.pane_is_private(&pane_id)? {
+            return Ok(());
+        }
         if !inner.visits.accept(&pane_id, &url, now) {
             // Still a chance to learn the name: the duplicate settle is often
             // the one that finally has a <title>.
@@ -1718,6 +1733,9 @@ impl Core {
                 keep_live: incoming.keep_live,
                 dock,
                 span: incoming.span.clamp(1, 2),
+                // A strip file never carries a private lane: nothing about one
+                // is meant to outlive its window, let alone a file.
+                is_private: false,
                 panes: Vec::new(),
             };
             inner.ledger.insert_lane(&lane)?;
@@ -1898,6 +1916,78 @@ impl Core {
         inner.ledger.lane(lane_id)?.dock.ok_or_else(|| CoreError::Invalid {
             message: format!("lane {lane_id} is not docked"),
         })
+    }
+
+    /// `create_lane` and `create_private_web_lane`, which differ in one flag
+    /// and one string. Not exported: uniffi would give the shell a third door.
+    #[allow(clippy::too_many_arguments)]
+    fn create_lane_impl(
+        &self,
+        placement: Placement,
+        kind: PaneKind,
+        relay_session_id: Option<String>,
+        url: Option<String>,
+        inherit_tag_from_lane: Option<String>,
+        is_private: bool,
+        private_store: Option<String>,
+    ) -> Result<StripState> {
+        let mut inner = self.inner.lock();
+        Self::refuse_second_pane(&inner.ledger, &kind, relay_session_id.as_deref())?;
+        let ordinal = Self::place(&mut inner.ledger, &placement)?;
+
+        let (project_root, project_source) = match inherit_tag_from_lane {
+            Some(src) => {
+                let l = inner.ledger.lane(&src)?;
+                (l.project_root, ProjectSource::Inherited)
+            }
+            None => (None, ProjectSource::Inherited),
+        };
+
+        let now = now_ms();
+        let lane = Lane {
+            id: new_id(),
+            ordinal,
+            width_pt: inner.default_lane_width,
+            title: None,
+            project_root,
+            project_source,
+            created_at: now,
+            last_focus_at: now,
+            keep_live: false,
+            // A lane is born in the strip. Docking is always something the user
+            // did to a lane that already exists, which is what makes "where
+            // does it go back to" answerable at all.
+            dock: None,
+            span: 1,
+            is_private,
+            panes: Vec::new(),
+        };
+        let pane = Pane {
+            id: new_id(),
+            lane_id: lane.id.clone(),
+            position: 0,
+            kind,
+            relay_session_id,
+            url,
+            scroll_y: None,
+            // A private pane is born knowing its jar, so a sibling can be put
+            // in the same one and the shell never has to guess from the lane.
+            data_store_id: if is_private {
+                Some(private_store.unwrap_or_else(|| format!("private:{}", lane.id)))
+            } else {
+                None
+            },
+            snapshot_path: None,
+            state: PaneState::Live,
+            height_weight: 1.0,
+            zoom: 1.0,
+            mobile: false,
+        };
+        inner.ledger.insert_lane(&lane)?;
+        inner.ledger.insert_pane(&pane)?;
+        inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane.id)?;
+        Self::bump(&mut inner);
+        Self::snapshot(&inner)
     }
 
     fn bump(inner: &mut Inner) {

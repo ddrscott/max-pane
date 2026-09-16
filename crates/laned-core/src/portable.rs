@@ -465,6 +465,7 @@ mod tests {
             keep_live: true,
             dock: None,
             span: 1,
+            is_private: false,
             panes,
         }
     }

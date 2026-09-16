@@ -34,6 +34,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0013_blocking_exempt",
         include_str!("../migrations/0013_blocking_exempt.sql"),
     ),
+    ("0014_lane_private", include_str!("../migrations/0014_lane_private.sql")),
 ];
 
 /// A needle as an FTS5 query: one quoted phrase, nothing else.
@@ -165,7 +166,7 @@ impl Ledger {
         let mut stmt = self.conn.prepare(
             "SELECT id, ordinal, width_pt, title, project_root, project_source,
                     created_at, last_focus_at, keep_live, span,
-                    dock_side, dock_mode, dock_width_pt
+                    dock_side, dock_mode, dock_width_pt, is_private
              FROM lane ORDER BY ordinal ASC",
         )?;
         let mut lanes: Vec<Lane> = stmt.query_map([], row_to_lane)?.collect::<rusqlite::Result<_>>()?;
@@ -196,7 +197,7 @@ impl Ledger {
             .query_row(
                 "SELECT id, ordinal, width_pt, title, project_root, project_source,
                         created_at, last_focus_at, keep_live, span,
-                        dock_side, dock_mode, dock_width_pt FROM lane WHERE id = ?1",
+                        dock_side, dock_mode, dock_width_pt, is_private FROM lane WHERE id = ?1",
                 [id],
                 row_to_lane,
             )
@@ -276,8 +277,8 @@ impl Ledger {
         self.conn.execute(
             "INSERT INTO lane (id, ordinal, width_pt, title, project_root, project_source,
                                created_at, last_focus_at, keep_live, span,
-                               dock_side, dock_mode, dock_width_pt)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                               dock_side, dock_mode, dock_width_pt, is_private)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 lane.id,
                 lane.ordinal,
@@ -292,9 +293,37 @@ impl Ledger {
                 lane.dock.map(|d| dock_side_str(d.side)),
                 lane.dock.map(|d| dock_mode_str(d.mode)),
                 lane.dock.map(|d| d.width_pt),
+                lane.is_private as i32,
             ],
         )?;
         Ok(())
+    }
+
+    /// Whether `pane_id` sits in a private lane. `false` for a pane the ledger
+    /// does not know, so a late write from a pane that has just been closed is
+    /// treated like any other and not refused for the wrong reason.
+    pub fn pane_is_private(&self, pane_id: &str) -> Result<bool> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT lane.is_private FROM pane JOIN lane ON lane.id = pane.lane_id WHERE pane.id = ?1",
+                [pane_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?
+            .is_some_and(|v| v != 0))
+    }
+
+    /// Delete every private lane, its panes with it, and the site permissions
+    /// that were decided under a private cookie jar. Run at open, before the
+    /// first read: a private lane is the one row that is not meant to
+    /// survive a launch (migration 0014). Returns how many lanes went.
+    pub fn purge_private_lanes(&self) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        let lanes = tx.execute("DELETE FROM lane WHERE is_private = 1", [])?;
+        tx.execute("DELETE FROM site_permission WHERE data_store_id LIKE 'private:%'", [])?;
+        tx.commit()?;
+        Ok(lanes)
     }
 
     pub fn set_span(&self, lane_id: &str, span: u32) -> Result<()> {
@@ -2142,6 +2171,7 @@ fn row_to_lane(r: &Row) -> rusqlite::Result<Lane> {
                     .unwrap_or(crate::LANE_MIN_PT),
             })
         }),
+        is_private: r.get::<_, i64>(13)? != 0,
         panes: Vec::new(),
     })
 }

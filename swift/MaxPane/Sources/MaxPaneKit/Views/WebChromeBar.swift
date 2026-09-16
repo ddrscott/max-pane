@@ -95,6 +95,10 @@ final class WebChromeBar: NSView {
     /// not an icon: there is no glyph for "the ads are on" that anyone reads
     /// without a legend, and the state is rare enough to afford the letters.
     private let unblocked = ChromeButton(glyph: "unblocked")
+    /// On a pane in a private lane, and nowhere else. Left of the address,
+    /// with the padlock, because it is a fact about where you are; a word in
+    /// an outline, like `unblocked`, in the resting grey. It is not a button.
+    private let privateChip = ChromeButton(glyph: "PRIVATE")
     private let security = NSTextField(labelWithString: "")
     private let address = AddressField()
 
@@ -144,6 +148,9 @@ final class WebChromeBar: NSView {
         unblocked.onClick = { [weak self] in self?.onBlockingChip?() }
         unblocked.isOutlined = true
         unblocked.isHidden = true
+        privateChip.isOutlined = true
+        privateChip.isHidden = true
+        privateChip.toolTip = "A private lane: nothing here is kept — no history, no cookies past its close, no saved passwords"
         back.onMenu = { [weak self] in self?.onBackMenu?() }
         forward.onMenu = { [weak self] in self?.onForwardMenu?() }
 
@@ -160,7 +167,7 @@ final class WebChromeBar: NSView {
         // The star sits between the address and find: it is about *this page*,
         // which is what the field to its left says, where find and zoom are
         // about reading whatever is on screen.
-        let row = NSStackView(views: [back, forward, reload, security, address, unblocked, star, key, find, zoom])
+        let row = NSStackView(views: [back, forward, reload, security, privateChip, address, unblocked, star, key, find, zoom])
         row.orientation = .horizontal
         row.spacing = 2
         row.alignment = .centerY
@@ -308,6 +315,16 @@ final class WebChromeBar: NSView {
     /// For a test: whether the chip is on the row.
     var isBlockingChipShown: Bool { !unblocked.isHidden }
 
+    /// Whether this bar belongs to a pane in a private lane. Set once, when
+    /// the pane is built: a lane is private for its whole life or never.
+    func setPrivate(_ isPrivate: Bool) {
+        privateChip.isHidden = !isPrivate
+        privateChip.alphaValue = 1
+    }
+
+    /// For a test: whether the `PRIVATE` chip is on the row.
+    var isPrivateChipShown: Bool { !privateChip.isHidden }
+
     /// Show or hide a chip with a fade rather than a cut: the row's contents
     /// shift when one appears, and the fade is the difference between
     /// "something arrived" and "the address bar just got shorter for no
@@ -337,7 +354,7 @@ final class WebChromeBar: NSView {
     var isPaneFocused: Bool = false {
         didSet {
             guard isPaneFocused != oldValue else { return }
-            for button in [back, forward, reload, unblocked, star, key, find, zoom] { button.isDimmed = !isPaneFocused }
+            for button in [back, forward, reload, privateChip, unblocked, star, key, find, zoom] { button.isDimmed = !isPaneFocused }
             renderAddress()
             needsDisplay = true
         }

@@ -506,6 +506,26 @@ A page with no `<title>` gets its host and path on the lane header rather than
 keeping the last page's title — `localhost:3000/api/users`, which is what tells
 six columns of raw JSON apart.
 
+### A private lane
+
+**⇧⌘N** opens a private web lane: a blank page, cursor in the address, marked
+`PRIVATE` on its header, its chrome bar and its ⌘P rows. Its pages live in a
+`WKWebsiteDataStore` that is never written to disk — one per private lane,
+shared by every pane in it and by every lane a ⌘-click from it opens, and
+dropped when the last of them closes. Nothing about them is kept: no visit
+reaches history, no title correction, no session blob, and ⇧⌘L is greyed out
+while ⌥⌘L still fills a saved password. A relaunch never brings a private lane
+back, and quitting with one up, or a `kill -9`, is the same case: the ledger
+deletes it at the next open.
+
+It is for "log in to the other account once, then forget it", which used to
+need a whole profile. It is not a profile: a profile is an instance with its
+own ledger and its own persistent jars, chosen at launch and kept forever; a
+private lane is one column, gone on close. While it stands it is a lane like
+any other — placed, docked, gathered, evicted and rehydrated by the same code —
+because the strip draws only what the ledger holds. How that squares with
+"recorded nowhere" is [ADR-0016](docs/decisions/0016-private-lanes-live-in-the-ledger-until-open.md).
+
 ### History
 
 **Nothing is ever evicted.** No row cap, no age cap — a page you opened two

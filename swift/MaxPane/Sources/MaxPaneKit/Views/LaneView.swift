@@ -1186,10 +1186,22 @@ final class LaneHeaderView: NSView {
     /// header on a focused idle lane was exactly the collision.
     private func applyChip() {
         guard let state = model.state, state.hasChip else {
-            chip.stringValue = ""
-            chip.layerBackgroundColor = NSColor.clear
-            chip.layer?.borderWidth = 0
             chip.isPulsing = false
+            chip.layerBackgroundColor = NSColor.clear
+            if model.isPrivate {
+                // The one chip a web lane can wear. Grey, outlined, and a word:
+                // the same shape as a state chip so it reads in the same
+                // column, in the resting colour so it never competes with a
+                // BLOCKED two lanes over.
+                chip.stringValue = chipFits ? "PRIVATE" : "P"
+                chip.font = Theme.mono(9, weight: .bold)
+                chip.layerBorderColor = Theme.dimText.withAlphaComponent(0.6)
+                chip.layer?.borderWidth = 1
+                chip.textColor = Theme.dimText
+                return
+            }
+            chip.stringValue = ""
+            chip.layer?.borderWidth = 0
             return
         }
         let colour = Theme.agentStateColor(state)

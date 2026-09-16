@@ -69,8 +69,31 @@ public final class StripStore {
     /// strip is the one cost worth never paying.
     private func publish(_ next: StripState) {
         guard next.revision != state.revision || next.gatherFilter != state.gatherFilter else { return }
+        let jarsBefore = Self.privateJars(in: state.lanes)
         state = next
+        releasePrivateJars(heldBefore: jarsBefore)
         for body in observers.values { body(next) }
+    }
+
+    /// The non-persistent cookie jars the private lanes in `lanes` name.
+    private static func privateJars(in lanes: [Lane]) -> Set<String> {
+        Set(lanes.lazy.filter(\.isPrivate).flatMap(\.panes).compactMap(\.dataStoreId)
+            .filter(DataStorePool.isPrivate))
+    }
+
+    /// A private lane that has left the ledger takes its cookie jar with it.
+    ///
+    /// Asked of every lane, not the snapshot: a gather view narrows the
+    /// snapshot to one project, and a private lane tagged elsewhere is hidden
+    /// by it, not closed. Dropping its jar then would hand the next pane
+    /// built for it — a split, a rehydrate — an empty store and lose the
+    /// sign-in the lane was opened for. The full read only happens when a
+    /// jar has left the snapshot, which is rare.
+    private func releasePrivateJars(heldBefore: Set<String>) {
+        let inSnapshot = Self.privateJars(in: state.lanes)
+        guard !heldBefore.isSubset(of: inSnapshot) else { return }
+        let live = Self.privateJars(in: allLanes)
+        for jar in heldBefore.subtracting(live) { DataStorePool.shared.releasePrivateStore(jar) }
     }
 
     /// Pull a fresh snapshot only if the core has moved since the last one.
@@ -95,9 +118,22 @@ public final class StripStore {
     }
 
     /// A new web lane (⌘L, or a URL opened from a terminal).
-    func newWebLane(url: String, near laneId: String?) throws {
+    ///
+    /// `private` makes it a private lane (⇧⌘N): a cookie jar that is never
+    /// written to disk, no history, no session blob, and a row the ledger
+    /// deletes at the next open. `sharingJarWith` names an existing private
+    /// jar for the new lane to join — how a ⌘-click from a private pane opens
+    /// its sibling in the same sign-in — and is ignored for a public lane.
+    func newWebLane(url: String, near laneId: String?, private isPrivate: Bool = false,
+                    sharingJarWith jar: String? = nil) throws {
+        let placement: Placement = laneId.map { .rightOf(laneId: $0) } ?? .end
+        if isPrivate {
+            publish(try core.createPrivateWebLane(
+                placement: placement, url: url, inheritTagFromLane: laneId, dataStoreId: jar))
+            return
+        }
         publish(try core.createLane(
-            placement: laneId.map { .rightOf(laneId: $0) } ?? .end,
+            placement: placement,
             kind: .web,
             relaySessionId: nil,
             url: url,
