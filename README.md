@@ -407,6 +407,19 @@ out at the lane's width, not a phone's 980 — so what you get is what a site
 serves to that user agent, which is what the ones that matter decide on. No
 key by default; `keys` binds `toggleMobileLayout`.
 
+**Pinch to zoom.** A trackpad pinch over a page is the same zoom as ⌘= and
+⌘-, not a second one: the page reflows under your fingers as it does in
+Safari, and when they lift it settles, on the pane's usual 0.16 s, onto the
+nearest rung of the ladder the keys climb (50% to 300%) and is written to the
+ledger like a keypress — so a pinched zoom survives a relaunch, ⌘0 puts it
+back, and ⌘= afterwards steps from a rung rather than from 137%. The readout
+in the chrome bar follows the fingers. A two-finger double tap goes to 150%
+from actual size and back to 100% from anywhere else. WebKit's own pinch
+would have scaled the drawing without laying the page out again, which in a
+420 pt column is the opposite of what zooming is for; a popup, which has no
+zoom to keep, gets that one. A pinch never pages the strip: the strip takes
+sideways *scrolls*, and a pinch is a different gesture.
+
 **Ads and trackers are blocked**, in every web pane and in the popups over
 them, by WebKit's own content blocker: a rule list compiled once into bytecode
 the network process runs on every request, with no script in the page and no

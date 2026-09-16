@@ -138,4 +138,26 @@ final class ChromeWebView: WKWebView {
         super.willOpenMenu(menu, with: event)
         WebContextMenu.rename(in: menu)
     }
+
+    /// A trackpad pinch, before WebKit sees it. Return `true` to keep it.
+    ///
+    /// A pane installs this (`WebPaneController.pinch`) so the gesture drives
+    /// its persisted `pageZoom` rather than WebKit's own `magnification`: that
+    /// one scales what is drawn without laying the page out again, and in a
+    /// 420 pt column a zoom that does not reflow is the wrong zoom — see the
+    /// zoom section of the controller. A popup installs nothing and gets
+    /// WebKit's transient magnification, which is all a dialog needs.
+    var onMagnify: ((NSEvent) -> Bool)?
+    /// A two-finger double tap, likewise.
+    var onSmartMagnify: ((NSEvent) -> Bool)?
+
+    override func magnify(with event: NSEvent) {
+        if onMagnify?(event) == true { return }
+        super.magnify(with: event)
+    }
+
+    override func smartMagnify(with event: NSEvent) {
+        if onSmartMagnify?(event) == true { return }
+        super.smartMagnify(with: event)
+    }
 }

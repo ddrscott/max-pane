@@ -163,6 +163,12 @@ final class WebPopupDialog: Popup {
         view.navigationDelegate = self
         view.uiDelegate = self
         view.allowsBackForwardNavigationGestures = true
+        // A pinch works in a popup too. Here it is WebKit's own transient
+        // magnification — no `onMagnify` handler is installed, unlike a pane's
+        // view — because a popup has no zoom of its own to persist: the zoom
+        // keys do nothing in it and nothing about a popup is saved. It scales
+        // the page a sign-in form drew too small, which is all it is for.
+        view.allowsMagnification = true
         view.translatesAutoresizingMaskIntoConstraints = false
         pageHost.addSubview(view, positioned: .below, relativeTo: askSheet)
         NSLayoutConstraint.activate([

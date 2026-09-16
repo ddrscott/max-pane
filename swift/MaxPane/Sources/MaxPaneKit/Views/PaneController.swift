@@ -142,6 +142,14 @@ enum PaneZoom {
         if up { return ladder.first { $0 > current + 0.001 } ?? ladder.last! }
         return ladder.last { $0 < current - 0.001 } ?? ladder.first!
     }
+
+    /// The rung closest to `value`, for a gesture that lands between two:
+    /// a pinch ends wherever the fingers stop, and the pane settles on the
+    /// ladder so ⌘= and ⌘- go on stepping from a rung rather than from 1.37.
+    static func nearest(to value: Double) -> Double {
+        guard value.isFinite else { return 1 }
+        return ladder.min { abs($0 - value) < abs($1 - value) }!
+    }
 }
 
 /// What WebKit's content processes actually weigh, right now.

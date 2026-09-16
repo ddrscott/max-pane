@@ -732,11 +732,113 @@ final class WebPaneController: NSObject, PaneController {
     private(set) var zoom: Double = 1
 
     func setZoom(_ next: Double) {
+        cancelPinch()
         let ladder = PaneZoom.ladder
         zoom = min(max(next, ladder.first!), ladder.last!)
         webView?.pageZoom = CGFloat(zoom)
         chrome.setZoom(zoom)
         store.setPaneZoom(paneId, zoom)
+    }
+
+    // MARK: - pinch
+
+    /// A trackpad pinch is the same zoom as ⌘= — not WebKit's `magnification`.
+    ///
+    /// `allowsMagnification` alone would make a pinch scale the rendered page
+    /// about the fingers without laying it out again: a CSS transform in all
+    /// but name, and the thing the comment above `zoom` rules out. It would
+    /// also be a second zoom, one ⌘0 could not see and a relaunch would not
+    /// keep. So the gesture is taken from WebKit (`ChromeWebView.onMagnify`)
+    /// and drives `pageZoom` live, so the page reflows under the fingers as it
+    /// does in Safari, and when the fingers lift the zoom eases on
+    /// `Motion.pane` to the nearest rung of `PaneZoom.ladder` and is written to
+    /// the ledger like a ⌘= press — so a pinched zoom survives a restart, and
+    /// ⌘= afterwards steps from a rung rather than from 1.37. Under Reduce
+    /// Motion it lands on the rung at once.
+    ///
+    /// Only the rung is written: the ledger is not a place for sixty writes a
+    /// second, and the chrome readout follows the live value so the number is
+    /// never a lie while the fingers are down.
+    ///
+    /// The lane's own gestures are not in the way: the strip claims sideways
+    /// *scroll* events (`startScrollCapture`), and a pinch is a `magnify`
+    /// event, a different stream. A pinch over a page reaches the page.
+
+    /// The zoom under the fingers while a pinch is in progress.
+    private var pinchLive: Double?
+    /// The ease from where the fingers stopped to the rung.
+    private var pinchSettle: MotionTimer?
+
+    /// One `magnify` event: `delta` is `NSEvent.magnification`, a change since
+    /// the last event, so the live zoom is a running product. Returns `false`
+    /// when there is nothing to zoom, and WebKit gets the event.
+    @discardableResult
+    func pinch(by delta: CGFloat, phase: NSEvent.Phase) -> Bool {
+        guard let webView else { return false }
+        switch phase {
+        case .began:
+            pinchSettle?.cancel()
+            pinchSettle = nil
+            pinchLive = Double(webView.pageZoom)
+        case .changed:
+            let ladder = PaneZoom.ladder
+            let from = pinchLive ?? Double(webView.pageZoom)
+            let live = min(max(from * Double(1 + delta), ladder.first!), ladder.last!)
+            pinchLive = live
+            webView.pageZoom = CGFloat(live)
+            chrome.setZoom(live)
+        case .ended, .cancelled:
+            let live = pinchLive ?? Double(webView.pageZoom)
+            pinchLive = nil
+            settle(from: live, to: PaneZoom.nearest(to: live))
+        default:
+            break
+        }
+        return true
+    }
+
+    /// A two-finger double tap: Safari's smart zoom, in the ladder's terms.
+    /// At actual size it goes to 150%; from anywhere else it comes back to
+    /// 100%. Both ease as a pinch's landing does.
+    @discardableResult
+    func smartZoom() -> Bool {
+        guard let webView else { return false }
+        let from = Double(webView.pageZoom)
+        settle(from: from, to: abs(zoom - 1) < 0.001 ? 1.5 : 1)
+        return true
+    }
+
+    /// Ease `pageZoom` from `from` to the rung `to`, then make it the zoom.
+    private func settle(from: Double, to: Double) {
+        pinchSettle?.cancel()
+        pinchSettle = nil
+        guard !Motion.isReduced, abs(to - from) > 0.001 else {
+            setZoom(to)
+            return
+        }
+        pinchSettle = Motion.run(duration: Motion.pane) { [weak self] t in
+            guard let self else { return }
+            let eased = Motion.easeOut(t)
+            let at = from + (to - from) * Double(eased)
+            self.webView?.pageZoom = CGFloat(at)
+            self.chrome.setZoom(at)
+        } completion: { [weak self] in
+            guard let self else { return }
+            self.pinchSettle = nil
+            self.setZoom(to)
+        }
+    }
+
+    /// Whether a pinch or its landing is in flight — for the tests, which
+    /// cannot lift real fingers.
+    var isPinching: Bool { pinchLive != nil || pinchSettle != nil }
+
+    /// Drop a pinch in flight: something else (⌘=, a size preset, teardown)
+    /// is deciding the zoom now.
+    private func cancelPinch() {
+        pinchLive = nil
+        pinchSettle?.cancel()
+        pinchSettle = nil
     }
 
     // MARK: - mobile layout
@@ -812,6 +914,7 @@ final class WebPaneController: NSObject, PaneController {
 
     /// The ledger already holds `target`; this only moves the page there.
     func beginSizeTransition(toZoom target: Double) {
+        cancelPinch()
         let ladder = PaneZoom.ladder
         let next = min(max(target, ladder.first!), ladder.last!)
         sizeTransition = (webView.map { Double($0.pageZoom) } ?? zoom, next)
@@ -998,6 +1101,9 @@ final class WebPaneController: NSObject, PaneController {
         // It would fire against a pane with no web view and re-title the lane
         // from a page that is no longer loaded.
         untitledFallback?.cancel()
+        // A pinch landing on a view that is about to go would write its zoom
+        // through `setZoom` to a pane that is closing.
+        cancelPinch()
         untitledFallback = nil
         chromeObservations = []
         focusToken.map(store.stopObserving)
@@ -1057,6 +1163,10 @@ final class WebPaneController: NSObject, PaneController {
         // this lane is waiting; reclaiming it from underneath that is the one
         // case where the memory policy and the user disagree.
         guard !isAsking else { return }
+        // Only the rung is ever written, so a pinch cut here loses at most the
+        // gesture; letting its landing run against a view being reclaimed
+        // would not be worth keeping.
+        cancelPinch()
         captureScroll()
         let paneId = self.paneId
         let scrollY = pane.scrollY
@@ -1171,6 +1281,16 @@ final class WebPaneController: NSObject, PaneController {
         // for ⇧ and a second request; the first request fills the pane. A
         // popup's configuration is copied from this one and inherits it.
         configuration.preferences.isElementFullscreenEnabled = true
+        // A bare `example.com` reaches the network as `https://`, as Safari
+        // sends it, rather than staying on `http://` and wearing the amber ⚠
+        // for a site that was never meant to be reached that way. It is
+        // WebKit's default on macOS 26 — measured, not assumed — and set here
+        // anyway so the pane does not depend on a default staying put;
+        // `WebPinchZoomTests` pins it. The address field's own `https://`
+        // prefix (`BrowserAddress`) is the first line; this catches the rest —
+        // an `http://` typed in full, a link, a redirect — for the hosts WebKit
+        // knows. A popup's configuration is copied from this one and inherits it.
+        configuration.upgradeKnownHostsToHTTPS = true
         // The ad and tracker list, unless this site is switched off. A popup's
         // configuration is copied from this one and keeps the same controller
         // object, so the list is on the popup too — `WebContentBlockingTests`
@@ -1244,6 +1364,16 @@ final class WebPaneController: NSObject, PaneController {
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
         webView.autoresizingMask = [.width, .height]
+        // On, so a pinch is a gesture WebKit will take at all — and then taken
+        // from it: `pinch` drives the pane's persisted zoom instead of WebKit's
+        // transient magnification, for the reasons under `zoom` below.
+        webView.allowsMagnification = true
+        (webView as? ChromeWebView)?.onMagnify = { [weak self] event in
+            self?.pinch(by: event.magnification, phase: event.phase) ?? false
+        }
+        (webView as? ChromeWebView)?.onSmartMagnify = { [weak self] _ in
+            self?.smartZoom() ?? false
+        }
 
         self.webView = webView
         webView.pageZoom = CGFloat(zoom)
