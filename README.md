@@ -1360,11 +1360,20 @@ the pane, or changes the shape of the strip, restores first. So ⌘[ ⌘] ⇧⌘
 restore and then go where they say; a lane arriving from ⌘O restores (the picker
 on its own does not, and Esc from it leaves the pane up); ⌘W closes the pane and
 the overlay fades with it; a split, a dock, a lane resize, a move or a gather
-restores; and ⌘G restores and then opens the gallery, where the command is greyed
-out because a double click already grows a tile there. A session in a covered
+restores; and ⌘G restores and then changes the layout, in either direction. A
+session in a covered
 lane that goes BLOCKED still shows in the sidebar, and clicking its row restores
 and then goes to it. Zoom, reload, find, a navigation or a new title leave the
 pane up. **Esc never restores**, because a terminal always has a use for Esc.
+
+**In the gallery too.** ⇧⌘↩ maximizes the focused pane from a tile and from an
+expanded tile, and there it fills the whole gallery: a dock is an ordinary tile in
+that view, so there is no wall to stay clear of. The same key puts the pane back
+in its tile, and an expanded tile is still expanded. A double click grows a tile
+to the size of its lane; this is the step past that, to the size of the window. A
+terminal in a tile is held at its strip size and drawn small, so it lets go of
+that hold on the way up and the gallery takes it again on the way down, which is
+one resize each way, the same as on the strip.
 
 ### Docking a lane to an edge
 

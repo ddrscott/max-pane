@@ -158,6 +158,9 @@ public final class StripViewController: NSViewController {
             // Re-parenting hands the keyboard back to the window. The pane that
             // came down takes it again if the ledger still says it has it.
             if self.store.state.focusedPaneId == paneId { self.paneControllers[paneId]?.takeFocus() }
+            // Back in a tile: a terminal let go of its thumbnail hold to fill
+            // the window, and takes it again now that its slot has sized it.
+            if self.isGallery { self.layoutGallery() }
         }
         maximizer.overlay.onRestore = { [weak self] in self?.restoreMaximizedPane(animated: true) }
         return maximizer
@@ -420,7 +423,10 @@ public final class StripViewController: NSViewController {
                 // pane the double click is the program's again: that tile is big
                 // enough to read, so selecting a word in it is something you want.
                 // The first click went through and focused the pane either way.
+                // Nor over a maximized pane, which covers the gallery and is the
+                // largest a pane gets: every click in it is the program's.
                 if self.isGallery, event.clickCount >= 2,
+                   !self.maximizer.contains(windowPoint: event.locationInWindow),
                    let laneId = self.store.lane(containing: paneId)?.id {
                     let isExpanded = laneId == self.expandedLaneId
                     if !isExpanded || !self.isPaneContent(at: event.locationInWindow, laneId: laneId) {
@@ -1365,7 +1371,9 @@ public final class StripViewController: NSViewController {
             let scale = frame.width / size.width
             // Before the lane moves: a terminal has to take hold of its strip
             // size while it still has it, not after the tile has rounded it.
-            for pane in lane.panes {
+            // Not the pane ⇧⌘↩ has lifted over the gallery: it is at the
+            // window's size, and a hold taken now would freeze it there.
+            for pane in lane.panes where !(maximizer.isActive && maximizer.paneId == pane.id) {
                 (paneControllers[pane.id] as? TerminalPaneController)?
                     .setThumbnail(scale: scale, backingScale: backing)
             }
@@ -1830,18 +1838,22 @@ public final class StripViewController: NSViewController {
     var maximizedPaneId: String? { maximizer.isMaximized ? maximizer.paneId : nil }
     var maximizedOverlay: MaximizedPaneView { maximizer.overlay }
 
-    /// Restore always; maximize whenever a pane with a view has the keyboard.
-    /// Not in the gallery, where a double click already grows a tile in place.
+    /// Restore always; maximize whenever a pane with a view has the keyboard —
+    /// on the strip, in a gallery tile, or in an expanded one.
     public var canToggleMaximize: Bool {
         if maximizer.isMaximized { return true }
-        guard !isGallery, let paneId = store.state.focusedPaneId else { return false }
+        guard let paneId = store.state.focusedPaneId else { return false }
         return store.pane(paneId) != nil
     }
 
     /// The strip's visible window in this view's coordinates: between the
     /// rails, inside an inset dock and clear of an overlay one. The sidebar is
     /// outside this view altogether. Docks stay where they are and stay usable.
+    ///
+    /// In the gallery it is the gallery: a dock is an ordinary tile there
+    /// (ADR-0011), so there is no wall to stay clear of.
     var maximizedViewportRect: CGRect {
+        if isGallery { return view.bounds }
         let strip = scrollView.frame
         return CGRect(
             x: strip.minX + dockLayout.overlayLeft, y: strip.minY,
@@ -1862,7 +1874,7 @@ public final class StripViewController: NSViewController {
         // A second press before the first restore has landed: land it, so the
         // pane is in its lane to be taken from.
         maximizer.land()
-        guard !isGallery, let paneId = store.state.focusedPaneId,
+        guard let paneId = store.state.focusedPaneId,
               let lane = store.lane(containing: paneId)
         else { return }
         guard let laneView = laneViews[lane.id],
@@ -1872,8 +1884,15 @@ public final class StripViewController: NSViewController {
             // The focused lane was scrolled so far away that the strip has let
             // its view go. There is no rect to grow from, so the key brings the
             // lane back into view, and the next press has something to lift.
-            ensureVisible(lane.id)
+            // (Never in the gallery, where every lane has a view and a tile.)
+            if !isGallery { ensureVisible(lane.id) }
             return
+        }
+        // A tile holds its terminal at the strip's size and draws it small. The
+        // pane is leaving the tile for the whole window, so it lets go first and
+        // is sized by the overlay; `onLanded` has the gallery take hold again.
+        if isGallery {
+            (controller as? TerminalPaneController)?.setThumbnail(scale: nil, backingScale: 1)
         }
         // A preset still easing holds its terminals at a width that is not
         // theirs; it lands first, so the slot left behind is the real one.

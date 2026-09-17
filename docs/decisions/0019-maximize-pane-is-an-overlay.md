@@ -141,15 +141,42 @@ item named does:
 | ⌘O | the picker opens over the maximized pane and changes nothing; Esc from it leaves the pane up. The lane *arriving* restores |
 | ⌘W on the maximized pane | the pane closes; the overlay fades with it |
 | ⇧⌘W, ⌘D, ⇧⌘D, ⌘\\, ⌃⌘= ⌃⌘-, docking, moving a lane, gather | restore — each changes the shape |
-| ⌘G | restores at once, then the gallery. At once because the gallery re-parents every lane view, this pane's included; entering the gallery is itself unanimated today |
+| ⌘G | restores at once, then changes the layout, in either direction. At once because the gallery re-parents every lane view, this pane's included; entering the gallery is itself unanimated today |
 | A covered session goes BLOCKED | nothing moves; the sidebar shows it. Clicking its row focuses it, which restores, then reveals it |
 | ⌘= ⌘- ⌘0, ⌘R, ⌘L, ⌘F, a navigation, a title, telemetry, Keep Lane Loaded | stay maximized: neither focus nor shape |
 | Esc | never restores. A terminal always has a use for Esc, and one rule for both kinds is worth more than Esc working on pages only |
 | A page asks for full screen | fills the maximized pane (ADR-0014 works inside the pane's own view); leaving full screen leaves it maximized |
 | The window resizes, the sidebar collapses | the overlay follows the visible window |
 
-In the gallery the command is greyed out: a double click already grows a tile in
-place there.
+### In the gallery (amended 2026-09-17)
+
+As first built the command was greyed out in the gallery, on the grounds that a
+double click already grows a tile in place. The owner used it for a day and
+overruled that: *"the pane full expand only works in lanes mode. It should also
+work from gallery thumbnail and gallery expanded."* He is right that they are
+different things. An expanded tile is a lane at the size of a lane; maximize is a
+pane at the size of the window.
+
+So ⇧⌘↩ works from a tile and from an expanded tile, through the same overlay and
+the same rule. Three things differ:
+
+- **The viewport is the whole gallery**, not the strip's window less its docks. A
+  dock is an ordinary tile in the gallery (ADR-0011), so there is no wall to stay
+  clear of.
+- **A terminal lets go of its `ThumbnailHold` going up and is held again on
+  landing.** A tile holds its terminal at the strip's size and draws it small;
+  left held, the pane would fill the window with a lane-sized terminal in its
+  corner. `layoutGallery` skips the lifted pane while it is up, or a window resize
+  would freeze it at the window's size. The far end hears one size each way, as
+  on the strip, and ends where it began (`terminalInATile`).
+- **A double click inside the overlay is the program's.** The gallery's monitor
+  would otherwise read it as "expand this tile" or "collapse this one", because
+  the overlay covers both.
+
+Restoring goes back into the tile, and an expanded tile is still expanded.
+Nothing is written in either case. A pane in a tile sits within a point of where
+it was rather than exactly there: AppKit snaps a scaled tile's contents to
+backing pixels on every layout pass, maximize or no maximize.
 
 ### The sign
 

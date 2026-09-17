@@ -512,9 +512,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             // layout and focus.
             return store.focusedLane != nil && !strip.isGallery
         case .toggleMaximizePane:
-            // A pane with the keyboard, on the strip or in a dock — or one that
-            // is already up, which can always come down. Not in the gallery,
-            // whose own double click grows a tile in place.
+            // A pane with the keyboard — on the strip, in a dock, in a gallery
+            // tile — or one that is already up, which can always come down.
             return strip.canToggleMaximize
         case .toggleMobileLayout:
             // A lane with a page in it. The pages are asked, not the snapshot,
