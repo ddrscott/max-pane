@@ -135,6 +135,25 @@ public struct ConfigField {
             })
     }
 
+    /// One of an enum's raw values. Anything else is refused with the list,
+    /// so the key keeps its default rather than meaning nothing.
+    private static func choice<E: RawRepresentable & CaseIterable>(
+        _ name: String, _ path: WritableKeyPath<Config, E>, _ group: ConfigGroup, appliesLive: Bool,
+        _ summary: String
+    ) -> ConfigField where E.RawValue == String {
+        let options = E.allCases.map(\.rawValue)
+        return ConfigField(
+            name: name, group: group, control: .choice(options), summary: summary, appliesLive: appliesLive,
+            read: { .string($0[keyPath: path].rawValue) },
+            apply: { config, value in
+                guard case .string(let s) = value, let choice = E(rawValue: s) else {
+                    return "expected one of " + options.map { "\"\($0)\"" }.joined(separator: ", ")
+                }
+                config[keyPath: path] = choice
+                return nil
+            })
+    }
+
     private static func string(
         _ name: String, _ path: WritableKeyPath<Config, String>, _ group: ConfigGroup, _ summary: String
     ) -> ConfigField {
@@ -206,6 +225,8 @@ public struct ConfigField {
                    "The terminal font size, in points. ⌘= and ⌘- zoom a pane from here."),
             bool("copyOnSelect", \.copyOnSelect, .terminals,
                  "Selecting text in a terminal copies it. Off, ⌘C copies."),
+            choice("cursorBlink", \.cursorBlink, .terminals, appliesLive: false,
+                   "Which terminal cursors blink: the one with the keyboard, all of them, or none."),
             double("sessionPollSeconds", \.sessionPollSeconds, .terminals, 1...120, step: 1,
                    "How often RelayTTY's session files are read. pty-host writes every 5 s."),
             double("doneHoldSeconds", \.doneHoldSeconds, .terminals, 0...86_400, step: 60,
@@ -217,17 +238,8 @@ public struct ConfigField {
                            "What a ⌘-clicked file opens in. %f is the path, %l the line, %c the column."),
             string("searchUrl", \.searchUrl, .editorSearch,
                    "Where the address bar sends what is not an address. %s is the query."),
-            ConfigField(
-                name: "theme", group: .appearance, control: .choice(ThemeChoice.allCases.map(\.rawValue)),
-                summary: "Follow the Mac's light or dark mode, or pin one.", appliesLive: true,
-                read: { .string($0.theme.rawValue) },
-                apply: { config, value in
-                    guard case .string(let s) = value, let choice = ThemeChoice(rawValue: s) else {
-                        return "expected one of " + ThemeChoice.allCases.map { "\"\($0.rawValue)\"" }.joined(separator: ", ")
-                    }
-                    config.theme = choice
-                    return nil
-                }),
+            choice("theme", \.theme, .appearance, appliesLive: true,
+                   "Follow the Mac's light or dark mode, or pin one."),
         ]
     }
 

@@ -103,6 +103,19 @@ public struct Config: Codable, Equatable {
     /// does.
     public var copyOnSelect: Bool = false
 
+    /// Which terminal cursors blink.
+    ///
+    /// `focused`, the default: the one terminal that holds the keyboard, and
+    /// none when no terminal does. A blinking cursor says "typing goes here",
+    /// and only one pane can mean that at a time; a gallery of a dozen blinking
+    /// out of phase says nothing. `never` holds every cursor still, the focused
+    /// one included. `always` blinks them all, by telling every surface it is
+    /// focused, so a program that asked for focus reports (mode 1004) is told
+    /// the same thing. A program's own DECSCUSR steady cursor stays steady
+    /// under all three. Read when the terminals' shared configuration is
+    /// built, so a change takes the next launch, as the font does.
+    public var cursorBlink: CursorBlink = .focused
+
     /// The command line a ⌘-clicked file opens in, when it is not something a
     /// web pane can render.
     ///
@@ -239,6 +252,7 @@ public struct Config: Codable, Equatable {
         fontName = read(.fontName, d.fontName)
         fontSize = read(.fontSize, d.fontSize)
         copyOnSelect = read(.copyOnSelect, d.copyOnSelect)
+        cursorBlink = read(.cursorBlink, d.cursorBlink)
         editor = read(.editor, d.editor)
         searchUrl = read(.searchUrl, d.searchUrl)
         snapToLanes = read(.snapToLanes, d.snapToLanes)
@@ -269,6 +283,11 @@ public struct Config: Codable, Equatable {
     public var webMemoryHardBytes: UInt64 { UInt64(physicalMemory * webMemoryHardFraction) }
     /// Evict down to here once evicting, so the cooldown has something to hold.
     public var webMemoryTargetBytes: UInt64 { UInt64(physicalMemory * webMemoryTargetFraction) }
+}
+
+/// `cursor_blink` in the config file. See `Config.cursorBlink`.
+public enum CursorBlink: String, Codable, CaseIterable, Sendable {
+    case focused, always, never
 }
 
 /// `theme` in the config file. See `Appearance`.

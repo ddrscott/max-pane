@@ -27,6 +27,22 @@ final class ClickableTerminalView: TerminalView {
         handler(convert(event.locationInWindow, from: nil))
     }
 
+    /// Tell Ghostty's surface whether it is focused, without moving the keyboard.
+    ///
+    /// The library reaches `ghostty_surface_set_focus` from its responder
+    /// overrides and its window-key observers and from nowhere else, and its
+    /// coordinator is internal. So a surface that was never first responder is
+    /// never told anything, and Ghostty's surfaces are born believing they are
+    /// focused: a fresh one answers `CSI ? 1004 h` with `CSI I`. Those two
+    /// overrides are `super`, the surface call, and a SwiftUI bridge that is nil
+    /// here; and `NSView`'s own do nothing but return true. Calling one
+    /// directly is therefore the surface call alone: `window.firstResponder`
+    /// is not touched, which is the point. `TerminalPaneController` is the
+    /// only caller and decides the value. See `syncSurfaceFocus`.
+    func tellSurface(focused: Bool) {
+        _ = focused ? becomeFirstResponder() : resignFirstResponder()
+    }
+
     /// Turn a point into a grid position.
     ///
     /// The cell size is worked back out of the grid rather than taken from the

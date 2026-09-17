@@ -1548,6 +1548,16 @@ leaves the clipboard exactly as it was. **⌘C**, Edit › Copy and the right-cl
 **Copy** item copy the selection. `copy_on_select = true` brings back copying on
 every selection; see [Settings](#settings).
 
+### The cursor
+
+**Only the terminal that has the keyboard blinks its cursor.** Every other
+terminal, on the strip, in a dock, in a gallery tile or behind a maximized pane,
+shows Ghostty's unfocused cursor: hollow and still. With the keyboard somewhere
+that is not a terminal (a web pane, a find bar, ⌘O, the sidebar's filter), or
+with Settings, History or another app in front, nothing blinks, and the focused
+terminal resumes when the keyboard comes back to it. `cursor_blink` changes
+this; see [Settings](#settings).
+
 ### ⌘-clicking a path
 
 **⌘-click a path or a URL in terminal output** and it opens in a lane right of
@@ -1756,6 +1766,7 @@ strip_edge_rails = true
 font_name = "JetBrains Mono"
 font_size = 13
 copy_on_select = false
+cursor_blink = "focused"
 ```
 
 The window writes one value at a time, in place: your comments, the order of
@@ -1788,6 +1799,17 @@ clipboard. It is `false` by default, so a selection is only a selection and ⌘C
 is what copies; `true` copies every selection as it is made. Like the font, it
 is read when the terminals' shared configuration is built, so a change takes the
 next launch.
+
+`cursor_blink` is which terminal cursors blink: `"focused"`, `"always"` or
+`"never"`. `"focused"`, the default, blinks the one terminal that has the
+keyboard and none when no terminal has it. `"never"` holds every cursor still,
+the focused one included; it still turns hollow when its pane loses the
+keyboard. `"always"` blinks every terminal, by telling every surface it is
+focused, so a program that asked for focus events (mode 1004) is told it has
+focus for as long as it runs. Under all three a program's own request wins
+where Ghostty honours it: one that sets a steady cursor with DECSCUSR keeps it
+steady while focused. Any other word is reported on the key's row and
+`"focused"` is used. Read with the font, so a change takes the next launch.
 
 `search_url` is where a web pane's address bar sends something that is not an
 address — `%s` is the query. A portrait lane has room for one text field, so the

@@ -47,6 +47,12 @@ final class TerminalPaneController: NSObject, PaneController {
     private let container = TerminalPaneContainer()
     /// Focus was asked for while the pane had no window to give it.
     private var wantsFocus = false
+    /// What Ghostty's surface was last told about focus. A surface is born
+    /// believing it is focused, so that is what a new one resets this to.
+    private var surfaceFocused = true
+    /// Whether a window counts as holding the keyboard. A test's window is
+    /// never key, and ordering one front would take the owner's screen.
+    var windowIsKey: (NSWindow) -> Bool = { $0.isKeyWindow }
     /// The grid as Ghostty last measured it, for turning a click into a cell.
     private var grid: (columns: Int, rows: Int)?
 
@@ -175,6 +181,9 @@ final class TerminalPaneController: NSObject, PaneController {
         }
         container.onAttach = { [weak self] in
             self?.applyPendingFocus()
+            // Leaving a window told the surface it lost focus; coming back
+            // tells it nothing. Under `always` that is a still cursor.
+            self?.syncSurfaceFocus()
             // A recycled lane view brings a fresh surface, at the config's font
             // size — so a zoomed pane scrolled off the strip and back would
             // come back the wrong size without this.
@@ -333,6 +342,31 @@ final class TerminalPaneController: NSObject, PaneController {
             return
         }
         if window.makeFirstResponder(terminal) { wantsFocus = false }
+    }
+
+    /// Make the surface's idea of focus the true one: it is focused when its
+    /// view is first responder in the key window, and not otherwise.
+    ///
+    /// First responder is the truth here, not the ledger's focused pane,
+    /// because the cursor has to agree with where the keys go: with the ⌘O
+    /// picker or a find bar holding the keyboard, the ledger still names this
+    /// pane and nothing should blink. The library keeps that up on its own
+    /// once a view has been first responder. What it never does is tell a
+    /// surface its state at *birth*, and Ghostty's surfaces are born focused,
+    /// so every terminal that had not yet held the keyboard blinked: each
+    /// restored lane, each gallery tile. It also reports focus to a view made
+    /// first responder in a window that is not key. Both are corrected here,
+    /// from the three places the answer can change: a surface being built,
+    /// the library reporting a focus change, and the view entering a window.
+    ///
+    /// `cursor_blink = "always"` keeps every surface told it is focused,
+    /// which is what makes them all blink. Ghostty owns the blink itself.
+    private func syncSurfaceFocus() {
+        guard let window = container.window else { return }
+        let ownsKeyboard = windowIsKey(window) && window.firstResponder === terminal
+        let want = config.cursorBlink == .always || ownsKeyboard
+        guard want != surfaceFocused else { return }
+        terminal.tellSurface(focused: want)
     }
 
     func tearDown() {
@@ -861,6 +895,28 @@ final class TerminalPaneController: NSObject, PaneController {
 
 // MARK: - Ghostty delegates
 
+extension TerminalPaneController: TerminalSurfaceFocusDelegate, TerminalSurfaceLifecycleDelegate {
+    /// Every route into `ghostty_surface_set_focus` reports here, ours included.
+    ///
+    /// Checked a turn later, not here: this arrives from *inside*
+    /// `becomeFirstResponder` and `resignFirstResponder`, where
+    /// `window.firstResponder` is still the previous answer. Asked now, a pane
+    /// taking the keyboard would be told it had not.
+    func terminalDidChangeFocus(_ focused: Bool) {
+        surfaceFocused = focused
+        DispatchQueue.main.async { [weak self] in self?.syncSurfaceFocus() }
+    }
+
+    /// A new surface, and so a new belief that it is focused. A rebuild (a
+    /// font size, a recycled lane view) is a birth as much as the first one.
+    func terminalDidAttachSurface(_ surface: TerminalSurface) {
+        surfaceFocused = true
+        syncSurfaceFocus()
+    }
+
+    func terminalDidDetachSurface() {}
+}
+
 extension TerminalPaneController: TerminalSurfaceTitleDelegate {
     func terminalDidChangeTitle(_ title: String) { adoptTitle(title) }
 }
@@ -1035,6 +1091,14 @@ enum TerminalControllerPool {
                     // that does. ⌘C and the right-click Copy item are
                     // `copy_to_clipboard`, which does not read this.
                     builder.withCustom("copy-on-select", config.copyOnSelect ? "true" : "false")
+                    // `cursor_blink`. Ghostty blinks a focused surface's cursor
+                    // and holds an unfocused one still and hollow, so
+                    // `focused` and `always` are both "blink", and differ in
+                    // what each surface is told about focus: see
+                    // `syncSurfaceFocus`. Said both ways, as above. A program's
+                    // DECSCUSR steady cursor still wins; this is the default
+                    // style, not an override.
+                    builder.withCursorStyleBlink(config.cursorBlink != .never)
                     // Matching the lane's own gutter, so text does not start
                     // hard against the divider.
                     builder.withWindowPaddingX(Int(TerminalPaneController.terminalPadding.x))
