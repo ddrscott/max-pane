@@ -170,6 +170,7 @@ the cut, which shows as a pale ring and light corners.
 
 ```sh
 ./scripts/test.sh                # the edit-loop run: Rust + Swift, ~1.5 s
+./scripts/test.sh --skip SUITE   # the same, minus one suite (swift test's --skip, passed through)
 ./scripts/test.sh bench          # the cost tests, in release
 ./scripts/test.sh shots DIR      # render the header and picker sheets as PNGs
 ./scripts/test.sh all            # all three
@@ -227,6 +228,32 @@ for its cookie jars — the default profile's salt is empty — and they only as
 for identity so nothing is written today, but a test process that can name the
 live jar should not be one WebKit release away from opening it. See
 [Profiles](#profiles).
+
+The profile is **forced**, not defaulted: the script exports
+`MAXPANE_PROFILE=tests` over whatever the shell had, and unsets the four path
+overrides (`MAXPANE_SOCKET`, `MAXPANE_LEDGER`, `MAXPANE_CONFIG`,
+`MAXPANE_DATA_SALT`) that would otherwise beat it. A shell inside a live Max
+Pane pane inherits `MAXPANE_PROFILE=default` and the app's own socket from the
+pane that spawned it, and when the script merely defaulted the profile, a run
+from there saw the empty default salt, every real-WebKit suite printed
+`SKIPPED`, and the run went green having proved less than it said.
+
+The real-WebKit suites — the nine that guard on the profile's salt and serve
+real pages to a real `WebPaneController` — are accounted for at the end of every
+default run:
+
+```
+real-WebKit suites: 9 in the tree, 8 ran, 1 opted out, 0 skipped by the profile guard
+      opted out (--skip): WebPrintTests
+```
+
+The count of guarded suites comes from the tree, so a new suite joins the line
+by carrying the same guard. The one sanctioned way to leave a suite out is
+`./scripts/test.sh --skip SUITE`, which passes `swift test`'s own `--skip`
+through (a regex over test IDs; `--skip=A --skip B` both work) and lists what it
+left out. A suite that skips for any other reason fails the run, because after
+the export above the only way the guard can trip is the profile not reaching the
+test process, and that is a harness bug, not a result.
 
 `WebPopupDialogTests` is the Swift suite that serves real pages. Two loopback
 sites on two ports — two origins to WebKit — stand in for a site and its sign-in

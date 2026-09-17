@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - An expanded gallery tile's seams drag. The separator between two stacked panes in the expanded tile resizes them exactly as on the strip — same arithmetic, same grab band, one ledger write on the drop, and the terminals hear the same live-resize word — so leaving the gallery shows the panes where the drag left them, and a relaunch keeps them. The pane grips come back on the expanded tile too. Unexpanded tiles are as handle-free as before, and their seams now let the click through and never show a resize cursor over a seam that will not move. A tile clamped below half size keeps its handles hidden. ADR-0011 amended
 
+### Fixed
+- `scripts/test.sh` forces `MAXPANE_PROFILE=tests` and unsets the four path overrides (`MAXPANE_SOCKET`, `MAXPANE_LEDGER`, `MAXPANE_CONFIG`, `MAXPANE_DATA_SALT`) instead of defaulting the profile. A shell inside a live Max Pane pane inherits `MAXPANE_PROFILE=default` and the app's socket, so a run from there saw the empty default salt, every real-WebKit suite printed `SKIPPED`, and the run went green having proved less than it said. The default run now ends with a count of the real-WebKit suites in the tree, how many ran, which were opted out by `--skip` (now passed through to `swift test`), and how many the profile guard skipped; any of the last fails the run
+
 ## [0.6.0] - 2026-09-16
 
 ### Added
