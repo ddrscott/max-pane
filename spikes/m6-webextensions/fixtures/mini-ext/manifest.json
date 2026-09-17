@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "M6 Mini",
+  "version": "0.1",
+  "description": "Stamps every page so the spike can tell whether WebKit injected anything at all.",
+  "permissions": ["storage"],
+  "host_permissions": ["*://*/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    { "matches": ["<all_urls>"], "js": ["content.js"], "run_at": "document_start" }
+  ],
+  "action": { "default_title": "M6 Mini" }
+}
