@@ -2209,6 +2209,7 @@ pub fn site_feature_str(f: SiteFeature) -> &'static str {
         SiteFeature::Camera => "camera",
         SiteFeature::Microphone => "microphone",
         SiteFeature::Notifications => "notifications",
+        SiteFeature::Geolocation => "geolocation",
     }
 }
 

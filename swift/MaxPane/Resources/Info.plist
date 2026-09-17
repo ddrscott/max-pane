@@ -56,6 +56,17 @@
 	<string>A web page in a lane is asking to use the camera. Max Pane asks you about each site before it does.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>A web page in a lane is asking to use the microphone. Max Pane asks you about each site before it does.</string>
+	<!-- Location is the same shape, one step removed: WebKit never asks the
+	     app about `navigator.geolocation` on macOS, so the app answers the page
+	     itself (`WebGeolocation`) and reaches CoreLocation only after the sheet
+	     in the pane has said yes for that site. Without this string, that
+	     first `requestWhenInUseAuthorization` kills the process the same way
+	     the camera's did. Both keys, because macOS 11 and later read the
+	     When-In-Use one and older documentation names the plain one. -->
+	<key>NSLocationUsageDescription</key>
+	<string>A web page in a lane asked where you are. Max Pane asks you about each site before it does.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>A web page in a lane asked where you are. Max Pane asks you about each site before it does.</string>
 	<!-- Web lanes load ordinary sites; WebKit's own TLS handling applies.
 
 	     `NSAllowsArbitraryLoadsInWebContent` is the narrow key and the reason

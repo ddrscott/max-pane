@@ -6641,6 +6641,12 @@ public enum SiteFeature: Equatable, Hashable {
      * shell does, and this is the answer to its `requestPermission()`.
      */
     case notifications
+    /**
+     * `navigator.geolocation`. WebKit on macOS has no public way to grant it,
+     * so the shell answers the page itself; this is the per-site yes or no
+     * that comes before CoreLocation is ever asked.
+     */
+    case geolocation
 
 
 
@@ -6668,6 +6674,8 @@ public struct FfiConverterTypeSiteFeature: FfiConverterRustBuffer {
         
         case 3: return .notifications
         
+        case 4: return .geolocation
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -6686,6 +6694,10 @@ public struct FfiConverterTypeSiteFeature: FfiConverterRustBuffer {
         
         case .notifications:
             writeInt(&buf, Int32(3))
+        
+        
+        case .geolocation:
+            writeInt(&buf, Int32(4))
         
         }
     }

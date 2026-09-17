@@ -259,6 +259,23 @@ fires the page's `click`; that a repeated `tag` replaces; and that a click on a
 banner from a pane that has since closed does nothing. The real banners are
 checked by hand: Slack in a lane, the app in the background.
 
+`WebGeolocationTests` serves one loopback page that uses `navigator.geolocation`
+the way a map does, against a `WebGeolocationCenter` whose location source is a
+stub — a `CLLocationManager` in a process that is not an app bundle has no TCC
+identity and a prompt no test can answer. It checks the shape a page reads
+(`instanceof Geolocation`), that Esc is `PERMISSION_DENIED` and remembers
+nothing, that a remembered BLOCK survives a reload and never reaches the stub,
+that two calls during one sheet are one sheet, that ALLOW asks macOS once and
+starts the manager only after its yes, that the stub's coordinates reach both
+callbacks as `GeolocationPosition`s, that a `maximumAge` the last fix satisfies
+is answered without a start, that a watch hears every fix and stops the manager
+when cleared, that the page's `timeout` fires code 3, that no fix is code 2,
+that a refusal in System Settings or at macOS's prompt is code 1 at once, and
+that a pane closing with a watch up leaves nothing waiting. The measurement the
+shim rests on — bare WebKit never calling back — was taken by hand with a
+throwaway web view and is recorded in `WebGeolocation`'s comment rather than
+re-run, because a test that waits seven seconds for nothing proves it slowly.
+
 `WebFullscreenTests` uses the same two-origin setup for full screen: a host page
 with a box inside a transformed card and two iframes from the other origin, one
 allowed full screen and one not, in a split lane. It checks the box's size
@@ -488,6 +505,26 @@ has evicted is quiet until it is back on screen and reloaded; and a service
 worker's `showNotification` is not supported, so a site that notifies only
 from its worker — with no page open — will not. A popup's page asks in its
 dialog and notifies as its opener.
+
+**Where you are.** `navigator.geolocation` is the same story one step on:
+WebKit on macOS never answers a page's `getCurrentPosition` at all — not
+denied, not a timeout; the page's spinner simply never stops — because it has
+no public way for an app to grant it, and a grant to the app in System Settings
+changes nothing about that. So the API is the app's too: a script in every
+frame stands in for `navigator.geolocation`, built on WebKit's own
+`Geolocation` and `GeolocationPosition` types so a page cannot tell, and the
+pane is the location provider behind it. A site's first call is the camera's
+question — `maps.example WANTS TO KNOW WHERE YOU ARE`, drawn in the pane, BLOCK
+or ALLOW, with the box to remember it for that site in that cookie jar — and
+two calls while the sheet is up are one sheet. Only a yes reaches CoreLocation,
+which is when macOS asks about Max Pane itself, once, with the words in
+`Info.plist`; a no from you or from System Settings is `PERMISSION_DENIED` to
+the page at once rather than a wait, and Esc is *not now*, the same code with
+nothing remembered. One location manager serves every lane: a fix goes to
+every request and every `watchPosition` that is waiting, the manager stops
+when nothing is, and a fix young enough for a page's `maximumAge` is answered
+without starting it. A page's `timeout` runs from the yes, as the spec has it.
+A popup's page asks in its dialog.
 
 The default list is Adblock Plus's published WebKit conversion of EasyList,
 which is the one maintained conversion of a list people actually use that is

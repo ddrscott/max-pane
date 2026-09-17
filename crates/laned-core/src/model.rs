@@ -38,6 +38,10 @@ pub enum SiteFeature {
     /// The Notification API. WebKit does not implement it on macOS, so the
     /// shell does, and this is the answer to its `requestPermission()`.
     Notifications,
+    /// `navigator.geolocation`. WebKit on macOS has no public way to grant it,
+    /// so the shell answers the page itself; this is the per-site yes or no
+    /// that comes before CoreLocation is ever asked.
+    Geolocation,
 }
 
 /// One remembered answer, for the listing a pane embeds into its page so

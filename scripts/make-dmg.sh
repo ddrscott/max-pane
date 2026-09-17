@@ -78,7 +78,7 @@ codesign --verify --deep --strict "$APP"
 
 # Apple rejects a submission whose binaries lack the hardened runtime or a
 # secure timestamp. build-app.sh signs with both (and the entitlements in
-# swift/MaxPane/Resources/MaxPane.entitlements that keep the camera and
+# swift/MaxPane/Resources/MaxPane.entitlements that keep the camera, location and
 # microphone grantable under the runtime), so a miss here means a stale bundle
 # or an offline build that fell back to --timestamp=none. Checked before the
 # image is built and whether or not notarisation is set up, so the DMG that

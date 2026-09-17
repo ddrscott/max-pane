@@ -5,9 +5,10 @@ enum AskPrompt: Equatable {
     case alert(message: String)
     case confirm(message: String)
     case prompt(message: String, defaultText: String)
-    /// `getUserMedia`, and `Notification.requestPermission()`. `what` is
-    /// already phrased — "THE CAMERA", "THE MICROPHONE", "THE CAMERA AND
-    /// MICROPHONE", "TO SEND NOTIFICATIONS" — because the two capture flags
+    /// `getUserMedia`, `Notification.requestPermission()` and
+    /// `navigator.geolocation`. `what` is already phrased — "THE CAMERA", "THE
+    /// MICROPHONE", "THE CAMERA AND MICROPHONE", "TO SEND NOTIFICATIONS", "TO
+    /// KNOW WHERE YOU ARE" — because the two capture flags
     /// are stored as two rows and the *sentence* is one, and a permission is a
     /// permission: BLOCK, ALLOW, and a box to remember either.
     case capture(what: String)
@@ -207,7 +208,11 @@ final class WebAskSheet: NSView {
         case .prompt(let message, _):
             return message
         case .capture(let what):
-            return "This page is asking to use \(what.lowercased())."
+            // "THE CAMERA" is a thing to use; "TO SEND NOTIFICATIONS" and "TO
+            // KNOW WHERE YOU ARE" are already the rest of the sentence.
+            return what.hasPrefix("TO ")
+                ? "This page is asking \(what.lowercased())."
+                : "This page is asking to use \(what.lowercased())."
         case .httpAuth(let realm, _):
             return realm.isEmpty ? "A username and password are required." : realm
         case .clientCertificate:

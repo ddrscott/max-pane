@@ -103,6 +103,14 @@ final class WebPaneController: NSObject, PaneController {
     /// Where this pane's notifications are posted and clicks come back from.
     /// The app's one, unless a test hands over its own with a recorder behind it.
     let notifications: WebNotificationCenter
+    /// `navigator.geolocation`'s handler, the same relay again.
+    private var geolocationRelay: FullScreenMessageRelay?
+    /// Where a page's position requests go once the person has said yes.
+    /// The app's one, unless a test hands over its own with a stub behind it.
+    let geolocation: WebGeolocationCenter
+    /// Position requests waiting on the one sheet up for their origin
+    /// (`WebPaneGeolocation.swift`).
+    var geolocationAsks: [String: [(request: WebGeolocationCenter.Request, maximumAge: Double?)]] = [:]
     private var keyWindowObserver: (any NSObjectProtocol)?
 
     /// True while an element of this pane's page fills the pane. See
@@ -144,13 +152,15 @@ final class WebPaneController: NSObject, PaneController {
     /// strip that built every one of them at launch would spend gigabytes before
     /// the window appeared.
     init(pane: Pane, lane: Lane, store: StripStore, config: Config, deferLoad: Bool = false,
-         blocker: ContentBlocker = .shared, notifications: WebNotificationCenter = .shared) {
+         blocker: ContentBlocker = .shared, notifications: WebNotificationCenter = .shared,
+         geolocation: WebGeolocationCenter = .shared) {
         self.paneId = pane.id
         self.pane = pane
         self.store = store
         self.config = config
         self.blocker = blocker
         self.notifications = notifications
+        self.geolocation = geolocation
         self.laneWidth = CGFloat(lane.widthPt)
         self.isPrivate = lane.isPrivate
         // A private pane is born with its jar named (the core sets it), so the
@@ -1129,6 +1139,10 @@ final class WebPaneController: NSObject, PaneController {
         webView.map(WebNotifications.remove(from:))
         notificationRelay = nil
         notifications.unregister(paneId: paneId)
+        webView.map(WebGeolocation.remove(from:))
+        geolocationRelay = nil
+        geolocation.clear(paneId: paneId)
+        geolocationAsks = [:]
         webView.map { blocker.detach($0.configuration.userContentController) }
         setPaneFullscreen(false)
         webView?.stopLoading()
@@ -1407,6 +1421,9 @@ final class WebPaneController: NSObject, PaneController {
         notificationRelay = notify
         WebNotifications.install(on: webView, handler: notify, grants: notificationGrants())
         notifications.register(self)
+        let locate = FullScreenMessageRelay { [weak self] message in self?.geolocationMessage(message) }
+        geolocationRelay = locate
+        WebGeolocation.install(on: webView, handler: locate)
         observeChrome(webView)
         // `webView.title` is usually still empty when `didFinish` fires — the
         // document's <title> often lands a beat later — so observe it rather
@@ -1425,16 +1442,18 @@ final class WebPaneController: NSObject, PaneController {
     /// Only the Notification API's script changes — a remembered answer is
     /// written into its source, because `Notification.permission` cannot be
     /// fetched — but `WKUserContentController` removes user scripts all or
-    /// none, so the other two go and come back with it. Each install is
+    /// none, so the other three go and come back with it. Each install is
     /// idempotent, so on an already-current controller this does nothing.
     func refreshUserScripts() {
-        guard let webView, let hoverRelay, let fullScreenRelay, let notificationRelay else { return }
+        guard let webView, let hoverRelay, let fullScreenRelay, let notificationRelay, let geolocationRelay
+        else { return }
         let grants = notificationGrants()
         guard WebNotifications.isStale(on: webView, grants: grants) else { return }
         webView.configuration.userContentController.removeAllUserScripts()
         LinkHoverProbe.install(on: webView, handler: hoverRelay)
         PaneFullscreen.install(on: webView, handler: fullScreenRelay)
         WebNotifications.install(on: webView, handler: notificationRelay, grants: grants)
+        WebGeolocation.install(on: webView, handler: geolocationRelay)
     }
 
     /// Constraints rather than an autoresizing mask, and that is not a taste
@@ -1482,6 +1501,11 @@ final class WebPaneController: NSObject, PaneController {
         webView.map(WebNotifications.remove(from:))
         notificationRelay = nil
         notifications.unregister(paneId: paneId)
+        // Nothing of a page that is gone is waiting for a fix.
+        webView.map(WebGeolocation.remove(from:))
+        geolocationRelay = nil
+        geolocation.clear(paneId: paneId)
+        geolocationAsks = [:]
         // The snapshot standing in for the page has an address to show.
         setPaneFullscreen(false)
         chrome.setHoveredLink(nil)

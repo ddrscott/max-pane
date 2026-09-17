@@ -82,7 +82,8 @@ extension WebPaneController {
     }
 
     /// The dialog whose page `webView` is, if it is a popup's and not this pane's.
-    private func popup(showing webView: WKWebView?) -> WebPopupDialog? {
+    /// Shared with `WebPaneGeolocation.swift`, whose messages arrive the same way.
+    func popup(showing webView: WKWebView?) -> WebPopupDialog? {
         guard let webView, webView !== self.webView else { return nil }
         var dialog = popupDialog
         while let open = dialog {

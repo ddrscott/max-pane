@@ -91,12 +91,12 @@ fn answering_again_replaces_the_answer() {
 #[test]
 fn forgetting_a_site_clears_every_feature_at_once() {
     let core = Core::open_in_memory().unwrap();
-    for feature in [SiteFeature::Camera, SiteFeature::Microphone] {
+    for feature in [SiteFeature::Camera, SiteFeature::Microphone, SiteFeature::Geolocation] {
         core.set_site_permission("shard-0".into(), "https://meet.example".into(), feature, false).unwrap();
     }
     core.forget_site_permissions("shard-0".into(), "https://meet.example".into()).unwrap();
 
-    for feature in [SiteFeature::Camera, SiteFeature::Microphone] {
+    for feature in [SiteFeature::Camera, SiteFeature::Microphone, SiteFeature::Geolocation] {
         assert_eq!(
             core.site_permission("shard-0".into(), "https://meet.example".into(), feature).unwrap(),
             None
@@ -137,6 +137,8 @@ fn notification_answers_are_listed_per_jar_and_feature() {
     core.set_site_permission("shard-0".into(), "https://ads.example".into(), SiteFeature::Notifications, false)
         .unwrap();
     core.set_site_permission("shard-0".into(), "https://meet.example".into(), SiteFeature::Camera, true)
+        .unwrap();
+    core.set_site_permission("shard-0".into(), "https://maps.example".into(), SiteFeature::Geolocation, true)
         .unwrap();
     core.set_site_permission("shard-1".into(), "https://mail.example".into(), SiteFeature::Notifications, true)
         .unwrap();

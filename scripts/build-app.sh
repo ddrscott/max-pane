@@ -108,8 +108,8 @@ fi
 # processes and libghostty its renderer; neither needs an exception. WebKit's
 # helpers are Apple's own XPC services with their own entitlements, and
 # libghostty is linked statically with no JIT. The only entitlements the app
-# carries are the two device ones in MaxPane.entitlements, so a web page can
-# be granted the camera or microphone it asked for (see the comment there).
+# carries are the camera, microphone and location ones in MaxPane.entitlements,
+# so a web page can be granted what it asked for (see the comment there).
 # The helper CLIs get the runtime with no entitlements: they open sockets and
 # talk to the app, nothing more.
 #
