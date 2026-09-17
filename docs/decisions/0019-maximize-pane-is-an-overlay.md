@@ -141,7 +141,7 @@ item named does:
 | ⌘O | the picker opens over the maximized pane and changes nothing; Esc from it leaves the pane up. The lane *arriving* restores |
 | ⌘W on the maximized pane | the pane closes; the overlay fades with it |
 | ⇧⌘W, ⌘D, ⇧⌘D, ⌘\\, ⌃⌘= ⌃⌘-, docking, moving a lane, gather | restore — each changes the shape |
-| ⌘G | restores at once, then changes the layout, in either direction. At once because the gallery re-parents every lane view, this pane's included; entering the gallery is itself unanimated today |
+| ⌘G | restores at once, then changes the layout, in either direction. At once because the gallery re-parents every lane view, this pane's included. The switch itself is a motion since ADR-0011's 2026-09-17 amendment; the maximized pane still comes down at once, before it |
 | A covered session goes BLOCKED | nothing moves; the sidebar shows it. Clicking its row focuses it, which restores, then reveals it |
 | ⌘= ⌘- ⌘0, ⌘R, ⌘L, ⌘F, a navigation, a title, telemetry, Keep Lane Loaded | stay maximized: neither focus nor shape |
 | Esc | never restores. A terminal always has a use for Esc, and one rule for both kinds is worth more than Esc working on pages only |

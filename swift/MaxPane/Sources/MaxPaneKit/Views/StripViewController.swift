@@ -781,7 +781,7 @@ public final class StripViewController: NSViewController {
         let wanted = Set(strip[window].map(\.id))
 
         for (id, laneView) in laneViews
-        where !wanted.contains(id) && !isDeparting(id) && !isDocked(id) {
+        where !wanted.contains(id) && !isDeparting(id) && !isDocked(id) && retirementHold == nil {
             // Off the window: recycle the chrome, keep the panes alive. A lane
             // whose column is still closing is not off the window — it is not in
             // the snapshot at all, and recycling it mid-collapse would make it
@@ -1190,6 +1190,55 @@ public final class StripViewController: NSViewController {
     ///
     /// In memory, not in the ledger: it is the other half of a double click,
     /// and a relaunch into the gallery starts with every tile in its place.
+    /// Where each lane stood when ⌘G was pressed, in the gallery's coordinates.
+    /// Set for the one `syncGallery` that enters, and empty otherwise.
+    private var galleryEntryOrigins: [String: CGRect] = [:]
+    /// Running while lanes ease out of their tiles: the strip does not recycle
+    /// an off-window lane view in the middle of the motion that carries it off.
+    private var retirementHold: MotionTimer?
+
+    /// For tests: the layer a lane is drawn by right now — its tile's in the
+    /// gallery, its own on the strip — and that layer's superview, whose
+    /// coordinates the layer's frame and any `galleryMove` on it are in.
+    func layoutMotionLayer(laneId: String) -> (layer: CALayer, space: NSView)? {
+        if isGallery {
+            guard let layer = gallery.tile(for: laneId)?.layer else { return nil }
+            return (layer, gallery)
+        }
+        guard let laneView = laneViews[laneId], let layer = laneView.layer,
+              let parent = laneView.superview else { return nil }
+        return (layer, parent)
+    }
+
+    /// Every lane's rect on the strip right now, in the gallery's coordinates.
+    ///
+    /// From geometry rather than from views, because most of a long strip has
+    /// no view: a lane's place is the sum of the widths before it. One that is
+    /// past the window's edge is brought in to just beyond that edge — it still
+    /// arrives from its own side, which is the spatial fact worth keeping, and
+    /// does not cross thirty lanes' worth of screen in a fifth of a second to
+    /// say so. A docked lane comes from its wall.
+    private func stripRectsForGallery() -> [String: CGRect] {
+        if gallery.frame != view.bounds { gallery.frame = view.bounds }
+        var rects: [String: CGRect] = [:]
+        let height = galleryStripHeight
+        let window = gallery.convert(scrollView.frame, from: view)
+        var x: CGFloat = 0
+        for lane in store.stripLanes {
+            let width = CGFloat(lane.widthPt)
+            var rect = gallery.convert(CGRect(x: x, y: 0, width: width, height: height), from: content)
+            if rect.maxX < window.minX { rect.origin.x = window.minX - width }
+            if rect.minX > window.maxX { rect.origin.x = window.maxX }
+            rects[lane.id] = rect
+            x += width + Theme.borderWidth
+        }
+        for dock in dockViews.values {
+            guard let laneView = laneViews[dock.laneId], laneView.window != nil else { continue }
+            rects[dock.laneId] = gallery.convert(laneView.bounds, from: laneView)
+        }
+        return rects
+    }
+
     public private(set) var expandedLaneId: String?
 
     /// Grow a tile in place and give its pane the keyboard. Expanding another
@@ -1264,6 +1313,23 @@ public final class StripViewController: NSViewController {
         // The gallery re-parents every lane view into a tile, so a maximized
         // pane goes home first, and at once: its lane is about to move under it.
         restoreMaximizedPane(animated: false)
+        let moves = !isColdLaunch && !Motion.isReduced && view.window != nil
+        // Where things are drawn now, before anything is re-parented: a tile
+        // grows out of the place its lane had, and a lane out of its tile's.
+        // Without that the screen is replaced rather than rearranged, and which
+        // tile was the lane you were in is left for the eye to work out.
+        if entering {
+            galleryEntryOrigins = moves ? stripRectsForGallery() : [:]
+        }
+        let tileRects: [String: CGRect] = !entering && moves
+            ? Dictionary(uniqueKeysWithValues: gallery.tileIds.compactMap { id in
+                gallery.tile(for: id).map { tile in
+                    (id, gallery.convert(tile.layer?.presentation()?.frame ?? tile.frame, to: view))
+                }
+            })
+            : [:]
+        retirementHold?.cancel()
+        retirementHold = nil
         isGallery = entering
         onLayoutChange?(layout)
         scrollView.isHidden = entering
@@ -1274,6 +1340,7 @@ public final class StripViewController: NSViewController {
             leadingRail.isHidden = true
             trailingRail.isHidden = true
             syncGallery(store.state)
+            galleryEntryOrigins = [:]
             return
         }
 
@@ -1297,6 +1364,21 @@ public final class StripViewController: NSViewController {
         }
         gallery.removeTiles(except: [])
         relayout()
+        // Every lane eases from its tile to its place on the strip — the ones
+        // bound for beyond the window's edge too, which slide out through it
+        // rather than blink off. They are kept until the motion is over; the
+        // strip lets them go then, as it would have at once.
+        if !tileRects.isEmpty {
+            for (laneId, laneView) in laneViews {
+                guard let from = tileRects[laneId], let parent = laneView.superview else { continue }
+                animateTile(laneView, from: parent.convert(from, from: view))
+            }
+            retirementHold = Motion.run(duration: Motion.lane, step: { _ in }) { [weak self] in
+                guard let self else { return }
+                self.retirementHold = nil
+                if !self.isGallery { self.updateMaterialization() }
+            }
+        }
         updateMaterialization()
         updateEdgeRails()
         // The lane you were working in, where you can see it. Minimal rather
@@ -1344,11 +1426,16 @@ public final class StripViewController: NSViewController {
         // click during an expansion reverses from where the eye is, not from
         // where the last layout put the tile. Empty when nothing should move: a
         // window being resized follows the pointer, and a trailing tile would lag it.
-        let before: [String: CGRect] = animated && !Motion.isReduced
+        var before: [String: CGRect] = animated && !Motion.isReduced
             ? Dictionary(uniqueKeysWithValues: gallery.tileIds.compactMap { id in
                 gallery.tile(for: id)?.layer.map { (id, $0.presentation()?.frame ?? $0.frame) }
             })
             : [:]
+        // Entering: no tile has been anywhere yet, so each comes from where its
+        // lane stood on the strip.
+        if animated && !Motion.isReduced {
+            for (id, rect) in galleryEntryOrigins where before[id] == nil { before[id] = rect }
+        }
         let lanes = store.state.lanes
         let stripHeight = galleryStripHeight
         let sizes = lanes.map { realSize(of: $0, stripHeight: stripHeight) }

@@ -238,3 +238,38 @@ What did not change: no width handle and no size presets on any tile, and an
 unexpanded tile's seams and grips are exactly as inert as before. The 2026-09-14
 amendment's *no pane grips* and *no seam drags* now read with "on an unexpanded
 tile" in front of them.
+
+## Amended 2026-09-17: ⌘G in and ⌘G out are motions
+
+As built, the switch was a cut: the strip was hidden, the gallery shown, and
+every tile was simply there. The owner: *"when entering and exiting gallery the
+thumbs should have a transition, otherwise we break the spatial relationship."*
+It was the one place left where the screen was replaced rather than rearranged,
+and it is the place where that costs most, because the question the gallery
+answers is "where is everything" and a cut throws away where everything just was.
+
+- **In:** each tile eases from the rect its lane had on the strip to its slot in
+  the grid. The rect comes from geometry, not from a view, because most of a long
+  strip has no view: a lane's place is the sum of the widths before it. A docked
+  lane comes from its wall.
+- **A lane past the window's edge comes from just beyond that edge**, not from
+  its true distance. It still arrives from its own side, which is the spatial
+  fact worth keeping; lane 140 crossing the screen in a fifth of a second to say
+  so is a streak, not information.
+- **Out:** each lane eases from where its tile was *drawn* (the presentation
+  layer, so a second ⌘G mid-flight turns round from where the eye is) to its
+  place on the strip. Lanes bound for beyond the window slide out through its
+  edge. The strip would recycle their views at once, so recycling is held for the
+  length of the motion and done when it lands.
+- **The same mechanism as an expanding tile**: the layer's transform, composed by
+  `GalleryLayout.moveTransforms`, over `Motion.lane` on the ease-out curve. Frames
+  are final from the first frame, so clicks land where things are going, and no
+  lane changes size for the sake of the effect: a terminal hears nothing.
+- **Nothing under Reduce Motion, on a cold launch, or with no window.**
+
+What was rejected: a cross-fade between the two layouts. It is cheaper and says
+nothing about which tile was the lane you were in, which is the whole request.
+
+Known and accepted: the rails and an inset dock's chrome still cut rather than
+fade, and a tile that begins under the toolbar or a dock is clipped by the
+strip's scroll view for the first frames on the way out.

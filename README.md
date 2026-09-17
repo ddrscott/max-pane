@@ -1469,6 +1469,14 @@ shows four means scrolling to find the one that stopped to ask for a `y` —
 which is the job the strip exists to make unnecessary. The gallery is the other
 answer to the same question: you do not scroll to it, you look.
 
+**The switch is a motion, both ways.** Going in, every tile eases out of the place
+its lane had on the strip, so the lane you were in is the tile your eye is already
+on. A lane that was off screen comes in from its own side, from just past the
+window's edge. Coming out, every lane eases out of its tile to its place on the
+strip, and the ones bound for beyond the window slide out through its edge. It is
+the strip's 0.22 s on the same ease-out, no lane changes size for the effect, and
+under Reduce Motion the layouts simply change.
+
 It is a **layout, not a view you visit**. Whichever of the two was showing comes
 back after a quit and after a `kill -9`, and the switch is written to the ledger
 before anything on screen moves. It is also the only thing the switch writes: the
