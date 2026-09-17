@@ -94,7 +94,7 @@ single biggest gap, builder fixes, repeat. Rows are appended as they happen.
 Things the run cannot do or should not decide:
 
 1. ~~Notarisation credential~~ Done 2026-09-16: `dist/MaxPane-0.6.0.dmg` is notarised and stapled, `spctl` says `accepted, source=Notarized Developer ID`. Was: `xcrun notarytool store-credentials maxpane-notary --apple-id <email> --team-id DH6NDWAQQ2 --password <app-specific password>`, then `./scripts/make-dmg.sh`.
-2. Create `ddrscott/homebrew-tap`; the cask at `packaging/Casks/max-pane.rb` is ready to push.
+2. ~~Create `ddrscott/homebrew-tap`~~ Done 2026-09-16: the tap is public with `Formula/relay-tty.rb` (npm tarball + the release's pre-built pty-host as a resource; installed and audited clean here) and `Casks/max-pane.rb`, which depends on that formula. The cask resolves once the v0.6.0 release exists; `release.sh` writes the shipping hash to `dist/max-pane.rb` for the tap.
 3. Sign the maker comment in `docs/launch/producthunt.md`: two origin-story sentences are marked, and a proof line is left as a slot.
 4. Pick where `site/` is hosted and set the repo homepage to it.
 5. Commit, tag `v0.6.0`, and `RELEASE=1 ./scripts/release.sh`.

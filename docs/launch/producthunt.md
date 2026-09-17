@@ -105,7 +105,7 @@ with anything it cannot back.
 ## 7. Maker's first comment
 
 Post from Scott's own account within a minute of the launch going live, pin
-it. About 290 words plus the proof line.
+it. About 290 words plus the proof line. The tap exists now, so the brew line is unconditional.
 
 **Sentences only Scott can sign.** Nothing in this repo backs these; they are
 his story as the run understood it, and he should rewrite or cut any that is
@@ -132,7 +132,7 @@ on the DMG line.
 > [Scott: one checkable proof line goes here, e.g. how long you have run it daily or how many sessions a normal day holds. The run cannot invent this.] Built and used daily by one person, so if you run more than one agent at a time I would like to know what it gets wrong. Issues are on GitHub.
 >
 > Download: https://github.com/ddrscott/max-pane/releases/download/v0.6.0/MaxPane-0.6.0.dmg
-> Or, once the tap exists: brew install --cask ddrscott/tap/max-pane
+> Or: brew install --cask ddrscott/tap/max-pane
 
 Voice notes for whoever edits it: no exclamation marks, no emoji, no
 "excited", no "game-changer". Contractions were removed on purpose; Scott's

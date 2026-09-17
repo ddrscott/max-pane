@@ -28,6 +28,9 @@ cask "max-pane" do
   # build is a separate decision. Without this, an Intel Mac installs a bundle
   # that will not launch.
   depends_on arch: :arm64
+  # The daemon that owns the terminal sessions. Without it the first ⌘O is an
+  # error naming an installer; with it, `brew install` gives a working app.
+  depends_on formula: "ddrscott/tap/relay-tty"
 
   app "MaxPane.app"
   # The CLI that lists lanes and opens URLs in them; the app sets it up in the
@@ -42,9 +45,7 @@ cask "max-pane" do
   ]
 
   caveats <<~EOS
-    Max Pane runs agent sessions through relay-tty (1.22.0 or newer), which is
-    installed separately:
-
-      curl -fsSL https://raw.githubusercontent.com/ddrscott/relay-tty/main/install.sh | bash
+    Max Pane runs agent sessions through relay-tty, installed alongside it as
+    ddrscott/tap/relay-tty. Press ⌘O in the app, type a command, press ↩.
   EOS
 end
