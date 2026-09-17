@@ -6,7 +6,7 @@
 - [x] Two WebKit one-liners: `allowsMagnification` for trackpad pinch (tied to the persisted zoom ladder) and `upgradeKnownHostsToHTTPS` — [detail](web-one-liners.md)
 - [x] A private web lane on a non-persistent data store, marked `PRIVATE`, recorded nowhere, gone on close — [detail](web-private-pane.md)
 - [x] Geolocation: usage string, per-origin ask, and whatever WebKit needs to answer `navigator.geolocation` — [detail](web-geolocation.md)
-- [ ] Verify in a throwaway instance: passkeys / WebAuthn (likely needs the browser public-key-credential entitlement) and picture-in-picture under `PaneFullscreen` — [detail](web-verify-passkeys-pip.md)
+- [-] Verify in a throwaway instance: passkeys / WebAuthn (likely needs the browser public-key-credential entitlement) and picture-in-picture under `PaneFullscreen` — [detail](web-verify-passkeys-pip.md)
 - [ ] Spike: WebExtension support via `WKWebExtension` (macOS 15.4+) against the macOS 14 floor — load one real extension, measure, recommend — [detail](web-extensions.md)
 - [ ] An expanded gallery tile's stacked panes resize by dragging their seam, exactly as on the strip; unexpanded tiles stay handle-free — [detail](gallery-expanded-seam-drag.md)
 - [ ] `scripts/test.sh` forces `MAXPANE_PROFILE=tests` (and drops `MAXPANE_SOCKET`) instead of defaulting to it: a shell inside a live Max Pane pane inherits `default`, and every real-WebKit suite then silently SKIPs, so a green run proves less than it says. Print how many suites were skipped and why, and fail the run if any real-WebKit suite skipped for a reason other than an explicit opt-out
