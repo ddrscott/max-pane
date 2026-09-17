@@ -1028,10 +1028,13 @@ enum TerminalControllerPool {
                     // Copy, paste and select-all are unaffected: those are
                     // responder-chain actions, driven by our Edit menu.
                     builder.withCustom("keybind", "clear")
-                    // Selecting text puts it on the clipboard, as it did before
-                    // the migration and as it does in Relay. Ghostty's own
-                    // default is off.
-                    builder.withCustom("copy-on-select", "true")
+                    // `copy_on_select`, off unless the config says otherwise:
+                    // a selection made by accident must not replace what was
+                    // copied on purpose. Written out both ways rather than
+                    // left to Ghostty's default, so this cannot move when
+                    // that does. ⌘C and the right-click Copy item are
+                    // `copy_to_clipboard`, which does not read this.
+                    builder.withCustom("copy-on-select", config.copyOnSelect ? "true" : "false")
                     // Matching the lane's own gutter, so text does not start
                     // hard against the divider.
                     builder.withWindowPaddingX(Int(TerminalPaneController.terminalPadding.x))

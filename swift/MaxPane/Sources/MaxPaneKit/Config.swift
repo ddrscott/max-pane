@@ -93,6 +93,16 @@ public struct Config: Codable, Equatable {
     public var fontName: String = "JetBrains Mono"
     public var fontSize: Double = 13
 
+    /// Selecting text in a terminal puts it on the clipboard.
+    ///
+    /// Off by default, which is Ghostty's default too. A selection made by
+    /// accident — and most are — replaced whatever had been copied on purpose
+    /// a moment before, silently. ⌘C, Edit › Copy and the right-click Copy
+    /// item copy the selection either way. Read when the terminals' shared
+    /// configuration is built, so a change takes the next launch, as the font
+    /// does.
+    public var copyOnSelect: Bool = false
+
     /// The command line a ⌘-clicked file opens in, when it is not something a
     /// web pane can render.
     ///
@@ -228,6 +238,7 @@ public struct Config: Codable, Equatable {
         relayPtyHostPath = read(.relayPtyHostPath, d.relayPtyHostPath)
         fontName = read(.fontName, d.fontName)
         fontSize = read(.fontSize, d.fontSize)
+        copyOnSelect = read(.copyOnSelect, d.copyOnSelect)
         editor = read(.editor, d.editor)
         searchUrl = read(.searchUrl, d.searchUrl)
         snapToLanes = read(.snapToLanes, d.snapToLanes)

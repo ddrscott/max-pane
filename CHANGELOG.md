@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Web Inspector on every web pane: right-click, Inspect Element, or attach from Safari's Develop menu. Always on, since the app is for people who build pages
 
 ### Changed
+- Selecting text in a terminal no longer copies it. `copy-on-select` had been hard-coded on since the libghostty migration, so every accidental highlight silently replaced whatever had been copied on purpose. It is now the `copy_on_select` setting (Settings › Terminals & sessions), **off by default**; ⌘C, Edit › Copy and the right-click Copy item copy the selection as before. Set `copy_on_select = true` to get the old behaviour back. Applies on the next launch, like the font. A test on a real surface and the real pasteboard pins both states
 - An expanded gallery tile's seams drag. The separator between two stacked panes in the expanded tile resizes them exactly as on the strip — same arithmetic, same grab band, one ledger write on the drop, and the terminals hear the same live-resize word — so leaving the gallery shows the panes where the drag left them, and a relaunch keeps them. The pane grips come back on the expanded tile too. Unexpanded tiles are as handle-free as before, and their seams now let the click through and never show a resize cursor over a seam that will not move. A tile clamped below half size keeps its handles hidden. ADR-0011 amended
 
 ### Fixed

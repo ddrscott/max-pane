@@ -204,6 +204,8 @@ public struct ConfigField {
             string("fontName", \.fontName, .terminals, "The terminal font."),
             double("fontSize", \.fontSize, .terminals, 6...72, step: 1,
                    "The terminal font size, in points. ⌘= and ⌘- zoom a pane from here."),
+            bool("copyOnSelect", \.copyOnSelect, .terminals,
+                 "Selecting text in a terminal copies it. Off, ⌘C copies."),
             double("sessionPollSeconds", \.sessionPollSeconds, .terminals, 1...120, step: 1,
                    "How often RelayTTY's session files are read. pty-host writes every 5 s."),
             double("doneHoldSeconds", \.doneHoldSeconds, .terminals, 0...86_400, step: 60,

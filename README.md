@@ -1489,6 +1489,13 @@ A few things behave the way the rest of the strip made them:
   in view. [ADR-0011](docs/decisions/0011-gallery-layout.md) has the numbers and
   what would change it.
 
+### Selecting and copying in a terminal
+
+**Selecting text in a terminal does not copy it.** A highlight made by accident
+leaves the clipboard exactly as it was. **⌘C**, Edit › Copy and the right-click
+**Copy** item copy the selection. `copy_on_select = true` brings back copying on
+every selection; see [Settings](#settings).
+
 ### ⌘-clicking a path
 
 **⌘-click a path or a URL in terminal output** and it opens in a lane right of
@@ -1696,6 +1703,7 @@ lane_peek_pt = 28
 strip_edge_rails = true
 font_name = "JetBrains Mono"
 font_size = 13
+copy_on_select = false
 ```
 
 The window writes one value at a time, in place: your comments, the order of
@@ -1722,6 +1730,12 @@ either comes across as a comment.
 `blocking` turns the ad and tracker blocker off everywhere when `false`, and
 `blocking_list_url` is where its rules come from. See
 [A web lane](#a-web-lane).
+
+`copy_on_select` is whether selecting text in a terminal puts it on the
+clipboard. It is `false` by default, so a selection is only a selection and ⌘C
+is what copies; `true` copies every selection as it is made. Like the font, it
+is read when the terminals' shared configuration is built, so a change takes the
+next launch.
 
 `search_url` is where a web pane's address bar sends something that is not an
 address — `%s` is the query. A portrait lane has room for one text field, so the
