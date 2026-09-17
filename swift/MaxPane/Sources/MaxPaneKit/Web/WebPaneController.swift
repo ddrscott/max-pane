@@ -105,6 +105,10 @@ final class WebPaneController: NSObject, PaneController {
     let notifications: WebNotificationCenter
     /// `navigator.geolocation`'s handler, the same relay again.
     private var geolocationRelay: FullScreenMessageRelay?
+    /// The page's word on whether one of its videos is in picture-in-picture.
+    /// See `WebPictureInPicture` for why `evict()` reads it.
+    private var pictureInPictureRelay: FullScreenMessageRelay?
+    private(set) var isInPictureInPicture = false
     /// Where a page's position requests go once the person has said yes.
     /// The app's one, unless a test hands over its own with a stub behind it.
     let geolocation: WebGeolocationCenter
@@ -1143,6 +1147,9 @@ final class WebPaneController: NSObject, PaneController {
         geolocationRelay = nil
         geolocation.clear(paneId: paneId)
         geolocationAsks = [:]
+        webView.map(WebPictureInPicture.remove(from:))
+        pictureInPictureRelay = nil
+        isInPictureInPicture = false
         webView.map { blocker.detach($0.configuration.userContentController) }
         setPaneFullscreen(false)
         webView?.stopLoading()
@@ -1187,6 +1194,11 @@ final class WebPaneController: NSObject, PaneController {
         // this lane is waiting; reclaiming it from underneath that is the one
         // case where the memory policy and the user disagree.
         guard !isAsking else { return }
+        // A video playing in a PiP window is not idle memory either: the window
+        // is the page's, and destroying the web view closes it (measured, in
+        // `WebPictureInPictureTests`). The plan is recomputed on every scroll
+        // settle, so the pane is reclaimed once the video leaves PiP.
+        guard !isInPictureInPicture else { return }
         // Only the rung is ever written, so a pinch cut here loses at most the
         // gesture; letting its landing run against a view being reclaimed
         // would not be worth keeping.
@@ -1287,6 +1299,27 @@ final class WebPaneController: NSObject, PaneController {
 
     // MARK: - building
 
+    /// The KVC key for WebKit's private `_allowsPictureInPictureMediaPlayback`
+    /// on `WKPreferences`. One place, so a rename in a future macOS is a
+    /// one-line find; the README's web-lane section names it too.
+    static let pictureInPictureKey = "allowsPictureInPictureMediaPlayback"
+
+    /// Turn WebKit's macOS picture-in-picture setting on, if this WebKit still
+    /// has it. `setValue(_:forKey:)` on a key nothing answers raises
+    /// `NSUnknownKeyException`, which Swift cannot catch, so the setter is
+    /// looked for first: a WebKit that drops the SPI costs the PiP glyph, not
+    /// the app. Returns whether it was set.
+    @discardableResult
+    static func enablePictureInPicture(on preferences: WKPreferences) -> Bool {
+        let setters = ["_set", "set"].map { NSSelectorFromString("\($0)AllowsPictureInPictureMediaPlayback:") }
+        guard setters.contains(where: { preferences.responds(to: $0) }) else {
+            Log.debug("WKPreferences has no \(pictureInPictureKey) setter; picture-in-picture stays off")
+            return false
+        }
+        preferences.setValue(true, forKey: pictureInPictureKey)
+        return true
+    }
+
     private func buildWebView(dataStoreId: String) {
         let configuration = WKWebViewConfiguration()
         // No `processPool` here. PRD §9 says "one WKProcessPool for the whole
@@ -1308,6 +1341,18 @@ final class WebPaneController: NSObject, PaneController {
         // for ⇧ and a second request; the first request fills the pane. A
         // popup's configuration is copied from this one and inherits it.
         configuration.preferences.isElementFullscreenEnabled = true
+        // Picture-in-picture is off too, and the switch is private. WebKit's page
+        // setting `allowsPictureInPictureMediaPlayback` defaults to false on
+        // macOS, and `WKWebView` copies the public
+        // `WKWebViewConfiguration.allowsPictureInPictureMediaPlayback` into it
+        // only on iOS (`API_AVAILABLE(ios(9.0))`), so every `<video>` answered
+        // `webkitSupportsPresentationMode('picture-in-picture')` with false and
+        // `requestPictureInPicture()` rejected. WebKit's own macOS MiniBrowser
+        // sets `preferences._allowsPictureInPictureMediaPlayback`, which from
+        // Swift is KVC on the public spelling — KVC finds the `_set…:` setter.
+        // A popup's configuration is copied from this one and inherits it.
+        // `WebPictureInPictureTests` proves both in real WebKit.
+        Self.enablePictureInPicture(on: configuration.preferences)
         // A bare `example.com` reaches the network as `https://`, as Safari
         // sends it, rather than staying on `http://` and wearing the amber ⚠
         // for a site that was never meant to be reached that way. It is
@@ -1424,6 +1469,12 @@ final class WebPaneController: NSObject, PaneController {
         let locate = FullScreenMessageRelay { [weak self] message in self?.geolocationMessage(message) }
         geolocationRelay = locate
         WebGeolocation.install(on: webView, handler: locate)
+        let pip = FullScreenMessageRelay { [weak self] message in
+            guard let self, let entering = WebPictureInPicture.isEntering(message.body) else { return }
+            self.isInPictureInPicture = entering
+        }
+        pictureInPictureRelay = pip
+        WebPictureInPicture.install(on: webView, handler: pip)
         observeChrome(webView)
         // `webView.title` is usually still empty when `didFinish` fires — the
         // document's <title> often lands a beat later — so observe it rather
@@ -1442,10 +1493,11 @@ final class WebPaneController: NSObject, PaneController {
     /// Only the Notification API's script changes — a remembered answer is
     /// written into its source, because `Notification.permission` cannot be
     /// fetched — but `WKUserContentController` removes user scripts all or
-    /// none, so the other three go and come back with it. Each install is
+    /// none, so the other four go and come back with it. Each install is
     /// idempotent, so on an already-current controller this does nothing.
     func refreshUserScripts() {
-        guard let webView, let hoverRelay, let fullScreenRelay, let notificationRelay, let geolocationRelay
+        guard let webView, let hoverRelay, let fullScreenRelay, let notificationRelay, let geolocationRelay,
+              let pictureInPictureRelay
         else { return }
         let grants = notificationGrants()
         guard WebNotifications.isStale(on: webView, grants: grants) else { return }
@@ -1454,6 +1506,7 @@ final class WebPaneController: NSObject, PaneController {
         PaneFullscreen.install(on: webView, handler: fullScreenRelay)
         WebNotifications.install(on: webView, handler: notificationRelay, grants: grants)
         WebGeolocation.install(on: webView, handler: geolocationRelay)
+        WebPictureInPicture.install(on: webView, handler: pictureInPictureRelay)
     }
 
     /// Constraints rather than an autoresizing mask, and that is not a taste
@@ -1506,6 +1559,9 @@ final class WebPaneController: NSObject, PaneController {
         geolocationRelay = nil
         geolocation.clear(paneId: paneId)
         geolocationAsks = [:]
+        webView.map(WebPictureInPicture.remove(from:))
+        pictureInPictureRelay = nil
+        isInPictureInPicture = false
         // The snapshot standing in for the page has an address to show.
         setPaneFullscreen(false)
         chrome.setHoveredLink(nil)

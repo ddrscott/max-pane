@@ -290,7 +290,10 @@ final class LocalSite: @unchecked Sendable {
     var requests: [String] { log.paths }
     func hits(_ path: String) -> Int { log.paths.filter { $0 == path }.count }
 
-    init(pages: [String: String]) async throws {
+    /// `pages` are HTML; `files` are anything else, with their content type —
+    /// a video for `WebPictureInPictureTests`, which WebKit will not load from
+    /// a `data:` URL the way it loads a page.
+    init(pages: [String: String], files: [String: (type: String, data: Data)] = [:]) async throws {
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
         let listener = try NWListener(using: parameters)
@@ -304,9 +307,11 @@ final class LocalSite: @unchecked Sendable {
                 let path = target.split(separator: "?", maxSplits: 1).first.map(String.init) ?? "/"
                 log.record(path)
                 let body = pages[path]
-                let bytes = Data((body ?? "not found").utf8)
-                let head = "HTTP/1.1 \(body == nil ? "404 Not Found" : "200 OK")\r\n"
-                    + "Content-Type: text/html; charset=utf-8\r\nContent-Length: \(bytes.count)\r\n"
+                let file = files[path]
+                let bytes = file?.data ?? Data((body ?? "not found").utf8)
+                let type = file?.type ?? "text/html; charset=utf-8"
+                let head = "HTTP/1.1 \(body == nil && file == nil ? "404 Not Found" : "200 OK")\r\n"
+                    + "Content-Type: \(type)\r\nContent-Length: \(bytes.count)\r\n"
                     + "Cache-Control: no-store\r\nConnection: close\r\n\r\n"
                 connection.send(content: Data(head.utf8) + bytes, completion: .contentProcessed { _ in
                     connection.cancel()

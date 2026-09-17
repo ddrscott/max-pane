@@ -314,6 +314,19 @@ as native, so ⇧ and a second request are checked by the calls that would have
 reached WebKit, and `fullscreenState` stays `.notInFullscreen`. YouTube needs the
 network and plays ads, so ⤢ on a real video is checked by hand after installing.
 
+`WebPictureInPictureTests` serves one loopback page with a 64×64 h264 `<video>`
+and checks what a player's PiP button reads: the preference is set on the pane's
+`WKPreferences` and inherited by a popup's, and a loaded video answers
+`webkitSupportsPresentationMode('picture-in-picture')` with true, which it did
+not before the switch. A bare `WKPreferences` is checked to still default to
+off, and the guard to decline rather than raise on a WebKit without the SPI. The
+one test that actually enters PiP is behind **`MAXPANE_PIP`**, because it puts
+a window on the display: it enters through `evaluateJavaScript` (which WebKit
+runs as a user gesture), asks for full screen while PiP is up, checks that
+`evict()` declines while the video is in PiP and reclaims the pane once it is
+inline again, then closes the lane under a second PiP video and checks the
+window went with it and nothing else did.
+
 `crates/laned-core/tests/durability.rs` holds the half of PRD §15's acceptance
 tests that the core owns — mostly "the strip is identical after a `kill -9`",
 which it proves by dropping `Core` with no shutdown path and reopening the file.
@@ -435,6 +448,23 @@ display; Esc from there returns it to normal. In a sign-in popup it fills the
 dialog's page and the origin bar stays, and the first Esc leaves full screen
 before a second one closes the dialog. See
 [ADR-0014](docs/decisions/0014-web-full-screen-fills-the-pane.md).
+
+**Picture-in-picture** is on: the glyph in a video's native controls, and
+YouTube's and Vimeo's own buttons, which sit on the same
+`webkitSupportsPresentationMode('picture-in-picture')`. WebKit has it off on
+macOS unless the embedder says otherwise, and the switch is private — the
+public `WKWebViewConfiguration.allowsPictureInPictureMediaPlayback` is
+iOS-only — so `WebPaneController.enablePictureInPicture` sets it the way
+WebKit's own MiniBrowser does, through KVC on `WKPreferences` with the key
+**`allowsPictureInPictureMediaPlayback`** (`WebPaneController.pictureInPictureKey`;
+KVC finds the `_setAllowsPictureInPictureMediaPlayback:` setter). The setter is
+looked for before the call, so a macOS that renames it costs the glyph and a
+debug log line, not the app; `WebPictureInPictureTests` fails the day that
+happens. Not a problem for the App Store because this is not on it: Developer
+ID and a DMG. The PiP window is the page's — destroying the web view closes it
+— so a pane whose video is in PiP is not evicted (ADR-0003) until the video is
+back inline; the page says which through `WebPictureInPicture`. Closing the lane
+still closes the window, as the page goes with the lane.
 
 **Mobile Layout**, in the lane's `⋯` menu and the View menu, asks the site for
 its phone page. A portrait lane is a phone's shape, and a site that draws one

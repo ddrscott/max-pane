@@ -81,14 +81,13 @@ web-browser criteria (macOS 13.3+), and once granted it has to arrive through a
 provisioning profile embedded in the bundle. Scoped as its own queue item; the
 entitlements file alone cannot do it.
 
-**Picture-in-picture: fails, for a one-line reason that is ours.**
-`document.pictureInPictureEnabled` is `true` and `requestPictureInPicture` is a
-function, but `video.webkitSupportsPresentationMode('picture-in-picture')` is
-`false` — before and after the video had played to its end — and a real click
-on `requestPictureInPicture()` rejected with `NotSupportedError: The video
-element does not support the Picture-in-Picture mode.` The native controls on
-the local `<video controls>` show no PiP glyph. `PaneFullscreen` is not the
-cause; that script never touches presentation modes. Traced in WebKit `main`:
+**Picture-in-picture: failed, for a one-line reason that was ours; now on.**
+As found: `document.pictureInPictureEnabled` was `true` and
+`requestPictureInPicture` a function, but
+`video.webkitSupportsPresentationMode('picture-in-picture')` was `false`, a real
+click on `requestPictureInPicture()` rejected with `NotSupportedError: The video
+element does not support the Picture-in-Picture mode.`, and the native controls
+showed no PiP glyph. Traced in WebKit `main`:
 `HTMLVideoElement::supportsFullscreen(VideoFullscreenModePictureInPicture)`
 requires `mediaSession().allowsPictureInPicture()`, which is the page setting
 `allowsPictureInPictureMediaPlayback`; `UnifiedWebPreferences.yaml` gives it
@@ -98,9 +97,43 @@ only under `#if PLATFORM(IOS_FAMILY)`; the public
 `WKWebViewConfiguration.allowsPictureInPictureMediaPlayback` is
 `API_AVAILABLE(ios(9.0))`; and WebKit's own macOS MiniBrowser turns it on with
 `configuration.preferences._allowsPictureInPictureMediaPlayback = YES`
-(`WKPreferencesPrivate.h`, `macos(10.13)`). So a `WKWebView` on macOS has PiP
-off unless the embedder says otherwise, and this one never did. Not exercised,
-because nothing could enter PiP: the button on YouTube and Vimeo (their controls
-sit on the same API, which says no), and whether a PiP window survives the
-pane being evicted or the lane closed. Both belong to the queue item that turns
-the preference on.
+(`WKPreferencesPrivate.h`, `macos(10.13)`). `WebPaneController.enablePictureInPicture`
+now does the same through KVC, guarded on the setter existing.
+
+Re-checked 2026-09-16 with the switch in, in a throwaway `pip` profile
+(`MAXPANE_APP=build/pip.app`, a release bundle signed as a shipped one is) on a
+loopback page (`127.0.0.1:18931`) with a 64×64 h264 `<video controls>` that
+beaconed its answers: at `loadedmetadata` (`readyState` 1)
+`webkitSupportsPresentationMode('picture-in-picture')` is still **false**, and
+2.5 s later, at `readyState` 4, it is **true** — the answer needs the player to
+have a frame, not just metadata, which is why `WebPictureInPictureTests` waits
+for `readyState >= 2`. The glyph and YouTube's and Vimeo's buttons sit on the
+same call. Not hovered for a picture of the glyph, because the native controls
+only show it under the pointer and the pointer is the owner's.
+
+Entering PiP and what follows was measured by `WebPictureInPictureTests`'
+`MAXPANE_PIP=1` test rather than by hand, because a real click activates the
+throwaway's window and a `swift test` process can enter PiP through
+`evaluateJavaScript`, which WebKit runs with a user gesture (the gesture covers
+the call's synchronous part only: `await v.play()` ahead of the request spends
+it, `NotAllowedError`). Against real WebKit, on a `WebPaneController` in a
+window off every screen:
+
+- `requestPictureInPicture()` resolves, `webkitPresentationMode` is
+  `picture-in-picture`, the page gets `webkitpresentationmodechanged` then
+  `enterpictureinpicture`, and one new window owned by **Picture in Picture**
+  (macOS's agent, not the app) is on the display with the video playing.
+- The page's first `requestFullscreen()` while PiP is up fills the pane
+  (`isPaneFullscreen`), and the video stays in PiP through it and back.
+- **Eviction closed the window.** `evict()` destroyed the web view and the PiP
+  window went with it, mid-video, no crash. The window is the page's, so
+  `evict()` now declines while the page reports a video in PiP
+  (`WebPictureInPicture`, the same shape as the `isAsking` guard): asked while
+  in PiP, the web view is kept and the window stays; once the video is back
+  inline the next `evict()` reclaims it and the window count returns to what
+  it was.
+- **Closing the lane closes the window.** `closeLane` + `tearDown()` under a
+  PiP video takes the window with the page and nothing else: no crash, no
+  orphaned window. That is WebKit's behaviour and is left as is — keeping a
+  closed lane's page alive for its PiP window, as Safari does for a closed tab,
+  would be its own piece of work.
