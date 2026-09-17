@@ -98,17 +98,73 @@ struct WebPrintRenderTests {
         }
     }
 
+    /// The destination's parent is a regular *file*, so the write fails with
+    /// ENOTDIR on every filesystem — the fixture forces the failure rather than
+    /// hoping a missing directory is noticed. And the page is waited for by
+    /// title, as above: `isLoading == false` is true before `load` has started
+    /// the navigation, and a `createPDF` issued at that moment is asked of a
+    /// page about to be replaced, which is where WebKit drops the completion.
     @Test("a write that cannot land is a failed row, not a silent nothing")
     func failureIsARow() async throws {
         try await PrintFixture.with { f in
             try await f.open("/receipt")
-            #expect(await f.eventually { f.controller.webView?.isLoading == false })
-            let url = f.dir.appendingPathComponent("no-such-dir/out.pdf")
+            #expect(await f.eventually { f.controller.webView?.title == "Receipt 4471" })
+            let url = try f.blockedDestination("out.pdf")
             await f.controller.writePDF(to: url)
             let row = try #require(f.controller.downloads.last)
-            #expect(row.state != .running && row.state != .finished)
+            guard case .failed(let why) = row.state else {
+                Issue.record("expected a failed row, got \(row.state)")
+                return
+            }
+            #expect(!why.isEmpty)
+            #expect(row.name == "out.pdf")
             #expect(!FileManager.default.fileExists(atPath: url.path))
         }
+    }
+}
+
+/// `createPDF`'s completion is not promised. A render that never calls back
+/// used to be a continuation suspended for good — no row, no error, a Save as
+/// PDF the user waited on forever (and a test process that hung). The
+/// deadline is what turns that into a failed row, so it is pinned on its own,
+/// with an operation that provably never returns.
+@Suite("the PDF deadline")
+@MainActor
+struct PDFDeadlineTests {
+    @Test("an operation that never calls back is a timeout, with the wait in the reason")
+    func neverReturns() async {
+        let started = Date()
+        do {
+            let _: Data = try await PDFDeadline.run(within: 0.2) {
+                await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in }
+                return Data()
+            }
+            Issue.record("returned from an operation that never resumes")
+        } catch let error as PDFExportError {
+            guard case .timedOut(let seconds) = error else {
+                Issue.record("expected timedOut, got \(error)")
+                return
+            }
+            #expect(seconds == 0.2)
+            #expect(error.localizedDescription == "the page did not render as PDF within 0 s")
+        } catch {
+            Issue.record("unexpected \(error)")
+        }
+        #expect(Date().timeIntervalSince(started) < 5, "the deadline, not some other wait, ended it")
+    }
+
+    @Test("an operation that finishes in time returns its value, and one that throws rethrows")
+    func inTime() async throws {
+        let value = try await PDFDeadline.run(within: 5) { "rendered" }
+        #expect(value == "rendered")
+        await #expect(throws: PDFExportError.self) {
+            let _: String = try await PDFDeadline.run(within: 5) { throw PDFExportError.noPage }
+        }
+    }
+
+    @Test("the production deadline is long enough for a slow page and short enough to be a deadline")
+    func productionValue() {
+        #expect(PDFDeadline.seconds >= 10 && PDFDeadline.seconds <= 60)
     }
 }
 
@@ -162,6 +218,14 @@ final class PrintFixture {
     func open(_ path: String) async throws {
         let web = try #require(controller.webView)
         web.load(URLRequest(url: URL(string: site.origin + path)!))
+    }
+
+    /// A destination no write can land on: its parent path is a regular file,
+    /// so the write fails with ENOTDIR wherever the temporary directory is.
+    func blockedDestination(_ name: String) throws -> URL {
+        let blocker = dir.appendingPathComponent("blocked")
+        try Data("not a directory".utf8).write(to: blocker)
+        return blocker.appendingPathComponent(name)
     }
 
     func eventually(_ seconds: Double = 8, _ condition: () async -> Bool) async -> Bool {

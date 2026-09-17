@@ -103,10 +103,66 @@ enum PDFNaming {
 
 enum PDFExportError: LocalizedError {
     case noPage
+    case timedOut(TimeInterval)
 
     var errorDescription: String? {
         switch self {
         case .noPage: return "this pane has no page to save"
+        case .timedOut(let seconds): return "the page did not render as PDF within \(Int(seconds)) s"
+        }
+    }
+}
+
+/// An async operation, or `PDFExportError.timedOut` after `seconds` —
+/// whichever comes first.
+///
+/// Neither `evaluateJavaScript` nor `createPDF` is guaranteed to call back:
+/// asked of a page that is mid-navigation, or whose web content process goes
+/// away, WebKit drops the completion and a continuation waiting on it is
+/// suspended for good — the measurement was the one caught doing it, under
+/// the test suite's load. That was a Save as PDF
+/// that never became a row — nothing failed, nothing finished, the user just
+/// waited. So the render runs under a deadline, and a miss is the failed row
+/// with the reason.
+///
+/// Not a task group. A group waits for every child before it returns, and a
+/// child stuck on a continuation that will never be resumed is the exact hang
+/// this exists to end; cancelling it changes nothing, since there is nothing
+/// listening for cancellation inside WebKit's callback. Instead both sides
+/// race to resume one continuation, and the loser's result is dropped: an
+/// orphaned render that does come back late is discarded, and its task ends.
+@MainActor
+enum PDFDeadline {
+    static let seconds: TimeInterval = 30
+
+    static func run<T: Sendable>(
+        within seconds: TimeInterval = Self.seconds,
+        _ operation: @escaping @MainActor () async throws -> T
+    ) async throws -> T {
+        let once = Once<T>()
+        return try await withCheckedThrowingContinuation { continuation in
+            once.continuation = continuation
+            Task { @MainActor in
+                let result: Result<T, Error>
+                do { result = .success(try await operation()) } catch { result = .failure(error) }
+                once.resume(result)
+            }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
+                once.resume(.failure(PDFExportError.timedOut(seconds)))
+            }
+        }
+    }
+
+    /// A continuation that resumes once. Main-actor state, no lock: both racers
+    /// hop to the main actor before they touch it.
+    private final class Once<T: Sendable> {
+        var continuation: CheckedContinuation<T, Error>?
+
+        func resume(_ result: Result<T, Error>) {
+            guard let continuation else { return }
+            self.continuation = nil
+            continuation.resume(with: result)
         }
     }
 }
@@ -177,8 +233,15 @@ extension WebPaneController {
     /// left nil is the view's bounds — one screen of a receipt — so the
     /// document's own height is asked for and the rect is sized to it, with a
     /// ceiling so a page that scrolls forever does not ask for a PDF that does.
-    func renderPDF() async throws -> Data {
+    ///
+    /// Under `PDFDeadline`, because neither of the two WebKit calls here is
+    /// promised to call back: see the note on that type.
+    func renderPDF(within seconds: TimeInterval = PDFDeadline.seconds) async throws -> Data {
         guard let webView else { throw PDFExportError.noPage }
+        return try await PDFDeadline.run(within: seconds) { try await Self.render(webView) }
+    }
+
+    private static func render(_ webView: WKWebView) async throws -> Data {
         let measured = try? await webView.evaluateJavaScript(
             "Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0)")
         let height = (measured as? NSNumber)?.doubleValue ?? 0
