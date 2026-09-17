@@ -9,7 +9,7 @@
 # looking hash of an unshipped build is a lie `brew install` would catch late.
 cask "max-pane" do
   version "0.6.0"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000" # filled by scripts/release.sh
+  sha256 "91a748a071a079190dbb599bdd3b3b1ba91d28b2ee199fc3381a144d0bcb0f97"
 
   url "https://github.com/ddrscott/max-pane/releases/download/v#{version}/MaxPane-#{version}.dmg"
   name "Max Pane"
