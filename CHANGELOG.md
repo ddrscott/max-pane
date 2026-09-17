@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-16
+
+### Fixed
+- The 0.6.0 download trapped at its first terminal pane on any Mac but the build machine: libghostty's resource bundle was only found through the build directory's absolute path. The bundle now ships inside the app, and the release script launches the built app with that path hidden before packaging
+
 ## [0.6.0] - 2026-09-16
 
 ### Added
@@ -49,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Panes never inherit Claude session markers from the process that launched the app, so `claude` inside a pane saves its transcript
 - The core is linked statically, so a rebuild in the checkout cannot break the installed app
 
-[Unreleased]: https://github.com/ddrscott/max-pane/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/ddrscott/max-pane/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/ddrscott/max-pane/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/ddrscott/max-pane/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/ddrscott/max-pane/releases/tag/v0.5.0

@@ -77,6 +77,8 @@ fi
 # carries last week's code (the missing-relay-tty text shipped stale once).
 # build-app.sh refuses if that bundle is running, which is the right refusal.
 ./scripts/build-app.sh release
+# Would it start on a Mac that is not this one? 0.6.0 shipped without asking.
+if [ "${MAXPANE_SMOKE:-1}" != "0" ]; then ./scripts/smoke-app.sh build/MaxPane.app; fi
 ./scripts/make-dmg.sh
 
 if xcrun stapler validate -q "$DMG" >/dev/null 2>&1; then

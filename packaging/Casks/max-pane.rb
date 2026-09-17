@@ -8,8 +8,8 @@
 # placeholder, deliberately: every DMG build hashes differently, and a real-
 # looking hash of an unshipped build is a lie `brew install` would catch late.
 cask "max-pane" do
-  version "0.6.0"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000" # filled by scripts/release.sh
+  version "0.6.1"
+  sha256 "91a748a071a079190dbb599bdd3b3b1ba91d28b2ee199fc3381a144d0bcb0f97"
 
   url "https://github.com/ddrscott/max-pane/releases/download/v#{version}/MaxPane-#{version}.dmg"
   name "Max Pane"
@@ -28,6 +28,9 @@ cask "max-pane" do
   # build is a separate decision. Without this, an Intel Mac installs a bundle
   # that will not launch.
   depends_on arch: :arm64
+  # The daemon that owns the terminal sessions. Without it the first ⌘O is an
+  # error naming an installer; with it, `brew install` gives a working app.
+  depends_on formula: "ddrscott/tap/relay-tty"
 
   app "MaxPane.app"
   # The CLI that lists lanes and opens URLs in them; the app sets it up in the
@@ -42,9 +45,7 @@ cask "max-pane" do
   ]
 
   caveats <<~EOS
-    Max Pane runs agent sessions through relay-tty (1.22.0 or newer), which is
-    installed separately:
-
-      curl -fsSL https://raw.githubusercontent.com/ddrscott/relay-tty/main/install.sh | bash
+    Max Pane runs agent sessions through relay-tty, installed alongside it as
+    ddrscott/tap/relay-tty. Press ⌘O in the app, type a command, press ↩.
   EOS
 end
