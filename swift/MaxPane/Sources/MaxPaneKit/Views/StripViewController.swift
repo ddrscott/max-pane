@@ -787,9 +787,10 @@ public final class StripViewController: NSViewController {
             laneView = LaneView(lane: lane, widthBounds: config.widthRange)
         }
         laneView.laneId = lane.id
-        // A recycled view may have last been a tile. `layoutGallery` sets this
+        // A recycled view may have last been a tile. `layoutGallery` sets these
         // for the lanes that are tiles now; everything else is on the strip.
         laneView.thumbnailScale = nil
+        laneView.isExpandedTile = false
         // Focus, from the ledger, before the view is ever on screen.
         //
         // `apply` is the only other place that sets these, and a lane is
@@ -1186,10 +1187,16 @@ public final class StripViewController: NSViewController {
         layer.add(animation, forKey: "galleryMove")
     }
 
-    /// Whether `windowPoint` is inside one of the lane's pane views rather than
-    /// on its header or in a seam.
+    /// Whether `windowPoint` is inside one of the lane's pane views, or on a
+    /// seam that drags, rather than on its header or in an inert gap.
+    ///
+    /// A live seam counts as content for the same reason a pane does: the
+    /// press there is the start of a drag, and a drag released and re-grabbed
+    /// inside the double-click interval must move the seam again, not put the
+    /// tile back.
     private func isPaneContent(at windowPoint: NSPoint, laneId: String) -> Bool {
         guard let lane = store.lane(laneId), let laneView = laneViews[laneId] else { return false }
+        if laneView.isLiveSeam(atWindowPoint: windowPoint) { return true }
         return lane.panes.contains { pane in
             guard let view = laneView.paneView(for: pane.id) else { return false }
             return view.bounds.contains(view.convert(windowPoint, from: nil))
@@ -1226,6 +1233,7 @@ public final class StripViewController: NSViewController {
         let docked = Set(dockViews.values.map(\.laneId))
         for (laneId, laneView) in laneViews {
             laneView.thumbnailScale = nil
+            laneView.isExpandedTile = false
             if docked.contains(laneId) {
                 view.addSubview(laneView, positioned: .above, relativeTo: nil)
             } else {
@@ -1314,6 +1322,9 @@ public final class StripViewController: NSViewController {
             }
             gallery.place(laneView, laneId: lane.id, frame: frame, laneSize: size)
             laneView.thumbnailScale = scale
+            // The expanded tile's seams and grips are the strip's; every other
+            // tile's stay inert. The lane decides what its scale allows.
+            laneView.isExpandedTile = lane.id == expandedLaneId
         }
         if let expanded = expandedLaneId {
             if lanes.contains(where: { $0.id == expanded }) {

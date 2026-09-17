@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ad and tracker blocking in every web pane and the popups over them, with WebKit's own content blocker. The rule list is fetched from `blocking_list_url` (default: Adblock Plus's WebKit-format conversion of EasyList; several URLs are joined), compiled once into the profile's rule-list store, looked up from there on later launches and refreshed daily; a list past WebKit's 150 000-rule ceiling is cut into several with the exception rules in every part. Off for one site from the lane's ⋯ menu or Navigate › Block Ads on This Site, by registrable domain, kept in the ledger; the chrome bar wears an `unblocked` chip on such a site, and a click on it turns blocking back on. `blocking = false` turns it off everywhere; `keys` binds `toggleBlocking`
 - Web Inspector on every web pane: right-click, Inspect Element, or attach from Safari's Develop menu. Always on, since the app is for people who build pages
 
+### Changed
+- An expanded gallery tile's seams drag. The separator between two stacked panes in the expanded tile resizes them exactly as on the strip — same arithmetic, same grab band, one ledger write on the drop, and the terminals hear the same live-resize word — so leaving the gallery shows the panes where the drag left them, and a relaunch keeps them. The pane grips come back on the expanded tile too. Unexpanded tiles are as handle-free as before, and their seams now let the click through and never show a resize cursor over a seam that will not move. A tile clamped below half size keeps its handles hidden. ADR-0011 amended
+
 ## [0.6.0] - 2026-09-16
 
 ### Added

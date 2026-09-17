@@ -45,6 +45,20 @@ enum PaneSplit {
     /// in a column where the thing under that edge is blank margin.
     static let grab: CGFloat = 11
 
+    /// The smallest gallery scale at which an expanded tile's seams still drag.
+    ///
+    /// On the strip the grab band is `grab` (11 pt) and the pane grip 14 pt; a
+    /// tile draws both through its scale. An expanded tile is the lane at its
+    /// real size when the gallery has room (ADR-0011, amended 2026-09-13), so
+    /// this only bites when a lane is taller than the gallery and the tile is
+    /// clamped. At 0.5 the band is 5.5 pt on screen and the grip 7 pt: the band
+    /// is still wider than the 2 pt lit rule that advertises it, and the grip is
+    /// still a square you can see the three rules in. Below that the band is
+    /// thinner than the seam it draws on the strip, which is the point at which
+    /// a handle stops being one and becomes a place the cursor flickers. An
+    /// unexpanded tile never gets here: its seams are inert at every scale.
+    static let minimumLiveScale: CGFloat = 0.5
+
     /// The height each pane gets, in points, in a lane with `available` points
     /// of room for panes — the lane's height less its header and less every
     /// seam.
@@ -296,6 +310,21 @@ final class PaneDividerView: NSView {
     /// BLOCKED are *states a lane is in*, and this outlives nothing.
     var isOpening = false { didSet { if isOpening != oldValue { needsDisplay = true } } }
 
+    /// Whether this seam can be dragged at all.
+    ///
+    /// False on an unexpanded gallery tile, where the seam is drawn — a split
+    /// lane's tile keeps the lane's proportions — but is not a handle
+    /// (ADR-0011). Off, it takes no hover, sets no cursor and refuses the hit,
+    /// so a click on it reaches the lane the way a click on any other gap does,
+    /// and a resize cursor never appears over a seam that will not move.
+    var isEnabled = true {
+        didSet {
+            guard isEnabled != oldValue else { return }
+            if !isEnabled { hovering = false }
+            needsDisplay = true
+        }
+    }
+
     private var lastY: CGFloat = 0
     private var tracking: NSTrackingArea?
     private var hovering = false { didSet { if hovering != oldValue { needsDisplay = true } } }
@@ -329,9 +358,18 @@ final class PaneDividerView: NSView {
         tracking = area
     }
 
-    override func cursorUpdate(with event: NSEvent) { NSCursor.resizeUpDown.set() }
-    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func cursorUpdate(with event: NSEvent) {
+        guard isEnabled else { return }
+        NSCursor.resizeUpDown.set()
+    }
+    override func mouseEntered(with event: NSEvent) { hovering = isEnabled }
     override func mouseExited(with event: NSEvent) { hovering = false }
+
+    /// An inert seam is not there to the pointer: the click goes through to
+    /// whatever the lane would have given it.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        isEnabled ? super.hitTest(point) : nil
+    }
 
     /// Re-derive `hovering` from where the pointer actually is, for the seams
     /// that have just been moved.
@@ -350,21 +388,51 @@ final class PaneDividerView: NSView {
     /// location: this is asked from inside `layout`, where there is no event.
     func pointerMayHaveLeft() {
         guard let window, !dragging else { return }
-        hovering = bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
+        hovering = isEnabled && bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
     }
 
     override func mouseDown(with event: NSEvent) {
-        // Window coordinates, not our own: this view moves as the panes resize,
-        // so a delta measured in its local space is measured against an origin
-        // that the measurement itself just moved, and the drag fights itself.
-        // The same reason `LaneResizeHandle` does it, and the same bug.
-        lastY = event.locationInWindow.y
-        dragging = true
+        beginDrag(atWindowPoint: event.locationInWindow)
     }
 
     override func mouseDragged(with event: NSEvent) {
-        let y = event.locationInWindow.y
-        // Screen y grows upward and the stack runs downward, so the pane above
+        continueDrag(toWindowPoint: event.locationInWindow)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        endDrag()
+    }
+
+    /// Where the pointer is, measured in the lane's own points.
+    ///
+    /// The lane's coordinates, not our own: this view moves as the panes
+    /// resize, so a delta measured in its local space is measured against an
+    /// origin that the measurement itself just moved, and the drag fights
+    /// itself. The same reason `LaneResizeHandle` uses the window, and the same
+    /// bug. Not the window's either, any more: in a gallery tile the lane is
+    /// drawn through a scale, and a pointer that travels ten window points has
+    /// travelled ten over that scale in lane points. The lane converts through
+    /// the same transform the compositor draws with, so on the strip this is
+    /// the window's y exactly and in a clamped tile the seam stays under the
+    /// pointer instead of falling behind it.
+    private func laneY(ofWindowPoint point: NSPoint) -> CGFloat {
+        guard let superview else { return point.y }
+        return superview.convert(point, from: nil).y
+    }
+
+    /// The three halves of a drag, as `mouseDown`, `mouseDragged` and
+    /// `mouseUp` call them — and as a test drives them, with a window point,
+    /// so the scale mapping is what is under test rather than bypassed.
+    func beginDrag(atWindowPoint point: NSPoint) {
+        guard isEnabled else { return }
+        lastY = laneY(ofWindowPoint: point)
+        dragging = true
+    }
+
+    func continueDrag(toWindowPoint point: NSPoint) {
+        guard dragging else { return }
+        let y = laneY(ofWindowPoint: point)
+        // Lane y grows upward and the stack runs downward, so the pane above
         // the seam grows when the pointer goes *down*.
         let delta = lastY - y
         lastY = y
@@ -372,7 +440,8 @@ final class PaneDividerView: NSView {
         onDrag?(delta, false)
     }
 
-    override func mouseUp(with event: NSEvent) {
+    func endDrag() {
+        guard dragging else { return }
         dragging = false
         onDrag?(0, true)
     }

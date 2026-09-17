@@ -735,7 +735,8 @@ final class LaneView: NSView {
             }
             // A lane of one pane is picked up by its header, which is that
             // pane's handle too, so its corner goes back to the terminal.
-            grip.isHidden = isThumbnail || ids.count < 2
+            // Hidden on a tile unless the tile is expanded: see `seamsAreLive`.
+            grip.isHidden = !seamsAreLive || ids.count < 2
             let paneTop = top - PaneSplit.top(ofPaneAt: slot, heights: heights)
             let frame = NSRect(
                 x: PaneGripView.insetX,
@@ -810,6 +811,9 @@ final class LaneView: NSView {
             }
             offset += heights[index]
             divider.isHidden = false
+            // Drawn on every tile — a split lane's tile keeps its proportions —
+            // but a handle only where `seamsAreLive` says so.
+            divider.isEnabled = seamsAreLive
             divider.isOpening = index == litDivider
             // Centred on the gap and taller than it, so the grab area reaches a
             // few points into each neighbour. The seam it draws is still
@@ -845,9 +849,11 @@ final class LaneView: NSView {
     /// what makes a failed write snap back to the truth instead of leaving the
     /// screen showing a split nobody stored.
     private func seamDragged(at index: Int, by delta: CGFloat, isFinal: Bool) {
-        // A tile's proportions are the lane's, and moving them from a thumbnail
-        // would be a height write from a view that promises to write none.
-        guard !isThumbnail else { return }
+        // An unexpanded tile's proportions are the lane's, and moving them
+        // from a thumbnail would be a height write from a view that promises
+        // to write none. An expanded tile is the lane at its real size, and
+        // its seams write exactly what the strip's do.
+        guard seamsAreLive else { return }
         let ids = visiblePaneIds
         guard ids.indices.contains(index), ids.indices.contains(index + 1) else { return }
 
@@ -884,7 +890,8 @@ final class LaneView: NSView {
     /// A tile is the lane itself, shrunk, so it keeps everything that says what
     /// the lane is and loses every handle that would change it: the gallery is
     /// a view over the strip and writes nothing but the layout and focus. No
-    /// width handle, no grips, no seam drags.
+    /// width handle, no grips, no seam drags — until the tile is expanded, when
+    /// its seams and grips are the strip's again (`seamsAreLive`).
     ///
     /// The focus outline is the one thing drawn *thicker* in lane points, so
     /// that it lands on screen at the weight it has on the strip. Shrunk with
@@ -902,6 +909,51 @@ final class LaneView: NSView {
     }
 
     var isThumbnail: Bool { thumbnailScale != nil }
+
+    /// Whether this tile is the one drawn over the grid at the lane's real size
+    /// (ADR-0011, amended 2026-09-13). Set by the strip alongside
+    /// `thumbnailScale`; meaningless off the gallery.
+    ///
+    /// The owner: *"I should be able to change (adjust the heights) of stacked
+    /// panes by dragging the separator in the same way as lanes layout mode."*
+    /// The reason a tile's seams are inert — a height chosen from a thumbnail
+    /// is chosen without seeing what it does to the grid — does not hold for a
+    /// tile drawn at the size the strip draws it.
+    var isExpandedTile = false {
+        didSet {
+            guard isExpandedTile != oldValue else { return }
+            needsLayout = true
+        }
+    }
+
+    /// Whether the seams drag and the grips show: on the strip always; on a
+    /// tile only when it is expanded *and* drawn large enough for the handles
+    /// to be targets. An expanded tile is the lane's real size when the gallery
+    /// has room, so the scale test only bites when a lane taller than the
+    /// gallery has been clamped; below `PaneSplit.minimumLiveScale` the grab
+    /// band is thinner on screen than the seam it draws on the strip, and the
+    /// handles stay hidden rather than flicker. Still no width handle and no
+    /// size presets on any tile: this is heights only.
+    var seamsAreLive: Bool {
+        guard let thumbnailScale else { return true }
+        return isExpandedTile && thumbnailScale >= PaneSplit.minimumLiveScale
+    }
+
+    /// Whether `windowPoint` is on a seam that will take a drag. The strip's
+    /// click monitor asks so a press that begins a seam drag on an expanded
+    /// tile is never read as a double click on the tile itself.
+    func isLiveSeam(atWindowPoint windowPoint: NSPoint) -> Bool {
+        guard seamsAreLive else { return false }
+        return dividers.contains { divider in
+            !divider.isHidden && divider.bounds.contains(divider.convert(windowPoint, from: nil))
+        }
+    }
+
+    /// The seams, top to bottom, for tests that drive a drag through one.
+    var seamDividers: [PaneDividerView] { dividers.filter { !$0.isHidden } }
+
+    /// Whether any pane grip is on screen, for tests.
+    var gripsAreVisible: Bool { grips.contains { !$0.isHidden } }
 
     // MARK: - focus and flash
 

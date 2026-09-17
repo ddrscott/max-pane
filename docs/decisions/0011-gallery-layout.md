@@ -190,3 +190,51 @@ What did not change, and why:
   dock dropped beside a lane leaves its edge — `move_lane` now clears the dock,
   which is `move_pane_to_new_lane`'s existing rule for a lane of one — and a dock
   dropped into a stack is gone with its lane.
+
+### Amended 2026-09-16: an expanded tile's seams are the strip's
+
+The owner: *"I should be able to change (adjust the heights) of stacked panes
+by dragging the separator in the same way as lanes layout mode."* The rule
+above — **tiles do not resize anything** — is narrowed to **unexpanded tiles do
+not resize anything; an expanded tile's seams behave as the strip's**.
+
+The reason a tile's seams were inert was stated for a thumbnail: at a scale of
+0.3 a 14 pt grip is four points square, and a height chosen from a thumbnail is
+chosen without seeing what it does to the grid. Neither holds for the expanded
+tile (amended 2026-09-13), which is the lane at its real size, or as near it as
+the gallery's height allows. So in the expanded tile the seam between two
+stacked panes drags exactly as on the strip — the same `PaneSplit` arithmetic,
+the same grab band, the same cursor, the same `set_pane_heights` write once on
+the drop, the same live-resize word to each terminal (ADR-0007: the lane is
+sized to the session, never the PTY to the lane) — and the pane grips come back
+with it. The heights it produces are the lane's real heights: leaving the
+gallery shows the strip with the panes where the drag left them, and a relaunch
+keeps them.
+
+What made it correct rather than merely enabled:
+
+- **The pointer is measured in lane points, not window points.** A tile is
+  drawn through a scale, and a seam that took its delta from the window moved
+  slower than the pointer in any clamped tile. `PaneDividerView` now converts
+  the pointer into the lane's own coordinates through the same transform AppKit
+  hit-tests with, which is the window's y exactly on the strip and the scaled y
+  in a tile.
+- **A threshold, recorded in `PaneSplit.minimumLiveScale` (0.5).** An expanded
+  tile is only smaller than real size when its lane is taller than the gallery.
+  At 0.5 the 11 pt grab band is 5.5 pt on screen — still wider than the 2 pt
+  lit rule that advertises it — and the 14 pt grip is 7 pt. Below that the band
+  is thinner than the seam it draws on the strip, and the handles stay hidden
+  rather than flicker.
+- **An inert seam is not there to the pointer.** On an unexpanded tile the seam
+  is still drawn, because a split lane's tile keeps its proportions, but it
+  refuses the hit, takes no hover and sets no cursor, so a resize cursor never
+  appears over a seam that will not move. Before this the cursor changed and
+  the drag did nothing.
+- **A press on a live seam is a seam, not the tile.** A drag released and
+  re-grabbed inside the double-click interval must move the seam again, not
+  put the tile back; the click monitor treats a live seam as pane content.
+
+What did not change: no width handle and no size presets on any tile, and an
+unexpanded tile's seams and grips are exactly as inert as before. The 2026-09-14
+amendment's *no pane grips* and *no seam drags* now read with "on an unexpanded
+tile" in front of them.

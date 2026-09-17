@@ -183,8 +183,10 @@ struct GalleryRenderTests {
     }
 
     /// One lane, drawn at its full size and `backing`× — what a live surface is.
+    /// `expanded` draws it as the tile raised over the grid, seams and grips live.
     private func renderLane(_ model: Lane, views: [String: NSView], focused: String?,
-                            height: CGFloat, scale: CGFloat, backing: CGFloat) -> CGImage? {
+                            height: CGFloat, scale: CGFloat, backing: CGFloat,
+                            expanded: Bool = false) -> CGImage? {
         let laneView = LaneView(lane: model, widthBounds: 420...1800)
         for (index, p) in model.panes.enumerated() {
             let view = views[p.id] ?? PlaceholderView(pane: p)
@@ -193,6 +195,7 @@ struct GalleryRenderTests {
         laneView.isFocused = model.panes.contains { $0.id == focused }
         laneView.focusedPaneId = focused
         laneView.thumbnailScale = scale
+        laneView.isExpandedTile = expanded
         let size = CGSize(width: CGFloat(model.widthPt), height: height)
         laneView.frame = CGRect(origin: .zero, size: size)
         laneView.layoutSubtreeIfNeeded()
@@ -207,10 +210,19 @@ struct GalleryRenderTests {
         return rep.cgImage
     }
 
+    /// A lane's picture and where it is drawn: its tile's frame in the gallery
+    /// and the scale that shrinks it there. The expanded tile is one of these
+    /// too, last so it is drawn over the rest.
+    private struct Tile {
+        var image: CGImage
+        var frame: CGRect
+        var scale: CGFloat
+    }
+
     /// Shrink every lane into its tile through Core Animation, as the window
     /// server would draw a transformed layer.
-    private func composite(_ images: [CGImage], placement: GalleryLayout.Placement, size: CGSize,
-                           backing: CGFloat, filter: CALayerContentsFilter) -> CGImage? {
+    private func composite(_ tiles: [Tile], size: CGSize, backing: CGFloat,
+                           appearance: NSAppearance.Name) -> CGImage? {
         let w = Int(size.width * backing), h = Int(size.height * backing)
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else { return nil }
         let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: w, height: h, mipmapped: false)
@@ -226,17 +238,17 @@ struct GalleryRenderTests {
         root.anchorPoint = .zero
         root.position = .zero
         root.isGeometryFlipped = true
-        root.backgroundColor = Theme.stripBackground.cgColor
-        for (image, rect) in zip(images, placement.rects) {
-            let tile = CALayer()
-            tile.contents = image
-            tile.contentsGravity = .resize
-            tile.bounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
-            tile.anchorPoint = .zero
-            tile.position = CGPoint(x: rect.minX * backing, y: rect.minY * backing)
-            tile.transform = CATransform3DMakeScale(placement.scale, placement.scale, 1)
-            tile.minificationFilter = filter
-            root.addSublayer(tile)
+        root.backgroundColor = Theme.stripBackground.cgColor(in: NSAppearance(named: appearance)!)
+        for tile in tiles {
+            let layer = CALayer()
+            layer.contents = tile.image
+            layer.contentsGravity = .resize
+            layer.bounds = CGRect(x: 0, y: 0, width: tile.image.width, height: tile.image.height)
+            layer.anchorPoint = .zero
+            layer.position = CGPoint(x: tile.frame.minX * backing, y: tile.frame.minY * backing)
+            layer.transform = CATransform3DMakeScale(tile.scale, tile.scale, 1)
+            layer.minificationFilter = GalleryLayout.minificationFilter(scale: tile.scale, backingScale: backing)
+            root.addSublayer(layer)
         }
         renderer.layer = root
         renderer.bounds = root.bounds
@@ -276,9 +288,18 @@ struct GalleryRenderTests {
         return ctx.makeImage()
     }
 
-    @Test("renders a gallery of mixed lanes at both panel densities")
+    /// Both panel densities, and each in both appearances. The split lane `a`
+    /// is drawn twice: in its slot as an ordinary tile, seam inert and grips
+    /// hidden, and again raised over the grid as the expanded tile, where the
+    /// seam is a handle and the grips are back — clamped in both sheets, since
+    /// the lane is as tall as the gallery, so the handles are drawn through the
+    /// scale the pointer will be mapped through.
+    @Test("renders a gallery of mixed lanes, with an expanded stacked tile, at both panel densities and in both appearances")
     func renderSheet() throws {
         guard let dir = ProcessInfo.processInfo.environment["MAXPANE_SHOTS"] else { return }
+        let app = NSApplication.shared
+        let previous = app.appearance
+        defer { app.appearance = previous }
 
         let lanes: [Lane] = [
             lane("a", "claude — max-pane", width: 656, [pane("a1", "a", 0), pane("a2", "a", 1)]),
@@ -309,23 +330,52 @@ struct GalleryRenderTests {
             ]
         }
 
-        for (name, size, backing) in [("laptop-2x", CGSize(width: 1728, height: 1080), CGFloat(2)),
-                                      ("ultrawide-1x", CGSize(width: 3840, height: 1570), CGFloat(1))] {
-            let placement = GalleryLayout.place(
-                widths: lanes.map { CGFloat($0.widthPt) }, laneHeight: size.height, in: size)
-            let filter = GalleryLayout.minificationFilter(scale: placement.scale, backingScale: backing)
-            let stubs = views()
-            let images = lanes.compactMap {
-                renderLane($0, views: stubs, focused: focused, height: size.height,
-                           scale: placement.scale, backing: backing)
+        let panels: [(String, CGSize, CGFloat)] = [
+            ("laptop-2x", CGSize(width: 1728, height: 1080), 2),
+            ("ultrawide-1x", CGSize(width: 3840, height: 1570), 1),
+        ]
+        let appearances: [(String, NSAppearance.Name)] = [("light", .aqua), ("dark", .darkAqua)]
+        for (mode, appearance) in appearances {
+            app.appearance = NSAppearance(named: appearance)
+            for (name, size, backing) in panels {
+                let placement = GalleryLayout.place(
+                    widths: lanes.map { CGFloat($0.widthPt) }, laneHeight: size.height, in: size)
+                let filter = GalleryLayout.minificationFilter(scale: placement.scale, backingScale: backing)
+                let stubs = views()
+                var tiles: [Tile] = []
+                for (index, lane) in lanes.enumerated() {
+                    guard let image = renderLane(lane, views: stubs, focused: focused, height: size.height,
+                                                 scale: placement.scale, backing: backing)
+                    else { continue }
+                    let slot = placement.rects[index]
+                    let laneSize = CGSize(width: CGFloat(lane.widthPt), height: size.height)
+                    tiles.append(Tile(
+                        image: image,
+                        frame: CGRect(x: slot.minX, y: slot.minY,
+                                      width: laneSize.width * placement.scale, height: laneSize.height * placement.scale),
+                        scale: placement.scale))
+                }
+                #expect(tiles.count == lanes.count)
+
+                // The split lane, expanded over its own slot as `layoutGallery`
+                // would draw it: real size clamped to the gallery, seams live.
+                let laneSize = CGSize(width: CGFloat(lanes[0].widthPt), height: size.height)
+                let expanded = GalleryLayout.expanded(tile: tiles[0].frame, laneSize: laneSize, in: size)
+                let expandedScale = expanded.width / laneSize.width
+                if let image = renderLane(lanes[0], views: views(), focused: focused, height: size.height,
+                                          scale: expandedScale, backing: backing, expanded: true) {
+                    tiles.append(Tile(image: image, frame: expanded, scale: expandedScale))
+                }
+                #expect(expandedScale >= PaneSplit.minimumLiveScale,
+                        "the sheet's expanded tile must be one whose seams are live, or it shows nothing")
+
+                guard let upsideDown = composite(tiles, size: size, backing: backing, appearance: appearance),
+                      let sheet = flippedVertically(upsideDown)
+                else { continue }
+                let png = try #require(NSBitmapImageRep(cgImage: sheet).representation(using: .png, properties: [:]))
+                let file = "gallery-\(name)-scale\(String(format: "%.2f", placement.scale))-\(filter.rawValue)-\(mode).png"
+                try png.write(to: URL(fileURLWithPath: dir).appendingPathComponent(file))
             }
-            #expect(images.count == lanes.count)
-            guard let upsideDown = composite(images, placement: placement, size: size, backing: backing, filter: filter),
-                  let sheet = flippedVertically(upsideDown)
-            else { continue }
-            let png = try #require(NSBitmapImageRep(cgImage: sheet).representation(using: .png, properties: [:]))
-            let file = "gallery-\(name)-scale\(String(format: "%.2f", placement.scale))-\(filter.rawValue).png"
-            try png.write(to: URL(fileURLWithPath: dir).appendingPathComponent(file))
         }
     }
 }

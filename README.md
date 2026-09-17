@@ -1315,9 +1315,14 @@ again, since that tile is big enough to read. The session browser follows the
 same gestures while the gallery is up — click to focus, double-click to expand —
 and keeps its usual behaviour on the strip. ⌘G is still the way out.
 
-Tiles do not resize anything: no width handle and no seams to drag, and no pane
-grips, which would be four points square at a tile's scale. **They do rearrange
-the strip.** Drag a tile's header onto the edge of a pane in another tile and it
+Unexpanded tiles do not resize anything: no width handle and no seams to drag,
+and no pane grips, which would be four points square at a tile's scale. **An
+expanded tile's seams are the strip's**: drag the separator between two stacked
+panes and their heights change exactly as they would on the strip, with one
+ledger write on the drop, so leaving the gallery shows the panes where you left
+them. The grips come back with it. If a lane is taller than the gallery and its
+expanded tile is drawn below half size, the handles stay hidden rather than
+become targets too small to hit. **Tiles do rearrange the strip.** Drag a tile's header onto the edge of a pane in another tile and it
 lands there exactly as it would on the strip — see *Moving a pane or a lane*.
 The ⋯ menu still works.
 
