@@ -511,6 +511,11 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             // its own bounds. Not in the gallery, which writes nothing but the
             // layout and focus.
             return store.focusedLane != nil && !strip.isGallery
+        case .toggleMaximizePane:
+            // A pane with the keyboard, on the strip or in a dock — or one that
+            // is already up, which can always come down. Not in the gallery,
+            // whose own double click grows a tile in place.
+            return strip.canToggleMaximize
         case .toggleMobileLayout:
             // A lane with a page in it. The pages are asked, not the snapshot,
             // for the same reason the lane's menu asks them.
@@ -525,6 +530,13 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         default:
             return true
         }
+    }
+
+    public func title(for command: Command) -> String {
+        if command == .toggleMaximizePane, strip.isPaneMaximized, let active = command.activeTitle {
+            return active
+        }
+        return command.title
     }
 
     public func perform(_ command: Command) {
@@ -713,6 +725,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .laneSizeCycle:
                 if let lane = focusedLane { strip.cycleSizePreset(ofLane: lane.id) }
+
+            case .toggleMaximizePane:
+                strip.toggleMaximizeFocusedPane()
 
             case .toggleMobileLayout:
                 if let lane = focusedLane { strip.toggleMobileLayout(ofLane: lane.id) }

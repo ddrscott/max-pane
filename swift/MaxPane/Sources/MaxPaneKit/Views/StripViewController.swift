@@ -140,6 +140,34 @@ public final class StripViewController: NSViewController {
     /// ends it reaches nothing either.
     private var swallowNextMouseUp = false
 
+    // MARK: - maximize
+
+    /// ⇧⌘↩: one pane over the strip's visible window. In memory, never in the
+    /// ledger — a relaunch comes back with every pane in its lane. See
+    /// `PaneMaximize.swift` and ADR-0019.
+    private lazy var maximizer: PaneMaximizer = {
+        let maximizer = PaneMaximizer(host: view)
+        maximizer.viewportRect = { [weak self] in self?.maximizedViewportRect ?? .zero }
+        maximizer.laneView = { [weak self] paneId in
+            guard let self, let laneId = self.store.lane(containing: paneId)?.id else { return nil }
+            return self.laneViews[laneId]
+        }
+        maximizer.paneExists = { [weak self] paneId in self?.store.pane(paneId) != nil }
+        maximizer.onLanded = { [weak self] paneId in
+            guard let self else { return }
+            // Re-parenting hands the keyboard back to the window. The pane that
+            // came down takes it again if the ledger still says it has it.
+            if self.store.state.focusedPaneId == paneId { self.paneControllers[paneId]?.takeFocus() }
+        }
+        maximizer.overlay.onRestore = { [weak self] in self?.restoreMaximizedPane(animated: true) }
+        return maximizer
+    }()
+
+    /// Builds a pane's controller in place of `makeController`, when it answers.
+    /// For tests, which want a strip of lanes without a Relay socket or a
+    /// `WKWebView` behind each one.
+    var controllerFactory: ((Pane, Lane) -> PaneController?)?
+
     // MARK: - docks
 
     /// The lane view held at each edge — **a sibling of the scroll view, never
@@ -312,6 +340,7 @@ public final class StripViewController: NSViewController {
     public override func viewDidLayout() {
         super.viewDidLayout()
         layoutDocks()
+        maximizer.layout()
     }
 
     /// Make a horizontal scroll move the strip, wherever the pointer happens to
@@ -334,6 +363,10 @@ public final class StripViewController: NSViewController {
                   // Nothing scrolls in the gallery; a sideways gesture over a
                   // tile belongs to whatever is in it.
                   !self.isGallery,
+                  // Nor under a maximized pane: the strip it covers stays where
+                  // it was left, which is half of "puts it back exactly", and a
+                  // sideways gesture over a wide page is the page's.
+                  !self.maximizer.isActive,
                   abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
             else { return event }
 
@@ -413,6 +446,10 @@ public final class StripViewController: NSViewController {
 
     /// Which pane is under a point in window coordinates.
     private func pane(at windowPoint: NSPoint) -> String? {
+        // The maximized pane is drawn over every lane, so a point inside it is
+        // also inside whichever lane it covers — and answering with that one
+        // would move focus, which restores.
+        if maximizer.contains(windowPoint: windowPoint) { return maximizer.paneId }
         // The expanded tile first: it is drawn over its neighbours, so a point
         // inside it is also inside whichever lane it covers, and the dictionary
         // would otherwise pick one of the two at random.
@@ -469,6 +506,13 @@ public final class StripViewController: NSViewController {
     /// Diff the new snapshot against what is on screen and touch only the
     /// difference. Called after every mutation, so it must not rebuild the world.
     private func apply(_ state: StripState) {
+        // Before anything is diffed: the one rule for leaving maximize on its
+        // own (`MaximizeRule`). The pane starts back toward its slot, and the
+        // rest of this pass lays out the strip it is returning to.
+        if maximizer.isMaximized, let paneId = maximizer.paneId,
+           MaximizeRule.restores(maximized: paneId, before: lastLanes, after: state) {
+            restoreMaximizedPane(animated: true)
+        }
         let previous = lastLanes
         lastLanes = state.lanes
         let previousStrip = previous.filter { $0.dock == nil }
@@ -632,7 +676,9 @@ public final class StripViewController: NSViewController {
                 let controller = paneControllers[id] ?? makeController(for: pane, in: lane)
                 paneControllers[id] = controller
                 controller.apply(pane)
-                laneView.setPaneView(controller.view, for: id, at: index)
+                // A lane rebuilt while its pane is over the strip gets the slot,
+                // not the view: taking it back here would empty the overlay.
+                laneView.setPaneView(maximizer.placeholder(for: id) ?? controller.view, for: id, at: index)
                 if animated && !Motion.isReduced {
                     laneView.animatePaneViewIn(for: id, duration: Motion.pane)
                 }
@@ -1209,6 +1255,9 @@ public final class StripViewController: NSViewController {
         guard entering != isGallery else { return }
         // A drag under way belongs to the surface it started on.
         hideDropFeedback()
+        // The gallery re-parents every lane view into a tile, so a maximized
+        // pane goes home first, and at once: its lane is about to move under it.
+        restoreMaximizedPane(animated: false)
         isGallery = entering
         onLayoutChange?(layout)
         scrollView.isHidden = entering
@@ -1494,6 +1543,7 @@ public final class StripViewController: NSViewController {
             clip.setBoundsOrigin(NSPoint(x: clipOrigin(forVisible: keep), y: clip.bounds.origin.y))
             scrollView.reflectScrolledClipView(clip)
         }
+        maximizer.layout()
     }
 
     /// Whether a change at this index is worth animating.
@@ -1771,6 +1821,86 @@ public final class StripViewController: NSViewController {
         // header its lane just left — or reached — a size preset.
         if let lane = store.lane(containing: paneId) { refreshSizePreset(lane.id) }
     }
+
+    // MARK: - maximize (⇧⌘↩)
+
+    /// Whether a pane is over the strip right now, for the menu's title.
+    public var isPaneMaximized: Bool { maximizer.isMaximized }
+    /// The pane that is, for tests.
+    var maximizedPaneId: String? { maximizer.isMaximized ? maximizer.paneId : nil }
+    var maximizedOverlay: MaximizedPaneView { maximizer.overlay }
+
+    /// Restore always; maximize whenever a pane with a view has the keyboard.
+    /// Not in the gallery, where a double click already grows a tile in place.
+    public var canToggleMaximize: Bool {
+        if maximizer.isMaximized { return true }
+        guard !isGallery, let paneId = store.state.focusedPaneId else { return false }
+        return store.pane(paneId) != nil
+    }
+
+    /// The strip's visible window in this view's coordinates: between the
+    /// rails, inside an inset dock and clear of an overlay one. The sidebar is
+    /// outside this view altogether. Docks stay where they are and stay usable.
+    var maximizedViewportRect: CGRect {
+        let strip = scrollView.frame
+        return CGRect(
+            x: strip.minX + dockLayout.overlayLeft, y: strip.minY,
+            width: max(0, strip.width - dockLayout.overlayLeft - dockLayout.overlayRight),
+            height: strip.height)
+    }
+
+    /// ⇧⌘↩. The focused pane fills the strip's visible window; again, and it is
+    /// back in its lane at the frame it had.
+    ///
+    /// Writes nothing. A docked lane's pane fills the same window — the strip's,
+    /// not the dock's — and its dock keeps its place with the slot showing.
+    public func toggleMaximizeFocusedPane() {
+        if maximizer.isMaximized {
+            restoreMaximizedPane(animated: true)
+            return
+        }
+        // A second press before the first restore has landed: land it, so the
+        // pane is in its lane to be taken from.
+        maximizer.land()
+        guard !isGallery, let paneId = store.state.focusedPaneId,
+              let lane = store.lane(containing: paneId)
+        else { return }
+        guard let laneView = laneViews[lane.id],
+              let controller = paneControllers[paneId],
+              laneView.paneView(for: paneId) === controller.view
+        else {
+            // The focused lane was scrolled so far away that the strip has let
+            // its view go. There is no rect to grow from, so the key brings the
+            // lane back into view, and the next press has something to lift.
+            ensureVisible(lane.id)
+            return
+        }
+        // A preset still easing holds its terminals at a width that is not
+        // theirs; it lands first, so the slot left behind is the real one.
+        sizeTransitionEnds.removeValue(forKey: lane.id)?()
+        // The title the lane's own header is showing, from the same two sources.
+        let title = LaneHeaderModel(
+            lane: lane, telemetry: laneView.currentSessionId.flatMap { laneTelemetry[$0] }).title
+        maximizer.maximize(
+            paneId: paneId, view: controller.view, in: laneView, title: title,
+            animated: !Motion.isReduced && view.window != nil)
+        controller.takeFocus()
+    }
+
+    /// Put the maximized pane back, if there is one. Every path out of maximize
+    /// comes through here: the key, the chip, `MaximizeRule`, the gallery.
+    func restoreMaximizedPane(animated: Bool) {
+        if animated {
+            maximizer.restore(animated: true)
+        } else {
+            maximizer.restore(animated: false)
+            maximizer.land()
+        }
+    }
+
+    /// Finish a restore that is still easing. What a test calls instead of
+    /// waiting on the clock.
+    func landMaximizeTransition() { maximizer.land() }
 
     // MARK: - size presets
 
@@ -2077,6 +2207,7 @@ public final class StripViewController: NSViewController {
     }
 
     private func makeController(for pane: Pane, in lane: Lane) -> PaneController {
+        if let made = controllerFactory?(pane, lane) { return made }
         switch pane.kind {
         case .pty:
             let controller = TerminalPaneController(pane: pane, store: store, config: config)

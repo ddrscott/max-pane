@@ -56,6 +56,7 @@ public enum Command: String, CaseIterable, Sendable {
     case laneSizeMedium
     case laneSizeLarge
     case laneSizeCycle
+    case toggleMaximizePane
     case toggleMobileLayout
     case toggleBlocking
     case printPage
@@ -115,6 +116,7 @@ public enum Command: String, CaseIterable, Sendable {
         case .laneSizeMedium: return "Lane Size: Medium"
         case .laneSizeLarge: return "Lane Size: Extra Large"
         case .laneSizeCycle: return "Cycle Lane Size"
+        case .toggleMaximizePane: return "Maximize Pane"
         case .toggleMobileLayout: return "Mobile Layout"
         case .toggleBlocking: return "Block Ads on This Site"
         case .printPage: return "Print…"
@@ -289,6 +291,13 @@ public enum Command: String, CaseIterable, Sendable {
         // A command of its own rather than the chord on the three: a chord runs
         // one command, and which preset comes next depends on the lane.
         case .laneSizeCycle:   return ("\\", [.command])
+        // ⇧⌘↩, iTerm's Maximize Active Pane, and a toggle like it: the key that
+        // put the pane over the strip is the key that puts it back. Not Esc —
+        // a terminal always has a use for Esc. Nothing else here binds Return,
+        // and Ghostty's own bindings are cleared (ADR-0009), so the chord
+        // reaches the menu from a terminal; a web pane gives it up through
+        // `claims(_:)` like every other ⌘-chord in this file.
+        case .toggleMaximizePane: return ("\r", [.command, .shift])
         // No key. It is a per-lane setting you flip once for Discord and leave,
         // not a thing you do all day, and every unclaimed ⌘ chord left is one
         // a page might want. `keys` binds it for anyone who disagrees.
@@ -330,6 +339,16 @@ public enum Command: String, CaseIterable, Sendable {
         // itself — see `splitRight` above.
         case .openAnything: return [("t", [.command])]
         default: return []
+        }
+    }
+
+    /// What the menu calls this when it is already on. Only a toggle whose two
+    /// directions have different names needs one; the ⌘/ sheet and Settings
+    /// list the command by `title`, which is the direction you start from.
+    public var activeTitle: String? {
+        switch self {
+        case .toggleMaximizePane: return "Restore Pane"
+        default: return nil
         }
     }
 
@@ -443,6 +462,9 @@ public enum Command: String, CaseIterable, Sendable {
         // document out of the pane rather than acting on the site.
         case .printPage, .savePDF: return .file
         case .laneSizeSmall, .laneSizeMedium, .laneSizeLarge, .laneSizeCycle: return .view
+        // Beside the sizes and not one of them: it changes how much of the
+        // window a pane is shown in, and nothing about the lane (ADR-0019).
+        case .toggleMaximizePane: return .view
         // With the size presets, which it is the fourth of: a lane's shape.
         case .toggleMobileLayout: return .view
         // Under Navigate with Keep This Page and Fill Password: a thing you do
@@ -471,4 +493,11 @@ public protocol CommandHandling: AnyObject {
     /// Grey out what cannot be done right now (e.g. Leave Gather View when not
     /// gathered).
     func canPerform(_ command: Command) -> Bool
+    /// What the menu item says right now. A toggle with two names — Maximize
+    /// Pane, Restore Pane — answers with the one that pressing it would do.
+    func title(for command: Command) -> String
+}
+
+public extension CommandHandling {
+    func title(for command: Command) -> String { command.title }
 }

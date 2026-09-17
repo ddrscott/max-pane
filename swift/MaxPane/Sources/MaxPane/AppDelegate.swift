@@ -267,6 +267,9 @@ extension AppDelegate: NSMenuDelegate {
         for item in menu.items {
             guard let raw = item.representedObject as? String, let command = Command(rawValue: raw) else { continue }
             item.isEnabled = windowController.canPerform(command)
+            // A toggle with two names says the one pressing it would do.
+            let title = windowController.title(for: command)
+            if item.title != title { item.title = title }
         }
     }
 }

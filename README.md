@@ -452,6 +452,7 @@ Press **⌘/** for every shortcut. The three that matter:
 | **⌘[** / **⌘]** | move focus between lanes |
 | **⌃⌘[** / **⌃⌘]** | dock this lane to that edge of the window, or undock it |
 | **⌘G** | Lanes ⇄ Gallery: every lane on one screen, live; ⌘G again goes back |
+| **⇧⌘↩** | Maximize Pane: the focused pane over the whole visible strip; ⇧⌘↩ again puts it back |
 | **⌘P** | find a lane by title, URL or something it printed |
 
 ⌘O is the only door into the strip, because "something goes to the right of
@@ -1322,6 +1323,48 @@ lane wide, at two different widths, and the menu offered both. A lane you spanne
 with it still loads at its width, with no size ticked, and ⌘\\ takes it to **m**.
 A `toggleSpan` line left in `[keys]` is reported as a command that does not
 exist.
+
+### Maximizing a pane
+
+**⇧⌘↩** gives the focused pane the whole visible strip, and **⇧⌘↩** again puts it
+back exactly where it was. It is iTerm's Maximize Active Pane: a long diff, a wide
+log or a dense page for a minute, without dragging a lane or cycling it to **xl**
+and back. It is **View › Maximize Pane**, which reads **Restore Pane** while one is
+up, and `toggleMaximizePane` in `[keys]` and the ⌘/ sheet.
+
+The unit is the *pane*, not the lane: in a split lane only the focused pane
+rises, and the panes it was stacked with keep their heights. It fills the strip's
+visible window. The sidebar, both docks, the toolbar and the status bar stay
+where they are and stay usable. A row across the top carries the lane's title and
+a green `MAXIMIZED` chip with the key beside it; clicking the chip restores too.
+
+Nothing about the lane changes and nothing is written. The lane keeps its width,
+the `s | m | xl` switch does not move, the strip underneath keeps its scroll
+offset, and a relaunch comes back with every pane in its lane. The pane's view is
+lifted over the strip and a placeholder holds its slot, so "exactly where it was"
+is true because that place was never given to anything else
+([ADR-0019](docs/decisions/0019-maximize-pane-is-an-overlay.md)).
+
+It eases out of the pane's own rect on the strip's 0.22 s and back into it, and
+lands at once under Reduce Motion. A page lays out at the new width, with its
+address bar, find bar and downloads bar. A terminal gets the columns the window
+holds, and the session is told one size going up and one coming down, never one
+per frame. A page that asks for full screen while maximized fills the maximized
+pane, and leaving full screen leaves it maximized.
+
+**A docked lane's pane** maximizes into the same window, the strip's and not the
+dock's. Its dock stays at the wall with `maximized` in the slot.
+
+**What puts it back without the key** is one rule: anything that moves focus off
+the pane, or changes the shape of the strip, restores first. So ⌘[ ⌘] ⇧⌘[ ⇧⌘]
+restore and then go where they say; a lane arriving from ⌘O restores (the picker
+on its own does not, and Esc from it leaves the pane up); ⌘W closes the pane and
+the overlay fades with it; a split, a dock, a lane resize, a move or a gather
+restores; and ⌘G restores and then opens the gallery, where the command is greyed
+out because a double click already grows a tile there. A session in a covered
+lane that goes BLOCKED still shows in the sidebar, and clicking its row restores
+and then goes to it. Zoom, reload, find, a navigation or a new title leave the
+pane up. **Esc never restores**, because a terminal always has a use for Esc.
 
 ### Docking a lane to an edge
 
