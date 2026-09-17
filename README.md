@@ -24,6 +24,14 @@ app for watching several coding agents run while you read what they cite.
 Max Pane needs an Apple silicon Mac on macOS 14 or newer, and [relay-tty](https://github.com/ddrscott/relay-tty)
 1.22.0 or newer, the daemon that owns the terminal sessions.
 
+With Homebrew, both at once (relay-tty comes in as a dependency):
+
+```sh
+brew install --cask ddrscott/tap/max-pane
+```
+
+Or by hand:
+
 1. Install relay-tty:
 
    ```sh
@@ -166,6 +174,70 @@ script masks the artwork to Apple's squircle on a transparent canvas, because
 macOS 26 clips a square icon to its own squircle and paints the glass rim over
 the cut, which shows as a pale ring and light corners.
 
+### Passkeys and the provisioning profile
+
+Passkeys (WebAuthn) do not work in a web pane yet, and the reason is not in
+this repository. WebKit only answers `navigator.credentials` for a process that
+holds `com.apple.developer.web-browser.public-key-credential`, and that key is
+a *managed capability*: Apple grants it to a team after reviewing the app as a
+web browser, and the grant reaches the bundle as a provisioning profile. A
+bundle signed with the key and no profile is killed at launch — exit 137,
+before a byte of output, nothing in the unified log — which was measured on
+2026-09-16 (`docs/acceptance.md`, "Passkeys and picture-in-picture"). So the
+key is **not** in `MaxPane.entitlements`, and never will be; it enters through
+the build only when a profile is present.
+
+The plumbing is done and tested. What is **not done**, because it needs the
+Account Holder's Apple Developer account and cannot be done from a build box:
+
+1. **File the request.** Signed in as the Account Holder at
+   developer.apple.com, open the request form for the *Web Browser Public Key
+   Credential* capability (Account → Contact Us → "Request a capability"; the
+   form is the one for `com.apple.developer.web-browser.public-key-credential`).
+   Apple's published criteria, which Max Pane meets, are worth stating in the
+   form: it registers for `http` and `https` (`CFBundleURLTypes` in
+   `Info.plist`), it has a URL field on launch (the address in every web lane's
+   chrome bar), and it navigates to the typed destination directly. State the
+   bundle id (`app.ljs.maxpane`), the team (`DH6NDWAQQ2`) and that
+   distribution is Developer ID, not the App Store. Then write
+   `docs/decisions/0017-passkeys-capability.md` with the request date, and the
+   outcome when it comes — including "denied", if that is what comes back.
+2. **Once granted, make the profile.** In Certificates, Identifiers & Profiles:
+   the `app.ljs.maxpane` identifier gains the capability under Additional
+   Capabilities; then create a *Developer ID Application* provisioning profile
+   for that identifier with the Developer ID Application certificate on this
+   Mac, download it, and put it at **`packaging/MaxPane.provisionprofile`**
+   (git-ignored; it lives on the release Mac only). `MAXPANE_PROVISIONING_PROFILE`
+   points somewhere else; set it empty to build without a profile that is there.
+3. **Build, and check the two words.** `./scripts/build-app.sh release` prints
+   `passkeys: on — profile … (team …, app …, expires …)` and embeds the profile
+   as `Contents/embedded.provisionprofile`; `codesign -d --entitlements :-
+   build/MaxPane.app` shows the key. `make-dmg.sh` refuses a bundle where the
+   key and the embedded profile disagree.
+4. **Prove it**, in a throwaway instance (`MAXPANE_APP=build/verify.app`), and
+   write the result into `docs/acceptance.md`:
+   `PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()` is
+   `true`, and Register on webauthn.io shows the system passkey sheet. A
+   throwaway username, never a real account. If the app is killed at launch
+   with the profile in place, the profile does not match the bundle: check the
+   team, the identifier and the expiry, which `scripts/entitlements.sh` checks
+   too and would have refused had they been readable from the file.
+
+What the scripts do, so the behaviour without a profile is recognisable as
+today's: `scripts/entitlements.sh` is asked for the entitlements to sign with,
+and answers `off` — the shipped file, byte for byte — when there is no profile,
+when the signature is ad-hoc (a managed capability needs a team, so an ad-hoc
+build ignores any profile), or when the profile covers a different bundle id
+(a throwaway `build/verify.app` is not the app Apple approved). It answers
+`on` — the shipped file plus the key and the profile's own
+`com.apple.application-identifier` and `com.apple.developer.team-identifier`,
+which the kernel matches against the profile — only for a profile that grants
+the key, has not expired and names the signing identity's team. A profile that
+is present but fails any of those stops the build with the reason, rather than
+shipping a build that quietly lacks what was asked for. If Apple declines the
+request, nothing changes in the build: the ADR records it, and the paragraph
+in [A web lane](#a-web-lane) stays as it is.
+
 ## Test
 
 ```sh
@@ -180,6 +252,11 @@ Use `scripts/test.sh` rather than a bare `swift test`: swift-testing ships insid
 Command Line Tools but SwiftPM does not look for it there, and the fix is a
 framework search path plus two rpaths pointing at two different directories. The
 failure without them is a `dlopen` error that names neither.
+
+The default run opens with `scripts/tests/entitlements.sh`, a shell test of the
+signing decision in `scripts/entitlements.sh` (see [Passkeys and the
+provisioning profile](#passkeys-and-the-provisioning-profile)): every branch,
+against decoded fixture profiles, in milliseconds. It runs on its own too.
 
 ### What the default run leaves out, and why
 
@@ -465,6 +542,17 @@ ID and a DMG. The PiP window is the page's — destroying the web view closes it
 — so a pane whose video is in PiP is not evicted (ADR-0003) until the video is
 back inline; the page says which through `WebPictureInPicture`. Closing the lane
 still closes the window, as the page goes with the lane.
+
+**Passkeys are not available in a pane.** A site's "sign in with a passkey"
+gets `NotAllowedError` at once, no sheet, no QR code, and
+`isUserVerifyingPlatformAuthenticatorAvailable()` says `false`, so a well-built
+site offers a password instead. WebKit reserves WebAuthn for apps holding
+Apple's web-browser public-key-credential capability, which Apple grants to a
+team on request and delivers as a provisioning profile; without the profile the
+entitlement kills the app at launch. The build carries the profile the day one
+exists — [Passkeys and the provisioning
+profile](#passkeys-and-the-provisioning-profile) says what to ask Apple for —
+and until then a passkey site wants a password or another device's browser.
 
 **Mobile Layout**, in the lane's `⋯` menu and the View menu, asks the site for
 its phone page. A portrait lane is a phone's shape, and a site that draws one

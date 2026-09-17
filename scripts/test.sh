@@ -113,6 +113,12 @@ webkit_skip_report() {
 }
 
 default_run() {
+  # The signing decision (scripts/entitlements.sh) has branches that codesign
+  # cannot exercise without a profile from Apple; this runs every one of them
+  # against decoded fixtures. Milliseconds, so it is in the edit-loop run.
+  ./scripts/tests/entitlements.sh
+
+  echo
   echo "==> laned-core"
   cargo test --workspace
 

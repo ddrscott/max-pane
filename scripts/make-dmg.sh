@@ -93,6 +93,31 @@ if [ -n "$MISSING" ]; then
 fi
 echo "==> notarisable: hardened runtime and secure timestamp present"
 
+# Passkeys. The bundle either carries the web-browser public-key-credential
+# entitlement *and* the provisioning profile that grants it, or neither. The
+# key without the profile is an app that is SIGKILLed on every Mac at launch;
+# the profile without the key is a build that had passkeys in hand and did not
+# take them. build-app.sh (via scripts/entitlements.sh) produces only the two
+# consistent states, so a mismatch here is a hand-edited bundle.
+PASSKEY="com.apple.developer.web-browser.public-key-credential"
+HAS_KEY=0; HAS_PROFILE=0
+codesign -d --entitlements :- "$APP" 2>/dev/null | grep -q "<key>$PASSKEY</key>" && HAS_KEY=1
+[ -f "$APP/Contents/embedded.provisionprofile" ] && HAS_PROFILE=1
+if [ "$HAS_KEY" != "$HAS_PROFILE" ]; then
+  if [ "$HAS_KEY" = 1 ]; then
+    echo "$APP is signed with $PASSKEY but has no Contents/embedded.provisionprofile: it will not launch anywhere." >&2
+  else
+    echo "$APP embeds a provisioning profile but is not signed with $PASSKEY." >&2
+  fi
+  echo "rebuild it: ./scripts/build-app.sh release" >&2
+  exit 1
+fi
+if [ "$HAS_KEY" = 1 ]; then
+  echo "==> passkeys: entitlement and embedded profile present"
+else
+  echo "==> passkeys: off (no provisioning profile; see the README, \"Passkeys and the provisioning profile\")"
+fi
+
 # Stage a folder with the app and an Applications symlink — the drag-to-install
 # layout every Mac user already knows. `ditto` rather than `cp -R`: it keeps
 # the bundle byte-for-byte, and a copy that drops an extended attribute breaks

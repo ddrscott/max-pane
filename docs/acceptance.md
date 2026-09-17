@@ -81,6 +81,23 @@ web-browser criteria (macOS 13.3+), and once granted it has to arrive through a
 provisioning profile embedded in the bundle. Scoped as its own queue item; the
 entitlements file alone cannot do it.
 
+*Plumbing done 2026-09-16, proof pending on Apple.* `scripts/entitlements.sh`
+now decides the signing entitlements: the shipped file unchanged unless a
+profile at `packaging/MaxPane.provisionprofile` (or
+`MAXPANE_PROVISIONING_PROFILE`) grants the key for this team and this bundle
+id, in which case the key and the profile's identifier entitlements go in and
+the profile is embedded. Checked here in both states with a *decoded fixture*
+profile for team `DH6NDWAQQ2` against a throwaway bundle
+(`build/wq-passkeys.app`): off is byte-identical to today's signature; on
+signs, `codesign --verify --deep --strict` passes, and
+`Contents/embedded.provisionprofile` is in place. That bundle was deleted at
+once — a fixture profile is not a grant, so it too would be killed at launch —
+and it was **not** launched. `scripts/tests/entitlements.sh` pins every branch
+in the default test run. Still to do, by the Account Holder: the request form,
+the profile, ADR-0017 with the outcome, and the webauthn.io proof (README,
+"Passkeys and the provisioning profile"). Until then this section's finding
+stands: no passkeys in a pane.
+
 **Picture-in-picture: failed, for a one-line reason that was ours; now on.**
 As found: `document.pictureInPictureEnabled` was `true` and
 `requestPictureInPicture` a function, but

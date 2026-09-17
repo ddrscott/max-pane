@@ -12,3 +12,7 @@ target/
 
 # Agent worktrees, created by the harness for isolated builders.
 .claude/
+
+# Apple's provisioning profile for the passkeys capability, if the owner has one.
+# It lives in packaging/ on the release Mac only; see the README.
+*.provisionprofile

@@ -109,7 +109,9 @@ fi
 # helpers are Apple's own XPC services with their own entitlements, and
 # libghostty is linked statically with no JIT. The only entitlements the app
 # carries are the camera, microphone and location ones in MaxPane.entitlements,
-# so a web page can be granted what it asked for (see the comment there).
+# so a web page can be granted what it asked for (see the comment there) — plus
+# the passkeys capability when, and only when, a provisioning profile grants it
+# (below).
 # The helper CLIs get the runtime with no entitlements: they open sockets and
 # talk to the app, nothing more.
 #
@@ -118,7 +120,27 @@ fi
 # so, because a build that dies for want of a timestamp is worse than a build
 # that cannot be notarised yet. Ad-hoc signatures take the runtime flag too, so
 # a local build exercises the same runtime a shipped one does.
-ENTITLEMENTS="swift/MaxPane/Resources/MaxPane.entitlements"
+# Passkeys. WebAuthn in a WKWebView needs
+# `com.apple.developer.web-browser.public-key-credential`, a managed capability
+# Apple grants per team through a provisioning profile; signed with the key and
+# no profile, the app is SIGKILLed at launch. scripts/entitlements.sh decides:
+# the shipped MaxPane.entitlements as is (`off`) unless a profile that covers
+# this bundle id and this team is at MAXPANE_PROVISIONING_PROFILE (default
+# packaging/MaxPane.provisionprofile; set it empty to ignore a profile that is
+# there), in which case the key and the profile's identifiers go in (`on`) and
+# the profile is embedded where the kernel looks for it. An ad-hoc build is
+# always `off`. A profile that is present but wrong stops the build. The README
+# ("Passkeys and the provisioning profile") says how to get one.
+BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Contents/Info.plist")"
+PROFILE="${MAXPANE_PROVISIONING_PROFILE-packaging/MaxPane.provisionprofile}"
+ENTITLEMENTS="$(mktemp -t maxpane-entitlements)"
+trap 'rm -f "$ENTITLEMENTS"' EXIT
+PASSKEYS="$(./scripts/entitlements.sh swift/MaxPane/Resources/MaxPane.entitlements "$ENTITLEMENTS" \
+  --bundle-id "$BUNDLE_ID" --identity "$IDENTITY" ${PROFILE:+--profile "$PROFILE"})"
+if [ "$PASSKEYS" = "on" ]; then
+  echo "==> passkeys on: embedding $PROFILE"
+  cp "$PROFILE" "$APP/Contents/embedded.provisionprofile"
+fi
 TIMESTAMP="--timestamp"
 if [ "$IDENTITY" = "-" ]; then
   # Timestamps are meaningless on an ad-hoc signature; codesign ignores the
