@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Save as PDF… has a deadline. Neither the page-height measurement nor `createPDF` is promised a completion — asked of a page mid-navigation, or whose content process goes away, WebKit drops it — and the pane was waiting on it forever: no row, no error, nothing to click. The render now runs under a 30 s deadline and a miss is a failed row in the download bar with the reason (`the page did not render as PDF within 30 s`). The same hang stuck `./scripts/test.sh` in about half of runs, because the `WebPrintTests` failure test asked for the PDF before its page had started loading (`isLoading == false` is true before `load` begins); it now waits for the page by title and fails the write against a regular file in the path rather than a missing directory, which is a failure on every filesystem
 - `scripts/test.sh` forces `MAXPANE_PROFILE=tests` and unsets the four path overrides (`MAXPANE_SOCKET`, `MAXPANE_LEDGER`, `MAXPANE_CONFIG`, `MAXPANE_DATA_SALT`) instead of defaulting the profile. A shell inside a live Max Pane pane inherits `MAXPANE_PROFILE=default` and the app's socket, so a run from there saw the empty default salt, every real-WebKit suite printed `SKIPPED`, and the run went green having proved less than it said. The default run now ends with a count of the real-WebKit suites in the tree, how many ran, which were opted out by `--skip` (now passed through to `swift test`), and how many the profile guard skipped; any of the last fails the run
 
+## [0.6.1] - 2026-09-16
+
+### Fixed
+- The 0.6.0 download trapped at its first terminal pane on any Mac but the build machine: libghostty's resource bundle was only found through the build directory's absolute path. The bundle now ships inside the app, and the release script launches the built app with that path hidden before packaging
+
 ## [0.6.0] - 2026-09-16
 
 ### Added
@@ -67,6 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Panes never inherit Claude session markers from the process that launched the app, so `claude` inside a pane saves its transcript
 - The core is linked statically, so a rebuild in the checkout cannot break the installed app
 
-[Unreleased]: https://github.com/ddrscott/max-pane/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/ddrscott/max-pane/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/ddrscott/max-pane/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/ddrscott/max-pane/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/ddrscott/max-pane/releases/tag/v0.5.0

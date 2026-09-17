@@ -52,6 +52,16 @@ cp swift/MaxPane/Resources/Info.plist "$APP/Contents/Info.plist"
 # icon and no error anywhere. The .icns is generated from AppIcon-source.png
 # by scripts/gen-app-icon.py; edit the PNG, re-run that, commit both.
 cp swift/MaxPane/Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# The Ghostty resource bundle: terminfo and shell integration, read by
+# libghostty before its runtime starts. SwiftPM's Bundle.module looks for it at
+# the app root, which codesign rejects as unsealed contents, or at this
+# machine's absolute build path, which no other machine has. The fork of
+# libghostty-spm in Package.swift asks Contents/Resources first, so it goes
+# there. Without it, the first terminal pane traps in Bundle.module — which is
+# how 0.6.0 shipped, and why this refuses rather than warns.
+GHOSTTY_BUNDLE="swift/MaxPane/.build/$CONFIG/GhosttyKit_GhosttyTerminal.bundle"
+[ -d "$GHOSTTY_BUNDLE" ] || { echo "no Ghostty resource bundle at $GHOSTTY_BUNDLE" >&2; exit 1; }
+cp -R "$GHOSTTY_BUNDLE" "$APP/Contents/Resources/GhosttyKit_GhosttyTerminal.bundle"
 
 # A throwaway bundle gets a throwaway bundle id.
 #

@@ -18,7 +18,12 @@ let package = Package(
         .package(path: "../MaxPaneCore"),
         // Ghostty's terminal core, as a prebuilt XCFramework. See ADR-0009 for
         // why this replaced SwiftTerm.
-        .package(url: "https://github.com/Lakr233/libghostty-spm.git", from: "1.5.2"),
+        // A fork, one commit ahead of upstream 1.6.20260909: the Ghostty
+        // resource bundle is looked up in the app's Contents/Resources before
+        // SwiftPM's Bundle.module, which only knows the app root (unsealable)
+        // and this machine's build directory. build-app.sh copies the bundle
+        // there. Rebase the branch `max-pane` when taking an upstream release.
+        .package(url: "https://github.com/ddrscott/libghostty-spm.git", exact: "1.6.20260909-maxpane.1"),
     ],
     targets: [
         // zlib's gzip container. BUFFER_REPLAY_GZ (0x13) is a complete RFC 1952
