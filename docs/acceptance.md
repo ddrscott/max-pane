@@ -49,3 +49,58 @@ surfaced rather than quietly reinterpreted.
 
 None of these were reinterpreted silently. Each has an ADR saying what was built
 instead and why.
+
+## Passkeys and picture-in-picture in a web pane
+
+Checked 2026-09-16 in a throwaway `verify` profile (`MAXPANE_APP=build/verify.app`,
+signed with the Developer ID, the hardened runtime and the three entitlements in
+`MaxPane.entitlements`, exactly as a shipped build is), driven with a local probe
+page on `localhost:18923` that beaconed every result to a request-logging server,
+and with real mouse events from a small `CGEvent` helper. System Events' AX
+"click" was not enough: WebKit answered it with `NotAllowedError: The document
+is not focused` for WebAuthn and `The request is not triggered by a user
+activation` for PiP, which is worth knowing before anyone automates either again.
+
+**Passkeys / WebAuthn: fails, and the fix is not ours to type.**
+`window.PublicKeyCredential` exists, but
+`isUserVerifyingPlatformAuthenticatorAvailable()` and
+`isConditionalMediationAvailable()` both return `false`. A real click on
+`navigator.credentials.create()` for `rp.id = "localhost"` was refused at once,
+with no sheet and no QR code: `NotAllowedError: The request is not allowed by
+the user agent or the platform in the current context, possibly because the
+user denied permission.` On `webauthn.io`, Register for a throwaway username
+(`maxpane-verify-1`) put the same sentence in the page's red banner. To measure
+the entitlement rather than assume it, a copy of the bundle was re-signed with
+`com.apple.developer.web-browser.public-key-credential` added: `codesign
+--verify --deep --strict` passes, and the app exits 137 (SIGKILL) before writing
+a byte to stderr or opening a window. No kernel, `amfid` or `syspolicyd` line
+named the reason in the unified log, so the cause is inferred from Apple's
+documentation for the key, not observed: it is a *managed capability* — the
+Account Holder files a request form, Apple reviews the app against its
+web-browser criteria (macOS 13.3+), and once granted it has to arrive through a
+provisioning profile embedded in the bundle. Scoped as its own queue item; the
+entitlements file alone cannot do it.
+
+**Picture-in-picture: fails, for a one-line reason that is ours.**
+`document.pictureInPictureEnabled` is `true` and `requestPictureInPicture` is a
+function, but `video.webkitSupportsPresentationMode('picture-in-picture')` is
+`false` — before and after the video had played to its end — and a real click
+on `requestPictureInPicture()` rejected with `NotSupportedError: The video
+element does not support the Picture-in-Picture mode.` The native controls on
+the local `<video controls>` show no PiP glyph. `PaneFullscreen` is not the
+cause; that script never touches presentation modes. Traced in WebKit `main`:
+`HTMLVideoElement::supportsFullscreen(VideoFullscreenModePictureInPicture)`
+requires `mediaSession().allowsPictureInPicture()`, which is the page setting
+`allowsPictureInPictureMediaPlayback`; `UnifiedWebPreferences.yaml` gives it
+status `embedder` with a WebKit default of `false` on everything but the iOS
+family; `WKWebView.mm` copies the configuration's value into the preferences
+only under `#if PLATFORM(IOS_FAMILY)`; the public
+`WKWebViewConfiguration.allowsPictureInPictureMediaPlayback` is
+`API_AVAILABLE(ios(9.0))`; and WebKit's own macOS MiniBrowser turns it on with
+`configuration.preferences._allowsPictureInPictureMediaPlayback = YES`
+(`WKPreferencesPrivate.h`, `macos(10.13)`). So a `WKWebView` on macOS has PiP
+off unless the embedder says otherwise, and this one never did. Not exercised,
+because nothing could enter PiP: the button on YouTube and Vimeo (their controls
+sit on the same API, which says no), and whether a PiP window survives the
+pane being evicted or the lane closed. Both belong to the queue item that turns
+the preference on.
