@@ -13,6 +13,15 @@ WORKING, DONE), and survives a relaunch. Configured by hand in this phase (no
 Settings UI yet; that is Phase 2). Local behaviour with no remote servers
 configured is unchanged, byte for byte.
 
+## The bar to beat
+
+The owner can already open `https://<slug>.relaytty.com` in a web lane and get
+the relay-tty web app: sessions listed, attach, spawn, agent state. See plan
+§0. This phase is only worth landing if it is *better than that* in the ways
+the table there names for it. The report must say, in one paragraph, what a
+user gets here that the web pane does not, and what the web pane still does
+better.
+
 ## Acceptance Criteria
 
 - **Transport seam.** `RelayTransport` protocol under `RelaySession`;

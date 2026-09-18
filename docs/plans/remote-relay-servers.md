@@ -8,6 +8,30 @@ authorized remote server serves, with libghostty's rendering for all of them.
 (`~/code/relay-tty`), relaytty.com (`~/code/relaytty.com`), and the Max Pane
 tree at `82a1f3b`. Citations are `path:line` in the respective tree.
 
+## 0. The bar to beat
+
+The owner, 2026-09-17: *"I can currently access the remote relay servers via a
+browser in a browser pane; I just think we can get a better, more integrated
+experience, so the bar to beat is that."*
+
+So the baseline is not "nothing": it is the relay-tty web app, open in a web
+lane, pointed at `https://<slug>.relaytty.com`. It already lists that server's
+sessions, attaches to them, spawns, shows agent state, and handles files and
+uploads, and it costs no code here. Every phase below has to say, concretely,
+what it does that the web pane cannot, or it is not worth its weight:
+
+| The web pane today | What native adds, and where it is proven |
+|---|---|
+| xterm.js in a `WebContent` process, one per lane | libghostty on the GPU, in-process, with the same reflow, OSC 8 links and ⌘-click the local lanes have. Phase 0 measures the latency and memory gap; ADR-0001/0009 already measured it for local |
+| Sessions listed inside the page, one server per page | Every server's sessions in **the sidebar**, ranked with the local ones, BLOCKED pulsing the same green, one ⌘O to reach any of them (Phase 1) |
+| Log in by visiting the auth URL in the page | Paste the URL once in Settings; the token lives in the Keychain; every server's state is visible in one place (Phase 2) |
+| Spawn from the page's own form, on that server only | ⌘O / ⌘T / ⌘D on a remote lane start on that server in that directory, with the same recents and the same picker (Phase 3) |
+| A session is a tab inside a page | A session is a lane: it splits, docks, gathers by project, maximizes, and survives eviction and relaunch like any other |
+| Files through the page's own viewer | The same server API, but a file opens as a lane beside the terminal that named it (Phase 4) |
+
+Where native is *not* better, say so: the web pane's file browser and upload UI
+are the server's own and will stay the fuller ones until Phase 4 catches up.
+
 ## 1. What the research settled
 
 Five facts decide the shape of this feature. Three are good news.

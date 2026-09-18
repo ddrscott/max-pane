@@ -12,6 +12,15 @@ startup, see it connect and its sessions appear. Removing, disabling and
 renaming are as direct. The state of every server is visible where the user
 already looks (the sidebar), and every failure says what to do next.
 
+## The bar to beat
+
+The owner can already open `https://<slug>.relaytty.com` in a web lane and get
+the relay-tty web app: sessions listed, attach, spawn, agent state. See plan
+§0. This phase is only worth landing if it is *better than that* in the ways
+the table there names for it. The report must say, in one paragraph, what a
+user gets here that the web pane does not, and what the web pane still does
+better.
+
 ## Acceptance Criteria
 
 - **Settings › Servers.** A section in `SettingsWindow` in the app's own

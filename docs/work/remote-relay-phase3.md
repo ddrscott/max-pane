@@ -11,6 +11,15 @@ in the directory you meant, as a lane here, and goes BLOCKED in the sidebar
 when it asks something. ⌘T and ⌘D beside a remote lane start on that lane's
 server in that lane's directory. A remote project gathers with itself.
 
+## The bar to beat
+
+The owner can already open `https://<slug>.relaytty.com` in a web lane and get
+the relay-tty web app: sessions listed, attach, spawn, agent state. See plan
+§0. This phase is only worth landing if it is *better than that* in the ways
+the table there names for it. The report must say, in one paragraph, what a
+user gets here that the web pane does not, and what the web pane still does
+better.
+
 ## Acceptance Criteria
 
 - **Spawn seam.** `SessionSpawning` protocol over the three `spawn` overloads
