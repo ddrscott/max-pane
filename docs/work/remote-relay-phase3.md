@@ -11,14 +11,18 @@ in the directory you meant, as a lane here, and goes BLOCKED in the sidebar
 when it asks something. ⌘T and ⌘D beside a remote lane start on that lane's
 server in that lane's directory. A remote project gathers with itself.
 
-## The bar to beat
+## The bar, and the feel (plan §0)
 
-The owner can already open `https://<slug>.relaytty.com` in a web lane and get
-the relay-tty web app: sessions listed, attach, spawn, agent state. See plan
-§0. This phase is only worth landing if it is *better than that* in the ways
-the table there names for it. The report must say, in one paragraph, what a
-user gets here that the web pane does not, and what the web pane still does
-better.
+The owner can already open the relay-tty web app in a web lane. This phase is
+worth landing if it does, feature for feature, what that cannot; the report
+says in one paragraph what a user gets here that the web pane does not, and
+what the web pane still does better. Not a benchmark.
+
+And: **a remote session feels like a local one, with one simple mark.** Same
+header, chips, keys, menu, gallery and dock behaviour. The only difference is
+the server's name where the directory tag sits in the lane header and on the
+sidebar group. No new colour, no icon language. Anything that cannot work on
+a remote lane yet says so in one line when tried, never with a permanent badge.
 
 ## Acceptance Criteria
 

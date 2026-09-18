@@ -30,17 +30,14 @@ A throwaway, not a feature. Nothing lands in the shipped app's behaviour.
 
 ## What to measure and report (`docs/spikes/m7-remote-relay.md`)
 
-**The control that matters is the web pane.** The owner already uses the
-relay-tty web app in a web lane pointed at the tunnel URL; that is the bar to
-beat (plan §0). Measure it alongside: the same session in a web lane running
-the web app's terminal, through the same tunnel.
+The web pane is the bar to beat feature for feature (plan §0), not by
+benchmark; do not measure it here. The numbers below are for the native
+transport's own sake: they say whether a remote lane can feel like a local one.
 
 1. **Byte-exactness.** Replay of a long session (≥100 000 lines) through the
    tunnel compared to the same replay over the local socket, as spike M2 did.
-2. **Keystroke latency** through the tunnel vs LAN-direct vs local, *and vs
-   the web app in a web lane through the same tunnel*: median and p95 for a
-   key echo, measured, not felt. Also memory: the web lane's `WebContent`
-   process against the native pane, as spike M1 measured.
+2. **Keystroke latency** through the tunnel vs LAN-direct vs local: median and
+   p95 for a key echo, measured, not felt.
 3. **Reconnect.** Kill the network for 10 s, 60 s, and 3 min; sleep the Mac
    and wake it. What the pane shows during, and whether replay resumes from the
    right offset after.
