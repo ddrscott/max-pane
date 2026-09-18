@@ -47,8 +47,14 @@ final class RelayAttachmentAdapter: RelayAttachment {
     /// index keeps 200 lines and Relay keeps the real archive.
     private static let maximumReplayBytes: Double = 256 * 1024
 
-    init(sessionId: String) {
+    /// Builds the wire for each connection. Nil is today's Unix socket; the
+    /// remote-relay spike passes a `WebSocketTransport` here and nothing else
+    /// about the adapter or the pane changes (`docs/spikes/07-m7-remote-relay.md`).
+    private let makeTransport: ((DispatchQueue) -> RelayTransport)?
+
+    init(sessionId: String, transport: ((DispatchQueue) -> RelayTransport)? = nil) {
         self.sessionId = sessionId
+        self.makeTransport = transport
     }
 
     func connect() {
@@ -97,7 +103,13 @@ final class RelayAttachmentAdapter: RelayAttachment {
     private func openSession() {
         guard wantsConnection, session == nil else { return }
 
-        let session = RelaySession(id: sessionId)
+        let session: RelaySession
+        if let makeTransport {
+            let queue = DispatchQueue(label: "relay.session.\(sessionId)")
+            session = RelaySession(id: sessionId, queue: queue, transport: makeTransport(queue))
+        } else {
+            session = RelaySession(id: sessionId)
+        }
         self.session = session
 
         // Every callback arrives on the session's own queue. Hop to the main
@@ -144,7 +156,8 @@ final class RelayAttachmentAdapter: RelayAttachment {
             }
         }
         session.onClosed = { [weak self] in
-            Task { @MainActor in self?.handleClosed() }
+            let reason = session.closeReason
+            Task { @MainActor in self?.handleClosed(reason) }
         }
         session.onGzipError = { [weak self] _ in
             // A replay we cannot inflate is not fatal — reconnecting from
@@ -182,11 +195,20 @@ final class RelayAttachmentAdapter: RelayAttachment {
         session.sendInput(bytes)
     }
 
-    private func handleClosed() {
+    private func handleClosed(_ reason: RelayClose?) {
         session = nil
         isAttached = false
         guard wantsConnection else { return }
         onConnectionChange?(false)
+        // A server that refused the credential (WS close 4001/1008) will
+        // refuse it again; retrying would only be a loop with a log line.
+        if let reason, reason.isFinal {
+            Log.warn("\(sessionId): not reconnecting — \(reason)")
+            wantsConnection = false
+            pending.clear()
+            return
+        }
+        if let reason { Log.debug("\(sessionId): connection \(reason); reconnecting") }
         scheduleReconnect()
     }
 

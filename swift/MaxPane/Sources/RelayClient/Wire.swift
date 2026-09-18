@@ -14,11 +14,16 @@ public enum WSMsg {
     public static let sessionState: UInt8    = 0x12
     public static let bufferReplayGz: UInt8  = 0x13
     public static let sessionMetrics: UInt8  = 0x14
+    /// Synthesized by the Node WS server only (§2): the full `Session` JSON,
+    /// broadcast to every WS client of every session. Never on a Unix socket.
+    public static let sessionUpdate: UInt8   = 0x15
     public static let clipboard: UInt8       = 0x16
     public static let image: UInt8           = 0x17
     public static let sparklineReq: UInt8    = 0x18
     public static let sparklineHist: UInt8   = 0x19
     public static let ping: UInt8            = 0x20
+    /// The WS bridge's answer to `ping`; pty-host knows neither (§5).
+    public static let pong: UInt8            = 0x21
     public static let detach: UInt8          = 0x22
     public static let clearScrollback: UInt8 = 0x23
     public static let setTitle: UInt8        = 0x24
@@ -46,18 +51,34 @@ public func beU16(_ bytes: ArraySlice<UInt8>, _ o: Int) -> Int {
     return (Int(bytes[i]) << 8) | Int(bytes[i + 1])
 }
 
+/// A payload: `[type][data]`, no length. This is exactly one WebSocket
+/// binary message (§1, "WebSocket framing"); the Unix socket wraps it.
+public func encodePayload(_ type: UInt8, _ data: [UInt8] = []) -> [UInt8] {
+    var out = [UInt8]()
+    out.reserveCapacity(1 + data.count)
+    out.append(type)
+    out.append(contentsOf: data)
+    return out
+}
+
 /// Length-prefixed frame: [u32 BE payload_len][type][data], payload_len INCLUDES the type byte.
 public func encodeFrame(_ type: UInt8, _ payload: [UInt8] = []) -> [UInt8] {
-    let n = UInt32(1 + payload.count)
+    lengthPrefixed(encodePayload(type, payload))
+}
+
+/// The Unix-socket wrapper around a payload (§1): 4-byte big-endian length
+/// that counts the type byte.
+public func lengthPrefixed(_ payload: [UInt8]) -> [UInt8] {
+    let n = UInt32(payload.count)
     var out = [UInt8]()
-    out.reserveCapacity(5 + payload.count)
+    out.reserveCapacity(4 + payload.count)
     out.append(UInt8((n >> 24) & 0xff)); out.append(UInt8((n >> 16) & 0xff))
     out.append(UInt8((n >> 8) & 0xff));  out.append(UInt8(n & 0xff))
-    out.append(type)
     out.append(contentsOf: payload)
     return out
 }
 
+/// `RESUME` as a payload (no length prefix); the transport wraps it if it must.
 public func encodeResume(offset: Double, maxReplayBytes: Double? = nil) -> [UInt8] {
     var p = [UInt8]()
     func put(_ d: Double) {
@@ -66,10 +87,11 @@ public func encodeResume(offset: Double, maxReplayBytes: Double? = nil) -> [UInt
     }
     put(offset)
     if let m = maxReplayBytes { put(m) }
-    return encodeFrame(WSMsg.resume, p)
+    return encodePayload(WSMsg.resume, p)
 }
 
+/// `RESIZE` as a payload (no length prefix).
 public func encodeResize(cols: Int, rows: Int) -> [UInt8] {
     let c = UInt16(clamping: cols), r = UInt16(clamping: rows)
-    return encodeFrame(WSMsg.resize, [UInt8(c >> 8), UInt8(c & 0xff), UInt8(r >> 8), UInt8(r & 0xff)])
+    return encodePayload(WSMsg.resize, [UInt8(c >> 8), UInt8(c & 0xff), UInt8(r >> 8), UInt8(r & 0xff)])
 }

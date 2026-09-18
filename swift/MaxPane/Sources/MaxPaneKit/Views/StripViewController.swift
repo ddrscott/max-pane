@@ -2329,7 +2329,7 @@ public final class StripViewController: NSViewController {
                 self?.paneDidExit(pane.id)
             }
             if let sessionId = pane.relaySessionId {
-                controller.attach(RelayAttachmentAdapter(sessionId: sessionId))
+                controller.attach(SpikeRemote.adapter(for: sessionId) ?? RelayAttachmentAdapter(sessionId: sessionId))
             } else {
                 Log.warn("pty pane \(pane.id) has no relay session")
             }

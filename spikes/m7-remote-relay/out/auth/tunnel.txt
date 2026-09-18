@@ -1,0 +1,6 @@
+tunnel cookie(right)         outcome=handshake frames=['0x01', '0x03', '0x11', '0x12'] replay=90 close=None upgrade=0 tSync=216.474ms
+tunnel none                  outcome=handshake frames=['0x01', '0x03', '0x11', '0x12'] replay=90 close=None upgrade=0 tSync=143.269ms
+tunnel cookie(wrong)         outcome=handshake frames=['0x01', '0x03', '0x11', '0x12'] replay=90 close=None upgrade=0 tSync=176.844ms
+tunnel query(right)          outcome=handshake frames=['0x01', '0x03', '0x11', '0x12'] replay=90 close=None upgrade=0 tSync=152.513ms
+tunnel query(wrong)          outcome=handshake frames=['0x01', '0x03', '0x11', '0x12'] replay=90 close=None upgrade=0 tSync=146.576ms
+tunnel none, bogus id        outcome=closed-before-handshake frames=[] replay=None close=closed 1000 Session closed upgrade=0 tSync=Nonems

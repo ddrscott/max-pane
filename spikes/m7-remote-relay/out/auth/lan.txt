@@ -1,0 +1,8 @@
+port=44936
+unix socket (no auth exists)   outcome=handshake frames=['0x01', '0x03', '0x11', '0x12'] replay=90 close=None upgrade=0 tSync=2.381428ms
+loopback ws none               outcome=handshake frames=['0x01', '0x03', '0x11', '0x12'] replay=90 close=None upgrade=0 tSync=16.820493ms
+LAN 192.168.68.56 cookie(right) outcome=handshake frames=['0x01', '0x03', '0x11', '0x12'] replay=90 close=None upgrade=0 tSync=12.066447ms
+LAN none                       outcome=closed-before-handshake frames=[] replay=None close=failed 0 HTTP 401 upgrade=401 tSync=Nonems
+LAN cookie(wrong)              outcome=closed-before-handshake frames=[] replay=None close=failed 0 HTTP 401 upgrade=401 tSync=Nonems
+LAN query(right)               outcome=closed-before-handshake frames=[] replay=None close=failed 0 HTTP 401 upgrade=401 tSync=Nonems
+LAN query(wrong)               outcome=closed-before-handshake frames=[] replay=None close=failed 0 HTTP 401 upgrade=401 tSync=Nonems

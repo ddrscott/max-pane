@@ -404,6 +404,15 @@ runs as a user gesture), asks for full screen while PiP is up, checks that
 inline again, then closes the lane under a second PiP video and checks the
 window went with it and nothing else did.
 
+`RelayTransportTests` stands a Network.framework WebSocket server on a
+loopback port in place of relay-tty's `/ws/sessions/:id` bridge and checks
+what `WebSocketTransport` puts on the wire and makes of what comes back: a
+payload with no length prefix either way, text frames dropped, the PING
+cadence and the zombie, and close codes 4001/1008 as final. The transport
+itself was measured against a real server through relaytty.com in spike M7
+(`docs/spikes/07-m7-remote-relay.md`); the app reaches it only through
+`MAXPANE_SPIKE_REMOTE` until the remote-relay plan's Phase 1.
+
 `crates/laned-core/tests/durability.rs` holds the half of PRD §15's acceptance
 tests that the core owns — mostly "the strip is identical after a `kill -9`",
 which it proves by dropping `Core` with no shutdown path and reopening the file.

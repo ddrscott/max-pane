@@ -455,6 +455,15 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         if !windowed, window?.styleMask.contains(.fullScreen) == false {
             window?.toggleFullScreen(nil)
         }
+        // Spike M7: the one remote session gets a lane, once. Unreachable
+        // without MAXPANE_SPIKE_REMOTE in the environment.
+        if let spike = SpikeRemote.current, store.lane(holdingSession: spike.sessionId) == nil {
+            do {
+                if store.isGathered { try store.ungather() }
+                try store.attachSessionAtEnd(relaySessionId: spike.sessionId)
+                if let laneId = store.state.lanes.last?.id { strip.reveal(laneId: laneId, flash: true) }
+            } catch { showError(error) }
+        }
     }
 
     /// Called on quit, so a web pane's session reaches the ledger before the

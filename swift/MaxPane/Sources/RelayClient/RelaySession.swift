@@ -22,11 +22,9 @@ public final class RelaySession {
     public let id: String
     public let socketPath: String
     public let queue: DispatchQueue
-
-    private var fd: Int32 = -1
-    private var source: DispatchSourceRead?
-    private var parser = FrameParser()
-    private var readBuf = [UInt8](repeating: 0, count: 1 << 18)   // 256 KiB
+    /// The wire under the protocol. `UnixSocketTransport` unless the caller
+    /// says otherwise; `handle` below never knows which.
+    public let transport: RelayTransport
 
     /// Offset accounting (reference §3.4). DATA adds; replays add NOTHING; SYNC assigns.
     public private(set) var offset: Double = 0
@@ -34,6 +32,8 @@ public final class RelaySession {
     public private(set) var hostRows = 0
     public private(set) var handshakeDone = false
     public private(set) var timings = AttachTimings()
+    /// Why the transport stopped, once it has. `isFinal` means do not reconnect.
+    public private(set) var closeReason: RelayClose?
 
     // Counters for the bench
     public private(set) var dataFrames = 0
@@ -54,93 +54,54 @@ public final class RelaySession {
     public var onExit: ((Int32) -> Void)?
     public var onClosed: (() -> Void)?
     public var onGzipError: ((Error) -> Void)?
+    /// Every payload before `handle` sees it, for a bench that wants the ones
+    /// `handle` ignores (`SESSION_UPDATE`, `PONG`). Not for the app.
+    public var onPayload: ((UInt8, ArraySlice<UInt8>) -> Void)?
 
-    public init(id: String, socketPath: String? = nil, queue: DispatchQueue? = nil) {
+    public init(id: String, socketPath: String? = nil, queue: DispatchQueue? = nil, transport: RelayTransport? = nil) {
         self.id = id
         self.socketPath = socketPath ?? RelayPaths.socket(for: id)
-        self.queue = queue ?? DispatchQueue(label: "relay.session.\(id)")
+        let q = queue ?? DispatchQueue(label: "relay.session.\(id)")
+        self.queue = q
+        self.transport = transport ?? UnixSocketTransport(socketPath: self.socketPath, queue: q)
     }
 
-    public enum ConnectError: Error { case socketFailed(Int32), connectFailed(Int32), pathTooLong }
+    public typealias ConnectError = UnixSocketTransport.ConnectError
 
-    /// Blocking connect + IMMEDIATE first frame. The RESUME must be the first frame within
-    /// 100 ms of connect (reference §3.2) — sent here with no await in between.
+    /// Connect and send the first frame at once. The RESUME must be the first
+    /// frame within 100 ms of connect (reference §3.2); the transport owes it
+    /// to the wire before anything else happens.
     public func connect(mode: AttachMode = .resume(offset: 0, maxReplayBytes: nil)) throws {
         timings.tStart = now()
-        let s = socket(AF_UNIX, SOCK_STREAM, 0)
-        if s < 0 { throw ConnectError.socketFailed(errno) }
-        var addr = sockaddr_un()
-        addr.sun_family = sa_family_t(AF_UNIX)
-        let pathBytes = Array(socketPath.utf8)
-        guard pathBytes.count < MemoryLayout.size(ofValue: addr.sun_path) else {
-            Darwin.close(s); throw ConnectError.pathTooLong
-        }
-        withUnsafeMutableBytes(of: &addr.sun_path) { raw in
-            raw.baseAddress!.copyMemory(from: pathBytes, byteCount: pathBytes.count)
-        }
-        addr.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
-        let rc = withUnsafePointer(to: &addr) { p -> Int32 in
-            p.withMemoryRebound(to: sockaddr.self, capacity: 1) { sp in
-                Darwin.connect(s, sp, socklen_t(MemoryLayout<sockaddr_un>.size))
-            }
-        }
-        if rc != 0 { let e = errno; Darwin.close(s); throw ConnectError.connectFailed(e) }
-        timings.tConnected = now()
-
-        let frame: [UInt8]
+        let first: [UInt8]
         switch mode {
         case .resume(let off, let maxB):
             offset = off
-            frame = encodeResume(offset: off, maxReplayBytes: maxB)
+            first = encodeResume(offset: off, maxReplayBytes: maxB)
         case .observe:
-            frame = encodeFrame(WSMsg.observe)
+            first = encodePayload(WSMsg.observe)
         }
-        _ = writeAll(s, frame)
-        timings.tResumeSent = now()
-
-        fd = s
-        var flags = fcntl(s, F_GETFL, 0); flags |= O_NONBLOCK; _ = fcntl(s, F_SETFL, flags)
-        var one: Int32 = 1
-        setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
-
-        let src = DispatchSource.makeReadSource(fileDescriptor: s, queue: queue)
-        src.setEventHandler { [weak self] in self?.drain() }
-        src.setCancelHandler { [weak self] in
+        transport.onPayload = { [weak self] type, body in
             guard let self else { return }
-            if self.fd >= 0 { Darwin.close(self.fd); self.fd = -1 }
+            if self.timings.tFirstFrame == 0 { self.timings.tFirstFrame = now() }
+            self.onPayload?(type, body)
+            self.handle(type, body)
         }
-        source = src
-        src.resume()
+        transport.onClosed = { [weak self] reason in
+            guard let self else { return }
+            self.closeReason = reason
+            self.onClosed?()
+        }
+        try transport.open(firstPayload: first)
+        timings.tConnected = transport.tConnected
+        timings.tResumeSent = transport.tFirstSent
     }
 
-    public func send(_ frame: [UInt8]) { if fd >= 0 { _ = writeAll(fd, frame) } }
-    public func sendInput(_ bytes: [UInt8]) { send(encodeFrame(WSMsg.data, bytes)) }
+    public func send(_ payload: [UInt8]) { transport.send(payload) }
+    public func sendInput(_ bytes: [UInt8]) { send(encodePayload(WSMsg.data, bytes)) }
     public func sendResize(cols: Int, rows: Int) { send(encodeResize(cols: cols, rows: rows)) }
 
-    public func close() {
-        source?.cancel(); source = nil
-    }
-
-    private func drain() {
-        while true {
-            let n = readBuf.withUnsafeMutableBytes { rb in
-                Darwin.read(fd, rb.baseAddress, rb.count)
-            }
-            if n > 0 {
-                if timings.tFirstFrame == 0 { timings.tFirstFrame = now() }
-                readBuf.withUnsafeBufferPointer { bp in
-                    let slice = UnsafeBufferPointer(start: bp.baseAddress, count: n)
-                    parser.feed(slice) { type, body in self.handle(type, body) }
-                }
-                if n < readBuf.count { return }
-            } else if n == 0 {
-                close(); onClosed?(); return
-            } else {
-                if errno == EAGAIN || errno == EINTR { return }
-                close(); onClosed?(); return
-            }
-        }
-    }
+    public func close() { transport.close() }
 
     private func handle(_ type: UInt8, _ body: ArraySlice<UInt8>) {
         switch type {
