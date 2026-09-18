@@ -84,6 +84,9 @@ fn the_session_blob_stays_out_of_the_layout_snapshot() {
         position: _,
         kind: _,
         relay_session_id: _,
+        // A server name, or nothing: which box the session is on, so the
+        // shell attaches over the right wire at launch (ADR-0020).
+        relay_server: _,
         url: _,
         scroll_y: _,
         data_store_id: _,

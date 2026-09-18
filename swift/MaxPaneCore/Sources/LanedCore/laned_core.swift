@@ -658,6 +658,11 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func addPane(laneId: String, kind: PaneKind, relaySessionId: String?, url: String?) throws  -> StripState
     
     /**
+     * `add_pane` for a session on a remote server; see `attach_remote_session`.
+     */
+    func addRemotePane(laneId: String, relayServer: String, relaySessionId: String) throws  -> StripState
+    
+    /**
      * Every lane in the ledger, in ordinal order, **ignoring a gather filter**.
      *
      * `state()` narrows to the gathered project, which is right for the strip
@@ -669,6 +674,16 @@ public protocol CoreProtocol: AnyObject, Sendable {
      * created inside three seconds.
      */
     func allLanes() throws  -> [Lane]
+    
+    /**
+     * A lane for a session that is already running on a remote relay-tty
+     * server (ADR-0020). `create_lane` for a pty pane, with the server named,
+     * which is the one thing the local door cannot say. Not a parameter on
+     * `create_lane` because that door has forty callers that all mean
+     * "this Mac", and `None` in every one of them would be the field's
+     * meaning stated forty times.
+     */
+    func attachRemoteSession(placement: Placement, relayServer: String, relaySessionId: String, inheritTagFromLane: String?) throws  -> StripState
     
     /**
      * The sites the ad and tracker blocker is switched off for: registrable
@@ -1150,6 +1165,13 @@ public protocol CoreProtocol: AnyObject, Sendable {
      *
      * Returns `true` when the tag actually changed, so the shell can skip a
      * render on the overwhelmingly common no-op. **Never moves the lane.**
+     *
+     * A lane whose terminal is on a remote server is tagged `host:path` from
+     * the cwd as given, with no walk: the path is only a path on that
+     * machine, and walking this Mac's tree for it would tag the lane with
+     * whatever local repository happened to share a prefix (ADR-0020). A
+     * remote project therefore gathers with itself and never with a local
+     * path that happens to match.
      */
     func observeCwd(laneId: String, cwd: String) throws  -> Bool
     
@@ -1590,6 +1612,21 @@ open func addPane(laneId: String, kind: PaneKind, relaySessionId: String?, url: 
 }
     
     /**
+     * `add_pane` for a session on a remote server; see `attach_remote_session`.
+     */
+open func addRemotePane(laneId: String, relayServer: String, relaySessionId: String)throws  -> StripState  {
+    return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_add_remote_pane(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(laneId),
+        FfiConverterString.lower(relayServer),
+        FfiConverterString.lower(relaySessionId),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * Every lane in the ledger, in ordinal order, **ignoring a gather filter**.
      *
      * `state()` narrows to the gathered project, which is right for the strip
@@ -1605,6 +1642,27 @@ open func allLanes()throws  -> [Lane]  {
         uniffiCallStatus in
     uniffi_laned_core_fn_method_core_all_lanes(
             self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * A lane for a session that is already running on a remote relay-tty
+     * server (ADR-0020). `create_lane` for a pty pane, with the server named,
+     * which is the one thing the local door cannot say. Not a parameter on
+     * `create_lane` because that door has forty callers that all mean
+     * "this Mac", and `None` in every one of them would be the field's
+     * meaning stated forty times.
+     */
+open func attachRemoteSession(placement: Placement, relayServer: String, relaySessionId: String, inheritTagFromLane: String?)throws  -> StripState  {
+    return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_attach_remote_session(
+            self.uniffiCloneHandle(),
+        FfiConverterTypePlacement_lower(placement),
+        FfiConverterString.lower(relayServer),
+        FfiConverterString.lower(relaySessionId),
+        FfiConverterOptionString.lower(inheritTagFromLane),uniffiCallStatus
     )
 })
 }
@@ -2445,6 +2503,13 @@ open func nudgeLane(laneId: String, right: Bool)throws  -> StripState  {
      *
      * Returns `true` when the tag actually changed, so the shell can skip a
      * render on the overwhelmingly common no-op. **Never moves the lane.**
+     *
+     * A lane whose terminal is on a remote server is tagged `host:path` from
+     * the cwd as given, with no walk: the path is only a path on that
+     * machine, and walking this Mac's tree for it would tag the lane with
+     * whatever local repository happened to share a prefix (ADR-0020). A
+     * remote project therefore gathers with itself and never with a local
+     * path that happens to match.
      */
 open func observeCwd(laneId: String, cwd: String)throws  -> Bool  {
     return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
@@ -4486,6 +4551,13 @@ public struct Pane: Equatable, Hashable {
      */
     public var relaySessionId: String?
     /**
+     * `pty` only: which relay-tty server that session lives on. `None` is
+     * this Mac — the socket under `~/.relay-tty`, as before this field
+     * existed; a name is one of the shell's configured remote servers. A
+     * session is identified by the pair, never by the id alone (ADR-0020).
+     */
+    public var relayServer: String?
+    /**
      * `web`/`placeholder` only: kept current as the user navigates.
      */
     public var url: String?
@@ -4533,6 +4605,12 @@ public struct Pane: Equatable, Hashable {
          * `pty` only: the RelayTTY session this pane is attached to.
          */relaySessionId: String?, 
         /**
+         * `pty` only: which relay-tty server that session lives on. `None` is
+         * this Mac — the socket under `~/.relay-tty`, as before this field
+         * existed; a name is one of the shell's configured remote servers. A
+         * session is identified by the pair, never by the id alone (ADR-0020).
+         */relayServer: String?, 
+        /**
          * `web`/`placeholder` only: kept current as the user navigates.
          */url: String?, 
         /**
@@ -4566,6 +4644,7 @@ public struct Pane: Equatable, Hashable {
         self.position = position
         self.kind = kind
         self.relaySessionId = relaySessionId
+        self.relayServer = relayServer
         self.url = url
         self.scrollY = scrollY
         self.dataStoreId = dataStoreId
@@ -4597,6 +4676,7 @@ public struct FfiConverterTypePane: FfiConverterRustBuffer {
                 position: FfiConverterUInt32.read(from: &buf), 
                 kind: FfiConverterTypePaneKind.read(from: &buf), 
                 relaySessionId: FfiConverterOptionString.read(from: &buf), 
+                relayServer: FfiConverterOptionString.read(from: &buf), 
                 url: FfiConverterOptionString.read(from: &buf), 
                 scrollY: FfiConverterOptionDouble.read(from: &buf), 
                 dataStoreId: FfiConverterOptionString.read(from: &buf), 
@@ -4614,6 +4694,7 @@ public struct FfiConverterTypePane: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.position, into: &buf)
         FfiConverterTypePaneKind.write(value.kind, into: &buf)
         FfiConverterOptionString.write(value.relaySessionId, into: &buf)
+        FfiConverterOptionString.write(value.relayServer, into: &buf)
         FfiConverterOptionString.write(value.url, into: &buf)
         FfiConverterOptionDouble.write(value.scrollY, into: &buf)
         FfiConverterOptionString.write(value.dataStoreId, into: &buf)
@@ -4984,6 +5065,11 @@ public func FfiConverterTypePortableLane_lower(_ value: PortableLane) -> RustBuf
 public struct PortablePane: Equatable, Hashable {
     public var kind: PaneKind
     public var relaySessionId: String?
+    /**
+     * The server the session is on; `None` for this Mac, and for a file
+     * written before the field existed.
+     */
+    public var relayServer: String?
     public var url: String?
     public var scrollY: Double?
     /**
@@ -5000,7 +5086,11 @@ public struct PortablePane: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(kind: PaneKind, relaySessionId: String?, url: String?, scrollY: Double?, 
+    public init(kind: PaneKind, relaySessionId: String?, 
+        /**
+         * The server the session is on; `None` for this Mac, and for a file
+         * written before the field existed.
+         */relayServer: String?, url: String?, scrollY: Double?, 
         /**
          * This pane's share of its lane's height. 1 for a file written before the
          * field existed, or hand-edited to drop it.
@@ -5011,6 +5101,7 @@ public struct PortablePane: Equatable, Hashable {
          */mobile: Bool) {
         self.kind = kind
         self.relaySessionId = relaySessionId
+        self.relayServer = relayServer
         self.url = url
         self.scrollY = scrollY
         self.heightWeight = heightWeight
@@ -5036,6 +5127,7 @@ public struct FfiConverterTypePortablePane: FfiConverterRustBuffer {
             try PortablePane(
                 kind: FfiConverterTypePaneKind.read(from: &buf), 
                 relaySessionId: FfiConverterOptionString.read(from: &buf), 
+                relayServer: FfiConverterOptionString.read(from: &buf), 
                 url: FfiConverterOptionString.read(from: &buf), 
                 scrollY: FfiConverterOptionDouble.read(from: &buf), 
                 heightWeight: FfiConverterDouble.read(from: &buf), 
@@ -5047,6 +5139,7 @@ public struct FfiConverterTypePortablePane: FfiConverterRustBuffer {
     public static func write(_ value: PortablePane, into buf: inout [UInt8]) {
         FfiConverterTypePaneKind.write(value.kind, into: &buf)
         FfiConverterOptionString.write(value.relaySessionId, into: &buf)
+        FfiConverterOptionString.write(value.relayServer, into: &buf)
         FfiConverterOptionString.write(value.url, into: &buf)
         FfiConverterOptionDouble.write(value.scrollY, into: &buf)
         FfiConverterDouble.write(value.heightWeight, into: &buf)
@@ -7440,7 +7533,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_add_pane() != 2752) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_add_remote_pane() != 45553) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_all_lanes() != 64277) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_attach_remote_session() != 58762) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_blocking_exempt_domains() != 23383) {
@@ -7572,7 +7671,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_nudge_lane() != 50960) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_laned_core_checksum_method_core_observe_cwd() != 36) {
+    if (uniffi_laned_core_checksum_method_core_observe_cwd() != 11252) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_pair() != 61001) {

@@ -274,9 +274,19 @@ RustBuffer uniffi_laned_core_fn_method_core_add_bookmark(uint64_t ptr, RustBuffe
 RustBuffer uniffi_laned_core_fn_method_core_add_pane(uint64_t ptr, RustBuffer lane_id, RustBuffer kind, RustBuffer relay_session_id, RustBuffer url, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_ADD_REMOTE_PANE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_ADD_REMOTE_PANE
+RustBuffer uniffi_laned_core_fn_method_core_add_remote_pane(uint64_t ptr, RustBuffer lane_id, RustBuffer relay_server, RustBuffer relay_session_id, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_ALL_LANES
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_ALL_LANES
 RustBuffer uniffi_laned_core_fn_method_core_all_lanes(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_ATTACH_REMOTE_SESSION
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_ATTACH_REMOTE_SESSION
+RustBuffer uniffi_laned_core_fn_method_core_attach_remote_session(uint64_t ptr, RustBuffer placement, RustBuffer relay_server, RustBuffer relay_session_id, RustBuffer inherit_tag_from_lane, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_BLOCKING_EXEMPT_DOMAINS
@@ -966,9 +976,21 @@ uint16_t uniffi_laned_core_checksum_method_core_add_pane(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_ADD_REMOTE_PANE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_ADD_REMOTE_PANE
+uint16_t uniffi_laned_core_checksum_method_core_add_remote_pane(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_ALL_LANES
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_ALL_LANES
 uint16_t uniffi_laned_core_checksum_method_core_all_lanes(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_ATTACH_REMOTE_SESSION
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_ATTACH_REMOTE_SESSION
+uint16_t uniffi_laned_core_checksum_method_core_attach_remote_session(void
     
 );
 #endif

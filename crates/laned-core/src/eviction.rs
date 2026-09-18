@@ -346,6 +346,7 @@ mod tests {
             position: 0,
             kind,
             relay_session_id: None,
+            relay_server: None,
             url: Some("https://example.com".into()),
             scroll_y: None,
             data_store_id: None,

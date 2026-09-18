@@ -230,7 +230,41 @@ impl Core {
         url: Option<String>,
         inherit_tag_from_lane: Option<String>,
     ) -> Result<StripState> {
-        self.create_lane_impl(placement, kind, relay_session_id, url, inherit_tag_from_lane, false, None)
+        self.create_lane_impl(
+            placement,
+            kind,
+            relay_session_id,
+            None,
+            url,
+            inherit_tag_from_lane,
+            false,
+            None,
+        )
+    }
+
+    /// A lane for a session that is already running on a remote relay-tty
+    /// server (ADR-0020). `create_lane` for a pty pane, with the server named,
+    /// which is the one thing the local door cannot say. Not a parameter on
+    /// `create_lane` because that door has forty callers that all mean
+    /// "this Mac", and `None` in every one of them would be the field's
+    /// meaning stated forty times.
+    pub fn attach_remote_session(
+        &self,
+        placement: Placement,
+        relay_server: String,
+        relay_session_id: String,
+        inherit_tag_from_lane: Option<String>,
+    ) -> Result<StripState> {
+        self.create_lane_impl(
+            placement,
+            PaneKind::Pty,
+            Some(relay_session_id),
+            Some(relay_server),
+            None,
+            inherit_tag_from_lane,
+            false,
+            None,
+        )
     }
 
     /// A private web lane (⇧⌘N): one pane on `url`, in a lane the ledger will
@@ -256,6 +290,7 @@ impl Core {
             placement,
             PaneKind::Web,
             None,
+            None,
             Some(url),
             inherit_tag_from_lane,
             true,
@@ -271,43 +306,19 @@ impl Core {
         relay_session_id: Option<String>,
         url: Option<String>,
     ) -> Result<StripState> {
-        let mut inner = self.inner.lock();
-        Self::refuse_second_pane(&inner.ledger, &kind, relay_session_id.as_deref())?;
-        let position = inner.ledger.next_position(&lane_id)?;
-        // A split in a private lane is private: same jar as the pane above it,
-        // so the stack is one session and not one sign-in per pane.
-        let lane = inner.ledger.lane(&lane_id)?;
-        let data_store_id = if lane.is_private {
-            lane.panes.first().and_then(|p| p.data_store_id.clone())
-        } else {
-            None
-        };
-        let pane = Pane {
-            id: new_id(),
-            lane_id: lane_id.clone(),
-            position,
-            kind,
-            relay_session_id,
-            url,
-            scroll_y: None,
-            data_store_id,
-            snapshot_path: None,
-            state: PaneState::Live,
-            // The mean of what is already there, which is the one value that
-            // gives the arrival an equal share of the *new* total while leaving
-            // every existing ratio untouched. Splitting a lane you have already
-            // tuned 70/30 therefore gives 47/20/33 — the two panes you arranged
-            // still stand in the same relation to each other, and neither is
-            // singled out to pay for the newcomer.
-            height_weight: mean_weight(&inner.ledger.height_weights(&lane_id)?),
-            zoom: 1.0,
-            mobile: false,
-        };
-        inner.ledger.insert_pane(&pane)?;
-        inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane.id)?;
-        Self::bump(&mut inner);
-        Self::snapshot(&inner)
+        self.add_pane_impl(lane_id, kind, relay_session_id, None, url)
     }
+
+    /// `add_pane` for a session on a remote server; see `attach_remote_session`.
+    pub fn add_remote_pane(
+        &self,
+        lane_id: String,
+        relay_server: String,
+        relay_session_id: String,
+    ) -> Result<StripState> {
+        self.add_pane_impl(lane_id, PaneKind::Pty, Some(relay_session_id), Some(relay_server), None)
+    }
+
 
     /// Every lane in the ledger, in ordinal order, **ignoring a gather filter**.
     ///
@@ -839,10 +850,22 @@ impl Core {
     ///
     /// Returns `true` when the tag actually changed, so the shell can skip a
     /// render on the overwhelmingly common no-op. **Never moves the lane.**
+    ///
+    /// A lane whose terminal is on a remote server is tagged `host:path` from
+    /// the cwd as given, with no walk: the path is only a path on that
+    /// machine, and walking this Mac's tree for it would tag the lane with
+    /// whatever local repository happened to share a prefix (ADR-0020). A
+    /// remote project therefore gathers with itself and never with a local
+    /// path that happens to match.
     pub fn observe_cwd(&self, lane_id: String, cwd: String) -> Result<bool> {
-        let root = self.projects.root_of(&cwd);
         let mut inner = self.inner.lock();
         let lane = inner.ledger.lane(&lane_id)?;
+        let remote = lane.panes.iter().find_map(|p| p.relay_server.as_deref());
+        let root = match remote {
+            Some(server) if !cwd.is_empty() => Some(format!("{server}:{cwd}")),
+            Some(_) => None,
+            None => self.projects.root_of(&cwd),
+        };
         if lane.project_source == ProjectSource::Manual {
             return Ok(false);
         }
@@ -1747,6 +1770,7 @@ impl Core {
                     position: position as u32,
                     kind: p.kind,
                     relay_session_id: p.relay_session_id.clone(),
+                    relay_server: p.relay_server.clone(),
                     url: p.url.clone(),
                     scroll_y: p.scroll_y,
                     data_store_id: None,
@@ -1773,6 +1797,60 @@ impl Core {
 // ---- internals (not exported over FFI) -------------------------------------
 
 impl Core {
+    /// `add_pane` and `add_remote_pane`, which differ in one string. Not
+    /// exported: uniffi would give the shell a third door.
+    fn add_pane_impl(
+        &self,
+        lane_id: String,
+        kind: PaneKind,
+        relay_session_id: Option<String>,
+        relay_server: Option<String>,
+        url: Option<String>,
+    ) -> Result<StripState> {
+        let mut inner = self.inner.lock();
+        Self::refuse_second_pane(
+            &inner.ledger,
+            &kind,
+            relay_session_id.as_deref(),
+            relay_server.as_deref(),
+        )?;
+        let position = inner.ledger.next_position(&lane_id)?;
+        // A split in a private lane is private: same jar as the pane above it,
+        // so the stack is one session and not one sign-in per pane.
+        let lane = inner.ledger.lane(&lane_id)?;
+        let data_store_id = if lane.is_private {
+            lane.panes.first().and_then(|p| p.data_store_id.clone())
+        } else {
+            None
+        };
+        let pane = Pane {
+            id: new_id(),
+            lane_id: lane_id.clone(),
+            position,
+            kind,
+            relay_session_id,
+            relay_server,
+            url,
+            scroll_y: None,
+            data_store_id,
+            snapshot_path: None,
+            state: PaneState::Live,
+            // The mean of what is already there, which is the one value that
+            // gives the arrival an equal share of the *new* total while leaving
+            // every existing ratio untouched. Splitting a lane you have already
+            // tuned 70/30 therefore gives 47/20/33 — the two panes you arranged
+            // still stand in the same relation to each other, and neither is
+            // singled out to pay for the newcomer.
+            height_weight: mean_weight(&inner.ledger.height_weights(&lane_id)?),
+            zoom: 1.0,
+            mobile: false,
+        };
+        inner.ledger.insert_pane(&pane)?;
+        inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane.id)?;
+        Self::bump(&mut inner);
+        Self::snapshot(&inner)
+    }
+
     /// A session is on the strip once.
     ///
     /// Two panes on one Relay session are the same terminal drawn twice: both
@@ -1782,15 +1860,29 @@ impl Core {
     /// because a gather filter is precisely what made the doors forget. A pty
     /// pane with no session — one whose session could not start — holds nothing
     /// and is not counted.
-    fn refuse_second_pane(ledger: &Ledger, kind: &PaneKind, relay_session_id: Option<&str>) -> Result<()> {
+    ///
+    /// Keyed on `(server, id)`: ids are eight hex characters minted per
+    /// machine, so the same id on two servers is two sessions (ADR-0020).
+    fn refuse_second_pane(
+        ledger: &Ledger,
+        kind: &PaneKind,
+        relay_session_id: Option<&str>,
+        relay_server: Option<&str>,
+    ) -> Result<()> {
         let (PaneKind::Pty, Some(id)) = (kind, relay_session_id) else { return Ok(()) };
-        let holder = ledger
-            .lanes()?
-            .into_iter()
-            .find(|l| l.panes.iter().any(|p| p.relay_session_id.as_deref() == Some(id)));
+        let holder = ledger.lanes()?.into_iter().find(|l| {
+            l.panes.iter().any(|p| {
+                p.relay_session_id.as_deref() == Some(id) && p.relay_server.as_deref() == relay_server
+            })
+        });
         match holder {
             Some(lane) => Err(CoreError::Invalid {
-                message: format!("session {id} is already on the strip, in lane {}", lane.id),
+                message: match relay_server {
+                    Some(server) => {
+                        format!("session {id} on {server} is already on the strip, in lane {}", lane.id)
+                    }
+                    None => format!("session {id} is already on the strip, in lane {}", lane.id),
+                },
             }),
             None => Ok(()),
         }
@@ -1926,13 +2018,19 @@ impl Core {
         placement: Placement,
         kind: PaneKind,
         relay_session_id: Option<String>,
+        relay_server: Option<String>,
         url: Option<String>,
         inherit_tag_from_lane: Option<String>,
         is_private: bool,
         private_store: Option<String>,
     ) -> Result<StripState> {
         let mut inner = self.inner.lock();
-        Self::refuse_second_pane(&inner.ledger, &kind, relay_session_id.as_deref())?;
+        Self::refuse_second_pane(
+            &inner.ledger,
+            &kind,
+            relay_session_id.as_deref(),
+            relay_server.as_deref(),
+        )?;
         let ordinal = Self::place(&mut inner.ledger, &placement)?;
 
         let (project_root, project_source) = match inherit_tag_from_lane {
@@ -1968,6 +2066,7 @@ impl Core {
             position: 0,
             kind,
             relay_session_id,
+            relay_server,
             url,
             scroll_y: None,
             // A private pane is born knowing its jar, so a sibling can be put

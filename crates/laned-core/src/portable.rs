@@ -69,6 +69,12 @@ pub fn export(lanes: &[Lane]) -> String {
                 "          \"relay_session_id\": {},\n",
                 json_opt(pane.relay_session_id.as_deref())
             ));
+            // Which server the session is on; absent or null is this Mac, so a
+            // file written before the field existed reads back as local.
+            out.push_str(&format!(
+                "          \"relay_server\": {},\n",
+                json_opt(pane.relay_server.as_deref())
+            ));
             out.push_str(&format!("          \"url\": {},\n", json_opt(pane.url.as_deref())));
             out.push_str(&format!(
                 "          \"scroll_y\": {},\n",
@@ -115,6 +121,9 @@ pub struct PortableLane {
 pub struct PortablePane {
     pub kind: PaneKind,
     pub relay_session_id: Option<String>,
+    /// The server the session is on; `None` for this Mac, and for a file
+    /// written before the field existed.
+    pub relay_server: Option<String>,
     pub url: Option<String>,
     pub scroll_y: Option<f64>,
     /// This pane's share of its lane's height. 1 for a file written before the
@@ -225,6 +234,7 @@ fn parse_pane(fields: &[(String, mini_json::Value)]) -> PortablePane {
             _ => PaneKind::Web,
         },
         relay_session_id: get("relay_session_id").and_then(|v| v.string()).map(str::to_string),
+        relay_server: get("relay_server").and_then(|v| v.string()).map(str::to_string),
         url: get("url").and_then(|v| v.string()).map(str::to_string),
         scroll_y: get("scroll_y").and_then(|v| v.number()),
         // A hand-edited 0 or a negative would make `Σw` meaningless for the
@@ -477,6 +487,7 @@ mod tests {
             position: 0,
             kind,
             relay_session_id: session.map(str::to_string),
+            relay_server: None,
             url: url.map(str::to_string),
             scroll_y: Some(1200.5),
             data_store_id: None,
@@ -508,6 +519,30 @@ mod tests {
 
         assert_eq!(back[1].panes[0].kind, PaneKind::Pty);
         assert_eq!(back[1].panes[0].relay_session_id.as_deref(), Some("a7ab2d3b"));
+        assert_eq!(back[1].panes[0].relay_server, None);
+    }
+
+    #[test]
+    fn a_remote_pane_keeps_its_server_through_the_round_trip() {
+        let mut remote = pane(PaneKind::Pty, None, Some("0368d543"));
+        remote.relay_server = Some("yorkshire".into());
+        let lanes = vec![lane("box", 656, vec![remote])];
+
+        let text = export(&lanes);
+        assert!(text.contains("\"relay_server\": \"yorkshire\""), "{text}");
+        let back = import(&text).unwrap();
+        assert_eq!(back[0].panes[0].relay_session_id.as_deref(), Some("0368d543"));
+        assert_eq!(back[0].panes[0].relay_server.as_deref(), Some("yorkshire"));
+    }
+
+    #[test]
+    fn a_file_without_the_server_field_reads_back_as_local() {
+        let text = r#"{"format":"maxpane.strip","version":1,
+            "lanes":[{"title":null,"width_pt":656,"keep_live":false,"dock":null,
+            "project_root":null,"project_source":"cwd",
+            "panes":[{"kind":"pty","relay_session_id":"a7ab2d3b","url":null,"scroll_y":null}]}]}"#;
+        let back = import(text).unwrap();
+        assert_eq!(back[0].panes[0].relay_server, None);
     }
 
     #[test]

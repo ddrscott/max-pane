@@ -35,6 +35,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("../migrations/0013_blocking_exempt.sql"),
     ),
     ("0014_lane_private", include_str!("../migrations/0014_lane_private.sql")),
+    (
+        "0015_pane_relay_server",
+        include_str!("../migrations/0015_pane_relay_server.sql"),
+    ),
 ];
 
 /// A needle as an FTS5 query: one quoted phrase, nothing else.
@@ -174,7 +178,7 @@ impl Ledger {
         // One pass over every pane beats one query per lane at 150 lanes.
         let mut stmt = self.conn.prepare(
             "SELECT id, lane_id, position, kind, relay_session_id, url, scroll_y,
-                    data_store_id, snapshot_path, state, height_weight, zoom, mobile
+                    data_store_id, snapshot_path, state, height_weight, zoom, mobile, relay_server
              FROM pane ORDER BY lane_id, position ASC",
         )?;
         let panes: Vec<Pane> = stmt.query_map([], row_to_pane)?.collect::<rusqlite::Result<_>>()?;
@@ -205,7 +209,7 @@ impl Ledger {
             .ok_or_else(|| CoreError::NotFound { kind: "lane".into(), id: id.into() })?;
         let mut stmt = self.conn.prepare(
             "SELECT id, lane_id, position, kind, relay_session_id, url, scroll_y,
-                    data_store_id, snapshot_path, state, height_weight, zoom, mobile
+                    data_store_id, snapshot_path, state, height_weight, zoom, mobile, relay_server
              FROM pane WHERE lane_id = ?1 ORDER BY position ASC",
         )?;
         lane.panes = stmt.query_map([id], row_to_pane)?.collect::<rusqlite::Result<_>>()?;
@@ -216,7 +220,8 @@ impl Ledger {
         self.conn
             .query_row(
                 "SELECT id, lane_id, position, kind, relay_session_id, url, scroll_y,
-                        data_store_id, snapshot_path, state, height_weight, zoom, mobile FROM pane WHERE id = ?1",
+                        data_store_id, snapshot_path, state, height_weight, zoom, mobile, relay_server
+                 FROM pane WHERE id = ?1",
                 [id],
                 row_to_pane,
             )
@@ -334,8 +339,9 @@ impl Ledger {
     pub fn insert_pane(&self, pane: &Pane) -> Result<()> {
         self.conn.execute(
             "INSERT INTO pane (id, lane_id, position, kind, relay_session_id, url, scroll_y,
-                               data_store_id, snapshot_path, state, height_weight, zoom, mobile)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                               data_store_id, snapshot_path, state, height_weight, zoom, mobile,
+                               relay_server)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 pane.id,
                 pane.lane_id,
@@ -350,6 +356,7 @@ impl Ledger {
                 pane.height_weight,
                 pane.zoom,
                 pane.mobile,
+                pane.relay_server,
             ],
         )?;
         Ok(())
@@ -2191,6 +2198,7 @@ fn row_to_pane(r: &Row) -> rusqlite::Result<Pane> {
         height_weight: r.get(10)?,
         zoom: r.get(11)?,
         mobile: r.get::<_, i64>(12)? != 0,
+        relay_server: r.get(13)?,
     })
 }
 

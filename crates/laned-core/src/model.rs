@@ -147,6 +147,11 @@ pub struct Pane {
     pub kind: PaneKind,
     /// `pty` only: the RelayTTY session this pane is attached to.
     pub relay_session_id: Option<String>,
+    /// `pty` only: which relay-tty server that session lives on. `None` is
+    /// this Mac — the socket under `~/.relay-tty`, as before this field
+    /// existed; a name is one of the shell's configured remote servers. A
+    /// session is identified by the pair, never by the id alone (ADR-0020).
+    pub relay_server: Option<String>,
     /// `web`/`placeholder` only: kept current as the user navigates.
     pub url: Option<String>,
     /// `web` only: restored on rehydrate.

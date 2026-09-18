@@ -100,3 +100,86 @@ fn closing_the_lane_lets_the_session_back_on() {
     core.close_lane(lane).unwrap();
     pty(&core, Some("s1")).expect("a closed lane still held its session");
 }
+
+// ---- one namespace per server (ADR-0020) ----------------------------------
+
+fn remote(core: &Core, server: &str, session: &str) -> Result<String, String> {
+    core.attach_remote_session(Placement::End, server.into(), session.into(), None)
+        .map(|st| st.lanes.last().unwrap().id.clone())
+        .map_err(|e| e.to_string())
+}
+
+/// Ids are eight hex characters minted per machine. The same id on two
+/// servers is two sessions, and neither one is the local session of that id.
+#[test]
+fn the_same_id_on_two_servers_is_two_sessions() {
+    let core = Core::open_in_memory().unwrap();
+    pty(&core, Some("0368d543")).unwrap();
+    remote(&core, "yorkshire", "0368d543").unwrap();
+    remote(&core, "alien", "0368d543").unwrap();
+
+    let lanes = core.all_lanes().unwrap();
+    assert_eq!(lanes.len(), 3);
+    let servers: Vec<Option<String>> = lanes.iter().map(|l| l.panes[0].relay_server.clone()).collect();
+    assert_eq!(servers, vec![None, Some("yorkshire".into()), Some("alien".into())]);
+    assert!(lanes.iter().all(|l| l.panes[0].relay_session_id.as_deref() == Some("0368d543")));
+}
+
+#[test]
+fn a_remote_session_already_on_the_strip_is_refused_on_its_own_server_only() {
+    let core = Core::open_in_memory().unwrap();
+    remote(&core, "yorkshire", "0368d543").unwrap();
+
+    let refused = remote(&core, "yorkshire", "0368d543").unwrap_err();
+    assert!(refused.contains("0368d543 on yorkshire is already on the strip"), "{refused}");
+    assert_eq!(core.all_lanes().unwrap().len(), 1);
+
+    // The refusal is keyed on the pair, in a split too.
+    let docs = web(&core, "https://docs");
+    assert!(core.add_remote_pane(docs.clone(), "yorkshire".into(), "0368d543".into()).is_err());
+    core.add_remote_pane(docs, "alien".into(), "0368d543".into()).unwrap();
+    assert_eq!(panes_on(&core, "0368d543"), 2);
+}
+
+/// The relay_server column survives a close and reopen: a remote lane comes
+/// back knowing which box it is on, which is what lets the shell attach it
+/// over the right transport at launch.
+#[test]
+fn a_remote_lane_survives_a_relaunch() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ledger.sqlite");
+    {
+        let core = Core::open(path.to_str().unwrap().into()).unwrap();
+        remote(&core, "yorkshire", "0368d543").unwrap();
+    }
+    let core = Core::open(path.to_str().unwrap().into()).unwrap();
+    let lanes = core.all_lanes().unwrap();
+    assert_eq!(lanes.len(), 1);
+    assert_eq!(lanes[0].panes[0].relay_server.as_deref(), Some("yorkshire"));
+    assert_eq!(lanes[0].panes[0].relay_session_id.as_deref(), Some("0368d543"));
+}
+
+/// A remote cwd is only a path on the remote machine: the tag is `host:path`,
+/// never the result of walking this machine's tree for it.
+#[test]
+fn a_remote_lane_is_tagged_host_path_without_walking_the_local_tree() {
+    let core = Core::open_in_memory().unwrap();
+    let lane = remote(&core, "yorkshire", "0368d543").unwrap();
+    // A directory that is a git repository *here*: the walk would find it.
+    let here = env!("CARGO_MANIFEST_DIR").to_string();
+
+    assert!(core.observe_cwd(lane.clone(), here.clone()).unwrap());
+    let tagged = core.all_lanes().unwrap()[0].clone();
+    assert_eq!(tagged.project_root, Some(format!("yorkshire:{here}")));
+    assert_eq!(tagged.project_source, ProjectSource::Cwd);
+
+    // Unchanged cwd is a no-op, as for a local lane.
+    assert!(!core.observe_cwd(lane.clone(), here).unwrap());
+
+    // And a local lane in the same directory does not share the tag.
+    let local = pty(&core, Some("aaaaaaaa")).unwrap();
+    core.observe_cwd(local, env!("CARGO_MANIFEST_DIR").into()).unwrap();
+    let roots: Vec<Option<String>> = core.all_lanes().unwrap().iter().map(|l| l.project_root.clone()).collect();
+    assert_ne!(roots[0], roots[1]);
+    assert!(roots[1].as_deref().map(|r| !r.contains(':')).unwrap_or(false), "{roots:?}");
+}
