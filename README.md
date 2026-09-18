@@ -1632,7 +1632,7 @@ maxpane run htop          # a terminal lane running htop
 maxpane run               # a terminal lane running your shell
 maxpane open google.com   # a web lane
 maxpane ls                # what is on the strip
-maxpane server add NAME URL   # a remote relay-tty server; see "Remote servers"
+maxpane server add NAME URL   # a remote relay-tty server, from its startup Auth URL; see "Remote servers"
 maxpane server ls             # the configured servers and how they are doing
 ```
 
@@ -1704,49 +1704,52 @@ A relay-tty server on another machine can be a source of lanes: its sessions
 appear in the sidebar and in ⌘O beside the local ones, and one of them attaches
 as an ordinary terminal lane — the same libghostty rendering, resize, replay,
 BLOCKED, DONE and reconnect as a local session — over a WebSocket to that
-server's `/ws/sessions/:id` instead of the Unix socket. This is Phase 1 of
+server's `/ws/sessions/:id` instead of the Unix socket. Phases 1 and 2 of
 [`docs/plans/remote-relay-servers.md`](docs/plans/remote-relay-servers.md);
 [ADR-0020](docs/decisions/0020-a-session-belongs-to-a-server.md) says how a
-session is identified once there is more than one server.
+session is identified once there is more than one server, and
+[ADR-0021](docs/decisions/0021-servers-are-a-pasted-url-and-a-keychain-item.md)
+why a server is added by pasting one line and where its token lives.
 
-**What works in this phase.** A session *already running* on a remote server:
-listed, attached, typed into, resized, reconnected (with the whole scrollback
-replaced rather than appended when the server answers a missed `RESUME` with
-the full ring), shown with its agent state, and back after a relaunch. The
-server's sessions are read from `GET /api/sessions` and kept current by
-`/ws/events`, polled on `session_poll_seconds` as the fallback. Its
-connection state is on the sidebar group header (`RECONNECTING · 2 RUNNING`,
-`TOKEN REFUSED · …`) when it is anything but connected, and a 401 stops the
-retrying rather than looping. **Not yet:** starting anything on a remote
-server (⌘O, ⌘T and ⌘D still start on this Mac, and beside a remote lane they
-start in your home directory), a Settings section (Phase 2), and ⌘-clicking a
-path in a remote lane, which says so in one line — the path is a path on the
-other machine, and the server's file API is Phase 4.
+**Adding one.** The server prints an auth URL when it starts:
 
-**The one mark.** A remote lane is a local lane with the server's name where
-the directory sits: `yorkshire:/home/spierce` in the lane header, on the
-sidebar group, and before the id on a ⌘O row. No other colour, glyph or badge.
-Its project tag is `yorkshire:/home/spierce/m7out` — `host:path`, never the
-result of walking this Mac's tree for a directory that only exists over
-there — so a remote project gathers with itself and never with a local path
-that happens to match.
-
-**Adding one, by hand for now.** The server prints an auth URL when it starts
-(`Auth URL (1y): https://<slug>.relaytty.com/api/auth/callback?token=…`).
-Paste the whole line:
-
-```sh
-maxpane server add yorkshire 'https://yourslug.relaytty.com/api/auth/callback?token=…'
-maxpane server ls
+```
+Auth URL (1y): https://<slug>.relaytty.com/api/auth/callback?token=…
 ```
 
-The app splits it: the base URL goes to `config.toml` as a `[[servers]]`
-table, and the token goes to the macOS Keychain as an internet password for
-the server's host — the same space and the same rules as
-[Passwords](#passwords), listed and deleted in System Settings → Passwords,
-never in the file. The app stores it rather than the CLI so the item is written
-under the app's own signature and read back without a panel. Relaunch to see
-the server's sessions. The file's shape, which you can also write yourself:
+Open Settings (⌘,) › Servers and paste that line — the whole line, colour codes
+and all, or just the URL, or a bare `http://host:port` for a server on the LAN
+with no `JWT_SECRET`. The name defaults to the host's first label (`yourslug`
+for `yourslug.relaytty.com`) and is a field you can type in first. Max Pane
+splits the line: the base URL goes to `config.toml` as a `[[servers]]` table
+and the token goes to the macOS Keychain as an internet password for the
+server's host — the same space and the same rules as [Passwords](#passwords),
+listed and deleted in System Settings → Passwords, never in the file and never
+in a log or an error. The server is asked at once (`GET /api/sessions`, off the
+main thread), and the row says what came back:
+
+| the row | what it means |
+|---|---|
+| `connected · 3 sessions` | the list arrived; its sessions are in the sidebar |
+| `refused` — *token refused — paste the Auth URL from the server's startup output* | 401: the token is wrong or the server minted a new secret; **paste token** takes a new line |
+| `no token` — *paste the Auth URL…* | the table is in the file but the Keychain has no item for its host |
+| `reconnecting` — *unreachable — host: why* | no answer; retried on `session_poll_seconds` |
+| `disabled` | `enabled = false`: kept, ignored, not shown in the sidebar |
+
+**Remove** asks first, then takes the table out of the file and the token out of
+the Keychain (unless another server shares the host). **on | off** writes
+`enabled`. The name is a field: type a new one and leave it to rename — the
+lanes attached to that server and their `host:path` project tags follow, so
+nothing detaches and nothing stops gathering. `maxpane server add NAME '<line>'`
+and `maxpane server ls` do the same from a shell, through the same door.
+
+**Everything applies live.** Adding, removing, enabling, disabling, renaming or
+pasting a token takes effect the moment the file is written: the registry gains
+or loses that server's source, the sidebar's group appears or goes, and a lane
+attached to a server that is now gone stays where it is with a one-line banner
+(`SERVER NOT CONFIGURED`) rather than vanishing — put the server back and it
+attaches again. Editing `config.toml` by hand does exactly the same, through the
+watch the settings window already uses. The file's shape:
 
 ```toml
 [[servers]]
@@ -1758,18 +1761,56 @@ enabled = true                          # optional; false keeps the entry and ig
 The local server is never listed; it is implicit, and with no `[[servers]]`
 the app is exactly what it was before servers existed. A server with no name,
 a URL that is not `http(s)://` with a host, or a name already used is skipped
-with a line on stderr saying which. The token is sent as the `session` cookie
-on every request, the WebSocket upgrade included.
+with the reason on its row and on stderr.
 
-**Until relay-tty authenticates the tunnelled WebSocket.** Through
-relaytty.com the session WebSocket is accepted with no credential at all —
-the tunnel client opens it from loopback and the server grants the localhost
-bypass (spike M7 §4) — so a tunnelled server's sessions are attachable by
-anyone who knows the slug and an eight-hex session id, until relay-tty accepts
-`?token=` on `/ws/sessions/:id` and `/ws/events` (Phase 0b of the plan). HTTP
-through the tunnel is authenticated, and LAN-direct both are; the token is
-sent on the upgrade regardless, so nothing here changes when the server starts
-checking it.
+**In the sidebar.** Local project groups come first; then each enabled server
+as its own header — the server's name, and its state (`TOKEN REFUSED`,
+`RECONNECTING`) when it is anything but connected, else `N SESSIONS` or the
+BLOCKED count — with that server's project groups under it. A refused or
+unreachable server is a header with no rows; a disabled one is not there. A
+click on the header opens Settings › Servers on that row. BLOCKED counts in the
+footer and the status bar include remote sessions.
+
+**The one mark.** A remote lane is a local lane with the server's name where
+the directory sits: `yorkshire:/home/spierce` in the lane header, on the
+sidebar group, and before the id on a ⌘O row. No other colour, glyph or badge.
+Its project tag is `yorkshire:/home/spierce/m7out` — `host:path`, never the
+result of walking this Mac's tree for a directory that only exists over
+there — so a remote project gathers with itself and never with a local path
+that happens to match.
+
+**What works, and not yet.** A session *already running* on a remote server:
+listed, attached, typed into, resized, reconnected (with the whole scrollback
+replaced rather than appended when the server answers a missed `RESUME` with
+the full ring), shown with its agent state, and back after a relaunch. The
+server's sessions are read from `GET /api/sessions` and kept current by
+`/ws/events`, polled on `session_poll_seconds` as the fallback. **Not yet:**
+starting anything on a remote server (⌘O, ⌘T and ⌘D still start on this Mac,
+and beside a remote lane they start in your home directory — Phase 3), and
+⌘-clicking a path in a remote lane, which says so in one line — the path is a
+path on the other machine, and the server's file API is Phase 4.
+
+**Against the relay-tty web app in a web lane** — the bar the plan sets. What
+you get here that the page cannot give: every server's sessions in the one
+sidebar and the one ⌘O, ranked with the local ones and BLOCKED pulsing the same
+green; one paste per server, in one place, with the token in the Keychain
+instead of a cookie per page; a session as a lane that splits, docks, gathers by
+project, maximizes and survives eviction and relaunch; and one connection per
+server rather than a whole web app per pane. What the page still does better:
+starting a session (its form; here Phase 3), and files and uploads through its
+own viewer (Phase 4).
+
+**Until relay-tty authenticates the tunnelled WebSocket.** Through relaytty.com
+the session WebSocket is accepted with no credential at all — the tunnel client
+opens it from loopback and the server grants the localhost bypass (spike M7
+§4) — so a tunnelled server's sessions are attachable by anyone who knows the
+slug and an eight-hex session id, until relay-tty accepts `?token=` on
+`/ws/sessions/:id` and `/ws/events` (Phase 0b of the plan). As of relay-tty
+1.23.0 it does not: `?token=` is read on `/ws/share` only, and `verifyWsAuth`
+reads the cookie alone. Settings says so in one line on every relaytty.com row.
+HTTP through the tunnel is authenticated, and LAN-direct both are; the token is
+sent as the `session` cookie on every request, the upgrade included, so nothing
+here changes when the server starts checking it.
 
 ### Colour
 
@@ -1871,8 +1912,10 @@ your keys and keys it does not know all survive
 finder** shows the file, and **open in editor** opens it in a terminal lane with
 your `editor` setting, the same way ⌘-clicking a path does.
 
-`theme` applies at once. Every other key, the keyboard included, applies on the
-next launch, and the window marks a changed one `$ relaunch to apply` until then.
+`theme` applies at once, and so does everything under Servers (see [Remote
+servers](#remote-servers)). Every other key, the keyboard included, applies on
+the next launch, and the window marks a changed one `$ relaunch to apply` until
+then.
 
 A value of the wrong type is skipped and its default used. The window shows
 which key was skipped and why, on that key's row. A line it cannot read at all,

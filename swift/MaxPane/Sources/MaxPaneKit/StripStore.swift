@@ -157,6 +157,17 @@ public final class StripStore {
         try attachSessionAtEnd(SessionKey(id: relaySessionId))
     }
 
+    /// A server renamed in `config.toml`: its panes and its `old:path` tags
+    /// follow, so the lanes keep attaching and keep gathering. Returns how
+    /// many panes moved. Published, since every renamed lane's header and
+    /// sidebar row change with it.
+    @discardableResult
+    func renameServer(from old: String, to new: String) throws -> Int {
+        let moved = Int(try core.renameRelayServer(old: old, new: new))
+        if moved > 0 { publish(try core.state()) }
+        return moved
+    }
+
     /// Split down (⇧⌘D): another pane in the same lane's stack.
     func addPane(to laneId: String, kind: PaneKind, relaySessionId: String?, url: String?) throws {
         publish(try core.addPane(laneId: laneId, kind: kind, relaySessionId: relaySessionId, url: url))

@@ -116,6 +116,46 @@ public final class ConfigStore {
         write(next)
     }
 
+    /// The `[[servers]]` table whose `name` is `name`, as the document names
+    /// it (`servers[2]`), or nil.
+    private func serverTable(named name: String, in document: TomlDocument) -> String? {
+        document.arrayTables(ConfigField.serversTable).first {
+            if case .success(.string(let n)) = document.entry("name", in: $0)?.value { return n == name }
+            return false
+        }
+    }
+
+    /// Take a server's table out of the file. The token is the Keychain's
+    /// business, and its removal is the caller's (`RelayServerBook`).
+    public func removeServer(named name: String) {
+        var next = document
+        guard let table = serverTable(named: name, in: next) else { return }
+        next.removeArrayTable(table)
+        write(next)
+    }
+
+    /// `enabled = …` on one server, in place; a table with no `enabled` line
+    /// gains one, since the default is true and "off" has to be written.
+    public func setServerEnabled(named name: String, _ enabled: Bool) {
+        var next = document
+        guard let table = serverTable(named: name, in: next) else { return }
+        next.set("enabled", in: table, to: .bool(enabled))
+        write(next)
+    }
+
+    /// `name = "new"` on one server, in place; refused when the new name is
+    /// already a server's. The ledger's panes follow separately.
+    @discardableResult
+    public func renameServer(from old: String, to new: String) -> Bool {
+        var next = document
+        guard old != new, let table = serverTable(named: old, in: next),
+              serverTable(named: new, in: next) == nil
+        else { return false }
+        next.set("name", in: table, to: .string(new))
+        write(next)
+        return true
+    }
+
     /// The file, created with a header comment if there is none yet — so that
     /// "Reveal" and "Open in editor" always have something to show.
     @discardableResult

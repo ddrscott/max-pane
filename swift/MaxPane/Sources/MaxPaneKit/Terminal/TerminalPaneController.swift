@@ -420,6 +420,25 @@ final class TerminalPaneController: NSObject, PaneController {
         attachment = nil
     }
 
+    /// The pane's server changed under it — added, removed, renamed, or
+    /// given a new token in Settings — so the attachment it holds is for an
+    /// endpoint that no longer exists. Drop it and attach through the new
+    /// one. A refusal is final for an attachment, not for the pane: the
+    /// banner is reset so the new attachment can report its own state, and
+    /// a server that is now gone says so through its own transport.
+    func reattach(_ attachment: RelayAttachment) {
+        self.attachment?.disconnect()
+        self.attachment = nil
+        Motion.fade(status.layer)
+        status.setState(.reconnecting)
+        status.isHidden = false
+        attach(attachment)
+    }
+
+    /// The session this pane is attached to, for the strip to find every
+    /// pane on one server.
+    var sessionKey: SessionKey? { pane.sessionKey }
+
     // MARK: - clipboard
 
     /// ⌘V, arriving from the Edit menu by way of the pane's container view.

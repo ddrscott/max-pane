@@ -159,6 +159,11 @@ public struct TomlDocument: Sendable {
               lines[start - 1].trimmingCharacters(in: .whitespaces).isEmpty {
             lines.remove(at: start)
         }
+        // The last element took the blank line `appendArrayTable` put above
+        // it with it, so the file ends where it ended before the element.
+        if start == lines.count, let last = lines.last, last.trimmingCharacters(in: .whitespaces).isEmpty {
+            lines.removeLast()
+        }
         reparse()
     }
 

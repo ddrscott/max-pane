@@ -564,6 +564,11 @@ void uniffi_laned_core_fn_method_core_remove_bookmark(uint64_t ptr, RustBuffer i
 void uniffi_laned_core_fn_method_core_rename_bookmark(uint64_t ptr, RustBuffer id, RustBuffer title, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RENAME_RELAY_SERVER
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RENAME_RELAY_SERVER
+uint32_t uniffi_laned_core_fn_method_core_rename_relay_server(uint64_t ptr, RustBuffer old, RustBuffer new, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_REVISION
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_REVISION
 uint64_t uniffi_laned_core_fn_method_core_revision(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -1321,6 +1326,12 @@ uint16_t uniffi_laned_core_checksum_method_core_remove_bookmark(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RENAME_BOOKMARK
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RENAME_BOOKMARK
 uint16_t uniffi_laned_core_checksum_method_core_rename_bookmark(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RENAME_RELAY_SERVER
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RENAME_RELAY_SERVER
+uint16_t uniffi_laned_core_checksum_method_core_rename_relay_server(void
     
 );
 #endif

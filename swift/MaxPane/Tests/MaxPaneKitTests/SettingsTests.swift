@@ -153,15 +153,15 @@ struct ConfigFileTests {
         let properties = Set(Mirror(reflecting: Config()).children.compactMap(\.label))
         let named = ConfigField.all.map(\.name)
         // Two exemptions, both tables rather than keys: `keys` is listed from
-        // `Command`, and `servers` is an array of tables the settings window
-        // does not draw yet (Phase 2 of the remote-relay plan gives it a
-        // Servers section). `ConfigFile.decode` reads both by name.
+        // `Command`, and `servers` is an array of tables drawn by the Servers
+        // section (`ServersSection`) as rows you act on, not as key rows.
+        // `ConfigFile.decode` reads both by name.
         #expect(Set(named) == properties.subtracting(["keys", "servers"]))
         #expect(Set(named).count == named.count)
         #expect(ConfigField.all.map(\.key).contains("lane_default_pt"))
         #expect(ConfigField.all.map(\.key).contains("relay_pty_host_path"))
-        // Every group but the keyboard's has a key in it.
-        for group in ConfigGroup.allCases where group != .keyboard {
+        // Every group but the keyboard's and the servers' has a key in it.
+        for group in ConfigGroup.allCases where group != .keyboard && group != .servers {
             #expect(ConfigField.all.contains { $0.group == group }, "\(group) is empty")
         }
     }

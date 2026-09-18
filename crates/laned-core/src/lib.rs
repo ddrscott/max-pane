@@ -319,6 +319,23 @@ impl Core {
         self.add_pane_impl(lane_id, PaneKind::Pty, Some(relay_session_id), Some(relay_server), None)
     }
 
+    /// A server was renamed in `config.toml`: every pane on it, and every
+    /// lane tagged `old:path` by `observe_cwd`, follows the new name, so the
+    /// lanes keep attaching and keep gathering with each other. A manual
+    /// tag is the user's own words and is left alone. Returns how many panes
+    /// moved. Nothing to do when the two names are the same.
+    pub fn rename_relay_server(&self, old: String, new: String) -> Result<u32> {
+        if old == new {
+            return Ok(0);
+        }
+        let mut inner = self.inner.lock();
+        let moved = inner.ledger.rename_relay_server(&old, &new)?;
+        if moved > 0 {
+            Self::bump(&mut inner);
+        }
+        Ok(moved)
+    }
+
 
     /// Every lane in the ledger, in ordinal order, **ignoring a gather filter**.
     ///

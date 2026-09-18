@@ -183,3 +183,36 @@ fn a_remote_lane_is_tagged_host_path_without_walking_the_local_tree() {
     assert_ne!(roots[0], roots[1]);
     assert!(roots[1].as_deref().map(|r| !r.contains(':')).unwrap_or(false), "{roots:?}");
 }
+
+/// A server renamed in `config.toml` keeps its lanes: every pane on it and
+/// every `old:path` cwd tag follow the name, a manual tag does not, and
+/// nothing on another server or on this Mac moves.
+#[test]
+fn renaming_a_server_moves_its_panes_and_its_cwd_tags() {
+    let core = Core::open_in_memory().unwrap();
+    let mine = remote(&core, "yorkshire", "0368d543").unwrap();
+    core.observe_cwd(mine.clone(), "/home/spierce/m7out".into()).unwrap();
+    let named = remote(&core, "yorkshire", "4f2a0000").unwrap();
+    core.set_manual_tag(named.clone(), Some("yorkshire:by-hand".into())).unwrap();
+    let other = remote(&core, "alien", "0368d543").unwrap();
+    core.observe_cwd(other.clone(), "/srv".into()).unwrap();
+    let local = pty(&core, Some("0368d543")).unwrap();
+
+    assert_eq!(core.rename_relay_server("yorkshire".into(), "york".into()).unwrap(), 2);
+    assert_eq!(core.rename_relay_server("york".into(), "york".into()).unwrap(), 0);
+    assert_eq!(core.rename_relay_server("nobody".into(), "x".into()).unwrap(), 0);
+
+    let lanes = core.all_lanes().unwrap();
+    let find = |id: &str| lanes.iter().find(|l| l.id == id).unwrap();
+    assert_eq!(find(&mine).panes[0].relay_server.as_deref(), Some("york"));
+    assert_eq!(find(&mine).project_root.as_deref(), Some("york:/home/spierce/m7out"));
+    assert_eq!(find(&named).panes[0].relay_server.as_deref(), Some("york"));
+    assert_eq!(find(&named).project_root.as_deref(), Some("yorkshire:by-hand"), "a manual tag was rewritten");
+    assert_eq!(find(&other).panes[0].relay_server.as_deref(), Some("alien"));
+    assert_eq!(find(&other).project_root.as_deref(), Some("alien:/srv"));
+    assert_eq!(find(&local).panes[0].relay_server, None);
+
+    // The old name is free and the new one is taken, per session.
+    remote(&core, "yorkshire", "0368d543").unwrap();
+    assert!(remote(&core, "york", "0368d543").is_err());
+}

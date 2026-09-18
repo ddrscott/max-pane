@@ -111,6 +111,14 @@ enum SidebarModel {
         /// or nil for a group on this Mac.
         var server: String? { LaneHeaderPath.splitServer(path)?.server }
 
+        /// The server's own header — `yorkshire:` with no path — which sits
+        /// above that server's project groups and carries its state. One per
+        /// enabled server, whether or not it has sessions; a click on it
+        /// opens Settings › Servers rather than folding anything.
+        var isServer: Bool { LaneHeaderPath.splitServer(path).map { $0.path.isEmpty } ?? false }
+
+        static func serverPath(_ name: String) -> String { name + ":" }
+
         /// `~/code/max-pane` → `~/CODE/MAX-PANE`; the loose-web sentinel → `WEB`.
         var header: String {
             // The path as it really is. Upper-casing it was treating a
@@ -118,6 +126,7 @@ enum SidebarModel {
             // called ~/CODE/MAX-PANE names nothing on this disk.
             if path == SidebarModel.looseWebGroup { return "Web" }
             if path == SidebarModel.bookmarksGroup { return "Bookmarks" }
+            if isServer { return server ?? path }
             return path
         }
 
@@ -125,16 +134,19 @@ enum SidebarModel {
         /// fact you cannot afford to have hidden.
         var countText: String {
             if let countOverride { return countOverride }
-            let count = blocked > 0 ? "\(blocked) BLOCKED" : (running > 0 ? "\(running) RUNNING" : "\(total) CLOSED")
-            // A remote group whose server is not reachable says so ahead of
-            // the count, because the count is then what the server last
-            // said, not what is true now.
-            if let serverState, serverState != .connected { return "\(serverState.label) · \(count)" }
-            return count
+            if isServer {
+                // The server's line: its state when it is anything but
+                // connected, else what it holds. `total` is its session
+                // count across every project on it.
+                if let serverState, serverState != .connected { return serverState.label }
+                if blocked > 0 { return "\(blocked) BLOCKED" }
+                return "\(total) SESSION\(total == 1 ? "" : "S")"
+            }
+            return blocked > 0 ? "\(blocked) BLOCKED" : (running > 0 ? "\(running) RUNNING" : "\(total) CLOSED")
         }
 
         /// The header's state is worth a colour: the server is not connected.
-        var serverIsOff: Bool { serverState.map { $0 != .connected } ?? false }
+        var serverIsOff: Bool { isServer && (serverState.map { $0 != .connected } ?? false) }
     }
 
     /// One node of the bookmarks tree, as a row.
@@ -326,10 +338,28 @@ enum SidebarModel {
         //
         // What it is not is a fourth palette. Typing at a bookmark is ⌘O's job
         // and always was; this is for the eight targets the hand already knows.
+        //
+        // Local groups first, alphabetical; then each remote server, by
+        // name, as its own header (its state, and a click to Settings) with
+        // its project groups under it — so a box's lanes read as one block
+        // rather than sorting in among the local paths by the accident of
+        // where its name falls against `~` and `/`. A server the registry
+        // watches (`servers`) gets a header with or without sessions: refused
+        // or reconnecting is a header with the state and no rows. A disabled
+        // server is not in `servers` and not here.
         var out: [Row] = bookmarkRows(bookmarks, controls)
+        var byServer: [String: [String]] = [:]
+        var local: [String] = []
         for path in grouped.keys.sorted() {
+            if let server = LaneHeaderPath.splitServer(path)?.server {
+                byServer[server, default: []].append(path)
+            } else {
+                local.append(path)
+            }
+        }
+        func emit(_ path: String) {
             let kept = grouped[path]!.filter { matches($0, controls) }
-            guard !kept.isEmpty else { continue }
+            guard !kept.isEmpty else { return }
             let collapsed = controls.collapsed.contains(path)
             out.append(.group(Group(
                 path: path,
@@ -339,8 +369,22 @@ enum SidebarModel {
                 collapsed: collapsed,
                 countOverride: nil,
                 serverState: LaneHeaderPath.splitServer(path).flatMap { servers[$0.server] })))
-            guard !collapsed else { continue }
+            guard !collapsed else { return }
             out.append(contentsOf: sorted(kept, controls).map(Row.entry))
+        }
+        for path in local { emit(path) }
+        for server in Set(servers.keys).union(byServer.keys).sorted() {
+            let paths = byServer[server] ?? []
+            let entries = paths.flatMap { grouped[$0]! }.filter { matches($0, controls) }
+            out.append(.group(Group(
+                path: Group.serverPath(server),
+                running: entries.filter(\.isRunning).count,
+                blocked: entries.filter(\.needsAttention).count,
+                total: entries.count,
+                collapsed: false,
+                countOverride: nil,
+                serverState: servers[server])))
+            for path in paths { emit(path) }
         }
         return out
     }

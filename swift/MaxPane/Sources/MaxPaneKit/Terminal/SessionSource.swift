@@ -78,6 +78,10 @@ public final class RemoteSessionSource: NSObject, SessionSource {
     public private(set) var state: ServerState = .reconnecting {
         didSet { if state != oldValue { onStateChange?(state) } }
     }
+    /// Why the server is not connected, in one line for Settings: `token
+    /// refused — …` or `unreachable — <host>: <why>`. Nil while connected.
+    /// Never carries the token.
+    public private(set) var lastError: String?
 
     private let endpoint: RelayServer
     private let pollInterval: TimeInterval
@@ -198,6 +202,7 @@ public final class RemoteSessionSource: NSObject, SessionSource {
             Log.warn("server \(name): connected, \(list.count) session\(list.count == 1 ? "" : "s")")
         }
         saidUnreachable = false
+        lastError = nil
         state = .connected
         known = Dictionary(uniqueKeysWithValues: list.filter(\.isRunning).map { ($0.id, $0) })
         emit()
@@ -216,12 +221,24 @@ public final class RemoteSessionSource: NSObject, SessionSource {
         }
     }
 
+    /// A 401 is final for this source: it stops, and says so once. A new
+    /// token makes a new source (Settings › Servers, paste), which is what
+    /// lifts it. The list goes empty — a server that refuses us has no
+    /// sessions we can speak for, and the sidebar shows its header with the
+    /// state and no rows.
     private func refuse(_ status: Int) {
-        Log.warn("server \(name): token refused (HTTP \(status)) — not retrying until relaunch")
+        Log.warn("server \(name): token refused (HTTP \(status)) — not retrying until the token is replaced")
+        lastError = endpoint.token == nil
+            ? "no token — paste the Auth URL from the server's startup output"
+            : "token refused — paste the Auth URL from the server's startup output"
         state = .refused
         poll?.invalidate(); poll = nil
         eventsTimer?.invalidate(); eventsTimer = nil
         events?.cancel(with: .goingAway, reason: nil); events = nil
+        if !known.isEmpty {
+            known = [:]
+            emit()
+        }
     }
 
     /// Said once per outage: on the first failure, and again only after a
@@ -233,6 +250,7 @@ public final class RemoteSessionSource: NSObject, SessionSource {
             Log.warn("server \(name): unreachable — \(why); retrying every \(Int(pollInterval)) s")
             saidUnreachable = true
         }
+        lastError = "unreachable — \(endpoint.baseURL.host ?? name): \(why)"
         state = .reconnecting
     }
 

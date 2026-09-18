@@ -27,6 +27,13 @@ final class SettingsWindow: Popup {
 
     private let store: ConfigStore
     private let onOpenInEditor: (URL) -> Void
+    /// The remote servers, when the window has them (the app does; a test
+    /// over a bare store draws the section's note and no rows).
+    private let serversSection: ServersSection?
+    /// The ledger's half of a server rename; set by the window controller.
+    var onRenameServer: ((String, String) -> Void)? {
+        didSet { serversSection?.onRename = onRenameServer }
+    }
 
     private let scroll = NSScrollView()
     private let documentView = SettingsDocumentView()
@@ -42,9 +49,10 @@ final class SettingsWindow: Popup {
     private var keyMonitor: Any?
     private weak var recording: KeyRow?
 
-    init(store: ConfigStore, onOpenInEditor: @escaping (URL) -> Void) {
+    init(store: ConfigStore, servers: RelayServerBook? = nil, onOpenInEditor: @escaping (URL) -> Void) {
         self.store = store
         self.onOpenInEditor = onOpenInEditor
+        self.serversSection = servers.map(ServersSection.init(book:))
         super.init(
             size: Self.size, dismissal: .explicitOnly, resizable: true,
             minSize: NSSize(width: Self.size.width, height: 420))
@@ -153,7 +161,19 @@ final class SettingsWindow: Popup {
             headers.append((group, heading))
             sections.addArrangedSubview(heading)
             sections.setCustomSpacing(10, after: heading)
-            if group == .keyboard {
+            if group == .servers {
+                if let serversSection {
+                    sections.addArrangedSubview(serversSection)
+                } else {
+                    let none = NSTextField(wrappingLabelWithString:
+                        "Remote relay-tty servers are managed from the running app's Settings; "
+                        + "this window has no server book.")
+                    none.font = Theme.mono(11)
+                    none.textColor = Theme.dimText
+                    none.preferredMaxLayoutWidth = Self.textWidth + 260
+                    sections.addArrangedSubview(none)
+                }
+            } else if group == .keyboard {
                 keyboardNote.font = Theme.mono(11)
                 keyboardNote.textColor = Theme.dimText
                 keyboardNote.preferredMaxLayoutWidth = Self.textWidth + 260
@@ -283,7 +303,7 @@ final class SettingsWindow: Popup {
         } else {
             line("Written the moment you change something. Edits made in a text editor show up here.", dim)
         }
-        line("theme applies at once; everything else on the next launch.", dim)
+        line("theme and servers apply at once; everything else on the next launch.", dim)
         return out
     }
 
@@ -309,6 +329,11 @@ final class SettingsWindow: Popup {
             clip.animator().setBoundsOrigin(origin)
         }
         select(group)
+    }
+
+    /// Outline `server`'s row for a beat, after a click on its sidebar header.
+    func mark(server name: String) {
+        serversSection?.mark(server: name)
     }
 
     private func followScroll() {
@@ -392,7 +417,7 @@ private final class SettingsDocumentView: NSView {
 /// Fade a view's contents from what it showed to what it shows next, on the
 /// pane clock. Nothing on this window changes without one.
 @MainActor
-private func crossfade(_ view: NSView, animated: Bool) {
+func crossfade(_ view: NSView, animated: Bool = true) {
     guard animated, !Motion.isReduced else { return }
     view.wantsLayer = true
     let fade = CATransition()
@@ -403,7 +428,7 @@ private func crossfade(_ view: NSView, animated: Bool) {
 }
 
 @MainActor
-private func setText(_ label: NSTextField, _ text: String, animated: Bool) {
+func setText(_ label: NSTextField, _ text: String, animated: Bool) {
     guard label.stringValue != text else { return }
     crossfade(label, animated: animated)
     label.stringValue = text
@@ -412,7 +437,7 @@ private func setText(_ label: NSTextField, _ text: String, animated: Bool) {
 /// Show or hide a view inside a stack, easing both its opacity and the room it
 /// takes, so a problem line arriving does not shove the rows below it.
 @MainActor
-private func setShown(_ view: NSView, _ shown: Bool, in container: NSView?, animated: Bool) {
+func setShown(_ view: NSView, _ shown: Bool, in container: NSView?, animated: Bool = true) {
     guard view.isHidden == shown else { return }
     guard animated, !Motion.isReduced, let container else {
         view.isHidden = !shown

@@ -6,6 +6,9 @@ public enum ConfigGroup: String, CaseIterable, Sendable {
     case galleryMotion = "Gallery & motion"
     case web = "Web & memory"
     case terminals = "Terminals & sessions"
+    /// `[[servers]]`: not keys but tables, drawn by `ServersSection` rather
+    /// than by `ConfigField` rows.
+    case servers = "Servers"
     case editorSearch = "Editor & search"
     case appearance = "Appearance"
     case keyboard = "Keyboard"

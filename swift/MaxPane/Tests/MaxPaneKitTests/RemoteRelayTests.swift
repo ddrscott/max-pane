@@ -438,7 +438,7 @@ struct RemoteLaneTests {
         }
     }
 
-    @Test("the sidebar groups a remote session under server:path with the server's state, and matches it to its own lane only")
+    @Test("the sidebar groups a remote session under server:path below the server's own header, which carries the state, and matches it to its own lane only")
     func sidebarRows() throws {
         let store = try store()
         try store.attachSessionAtEnd(SessionKey(server: "yorkshire", id: "0368d543"))
@@ -451,12 +451,19 @@ struct RemoteLaneTests {
         let groups = rows.compactMap { if case .group(let g) = $0 { return g } else { return nil } }
         let entries = rows.compactMap { if case .entry(let e) = $0 { return e } else { return nil } }
 
-        #expect(groups.map(\.path) == ["yorkshire:/home/spierce", "~/code/max-pane"])
-        #expect(groups[0].server == "yorkshire")
-        #expect(groups[0].countText == "RECONNECTING · 1 BLOCKED")
-        #expect(groups[0].serverIsOff)
-        #expect(groups[1].server == nil)
-        #expect(groups[1].countText == "1 RUNNING")
+        // Local first; then the server's header, then its project groups.
+        #expect(groups.map(\.path) == ["~/code/max-pane", "yorkshire:", "yorkshire:/home/spierce"])
+        #expect(groups[0].server == nil)
+        #expect(groups[0].countText == "1 RUNNING")
+        #expect(groups[1].isServer)
+        #expect(groups[1].server == "yorkshire")
+        #expect(groups[1].header == "yorkshire")
+        #expect(groups[1].countText == "RECONNECTING")
+        #expect(groups[1].serverIsOff)
+        #expect(groups[2].server == "yorkshire")
+        #expect(!groups[2].isServer)
+        #expect(groups[2].countText == "1 BLOCKED", "the project group says the state twice")
+        #expect(!groups[2].serverIsOff)
         let remote = try #require(entries.first { $0.sessionKey?.server == "yorkshire" })
         let local = try #require(entries.first { $0.sessionKey?.server == nil })
         #expect(remote.laneId == lanes[0].id, "the remote row did not find its lane")
@@ -610,7 +617,7 @@ struct RemoteConfigTests {
         #expect(RelayServerTokens.parseStartupURL("https://yourslug.relaytty.com") == nil)
         #expect(RelayServerTokens.parseStartupURL("https://x/api/auth/callback?token=") == nil)
         #expect(RelayServerTokens.parseStartupURL("ftp://x/?token=abc") == nil)
-        #expect(RelayServerTokens.parseStartupURL("https://x/?token=a b") == nil)
+        #expect(RelayServerTokens.parseStartupURL("https://x/?token=a%20b") == nil)
     }
 
     @Test("the control socket parses server add and server ls")

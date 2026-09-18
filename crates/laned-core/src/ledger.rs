@@ -568,6 +568,21 @@ impl Ledger {
         Ok(())
     }
 
+    /// `pane.relay_server` and the `old:path` cwd tags, `old` → `new`. See
+    /// `Core::rename_relay_server`.
+    pub fn rename_relay_server(&self, old: &str, new: &str) -> Result<u32> {
+        let panes = self.conn.execute(
+            "UPDATE pane SET relay_server = ?2 WHERE relay_server = ?1",
+            params![old, new],
+        )?;
+        self.conn.execute(
+            "UPDATE lane SET project_root = ?2 || substr(project_root, length(?1) + 1) \
+             WHERE project_source = 'cwd' AND substr(project_root, 1, length(?1) + 1) = ?1 || ':'",
+            params![old, new],
+        )?;
+        Ok(panes as u32)
+    }
+
     pub fn update_lane_title(&self, lane_id: &str, title: Option<&str>) -> Result<()> {
         self.conn.execute("UPDATE lane SET title = ?2 WHERE id = ?1", params![lane_id, title])?;
         Ok(())

@@ -1261,6 +1261,15 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func renameBookmark(id: String, title: String) throws 
     
     /**
+     * A server was renamed in `config.toml`: every pane on it, and every
+     * lane tagged `old:path` by `observe_cwd`, follows the new name, so the
+     * lanes keep attaching and keep gathering with each other. A manual
+     * tag is the user's own words and is left alone. Returns how many panes
+     * moved. Nothing to do when the two names are the same.
+     */
+    func renameRelayServer(old: String, new: String) throws  -> UInt32
+    
+    /**
      * The current revision, without marshalling a snapshot.
      *
      * Spike M3 measured a 300-lane `state()` at 2.4 ms, 88% of it uniffi
@@ -2696,6 +2705,24 @@ open func renameBookmark(id: String, title: String)throws   {try rustCallWithErr
         FfiConverterString.lower(title),uniffiCallStatus
     )
 }
+}
+    
+    /**
+     * A server was renamed in `config.toml`: every pane on it, and every
+     * lane tagged `old:path` by `observe_cwd`, follows the new name, so the
+     * lanes keep attaching and keep gathering with each other. A manual
+     * tag is the user's own words and is left alone. Returns how many panes
+     * moved. Nothing to do when the two names are the same.
+     */
+open func renameRelayServer(old: String, new: String)throws  -> UInt32  {
+    return try  FfiConverterUInt32.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_rename_relay_server(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(old),
+        FfiConverterString.lower(new),uniffiCallStatus
+    )
+})
 }
     
     /**
@@ -7705,6 +7732,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_rename_bookmark() != 34032) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_rename_relay_server() != 7241) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_revision() != 56367) {

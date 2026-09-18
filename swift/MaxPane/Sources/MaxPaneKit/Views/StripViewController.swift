@@ -207,6 +207,21 @@ public final class StripViewController: NSViewController {
     /// launch with no `[[servers]]` — is every pane on the Unix socket.
     private let servers: RelayServers?
 
+    /// A server came, went or changed in `config.toml` (`RelayServerBook`):
+    /// every terminal pane on it drops its attachment and attaches again
+    /// through whatever the server is now — a WebSocket to the new
+    /// endpoint, or the "not configured" transport whose one line the
+    /// banner shows. The lanes stay where they are (PRD §11).
+    func reattachPanes(onServer name: String) {
+        guard let servers else { return }
+        for controller in paneControllers.values {
+            guard let terminal = controller as? TerminalPaneController,
+                  let key = terminal.sessionKey, key.server == name
+            else { continue }
+            terminal.reattach(servers.adapter(for: key))
+        }
+    }
+
     public init(store: StripStore, config: Config, servers: RelayServers? = nil) {
         self.store = store
         self.config = config

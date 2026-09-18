@@ -335,6 +335,17 @@ public final class SessionRegistry {
     public private(set) var sessions: [SessionKey: SessionTelemetry] = [:]
     /// Each remote server's connection state, by name. Local is never listed.
     public private(set) var serverStates: [String: ServerState] = [:]
+    /// Why each remote server is not connected, by name, in one line; a
+    /// connected server has no entry.
+    public var serverErrors: [String: String] {
+        var out: [String: String] = [:]
+        for source in sources {
+            if let server = source.server, let remote = source as? RemoteSessionSource, let why = remote.lastError {
+                out[server] = why
+            }
+        }
+        return out
+    }
 
     private var sources: [SessionSource] = []
     /// What each source last reported, by server (`nil` is local).
@@ -389,6 +400,36 @@ public final class SessionRegistry {
     public func stop() {
         for source in sources { source.stop() }
         sources = []
+    }
+
+    /// A server added, enabled, renamed or given a new token while the app
+    /// runs: one more source, started now. Its first reading arrives when
+    /// the server answers, never here. A source for a name already watched
+    /// replaces it.
+    public func addRemote(_ source: RemoteSessionSource) {
+        removeRemote(named: source.name)
+        add(source)
+    }
+
+    /// A server removed or disabled: its source stops, its sessions leave
+    /// the merged view at once, and its state row goes. Lanes attached to
+    /// them are the strip's business (they keep their place and say why).
+    public func removeRemote(named name: String) {
+        guard let index = sources.firstIndex(where: { $0.server == name }) else { return }
+        let source = sources.remove(at: index)
+        source.onChange = nil
+        source.onStateChange = nil
+        source.stop()
+        serverStates.removeValue(forKey: name)
+        slices.removeValue(forKey: name)
+        adopt([], from: name)
+        slices.removeValue(forKey: name)
+        notify()
+    }
+
+    /// How many sessions the registry holds for a server.
+    public func sessionCount(server: String) -> Int {
+        sessions.values.filter { $0.server == server }.count
     }
 
     /// Wire a source in and start it. Its first reading replaces nothing,

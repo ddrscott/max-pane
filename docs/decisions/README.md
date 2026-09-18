@@ -24,6 +24,7 @@ implemented (PRD §0.7).
 | [0018](0018-macos-only.md) | macOS only; Linux and Windows are not planned (0017 is reserved for the passkeys capability) | Accepted |
 | [0019](0019-maximize-pane-is-an-overlay.md) | A maximized pane (⇧⌘↩) is lifted over the strip and the lane never widens; the rule for showing a pane larger than its lane, the PTY told one size per toggle, and what restores it | Accepted |
 | [0020](0020-a-session-belongs-to-a-server.md) | A session belongs to a server and is keyed on `(server, id)`, never a synthesised id; the local server is implicit and never named; a remote project root is `host:path` | Accepted |
+| [0021](0021-servers-are-a-pasted-url-and-a-keychain-item.md) | A remote server is added by pasting the one line its server printed; the token lives in the Keychain and nowhere else; `[[servers]]` applies live through the config store, from the window, the CLI and a hand edit alike | Accepted |
 
 Each ADR states the decision, what evidence decided it (usually a spike, by
 number), what was rejected and why, and what would make us revisit.

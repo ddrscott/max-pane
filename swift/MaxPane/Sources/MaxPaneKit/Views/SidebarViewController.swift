@@ -70,6 +70,8 @@ final class SidebarViewController: NSViewController {
     var onNewSession: (() -> Void)?
     /// Click a session that has no lane → attach it.
     var onAttach: ((SessionKey) -> Void)?
+    /// Click a remote server's header → Settings › Servers, on that row.
+    var onOpenServer: ((String) -> Void)?
     /// A kept page was clicked. The sidebar does not know where a page should
     /// go — `StripWindowController.launch` owns that, and it is the same
     /// decision ⌘O makes.
@@ -452,6 +454,10 @@ final class SidebarViewController: NSViewController {
     @objc private func rowClicked() {
         let row = table.clickedRow
         if let group = group(at: row) {
+            if group.isServer, let server = group.server {
+                onOpenServer?(server)
+                return
+            }
             if controls.collapsed.contains(group.path) {
                 controls.collapsed.remove(group.path)
             } else {
@@ -530,8 +536,9 @@ final class SidebarViewController: NSViewController {
     /// Collapse everything, or open everything back up — the bar's second
     /// button, and the only way to get ten projects onto one screen.
     @objc private func toggleFold() {
+        // A server's header never folds — it has no rows of its own.
         let paths = Set(rows.compactMap {
-            if case .group(let g) = $0 { return g.path } else { return nil }
+            if case .group(let g) = $0, !g.isServer { return g.path } else { return nil }
         })
         let folding = !paths.isEmpty && !paths.isSubset(of: controls.collapsed)
         controls.collapsed = folding ? controls.collapsed.union(paths) : []
@@ -693,7 +700,7 @@ final class SidebarViewController: NSViewController {
     }
 
     @objc private func collapseAll() {
-        controls.collapsed = Set(rows.compactMap { if case .group(let g) = $0 { return g.path } else { return nil } })
+        controls.collapsed = Set(rows.compactMap { if case .group(let g) = $0, !g.isServer { return g.path } else { return nil } })
         rebuild(store.state)
     }
 

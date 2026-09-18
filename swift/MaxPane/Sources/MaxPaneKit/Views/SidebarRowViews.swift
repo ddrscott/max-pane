@@ -371,6 +371,19 @@ final class SidebarGroupView: NSTableCellView {
         count.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         toolTip = group.path == SidebarModel.looseWebGroup ? "Web lanes" : group.path
+
+        // A server's header: the one mark of a remote lane is the server's
+        // name where a directory sits (ADR-0020), and here it heads the
+        // block of that server's project groups. It does not fold, so no
+        // triangle; the name reads as a heading, not a path; the count slot
+        // carries the state, and a click opens Settings › Servers.
+        if group.isServer {
+            triangle.isHidden = true
+            label.font = Theme.mono(10, weight: .medium)
+            label.textColor = .labelColor
+            label.lineBreakMode = .byTruncatingTail
+            toolTip = "\(group.header) — \(group.countText.lowercased()); click for Settings › Servers"
+        }
     }
 
     @available(*, unavailable)

@@ -23,8 +23,22 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private var helpPanel: HelpPanel?
     private var settingsWindow: SettingsWindow?
     /// `config.toml`, open for ⌘,. Set by the app delegate, which owns it
-    /// because it also applies `theme` from it.
-    public var configStore: ConfigStore?
+    /// because it also applies `theme` from it. Setting it opens the server
+    /// book, which is what makes `[[servers]]` apply live from then on.
+    public var configStore: ConfigStore? {
+        didSet {
+            guard let configStore, serverBook == nil else { return }
+            let book = RelayServerBook(
+                servers: servers, registry: sessions, store: configStore,
+                pollInterval: config.sessionPollSeconds)
+            book.onServerChanged = { [weak self] name in self?.strip.reattachPanes(onServer: name) }
+            serverBook = book
+        }
+    }
+    /// Every add, remove, enable, rename and pasted token for a remote
+    /// server goes through this (ADR-0021), from Settings, the CLI and a
+    /// hand edit of the file alike.
+    public private(set) var serverBook: RelayServerBook?
     /// Held only so a second ⌥⌘Y raises the wizard already on screen instead of
     /// stacking another one over it; the wizard keeps itself alive otherwise.
     private var importWizard: ImportHistoryWizard?
@@ -174,6 +188,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         }
         sidebar.onNewSession = { [weak self] in self?.perform(.openAnything) }
         sidebar.onAttach = { [weak self] key in self?.attach(key) }
+        // A server's header in the sidebar is the state of that server, and
+        // the place to do something about it is Settings › Servers.
+        sidebar.onOpenServer = { [weak self] name in self?.showSettings(server: name) }
         // Through `launch`, so a kept page lands exactly where a ⌘O page lands:
         // a new lane, immediately right of the one you are in.
         sidebar.onOpenBookmark = { [weak self] url in
@@ -350,33 +367,32 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     }
 
     /// `maxpane server add NAME URL`. The URL is the one the server printed at
-    /// startup, token and all: the token goes to the Keychain against the
+    /// startup, token and all: the same door Settings › Servers uses
+    /// (`RelayServerBook.add`) — the token goes to the Keychain against the
     /// server's host, the name and base URL go to `config.toml` as a
     /// `[[servers]]` table, and the server's sessions appear in the sidebar
-    /// on the next launch. Nothing here prints or logs the token.
+    /// as soon as it answers. Nothing here prints or logs the token.
     private func addServer(name: String, startupURL: String) -> OpenServer.Reply {
-        guard let (base, token) = RelayServerTokens.parseStartupURL(startupURL) else {
-            return .refused("expected the server's auth URL: https://host/api/auth/callback?token=…")
+        guard let serverBook else { return .refused("the config file is not open") }
+        switch serverBook.add(pasted: startupURL, name: name) {
+        case .failure(let why):
+            return .refused(why.text)
+        case .success(let entry):
+            let token = RelayServerTokens.parse(startupURL)?.token == nil
+                ? "no token in that URL — paste the server's Auth URL in Settings › Servers"
+                : "token stored in the Keychain"
+            return OpenServer.Reply(ok: true, lanes: "\(entry.name)\t\(entry.url)\t\(token); connecting\n")
         }
-        let entry = RelayServerEntry(name: name, url: base.absoluteString, enabled: true)
-        if let why = entry.complaint { return .refused(why) }
-        guard let configStore else { return .refused("the config file is not open") }
-        guard RelayServerTokens.save(token, for: base) else {
-            return .refused("could not store the token in the Keychain for \(base.host ?? entry.url)")
-        }
-        configStore.addServer(entry)
-        if let error = configStore.writeError { return .refused("could not write \(configStore.path.path): \(error)") }
-        return OpenServer.Reply(
-            ok: true,
-            lanes: "\(name)\t\(entry.url)\ttoken stored in the Keychain; relaunch Max Pane to see its sessions\n")
     }
 
     /// One line per configured server: name, URL, and how it is doing.
     private func describeServers() -> String {
-        config.servers.map { entry in
-            let state = entry.enabled
-                ? (sessions.serverStates[entry.name]?.label.lowercased() ?? "not loaded — relaunch")
-                : "disabled"
+        guard let serverBook else { return "" }
+        return serverBook.entries.map { entry in
+            let status = serverBook.status(of: entry)
+            var state = status.word
+            if status.kind == .connected { state += " · \(status.sessions) session\(status.sessions == 1 ? "" : "s")" }
+            if let detail = status.detail { state += " — \(detail)" }
             return "\(entry.name)\t\(entry.url)\t\(state)\n"
         }.joined()
     }
@@ -1168,12 +1184,37 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             existing.closePopup()
             return
         }
-        guard let configStore else { return }
-        let panel = SettingsWindow(store: configStore) { [weak self] file in
+        openSettings()
+    }
+
+    /// Settings, scrolled to the Servers section with `server`'s row marked
+    /// — from a click on that server's header in the sidebar. Raises the
+    /// window already open rather than stacking another.
+    private func showSettings(server: String) {
+        if let existing = settingsWindow, existing.isOpen {
+            existing.reveal(.servers, animated: true)
+            existing.mark(server: server)
+            return
+        }
+        let panel = openSettings()
+        panel?.reveal(.servers, animated: false)
+        panel?.mark(server: server)
+    }
+
+    @discardableResult
+    private func openSettings() -> SettingsWindow? {
+        guard let configStore else { return nil }
+        let panel = SettingsWindow(store: configStore, servers: serverBook) { [weak self] file in
             self?.openInEditor(file)
+        }
+        panel.onRenameServer = { [weak self] old, new in
+            do { try self?.store.renameServer(from: old, to: new) } catch {
+                Log.warn("server \(old) → \(new): the ledger's panes were not renamed: \(error.localizedDescription)")
+            }
         }
         settingsWindow = panel
         panel.present(over: window)
+        return panel
     }
 
     /// A terminal lane running the `editor` setting on `file` — the same line a
