@@ -519,6 +519,8 @@ private final class SizeRecorder: RelayAttachment {
     var onTitle: ((String) -> Void)?
     var onExit: ((Int32) -> Void)?
     var onConnectionChange: ((Bool) -> Void)?
+    var onRefused: ((String) -> Void)?
+    var onReplaceScreen: (() -> Void)?
     var claims: [Size] = []
 
     func connect() {}

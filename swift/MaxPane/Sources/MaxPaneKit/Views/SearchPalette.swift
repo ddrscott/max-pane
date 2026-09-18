@@ -543,7 +543,7 @@ final class PaletteSessionRow: NSTableCellView {
         // The id is how every other tool on this machine names the session
         // (`relay attach 4f2a…`), and the command only earns its place when the
         // title is not already it — Relay titles fall back to the argv.
-        let short = String(t.sessionId.prefix(8))
+        let short = t.server.map { "\($0):\(t.sessionId.prefix(8))" } ?? String(t.sessionId.prefix(8))
         let repeats = t.title.hasPrefix(t.command) || t.command.isEmpty
         let command = PaletteStyle.label(
             repeats ? short : "\(short) · \(t.command)",
@@ -820,7 +820,7 @@ final class SearchPaletteController: PaletteController {
         let hit = hits[row]
         let lane = store.lane(hit.laneId)
         let pane = store.pane(hit.paneId)
-        let telemetry = pane?.relaySessionId.flatMap { registry.telemetry(for: $0) }
+        let telemetry = pane?.sessionKey.flatMap { registry.telemetry(for: $0) }
         let path = telemetry?.groupPath
             ?? lane?.projectRoot.map(SessionTelemetry.abbreviate)
             ?? ""

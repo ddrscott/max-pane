@@ -18,6 +18,12 @@ protocol RelayAttachment: AnyObject {
     var onExit: ((Int32) -> Void)? { get set }
     /// `false` while reconnecting, which the pane renders rather than hides.
     var onConnectionChange: ((Bool) -> Void)? { get set }
+    /// The attachment has given up: the server refused the credential, or
+    /// is not one this launch knows. One line for the pane, naming which.
+    var onRefused: ((String) -> Void)? { get set }
+    /// Clear the emulator before the next bytes: what follows is the whole
+    /// scrollback again, not a continuation of it.
+    var onReplaceScreen: (() -> Void)? { get set }
 
     func connect()
     func disconnect()
@@ -250,12 +256,39 @@ final class TerminalPaneController: NSObject, PaneController {
         status.isHidden = true
 
         // Seed cwd from the session file so a restored lane is tagged before a
-        // single byte has arrived.
-        if let sessionId = pane.relaySessionId {
+        // single byte has arrived. A remote session has no file here; its
+        // cwd arrives from the server's list (`adoptRemoteCwd`).
+        if let sessionId = pane.relaySessionId, pane.relayServer == nil {
             currentCwd = RelaySessionDirectory().session(sessionId)?.cwd
             reportCwd()
         }
     }
+
+    /// The cwd a remote server reports for this pane's session, from the
+    /// registry. The remote shell sends no OSC 7 unless configured to
+    /// (spike M7 §5), so this is the whole of how a remote lane gets its
+    /// `host:path` tag.
+    func adoptRemoteCwd(_ cwd: String) {
+        guard !cwd.isEmpty, cwd != currentCwd else { return }
+        currentCwd = cwd
+        reportCwd()
+    }
+
+    /// One line in the banner, briefly: what could not be done, and why.
+    func showNotice(_ text: String) {
+        status.isHidden = false
+        status.setState(.notice(text))
+        Motion.fade(status.layer)
+        noticeTimer?.invalidate()
+        noticeTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, case .notice = self.status.state else { return }
+                Motion.fade(self.status.layer)
+                self.status.setState(self.isSessionAvailable ? .connected : .reconnecting)
+            }
+        }
+    }
+    private var noticeTimer: Timer?
 
     /// Attach to the live session. Separate from `init` so a lane can exist —
     /// with its ordinal, its tag and its place on the strip — while Relay is
@@ -281,8 +314,20 @@ final class TerminalPaneController: NSObject, PaneController {
             self?.adoptTitle(title)
         }
         attachment.onConnectionChange = { [weak self] connected in
-            self?.status.isHidden = connected
-            self?.status.setState(connected ? .connected : .reconnecting)
+            guard let self else { return }
+            // A refusal is final and outlives every later disconnect report.
+            if case .refused = self.status.state { return }
+            self.status.isHidden = connected
+            self.status.setState(connected ? .connected : .reconnecting)
+        }
+        attachment.onRefused = { [weak self] why in
+            self?.status.isHidden = false
+            self?.status.setState(.refused(why))
+        }
+        attachment.onReplaceScreen = { [weak self] in
+            // Home, clear the screen, clear the scrollback, then a full reset:
+            // the ring that follows is the whole screen again.
+            self?.session.receive(Data("\u{1b}[H\u{1b}[2J\u{1b}[3J\u{1b}c".utf8))
         }
         attachment.onExit = { [weak self] code in
             // Deliberately not `session.finish(...)`. That hands the exit to
@@ -407,6 +452,9 @@ final class TerminalPaneController: NSObject, PaneController {
     func sessionAvailabilityChanged(_ available: Bool) {
         guard available != isSessionAvailable else { return }
         isSessionAvailable = available
+        // A refused attachment stays refused; the registry's view of the
+        // session coming and going does not change what the server said.
+        if case .refused = status.state { return }
         if available {
             status.setState(.connected)
             attachment?.connect()
@@ -965,8 +1013,13 @@ final class ReconnectingBanner: NSView {
         case connected
         case reconnecting
         case exited(Int32)
+        /// The attachment stopped for good: which server, and why, in one line.
+        case refused(String)
+        /// Something could not be done here, said once and then gone.
+        case notice(String)
     }
 
+    private(set) var state: State = .connected
     private let label = NSTextField(labelWithString: "")
 
     override init(frame frameRect: NSRect) {
@@ -985,6 +1038,7 @@ final class ReconnectingBanner: NSView {
     required init?(coder: NSCoder) { fatalError("not a nib") }
 
     func setState(_ state: State) {
+        self.state = state
         switch state {
         case .connected:
             isHidden = true
@@ -996,6 +1050,14 @@ final class ReconnectingBanner: NSView {
         case .exited(let code):
             isHidden = false
             label.stringValue = code == 0 ? "EXITED" : "EXITED \(code)"
+            label.textColor = Theme.dimText
+            layerBackgroundColor = Theme.laneBorder.withAlphaComponent(0.3)
+        case .refused(let why), .notice(let why):
+            // Grey, at rest: neither is a state the greens are for, and a
+            // permanent green line on a lane that cannot connect would spend
+            // the colour on something that is true all day.
+            isHidden = false
+            label.stringValue = why.uppercased()
             label.textColor = Theme.dimText
             layerBackgroundColor = Theme.laneBorder.withAlphaComponent(0.3)
         }

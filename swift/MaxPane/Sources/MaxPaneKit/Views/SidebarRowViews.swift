@@ -323,7 +323,10 @@ final class SidebarGroupView: NSTableCellView {
         // is one it takes the blocked green, breathing, and the rest stays quiet.
         count.stringValue = group.countText
         count.font = Theme.mono(9, weight: group.blocked > 0 ? .bold : .regular)
-        count.textColor = group.blocked > 0 ? Theme.blocked : Theme.dimText
+        // A server reconnecting or refused takes the accent green — a state,
+        // in the family every other state uses — unless an agent in the group
+        // is blocked, which is the louder of the two.
+        count.textColor = group.blocked > 0 ? Theme.blocked : (group.serverIsOff ? Theme.accent : Theme.dimText)
         count.isPulsing = group.blocked > 0
         count.alignment = .right
 

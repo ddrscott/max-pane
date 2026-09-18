@@ -49,13 +49,21 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     /// Every session Relay knows about, attached or not. The sidebar, the
     /// picker and the status bar all read this one registry so they cannot
     /// disagree about how many sessions exist.
-    public let sessions = SessionRegistry()
+    public let sessions: SessionRegistry
+    /// The remote servers this launch knows (ADR-0020). Empty when
+    /// `config.toml` names none, and then nothing about the local path is
+    /// different from before servers existed.
+    let servers: RelayServers
 
     public init(store: StripStore, config: Config) {
         self.store = store
         self.config = config
+        self.servers = RelayServers(config: config)
+        self.sessions = SessionRegistry(
+            pollInterval: config.sessionPollSeconds,
+            remotes: servers.sources(pollInterval: config.sessionPollSeconds))
         self.sidebar = SidebarViewController(store: store)
-        self.strip = StripViewController(store: store, config: config)
+        self.strip = StripViewController(store: store, config: config, servers: servers)
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1600, height: 1000),
@@ -165,7 +173,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             self.strip.openLane(laneId: laneId, paneId: paneId)
         }
         sidebar.onNewSession = { [weak self] in self?.perform(.openAnything) }
-        sidebar.onAttach = { [weak self] sessionId in self?.attach(sessionId: sessionId) }
+        sidebar.onAttach = { [weak self] key in self?.attach(key) }
         // Through `launch`, so a kept page lands exactly where a ⌘O page lands:
         // a new lane, immediately right of the one you are in.
         sidebar.onOpenBookmark = { [weak self] url in
@@ -292,8 +300,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             // Focusing a session's pane is what clears its DONE — a click, the
             // sidebar, ⌘P or the keyboard, they all land here.
             if let paneId = state.focusedPaneId,
-               let sessionId = self.store.pane(paneId)?.relaySessionId {
-                self.sessions.acknowledge(sessionId)
+               let key = self.store.pane(paneId)?.sessionKey {
+                self.sessions.acknowledge(key)
             }
         }
         sessions.doneHold = config.doneHoldSeconds
@@ -334,7 +342,43 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return runFromCLI(command: command, args: args, sessionId: sessionId, cwd: cwd)
         case .list:
             return OpenServer.Reply(ok: true, lanes: describeStrip())
+        case .addServer(let name, let url):
+            return addServer(name: name, startupURL: url)
+        case .listServers:
+            return OpenServer.Reply(ok: true, lanes: describeServers())
         }
+    }
+
+    /// `maxpane server add NAME URL`. The URL is the one the server printed at
+    /// startup, token and all: the token goes to the Keychain against the
+    /// server's host, the name and base URL go to `config.toml` as a
+    /// `[[servers]]` table, and the server's sessions appear in the sidebar
+    /// on the next launch. Nothing here prints or logs the token.
+    private func addServer(name: String, startupURL: String) -> OpenServer.Reply {
+        guard let (base, token) = RelayServerTokens.parseStartupURL(startupURL) else {
+            return .refused("expected the server's auth URL: https://host/api/auth/callback?token=…")
+        }
+        let entry = RelayServerEntry(name: name, url: base.absoluteString, enabled: true)
+        if let why = entry.complaint { return .refused(why) }
+        guard let configStore else { return .refused("the config file is not open") }
+        guard RelayServerTokens.save(token, for: base) else {
+            return .refused("could not store the token in the Keychain for \(base.host ?? entry.url)")
+        }
+        configStore.addServer(entry)
+        if let error = configStore.writeError { return .refused("could not write \(configStore.path.path): \(error)") }
+        return OpenServer.Reply(
+            ok: true,
+            lanes: "\(name)\t\(entry.url)\ttoken stored in the Keychain; relaunch Max Pane to see its sessions\n")
+    }
+
+    /// One line per configured server: name, URL, and how it is doing.
+    private func describeServers() -> String {
+        config.servers.map { entry in
+            let state = entry.enabled
+                ? (sessions.serverStates[entry.name]?.label.lowercased() ?? "not loaded — relaunch")
+                : "disabled"
+            return "\(entry.name)\t\(entry.url)\t\(state)\n"
+        }.joined()
     }
 
     /// PRD §7.1. The web lane goes immediately right of the terminal that asked,
@@ -454,15 +498,6 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         let windowed = ProcessInfo.processInfo.environment["MAXPANE_WINDOWED"] != nil
         if !windowed, window?.styleMask.contains(.fullScreen) == false {
             window?.toggleFullScreen(nil)
-        }
-        // Spike M7: the one remote session gets a lane, once. Unreachable
-        // without MAXPANE_SPIKE_REMOTE in the environment.
-        if let spike = SpikeRemote.current, store.lane(holdingSession: spike.sessionId) == nil {
-            do {
-                if store.isGathered { try store.ungather() }
-                try store.attachSessionAtEnd(relaySessionId: spike.sessionId)
-                if let laneId = store.state.lanes.last?.id { strip.reveal(laneId: laneId, flash: true) }
-            } catch { showError(error) }
         }
     }
 
@@ -878,12 +913,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 try store.newTerminalLane(relaySessionId: session, near: lane?.id)
                 store.noteRecent(.command, line, cwd: cwd)
 
-            case .attach(let sessionId):
+            case .attach(let key):
                 // PRD §7.1: attaching an existing session creates a lane at the
                 // end. Never beside the focused lane — an attach is not a
                 // consequence of what you were reading, and the old picker put
                 // it at the end for the same reason.
-                attach(sessionId: sessionId)
+                attach(key)
             }
         } catch {
             showError(error)
@@ -935,8 +970,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
     /// Every session with a lane, including lanes a gather view is hiding. The
     /// narrowed list offered a gathered-out session to ⌘O as not yet attached.
-    private func attachedSessionIDs() -> Set<String> {
-        Set(store.allLanes.flatMap(\.panes).compactMap(\.relaySessionId))
+    private func attachedSessionIDs() -> Set<SessionKey> {
+        Set(store.allLanes.flatMap(\.panes).compactMap(\.sessionKey))
     }
 
     /// Put a Relay session in front of the user — its lane if it has one.
@@ -948,16 +983,16 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     /// leaves any gather first: its new lane has no project tag yet, so the
     /// gather would hide it, and a click that visibly does nothing is the click
     /// that gets repeated.
-    private func attach(sessionId: String) {
-        if let lane = store.lane(holdingSession: sessionId) {
+    private func attach(_ key: SessionKey) {
+        if let lane = store.lane(holdingSession: key) {
             leaveGather(ifItHides: lane.id)
-            let pane = lane.panes.first { $0.relaySessionId == sessionId }
+            let pane = lane.panes.first { $0.sessionKey == key }
             _ = strip.select(laneId: lane.id, paneId: pane?.id)
             return
         }
         do {
             if store.isGathered { try store.ungather() }
-            try store.attachSessionAtEnd(relaySessionId: sessionId)
+            try store.attachSessionAtEnd(key)
             if let laneId = store.state.lanes.last?.id {
                 strip.reveal(laneId: laneId, flash: true)
             }

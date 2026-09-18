@@ -116,6 +116,62 @@ public enum AgentState: String, Sendable {
     }
 }
 
+/// Which session, on which server.
+///
+/// A relay-tty session id is eight hex characters minted per machine, and
+/// every server mints its own, so two servers will one day mint the same one.
+/// Nothing in the app keys on the bare id any more: the registry, the
+/// attached set, DONE, the sidebar and the strip all key on this pair, and
+/// the ledger stores both halves on the pane (ADR-0020). `server` is `nil`
+/// for this Mac — the local server is implicit and never named.
+public struct SessionKey: Hashable, Sendable, Comparable, CustomStringConvertible {
+    public let server: String?
+    public let id: String
+
+    public init(server: String? = nil, id: String) {
+        self.server = server
+        self.id = id
+    }
+
+    public var isRemote: Bool { server != nil }
+
+    /// `0368d543`, or `yorkshire:0368d543`.
+    public var description: String { server.map { "\($0):\(id)" } ?? id }
+
+    public static func < (lhs: SessionKey, rhs: SessionKey) -> Bool {
+        (lhs.server ?? "", lhs.id) < (rhs.server ?? "", rhs.id)
+    }
+}
+
+extension SessionKey: ExpressibleByStringLiteral {
+    /// A bare literal is a local session's id: the local server is implicit
+    /// (ADR-0020), so `"0368d543"` names the session on this Mac and nothing
+    /// else. A `String` value never converts; only a literal does, which is
+    /// what keeps an id read off a remote row from being mistaken for a
+    /// local one by the compiler on someone's behalf.
+    public init(stringLiteral value: String) { self.init(server: nil, id: value) }
+}
+
+/// How a server is doing, for the sidebar's group header. The local server
+/// is always `.connected`: its sessions are files on this disk.
+public enum ServerState: Equatable, Sendable {
+    case connected
+    /// Unreachable, and being retried on the source's cadence.
+    case reconnecting
+    /// The server answered 401: the token was refused, and retrying would
+    /// only be refused again. Stays until the app is relaunched.
+    case refused
+
+    /// The word the group header prints, in the green family.
+    public var label: String {
+        switch self {
+        case .connected: return "CONNECTED"
+        case .reconnecting: return "RECONNECTING"
+        case .refused: return "TOKEN REFUSED"
+        }
+    }
+}
+
 /// Everything known about one session's liveness, in one value.
 ///
 /// Read from the session file, which pty-host flushes every ≤5 s and which
@@ -123,6 +179,9 @@ public enum AgentState: String, Sendable {
 /// replaces the last reading outright; nothing is carried forward.
 public struct SessionTelemetry: Sendable, Equatable {
     public var sessionId: String
+    /// The server the session is on; `nil` for this Mac.
+    public var server: String?
+    public var key: SessionKey { SessionKey(server: server, id: sessionId) }
     public var title: String
     public var cwd: String
     public var command: String
@@ -156,11 +215,12 @@ public struct SessionTelemetry: Sendable, Equatable {
     public var isAttached: Bool
 
     public init(
-        sessionId: String, title: String = "", cwd: String = "", command: String = "",
+        sessionId: String, server: String? = nil, title: String = "", cwd: String = "", command: String = "",
         state: AgentState = .unknown, bytesPerSecond: Double = 0,
         lastActivity: Date? = nil, isRunning: Bool = true, isAttached: Bool = false
     ) {
         self.sessionId = sessionId
+        self.server = server
         self.title = title
         self.cwd = cwd
         self.command = command
@@ -171,9 +231,10 @@ public struct SessionTelemetry: Sendable, Equatable {
         self.isAttached = isAttached
     }
 
-    public init(_ info: RelaySessionInfo, isAttached: Bool = false) {
+    public init(_ info: RelaySessionInfo, server: String? = nil, isAttached: Bool = false) {
         self.init(
             sessionId: info.id,
+            server: server,
             title: info.displayName,
             cwd: info.cwd,
             command: info.command,
@@ -233,7 +294,23 @@ public struct SessionTelemetry: Sendable, Equatable {
 
     /// The group a session belongs to in the sidebar: its directory, with `$HOME`
     /// abbreviated to `~` the way the bar does.
-    public var groupPath: String { Self.abbreviate(cwd) }
+    ///
+    /// A remote session's group is `server:path`, the path as the server
+    /// gave it: `$HOME` here says nothing about `/home/spierce` there, and
+    /// the server's name is the one mark that tells a remote lane from a
+    /// local one. The same `server:path` is the lane's project root, so the
+    /// session and its lane file under one header.
+    public var groupPath: String {
+        guard let server else { return Self.abbreviate(cwd) }
+        return cwd.isEmpty ? server : "\(server):\(cwd)"
+    }
+
+    /// The path the lane header prints: the cwd, with the server's name in
+    /// front of it for a remote session. Unabbreviated; the header decides.
+    public var headerPath: String {
+        guard let server else { return cwd }
+        return cwd.isEmpty ? server : "\(server):\(cwd)"
+    }
 
     public static func abbreviate(_ path: String) -> String {
         let home = NSHomeDirectory()
@@ -247,19 +324,29 @@ public struct SessionTelemetry: Sendable, Equatable {
 ///
 /// One of these for the whole app. The sidebar, the attach picker and the status
 /// bar all read it, so they cannot disagree about how many sessions there are.
+///
+/// Fed by one `SessionSource` per server — the disk for this Mac, HTTP and
+/// `/ws/events` for each remote — and merged here, keyed on `(server, id)`.
+/// Each source replaces its own slice outright; a source going quiet leaves
+/// its last reading in place until it speaks again, because a server that
+/// is unreachable has not lost its sessions.
 @MainActor
 public final class SessionRegistry {
-    public private(set) var sessions: [String: SessionTelemetry] = [:]
+    public private(set) var sessions: [SessionKey: SessionTelemetry] = [:]
+    /// Each remote server's connection state, by name. Local is never listed.
+    public private(set) var serverStates: [String: ServerState] = [:]
 
-    private var watcher: RelaySessionWatcher?
-    private var observers: [UUID: ([String: SessionTelemetry]) -> Void] = [:]
-    /// Session ids a lane is currently attached to.
-    private var attached: Set<String> = []
+    private var sources: [SessionSource] = []
+    /// What each source last reported, by server (`nil` is local).
+    private var slices: [String?: [RelaySessionInfo]] = [:]
+    private var observers: [UUID: ([SessionKey: SessionTelemetry]) -> Void] = [:]
+    /// Sessions a lane is currently attached to.
+    private var attached: Set<SessionKey> = []
     /// Sessions that finished and have not been looked at since, by when.
-    private var doneSince: [String: Date] = [:]
+    private var doneSince: [SessionKey: Date] = [:]
     /// Sessions whose DONE — ours or pty-host's — was looked at or lapsed,
     /// so a file still saying `done` reads idle until the state moves on.
-    private var dismissed: Set<String> = []
+    private var dismissed: Set<SessionKey> = []
     /// How long DONE is held before it lapses to idle on its own. Set from
     /// `Config.doneHoldSeconds`; a hold of zero or less never lapses.
     public var doneHold: TimeInterval = 1800
@@ -270,10 +357,10 @@ public final class SessionRegistry {
     /// A ticker, so "6s ago" becomes "7s ago" without anything else changing.
     private var tick: Timer?
 
-    public init(pollInterval: TimeInterval = 5) {
-        watcher = RelaySessionWatcher(pollInterval: pollInterval) { [weak self] infos in
-            MainActor.assumeIsolated { self?.adopt(infos) }
-        }
+    /// The local disk source, and one remote source per server given. With
+    /// no servers this is exactly the registry that existed before servers
+    /// did: one watcher over `~/.relay-tty/sessions`.
+    public init(pollInterval: TimeInterval = 5, remotes: [RemoteSessionSource] = []) {
         // One second, because the bar's smallest unit is a second and a stale
         // age is worse than no age.
         tick = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -282,19 +369,58 @@ public final class SessionRegistry {
                 if !self.lapseDone(now: Date()) { self.notify() }
             }
         }
-        adopt(RelaySessionDirectory().live())
+        add(DiskSessionSource(pollInterval: pollInterval))
+        for remote in remotes { add(remote) }
     }
 
     /// A registry over the files it is handed and nothing else: no watcher, no
     /// ticker, no read of the real sessions directory. For tests.
     init(files: [RelaySessionInfo]) {
-        adopt(files)
+        adopt(files, from: nil)
     }
 
-    deinit { watcher = nil }
+    /// A registry over the sources it is handed — fakes, in tests.
+    init(sources: [SessionSource]) {
+        for source in sources { add(source) }
+    }
+
+    /// Stop every source. The registry lives as long as the window, so this
+    /// is reached from tests; a `deinit` cannot touch main-actor state.
+    public func stop() {
+        for source in sources { source.stop() }
+        sources = []
+    }
+
+    /// Wire a source in and start it. Its first reading replaces nothing,
+    /// since there is nothing of its yet.
+    private func add(_ source: SessionSource) {
+        sources.append(source)
+        let server = source.server
+        source.onChange = { [weak self] infos in
+            MainActor.assumeIsolated { self?.adopt(infos, from: server) }
+        }
+        source.onStateChange = { [weak self] state in
+            MainActor.assumeIsolated { self?.serverChanged(server, to: state) }
+        }
+        if let server { serverStates[server] = source.state }
+        source.start()
+    }
+
+    private func serverChanged(_ server: String?, to state: ServerState) {
+        guard let server, serverStates[server] != state else { return }
+        serverStates[server] = state
+        notify()
+    }
+
+    /// Ask every remote source for a fresh list now — after a wake, or when
+    /// a lane has just attached and wants the state the wire will not send
+    /// until it changes.
+    public func refreshRemotes() {
+        for source in sources where source.server != nil { source.refresh() }
+    }
 
     @discardableResult
-    public func observe(_ body: @escaping ([String: SessionTelemetry]) -> Void) -> UUID {
+    public func observe(_ body: @escaping ([SessionKey: SessionTelemetry]) -> Void) -> UUID {
         let token = UUID()
         observers[token] = body
         body(sessions)
@@ -303,7 +429,10 @@ public final class SessionRegistry {
 
     public func stopObserving(_ token: UUID) { observers.removeValue(forKey: token) }
 
-    public func telemetry(for sessionId: String) -> SessionTelemetry? { sessions[sessionId] }
+    public func telemetry(for key: SessionKey) -> SessionTelemetry? { sessions[key] }
+
+    /// The remote servers this registry watches, by name.
+    public var remoteServers: [String] { sources.compactMap(\.server) }
 
     /// Sessions grouped by directory, groups sorted by path and sessions within
     /// a group newest-active first — the bar's ordering.
@@ -339,13 +468,19 @@ public final class SessionRegistry {
 
     /// Tell the registry which sessions have lanes, so the picker can hide the
     /// ones already on the strip and the sidebar can mark them.
-    public func setAttached(_ ids: Set<String>) {
-        guard ids != attached else { return }
-        attached = ids
-        for id in sessions.keys {
-            sessions[id]?.isAttached = ids.contains(id)
+    public func setAttached(_ keys: Set<SessionKey>) {
+        guard keys != attached else { return }
+        // A remote session that has just gained a lane: ask its server now.
+        // The wire only sends SESSION_UPDATE on a change, so a session that
+        // is already BLOCKED when the pane attaches would otherwise say so
+        // only at the next poll (spike M7 §5).
+        let fresh = keys.subtracting(attached).filter(\.isRemote)
+        attached = keys
+        for key in sessions.keys {
+            sessions[key]?.isAttached = keys.contains(key)
         }
         notify()
+        if !fresh.isEmpty { refreshRemotes() }
     }
 
     /// Every file replaces the reading before it, rate and state both.
@@ -366,29 +501,37 @@ public final class SessionRegistry {
     /// or exits, DONE goes with no hold. The title rule makes this sharp for
     /// Claude Code: the spinner becomes `✳` on the turn's last frame, not
     /// between tool calls, so there is nothing to debounce.
-    func adopt(_ infos: [RelaySessionInfo], now: Date = Date()) {
-        var next: [String: SessionTelemetry] = [:]
+    ///
+    /// `from` is the server the reading came from (`nil` for this Mac); it
+    /// replaces that server's slice and no other's, and the merged view is
+    /// rebuilt from every slice.
+    func adopt(_ infos: [RelaySessionInfo], from server: String? = nil, now: Date = Date()) {
+        slices[server] = infos
+        var next: [SessionKey: SessionTelemetry] = [:]
         var changes: [(SessionTelemetry, AgentState, AgentState)] = []
-        for info in infos {
-            var t = SessionTelemetry(info, isAttached: attached.contains(info.id))
-            let fresh = t.state
-            let previous = sessions[info.id]?.state
-            switch fresh {
-            case .idle:
-                if previous == .working { doneSince[info.id] = now }
-                dismissed.remove(info.id)
-            case .done:
-                // pty-host's own verdict, for a session with no lane. Keep a
-                // start so the hold can lapse it the same as ours.
-                if doneSince[info.id] == nil, !dismissed.contains(info.id) { doneSince[info.id] = now }
-            case .working, .blocked, .exited, .unknown:
-                doneSince.removeValue(forKey: info.id)
-                dismissed.remove(info.id)
+        for (server, infos) in slices {
+            for info in infos {
+                let key = SessionKey(server: server, id: info.id)
+                var t = SessionTelemetry(info, server: server, isAttached: attached.contains(key))
+                let fresh = t.state
+                let previous = sessions[key]?.state
+                switch fresh {
+                case .idle:
+                    if previous == .working { doneSince[key] = now }
+                    dismissed.remove(key)
+                case .done:
+                    // pty-host's own verdict, for a session with no lane. Keep a
+                    // start so the hold can lapse it the same as ours.
+                    if doneSince[key] == nil, !dismissed.contains(key) { doneSince[key] = now }
+                case .working, .blocked, .exited, .unknown:
+                    doneSince.removeValue(forKey: key)
+                    dismissed.remove(key)
+                }
+                t.doneSince = doneSince[key]
+                t.doneDismissed = dismissed.contains(key)
+                next[key] = t
+                if let previous, previous != t.state { changes.append((t, previous, t.state)) }
             }
-            t.doneSince = doneSince[info.id]
-            t.doneDismissed = dismissed.contains(info.id)
-            next[info.id] = t
-            if let previous, previous != t.state { changes.append((t, previous, t.state)) }
         }
         doneSince = doneSince.filter { next[$0.key] != nil }
         dismissed = dismissed.filter { next[$0] != nil }
@@ -403,14 +546,14 @@ public final class SessionRegistry {
     /// Focusing the pane is what counts, from a click, the sidebar, ⌘P or the
     /// keyboard alike. Merely having the lane on screen does not, because in
     /// the gallery every lane is on screen and the chip would never survive.
-    public func acknowledge(_ sessionId: String) {
-        guard doneSince.removeValue(forKey: sessionId) != nil,
-              var t = sessions[sessionId] else { return }
+    public func acknowledge(_ key: SessionKey) {
+        guard doneSince.removeValue(forKey: key) != nil,
+              var t = sessions[key] else { return }
         let from = t.state
-        dismissed.insert(sessionId)
+        dismissed.insert(key)
         t.doneSince = nil
         t.doneDismissed = true
-        sessions[sessionId] = t
+        sessions[key] = t
         notify()
         if from != t.state { onStateChange?(t, from, t.state) }
     }

@@ -55,7 +55,7 @@ final class SidebarViewController: NSViewController {
     /// not carry. Read once per session id — the bar's default sort is by
     /// creation, and re-reading ten JSON files a second to keep it would be a
     /// silly price for a number that never changes.
-    private var createdAt: [String: Double] = [:]
+    private var createdAt: [SessionKey: Double] = [:]
 
     /// Click a lane row → search-to-scroll to it, and hand it the keyboard.
     ///
@@ -69,7 +69,7 @@ final class SidebarViewController: NSViewController {
     /// The `+ New` action.
     var onNewSession: (() -> Void)?
     /// Click a session that has no lane → attach it.
-    var onAttach: ((String) -> Void)?
+    var onAttach: ((SessionKey) -> Void)?
     /// A kept page was clicked. The sidebar does not know where a page should
     /// go — `StripWindowController.launch` owns that, and it is the same
     /// decision ⌘O makes.
@@ -83,10 +83,10 @@ final class SidebarViewController: NSViewController {
     }
 
     /// Latest telemetry for every session.
-    private(set) var telemetry: [String: SessionTelemetry] = [:]
+    private(set) var telemetry: [SessionKey: SessionTelemetry] = [:]
 
     /// New session telemetry arrived.
-    func sessionsChanged(_ next: [String: SessionTelemetry]) {
+    func sessionsChanged(_ next: [SessionKey: SessionTelemetry]) {
         telemetry = next
         readCreationTimes(for: next)
         rebuild(store.state)
@@ -94,16 +94,17 @@ final class SidebarViewController: NSViewController {
 
     /// The one fact the session file has that telemetry drops: when a session
     /// was created. Read once per id — it never changes, and the bar's default
-    /// sort is by it.
-    private func readCreationTimes(for next: [String: SessionTelemetry]) {
+    /// sort is by it. A remote session has no file here; its last activity
+    /// stands in, as it does for a file that cannot be read.
+    private func readCreationTimes(for next: [SessionKey: SessionTelemetry]) {
         let directory = RelaySessionDirectory()
-        for id in next.keys where createdAt[id] == nil {
-            if let file = directory.session(id) {
-                createdAt[id] = file.createdAt / 1000
+        for key in next.keys where createdAt[key] == nil {
+            if key.server == nil, let file = directory.session(key.id) {
+                createdAt[key] = file.createdAt / 1000
             } else {
                 // Fall back rather than leave the sort key at zero, which would
                 // pin the row to the bottom forever.
-                createdAt[id] = next[id]?.lastActivity?.timeIntervalSince1970
+                createdAt[key] = next[key]?.lastActivity?.timeIntervalSince1970
                     ?? Date().timeIntervalSince1970
             }
         }
@@ -393,7 +394,8 @@ final class SidebarViewController: NSViewController {
             telemetry: telemetry,
             created: createdAt,
             bookmarks: bookmarks,
-            controls: controls)
+            controls: controls,
+            servers: registry?.serverStates ?? [:])
         updateFooter(state)
         guard next != rows else {
             syncSelection(state)
@@ -476,10 +478,10 @@ final class SidebarViewController: NSViewController {
         guard let entry = entry(at: row) else { return }
         if let laneId = entry.laneId {
             onSelect?(laneId, entry.paneId)
-        } else if let sessionId = entry.sessionId {
+        } else if let key = entry.sessionKey {
             // The row you most need is the one not on the strip yet, so a click
             // on it does the obvious thing rather than selecting nothing.
-            onAttach?(sessionId)
+            onAttach?(key)
         }
     }
 
@@ -639,8 +641,8 @@ final class SidebarViewController: NSViewController {
     }
 
     @objc private func attachClicked() {
-        guard let entry = entry(at: table.clickedRow), let sessionId = entry.sessionId else { return }
-        onAttach?(sessionId)
+        guard let entry = entry(at: table.clickedRow), let key = entry.sessionKey else { return }
+        onAttach?(key)
     }
 
     /// The second click of a double click. With a `doubleAction` set, the table

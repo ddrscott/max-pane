@@ -12,7 +12,7 @@ import LanedCore
 struct SearchRecentTests {
     private func pane(_ id: String, _ lane: String, url: String? = nil) -> Pane {
         Pane(id: id, laneId: lane, position: 0, kind: url == nil ? .pty : .web,
-             relaySessionId: url == nil ? "s-\(id)" : nil, url: url, scrollY: nil,
+             relaySessionId: url == nil ? "s-\(id)" : nil, relayServer: nil, url: url, scrollY: nil,
              dataStoreId: nil, snapshotPath: nil, state: .live, heightWeight: 1, zoom: 1, mobile: false)
     }
 

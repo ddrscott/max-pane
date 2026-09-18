@@ -120,10 +120,11 @@ struct TomlDocumentTests {
                 return
             }
         }
-        // Under an array of tables, so not a top-level `theme` at all.
+        // Under an array of tables, so not a top-level `theme` at all: it is
+        // `servers[0].theme`, which is not a server setting either.
         #expect(doc.entry("theme") == nil)
         #expect(ConfigFile.decode(doc).config.theme == .system)
-        #expect(ConfigFile.decode(doc).problems.contains { $0.key == "[[servers]].theme" })
+        #expect(ConfigFile.decode(doc).problems.contains { $0.key == "servers[0].theme" })
         doc.set("lane_peek_pt", to: .integer(12))
         doc.remove("lane_peek_pt")
         #expect(doc.text == text)
@@ -151,7 +152,11 @@ struct ConfigFileTests {
     func schemaIsComplete() {
         let properties = Set(Mirror(reflecting: Config()).children.compactMap(\.label))
         let named = ConfigField.all.map(\.name)
-        #expect(Set(named) == properties.subtracting(["keys"]))
+        // Two exemptions, both tables rather than keys: `keys` is listed from
+        // `Command`, and `servers` is an array of tables the settings window
+        // does not draw yet (Phase 2 of the remote-relay plan gives it a
+        // Servers section). `ConfigFile.decode` reads both by name.
+        #expect(Set(named) == properties.subtracting(["keys", "servers"]))
         #expect(Set(named).count == named.count)
         #expect(ConfigField.all.map(\.key).contains("lane_default_pt"))
         #expect(ConfigField.all.map(\.key).contains("relay_pty_host_path"))

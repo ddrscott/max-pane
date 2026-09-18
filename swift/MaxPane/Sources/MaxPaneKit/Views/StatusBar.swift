@@ -157,7 +157,7 @@ public final class StatusBar: NSView {
     /// opposed to blocked agents or nothing at all.
     private var isAsking = false
 
-    public func update(state: StripState, telemetry: [String: SessionTelemetry], webBytes: UInt64) {
+    public func update(state: StripState, telemetry: [SessionKey: SessionTelemetry], webBytes: UInt64) {
         update(state: state, telemetry: telemetry, webBytes: webBytes, asking: 0)
     }
 
@@ -167,7 +167,7 @@ public final class StatusBar: NSView {
     /// separate bright counts would each be half as loud. So they share one ink,
     /// the blocked green, and one breath.
     public func update(
-        state: StripState, telemetry: [String: SessionTelemetry], webBytes: UInt64, asking: Int
+        state: StripState, telemetry: [SessionKey: SessionTelemetry], webBytes: UInt64, asking: Int
     ) {
         let laneCount = state.lanes.count
         let paneCount = state.lanes.reduce(0) { $0 + $1.panes.count }

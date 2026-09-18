@@ -4,7 +4,7 @@ import Testing
 @testable import MaxPaneKit
 
 private func pane(_ id: String, _ lane: String, _ position: UInt32) -> Pane {
-    Pane(id: id, laneId: lane, position: position, kind: .pty, relaySessionId: id,
+    Pane(id: id, laneId: lane, position: position, kind: .pty, relaySessionId: id, relayServer: nil,
          url: nil, scrollY: nil, dataStoreId: nil, snapshotPath: nil, state: .live,
          heightWeight: 1, zoom: 1, mobile: false)
 }

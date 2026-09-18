@@ -332,7 +332,10 @@ enum PaletteFilter {
         // Nothing matched — which used to be an empty box. Offer to start the
         // thing instead, in the directory the query looks most like.
         if out.isEmpty, !launchable.isEmpty {
-            let cwd = bestDirectory(for: tokens, among: groups.map(\.path), home: home)
+            // Local directories only: a launch from here starts on this Mac,
+            // and a remote group's path is a directory on another one.
+            let local = groups.filter { $0.sessions.first?.server == nil }.map(\.path)
+            let cwd = bestDirectory(for: tokens, among: local, home: home)
             out.append(.section(
                 title: "launch in \(SessionTelemetry.abbreviate(cwd))",
                 note: query.isEmpty ? "no sessions" : "no match for “\(query)”"))

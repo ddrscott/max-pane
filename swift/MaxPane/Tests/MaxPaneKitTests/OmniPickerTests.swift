@@ -258,7 +258,7 @@ struct OmniPickerTests {
                 session("bbbb2222", "claude in trifecta", attached: false),
             ])
         let attaches = actions(rows).compactMap { action -> String? in
-            if case .attach(let id) = action { return id } else { return nil }
+            if case .attach(let key) = action { return key.id } else { return nil }
         }
         #expect(attaches == ["bbbb2222"], "⌘O offered to start something that already exists")
     }

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import RelayClient
 
@@ -19,12 +20,18 @@ import RelayClient
 @MainActor
 final class RelayAttachmentAdapter: RelayAttachment {
     let sessionId: String
+    /// The server the session is on, for the log; nil for this Mac.
+    let server: String?
 
     var onData: ((ArraySlice<UInt8>) -> Void)?
     var onHostResize: ((Int, Int) -> Void)?
     var onTitle: ((String) -> Void)?
     var onExit: ((Int32) -> Void)?
     var onConnectionChange: ((Bool) -> Void)?
+    var onRefused: ((String) -> Void)?
+    /// The emulator should be cleared before the next replay is fed to it:
+    /// the server sent the whole ring where a delta was due.
+    var onReplaceScreen: (() -> Void)?
 
     private var session: RelaySession?
     private var reconnectDelay: TimeInterval = 0.5
@@ -38,6 +45,9 @@ final class RelayAttachmentAdapter: RelayAttachment {
     private var isAttached = false
     /// What the user typed or pasted at a pane whose socket was not up yet.
     private var pending = PendingInput()
+    /// A reconnect's delta replay, held until its `SYNC` says whether it is
+    /// one. See `syncArrived`.
+    private var heldReplay: [UInt8]?
 
     /// PRD §11: "retry with backoff".
     private static let minimumDelay: TimeInterval = 0.5
@@ -51,11 +61,29 @@ final class RelayAttachmentAdapter: RelayAttachment {
     /// remote-relay spike passes a `WebSocketTransport` here and nothing else
     /// about the adapter or the pane changes (`docs/spikes/07-m7-remote-relay.md`).
     private let makeTransport: ((DispatchQueue) -> RelayTransport)?
+    /// The live WebSocket, if that is what this session is on, for the wake
+    /// hook. Nil on a Unix socket, which a sleep does not half-open.
+    private weak var webSocket: WebSocketTransport?
+    private var wakeObserver: NSObjectProtocol?
 
-    init(sessionId: String, transport: ((DispatchQueue) -> RelayTransport)? = nil) {
+    init(sessionId: String, server: String? = nil, transport: ((DispatchQueue) -> RelayTransport)? = nil) {
         self.sessionId = sessionId
+        self.server = server
         self.makeTransport = transport
+        if transport != nil {
+            // A remote connection after a sleep is silent until the zombie
+            // timer notices, 45 s later. A PING now finds out in one round
+            // trip, and a dead one reconnects at once (spike M7 §10).
+            wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.webSocket?.pingNow() }
+            }
+        }
     }
+
+    /// `sessionId`, or `server:sessionId`, for the log.
+    private var label: String { server.map { "\($0):\(sessionId)" } ?? sessionId }
 
     func connect() {
         wantsConnection = true
@@ -66,6 +94,7 @@ final class RelayAttachmentAdapter: RelayAttachment {
         wantsConnection = false
         isAttached = false
         pending.clear()
+        heldReplay = nil
         session?.close()
         session = nil
     }
@@ -105,12 +134,17 @@ final class RelayAttachmentAdapter: RelayAttachment {
 
         let session: RelaySession
         if let makeTransport {
-            let queue = DispatchQueue(label: "relay.session.\(sessionId)")
-            session = RelaySession(id: sessionId, queue: queue, transport: makeTransport(queue))
+            let queue = DispatchQueue(label: "relay.session.\(label)")
+            let transport = makeTransport(queue)
+            webSocket = transport as? WebSocketTransport
+            session = RelaySession(id: sessionId, queue: queue, transport: transport)
         } else {
             session = RelaySession(id: sessionId)
         }
         self.session = session
+        // What a delta replay would be, at most: the bytes past our offset.
+        // Captured now because the session's offset moves on its own queue.
+        let resumedFrom = lastOffset
 
         // Every callback arrives on the session's own queue. Hop to the main
         // actor before touching anything the UI owns.
@@ -122,12 +156,21 @@ final class RelayAttachmentAdapter: RelayAttachment {
                 self.onData?(copy[...])
             }
         }
-        session.onReplay = { [weak self] plain, _ in
+        session.onReplay = { [weak self] plain, isDelta in
             Task { @MainActor in
                 guard let self else { return }
+                // A reconnect's replay is held until the SYNC after it says
+                // how long a delta could honestly be; see `syncArrived`.
+                if isDelta, resumedFrom > 0 {
+                    self.heldReplay = plain
+                    return
+                }
                 self.lastOffset = session.offset
                 self.onData?(plain[...])
             }
+        }
+        session.onSync = { [weak self] value in
+            Task { @MainActor in self?.syncArrived(value, resumedFrom: resumedFrom, offset: session.offset) }
         }
         session.onResize = { [weak self] cols, rows in
             Task { @MainActor in self?.onHostResize?(cols, rows) }
@@ -175,13 +218,39 @@ final class RelayAttachmentAdapter: RelayAttachment {
                 offset: lastOffset,
                 maxReplayBytes: lastOffset > 0 ? nil : Self.maximumReplayBytes)
             try session.connect(mode: mode)
-            Log.debug("attached \(sessionId) at offset \(lastOffset)")
+            Log.debug("attached \(label) at offset \(lastOffset)")
         } catch {
-            Log.warn("could not attach \(sessionId) at \(RelayPaths.socket(for: sessionId)): \(error)")
+            if server == nil {
+                Log.warn("could not attach \(sessionId) at \(RelayPaths.socket(for: sessionId)): \(error)")
+            } else {
+                Log.warn("could not attach \(label): \(error)")
+            }
             self.session = nil
             onConnectionChange?(false)
             scheduleReconnect()
         }
+    }
+
+    /// The `SYNC` after a reconnect's replay. A reconnect asked for the bytes
+    /// past `resumedFrom`; a delta replay can carry at most `sync −
+    /// resumedFrom` of them. pty-host answers a `RESUME` it missed with the
+    /// whole ring and no `SYNC(0)`, which the session cannot tell from a
+    /// delta (spike M7 §3) — but the ring is longer than the gap, and that is
+    /// the tell. Feeding it as a delta appends the scrollback again; the
+    /// screen is replaced first instead, so the pane shows the ring once.
+    private func syncArrived(_ sync: Double, resumedFrom: Double, offset: Double) {
+        guard let held = heldReplay else { return }
+        heldReplay = nil
+        if Self.isFullReplay(bytes: held.count, resumedFrom: resumedFrom, sync: sync) {
+            Log.debug("\(label): full replay disguised as a delta (\(held.count)B for a \(Int(sync - resumedFrom))B gap); replacing the screen")
+            onReplaceScreen?()
+        }
+        lastOffset = offset
+        onData?(held[...])
+    }
+
+    static func isFullReplay(bytes: Int, resumedFrom: Double, sync: Double) -> Bool {
+        Double(bytes) > max(sync - resumedFrom, 0)
     }
 
     /// Send what was held while the socket was down, or decide against it.
@@ -198,17 +267,22 @@ final class RelayAttachmentAdapter: RelayAttachment {
     private func handleClosed(_ reason: RelayClose?) {
         session = nil
         isAttached = false
+        heldReplay = nil
         guard wantsConnection else { return }
         onConnectionChange?(false)
-        // A server that refused the credential (WS close 4001/1008) will
-        // refuse it again; retrying would only be a loop with a log line.
+        // A server that refused the credential (WS close 4001/1008, or a 401
+        // on the upgrade) will refuse it again; retrying would only be a
+        // loop with a log line. The pane is told in one line, naming the
+        // server, and the lane stays where it is.
         if let reason, reason.isFinal {
-            Log.warn("\(sessionId): not reconnecting — \(reason)")
+            let why = server.map { "\($0): token refused" } ?? "refused"
+            Log.warn("\(label): not reconnecting — \(reason)")
             wantsConnection = false
             pending.clear()
+            onRefused?(reason.reason == "server not configured" ? "\(server ?? ""): server not configured" : why)
             return
         }
-        if let reason { Log.debug("\(sessionId): connection \(reason); reconnecting") }
+        if let reason { Log.debug("\(label): connection \(reason); reconnecting") }
         scheduleReconnect()
     }
 

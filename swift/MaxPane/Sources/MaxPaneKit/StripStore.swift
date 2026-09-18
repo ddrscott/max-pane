@@ -141,10 +141,20 @@ public final class StripStore {
     }
 
     /// An attached session with no parent lane goes to the end of the strip
-    /// (PRD §7.1, §7.2 — "unattributed new lanes append at the end").
+    /// (PRD §7.1, §7.2 — "unattributed new lanes append at the end"). A
+    /// remote session's lane is born knowing its server (ADR-0020).
+    func attachSessionAtEnd(_ key: SessionKey) throws {
+        if let server = key.server {
+            publish(try core.attachRemoteSession(
+                placement: .end, relayServer: server, relaySessionId: key.id, inheritTagFromLane: nil))
+        } else {
+            publish(try core.createLane(
+                placement: .end, kind: .pty, relaySessionId: key.id, url: nil, inheritTagFromLane: nil))
+        }
+    }
+
     func attachSessionAtEnd(relaySessionId: String) throws {
-        publish(try core.createLane(
-            placement: .end, kind: .pty, relaySessionId: relaySessionId, url: nil, inheritTagFromLane: nil))
+        try attachSessionAtEnd(SessionKey(id: relaySessionId))
     }
 
     /// Split down (⇧⌘D): another pane in the same lane's stack.
@@ -271,8 +281,8 @@ public final class StripStore {
     }
 
     /// The lane a Relay session is in, gathered out of view or not.
-    func lane(holdingSession sessionId: String) -> Lane? {
-        allLanes.first { $0.panes.contains { $0.relaySessionId == sessionId } }
+    func lane(holdingSession key: SessionKey) -> Lane? {
+        allLanes.first { $0.panes.contains { $0.sessionKey == key } }
     }
 
     /// The lane holding an edge, if any.
@@ -761,4 +771,12 @@ public final class StripStore {
     var focusedLane: Lane? { state.focusedPaneId.flatMap { lane(containing: $0) } }
 
     func projectRoot(of cwd: String) -> String? { core.projectRootOf(cwd: cwd) }
+}
+
+extension Pane {
+    /// The session this pty pane is attached to, on whichever server. Nil
+    /// for a web pane, and for a pty pane whose session could not start.
+    var sessionKey: SessionKey? {
+        relaySessionId.map { SessionKey(server: relayServer, id: $0) }
+    }
 }

@@ -309,20 +309,21 @@ final class LaneView: NSView {
 
     /// Adopt the latest session telemetry, so the header can show what the
     /// attached session is doing.
-    func applyTelemetry(_ telemetry: [String: SessionTelemetry]) {
-        let sessionId = currentSessionId
-        header.telemetry = sessionId.flatMap { telemetry[$0] }
+    func applyTelemetry(_ telemetry: [SessionKey: SessionTelemetry]) {
+        let key = currentSessionKey
+        header.telemetry = key.flatMap { telemetry[$0] }
     }
 
-    /// The Relay session this lane's first pty pane is attached to.
-    var currentSessionId: String?
+    /// The Relay session this lane's first pty pane is attached to, on
+    /// whichever server.
+    var currentSessionKey: SessionKey?
 
     /// Adopt a new snapshot of this lane. Called on every mutation that touches
     /// it, so it does the least work that produces the right result: the header
     /// is cheap to rebuild, the pane views are not and are reused by id.
     func apply(_ lane: Lane) {
         laneId = lane.id
-        currentSessionId = lane.panes.first(where: { $0.kind == .pty })?.relaySessionId
+        currentSessionKey = lane.panes.first(where: { $0.kind == .pty })?.sessionKey
         // A docked lane's handle drags the *dock's* width, which is a separate
         // durable number: undocking has to give the lane back at the width it
         // was dragged to in the strip, not at whatever the edge was last set to.

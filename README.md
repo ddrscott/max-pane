@@ -410,8 +410,12 @@ what `WebSocketTransport` puts on the wire and makes of what comes back: a
 payload with no length prefix either way, text frames dropped, the PING
 cadence and the zombie, and close codes 4001/1008 as final. The transport
 itself was measured against a real server through relaytty.com in spike M7
-(`docs/spikes/07-m7-remote-relay.md`); the app reaches it only through
-`MAXPANE_SPIKE_REMOTE` until the remote-relay plan's Phase 1.
+(`docs/spikes/07-m7-remote-relay.md`); the app reaches it through a
+`[[servers]]` table (see "Remote servers"). `RemoteRelayTests` stands a raw
+TCP fake of relay-tty's HTTP and `/ws/events` on one loopback port for the
+session source, and its last suite runs the whole path against a real server
+when `MAXPANE_REMOTE_VERIFY` names one (with `MAXPANE_REMOTE_TOKEN`, read at
+run time), printing `SKIPPED` otherwise.
 
 `crates/laned-core/tests/durability.rs` holds the half of PRD §15's acceptance
 tests that the core owns — mostly "the strip is identical after a `kill -9`",
@@ -1628,6 +1632,8 @@ maxpane run htop          # a terminal lane running htop
 maxpane run               # a terminal lane running your shell
 maxpane open google.com   # a web lane
 maxpane ls                # what is on the strip
+maxpane server add NAME URL   # a remote relay-tty server; see "Remote servers"
+maxpane server ls             # the configured servers and how they are doing
 ```
 
 `run` takes a command and its arguments as **separate words**, the way `relay`
@@ -1691,6 +1697,79 @@ terminal that asked. For a terminal you started yourself:
 ```sh
 export BROWSER="$PWD/build/MaxPane.app/Contents/Helpers/maxpane-open"
 ```
+
+### Remote servers
+
+A relay-tty server on another machine can be a source of lanes: its sessions
+appear in the sidebar and in ⌘O beside the local ones, and one of them attaches
+as an ordinary terminal lane — the same libghostty rendering, resize, replay,
+BLOCKED, DONE and reconnect as a local session — over a WebSocket to that
+server's `/ws/sessions/:id` instead of the Unix socket. This is Phase 1 of
+[`docs/plans/remote-relay-servers.md`](docs/plans/remote-relay-servers.md);
+[ADR-0020](docs/decisions/0020-a-session-belongs-to-a-server.md) says how a
+session is identified once there is more than one server.
+
+**What works in this phase.** A session *already running* on a remote server:
+listed, attached, typed into, resized, reconnected (with the whole scrollback
+replaced rather than appended when the server answers a missed `RESUME` with
+the full ring), shown with its agent state, and back after a relaunch. The
+server's sessions are read from `GET /api/sessions` and kept current by
+`/ws/events`, polled on `session_poll_seconds` as the fallback. Its
+connection state is on the sidebar group header (`RECONNECTING · 2 RUNNING`,
+`TOKEN REFUSED · …`) when it is anything but connected, and a 401 stops the
+retrying rather than looping. **Not yet:** starting anything on a remote
+server (⌘O, ⌘T and ⌘D still start on this Mac, and beside a remote lane they
+start in your home directory), a Settings section (Phase 2), and ⌘-clicking a
+path in a remote lane, which says so in one line — the path is a path on the
+other machine, and the server's file API is Phase 4.
+
+**The one mark.** A remote lane is a local lane with the server's name where
+the directory sits: `yorkshire:/home/spierce` in the lane header, on the
+sidebar group, and before the id on a ⌘O row. No other colour, glyph or badge.
+Its project tag is `yorkshire:/home/spierce/m7out` — `host:path`, never the
+result of walking this Mac's tree for a directory that only exists over
+there — so a remote project gathers with itself and never with a local path
+that happens to match.
+
+**Adding one, by hand for now.** The server prints an auth URL when it starts
+(`Auth URL (1y): https://<slug>.relaytty.com/api/auth/callback?token=…`).
+Paste the whole line:
+
+```sh
+maxpane server add yorkshire 'https://yourslug.relaytty.com/api/auth/callback?token=…'
+maxpane server ls
+```
+
+The app splits it: the base URL goes to `config.toml` as a `[[servers]]`
+table, and the token goes to the macOS Keychain as an internet password for
+the server's host — the same space and the same rules as
+[Passwords](#passwords), listed and deleted in System Settings → Passwords,
+never in the file. The app stores it rather than the CLI so the item is written
+under the app's own signature and read back without a panel. Relaunch to see
+the server's sessions. The file's shape, which you can also write yourself:
+
+```toml
+[[servers]]
+name = "yorkshire"                      # what the lane header shows
+url = "https://yourslug.relaytty.com"   # https://<slug>.relaytty.com, or http://host:port
+enabled = true                          # optional; false keeps the entry and ignores it
+```
+
+The local server is never listed; it is implicit, and with no `[[servers]]`
+the app is exactly what it was before servers existed. A server with no name,
+a URL that is not `http(s)://` with a host, or a name already used is skipped
+with a line on stderr saying which. The token is sent as the `session` cookie
+on every request, the WebSocket upgrade included.
+
+**Until relay-tty authenticates the tunnelled WebSocket.** Through
+relaytty.com the session WebSocket is accepted with no credential at all —
+the tunnel client opens it from loopback and the server grants the localhost
+bypass (spike M7 §4) — so a tunnelled server's sessions are attachable by
+anyone who knows the slug and an eight-hex session id, until relay-tty accepts
+`?token=` on `/ws/sessions/:id` and `/ws/events` (Phase 0b of the plan). HTTP
+through the tunnel is authenticated, and LAN-direct both are; the token is
+sent on the upgrade regardless, so nothing here changes when the server starts
+checking it.
 
 ### Colour
 

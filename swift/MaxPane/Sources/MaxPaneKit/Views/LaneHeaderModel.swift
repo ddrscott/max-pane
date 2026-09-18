@@ -100,7 +100,9 @@ struct LaneHeaderModel: Equatable {
 
         // The session's cwd is the truth — it follows `cd`. The project root is
         // a fallback for lanes with no session (a web lane, a dead terminal).
-        path = [telemetry?.cwd, lane.projectRoot]
+        // A remote session's is `server:cwd`: the server's name sits where
+        // the directory does, and nowhere else (ADR-0020).
+        path = [telemetry?.headerPath, lane.projectRoot]
             .compactMap { $0 }
             .first(where: { !$0.isEmpty }) ?? ""
 
@@ -115,7 +117,7 @@ struct LaneHeaderModel: Equatable {
             badgeIsThroughput = telemetry.badgeIsThroughput
             tooltip = [
                 telemetry.title.isEmpty ? title : telemetry.title,
-                telemetry.cwd,
+                telemetry.headerPath,
                 // The rate only while it is working, as on the badge: an idle
                 // session's sixty-second trickle is not news.
                 [telemetry.state.rawValue, telemetry.ageText,

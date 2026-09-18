@@ -45,11 +45,13 @@ public enum TomlValue: Equatable, Sendable {
 /// not understand — or understands and has no use for — comes back byte for
 /// byte. ADR-0012 says why this is in-house rather than `toml_edit` over uniffi.
 ///
-/// It reads the subset a settings file uses: `key = value` at the top, and
-/// `[table]` headers. Values are strings (basic and literal), integers, floats,
-/// booleans and single-line arrays of those. Anything else — a multi-line
-/// string, an inline table, a date, an array of tables — is reported as a
-/// problem on its line and left exactly where it is, never rewritten.
+/// It reads the subset a settings file uses: `key = value` at the top,
+/// `[table]` headers, and `[[table]]` array-of-tables headers — each `[[x]]`
+/// starts a new element, whose keys are filed under `x[0]`, `x[1]`, … in
+/// order of appearance. Values are strings (basic and literal), integers,
+/// floats, booleans and single-line arrays of those. Anything else — a
+/// multi-line string, an inline table, a date — is reported as a problem on
+/// its line and left exactly where it is, never rewritten.
 public struct TomlDocument: Sendable {
     /// One `key = value` line.
     public struct Entry: Equatable, Sendable {
@@ -84,8 +86,11 @@ public struct TomlDocument: Sendable {
 
     public private(set) var entries: [Entry] = []
     public private(set) var unreadable: [Unreadable] = []
-    /// Every `[header]`, in order, with its line index (0-based).
+    /// Every `[header]`, in order, with its line index (0-based). An
+    /// array-of-tables element is listed under its indexed name, `x[2]`.
     private var headers: [(name: String, index: Int)] = []
+    /// How many `[[name]]` elements each array of tables has.
+    public private(set) var arrayTableCounts: [String: Int] = [:]
 
     public init(_ text: String) {
         endsWithNewline = text.isEmpty || text.hasSuffix("\n")
@@ -104,6 +109,57 @@ public struct TomlDocument: Sendable {
     /// The first entry for `key` in `table`.
     public func entry(_ key: String, in table: String? = nil) -> Entry? {
         entries.first { $0.table == table && $0.key == key }
+    }
+
+    /// The table names of every `[[name]]` element, in file order:
+    /// `["servers[0]", "servers[1]"]`. Each is a `table` for `entry` and `set`.
+    public func arrayTables(_ name: String) -> [String] {
+        (0..<(arrayTableCounts[name] ?? 0)).map { "\(name)[\($0)]" }
+    }
+
+    /// The array-of-tables name and index a table name denotes, if it does.
+    public static func arrayElement(_ table: String) -> (name: String, index: Int)? {
+        guard table.hasSuffix("]"), let open = table.lastIndex(of: "["),
+              let index = Int(table[table.index(after: open)..<table.index(before: table.endIndex)]),
+              open > table.startIndex
+        else { return nil }
+        return (String(table[..<open]), index)
+    }
+
+    /// Add one `[[name]]` element at the end of the file with these keys, in
+    /// this order. The one way a new element is written; `set` edits keys of
+    /// an element that exists.
+    public mutating func appendArrayTable(_ name: String, _ pairs: [(key: String, value: TomlValue)]) {
+        if let last = lines.last, !last.trimmingCharacters(in: .whitespaces).isEmpty { lines.append("") }
+        lines.append("[[\(name)]]")
+        for (key, value) in pairs { lines.append("\(Self.bareOrQuoted(key)) = \(value.toml)") }
+        endsWithNewline = true
+        reparse()
+    }
+
+    /// Take one `[[name]]` element out: its header, its keys, and the blank
+    /// lines directly under it, so what remains reads as it did before the
+    /// element was added. Comments above the header stay, as `remove` keeps
+    /// them, because they may be about more than the one element.
+    public mutating func removeArrayTable(_ table: String) {
+        guard let position = headers.firstIndex(where: { $0.name == table }) else { return }
+        let start = headers[position].index
+        var end = lines.count
+        for header in headers where header.index > start { end = min(end, header.index) }
+        // Back off over the blank lines and comments that belong to the next
+        // header rather than to this element.
+        while end > start + 1 {
+            let line = lines[end - 1].trimmingCharacters(in: .whitespaces)
+            if line.isEmpty || line.hasPrefix("#") { end -= 1 } else { break }
+        }
+        lines.removeSubrange(start..<end)
+        // One blank line between what is now adjacent, never two.
+        while start < lines.count, start > 0,
+              lines[start].trimmingCharacters(in: .whitespaces).isEmpty,
+              lines[start - 1].trimmingCharacters(in: .whitespaces).isEmpty {
+            lines.remove(at: start)
+        }
+        reparse()
     }
 
     // MARK: - editing
@@ -163,6 +219,7 @@ public struct TomlDocument: Sendable {
         entries = []
         unreadable = []
         headers = []
+        arrayTableCounts = [:]
         var table: String?
         for (index, raw) in lines.enumerated() {
             var chars = Array(raw)
@@ -172,10 +229,20 @@ public struct TomlDocument: Sendable {
             guard let first = scan.peek, first != "#" else { continue }
             if first == "[" {
                 if scan.peek(at: 1) == "[" {
-                    unreadable.append(.init(line: index + 1, reason: "an array of tables ([[…]]) is not something this file uses"))
-                    // Named as written, so its keys are reported under it and
-                    // never mistaken for top-level settings.
-                    table = raw.trimmingCharacters(in: .whitespaces)
+                    // `[[servers]]`: the next element of that array of tables.
+                    scan.advance(); scan.advance()
+                    guard let name = scan.readKeyPath(), scan.skipSpace(), scan.take("]"), scan.take("]"),
+                          scan.atEndOrComment()
+                    else {
+                        unreadable.append(.init(line: index + 1, reason: "could not read this table header"))
+                        table = "[unreadable]"
+                        continue
+                    }
+                    let array = name.joined(separator: ".")
+                    let element = arrayTableCounts[array, default: 0]
+                    arrayTableCounts[array] = element + 1
+                    table = "\(array)[\(element)]"
+                    headers.append((table!, index))
                     continue
                 }
                 scan.advance()

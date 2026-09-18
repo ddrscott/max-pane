@@ -23,6 +23,14 @@ public final class OpenServer: @unchecked Sendable {
         case run(command: String, args: [String], sessionId: String, cwd: String)
         /// What is on the strip.
         case list
+        /// `maxpane server add NAME URL`: a remote relay-tty server, from the
+        /// auth URL it printed at startup. The token inside `url` goes to the
+        /// Keychain and nowhere else; the app is the one that stores it, so
+        /// the item is written under the app's own signature and read back
+        /// without a panel.
+        case addServer(name: String, url: String)
+        /// `maxpane server ls`.
+        case listServers
     }
 
     /// What goes back. `session` carries the id of a session just started;
@@ -178,6 +186,15 @@ public final class OpenServer: @unchecked Sendable {
 
         case "ls":
             return .list
+
+        case "server-add":
+            guard let name = object["name"] as? String, !name.isEmpty,
+                  let url = object["url"] as? String, !url.isEmpty
+            else { return nil }
+            return .addServer(name: name, url: url)
+
+        case "server-ls":
+            return .listServers
 
         default:
             return nil

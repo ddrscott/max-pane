@@ -9,8 +9,9 @@ enum OmniAction: Equatable {
     /// Open this in a web pane. The scheme is optional here and added later —
     /// `StripWindowController.normalizeURL` is the one place that decides.
     case open(String)
-    /// Put an already-running Relay session on the strip.
-    case attach(String)
+    /// Put an already-running Relay session on the strip, from whichever
+    /// server it is on.
+    case attach(SessionKey)
 }
 
 /// Which corpora ⌘O is looking at.
@@ -104,7 +105,7 @@ struct OmniCandidate: Equatable {
         switch action {
         case .open(let url): return "url:" + OmniText.handle(url).lowercased()
         case .run(let line, _): return "cmd:" + line
-        case .attach(let id): return "ses:" + id
+        case .attach(let key): return "ses:" + key.description
         }
     }
 }
@@ -428,10 +429,12 @@ enum OmniRanking {
         let name = t.title.isEmpty ? t.command : t.title
         guard let quality = MatchQuality.of(query, inAny: [name, t.command, t.groupPath])
         else { return nil }
-        let short = String(t.sessionId.prefix(8))
+        // The id, and the server before it for a remote session — the one
+        // mark, in the place the directory sits on a local row.
+        let short = t.server.map { "\($0):\(t.sessionId.prefix(8))" } ?? String(t.sessionId.prefix(8))
         let repeats = name.hasPrefix(t.command) || t.command.isEmpty
         return OmniCandidate(
-            action: .attach(t.sessionId),
+            action: .attach(t.key),
             kind: .session,
             headline: name.isEmpty ? short : name,
             detail: repeats ? "\(short) · \(t.groupPath)" : "\(short) · \(t.command)",

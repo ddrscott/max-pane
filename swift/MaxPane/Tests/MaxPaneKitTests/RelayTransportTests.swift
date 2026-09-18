@@ -289,19 +289,4 @@ struct RelayTransportTests {
         adapter.disconnect()
     }
 
-    @Test("MAXPANE_SPIKE_REMOTE parses, and its absence is nil")
-    func spikeEnv() {
-        #expect(SpikeRemote.parse(nil) == nil)
-        #expect(SpikeRemote.parse("") == nil)
-        #expect(SpikeRemote.parse("nonsense") == nil)
-        let t = SpikeRemote.parse("wss://yourslug.relaytty.com|0368D543|tok")
-        #expect(t?.server.baseURL.absoluteString == "https://yourslug.relaytty.com")
-        #expect(t?.sessionId == "0368d543")
-        #expect(t?.server.token == "tok")
-        #expect(t?.server.placement == .cookie)
-        let q = SpikeRemote.parse("http://localhost:44864|0368d543||query")
-        #expect(q?.server.token == nil)
-        #expect(q?.server.placement == .query)
-        #expect(SpikeRemote.current == nil, "the test process must not carry the spike variable")
-    }
 }

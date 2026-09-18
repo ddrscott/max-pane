@@ -245,6 +245,10 @@ public struct ConfigField {
 
     /// The table the keymap lives in.
     public static let keysTable = "keys"
+    /// The array of tables the remote servers live in.
+    public static let serversTable = "servers"
+    /// The keys one `[[servers]]` element may carry.
+    public static let serverKeys: Set<String> = ["name", "url", "enabled"]
 }
 
 /// Something in the file that was not used, and why.
@@ -282,6 +286,9 @@ public enum ConfigFile {
         var seen = Set<String>()
 
         var bindings: [String: [String]] = [:]
+        // `[[servers]]` elements, by index, each a partial entry until every
+        // key has been seen.
+        var servers: [Int: (name: String?, url: String?, enabled: Bool, line: Int)] = [:]
         for entry in document.entries {
             let table = entry.table
             let identity = "\(table ?? "").\(entry.key)"
@@ -291,6 +298,25 @@ public enum ConfigFile {
                 continue
             }
             seen.insert(identity)
+
+            if let table, let element = TomlDocument.arrayElement(table), element.name == ConfigField.serversTable {
+                var server = servers[element.index] ?? (nil, nil, true, entry.line)
+                switch (entry.key, entry.value) {
+                case (_, .failure(let error)):
+                    problems.append(.init(key: shown, line: entry.line, reason: error.reason))
+                case ("name", .success(.string(let s))): server.name = s
+                case ("url", .success(.string(let s))): server.url = s
+                case ("enabled", .success(.bool(let b))): server.enabled = b
+                case ("name", .success(let v)), ("url", .success(let v)):
+                    problems.append(.init(key: shown, line: entry.line, reason: "expected a string, got \(v.kind)"))
+                case ("enabled", .success(let v)):
+                    problems.append(.init(key: shown, line: entry.line, reason: "expected true or false, got \(v.kind)"))
+                default:
+                    problems.append(.init(key: shown, line: entry.line, reason: "not a server setting; left as it is"))
+                }
+                servers[element.index] = server
+                continue
+            }
 
             if table == ConfigField.keysTable {
                 switch entry.value {
@@ -334,6 +360,25 @@ public enum ConfigFile {
             }
         }
         config.keys = KeyBindings(bindings)
+        // A server with no name or no usable URL is skipped, and says so on
+        // the line its table starts at, the way a bad value is skipped and
+        // its default used — except that a server has no default to use.
+        for index in servers.keys.sorted() {
+            let partial = servers[index]!
+            let shown = "\(ConfigField.serversTable)[\(index)]"
+            let entry = RelayServerEntry(name: partial.name ?? "", url: partial.url ?? "", enabled: partial.enabled)
+            if partial.name == nil {
+                problems.append(.init(key: shown, line: partial.line, reason: "a server needs a name; skipped"))
+            } else if partial.url == nil {
+                problems.append(.init(key: shown, line: partial.line, reason: "a server needs a url; skipped"))
+            } else if let why = entry.complaint {
+                problems.append(.init(key: shown, line: partial.line, reason: "\(why); skipped"))
+            } else if config.servers.contains(where: { $0.name == entry.name }) {
+                problems.append(.init(key: shown, line: partial.line, reason: "another server is already named \"\(entry.name)\"; skipped"))
+            } else {
+                config.servers.append(entry)
+            }
+        }
         return (config, problems)
     }
 

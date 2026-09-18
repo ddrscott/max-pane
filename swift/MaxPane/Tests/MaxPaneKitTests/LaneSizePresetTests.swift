@@ -607,7 +607,7 @@ struct LaneSizePresetTests {
              projectSource: .cwd, createdAt: 0, lastFocusAt: 0, keepLive: false, dock: nil, span: span,
              panes: panes.enumerated().map { index, pane in
                  Pane(id: "p\(index)", laneId: "l", position: UInt32(index), kind: pane.0,
-                      relaySessionId: pane.0 == .pty ? "a" : nil,
+                      relaySessionId: pane.0 == .pty ? "a" : nil, relayServer: nil,
                       url: pane.0 == .web ? "https://example.com" : nil, scrollY: nil, dataStoreId: nil,
                       snapshotPath: nil, state: .live, heightWeight: 1, zoom: pane.1, mobile: false)
              })
@@ -636,6 +636,8 @@ private final class RecordingAttachment: RelayAttachment {
     var onTitle: ((String) -> Void)?
     var onExit: ((Int32) -> Void)?
     var onConnectionChange: ((Bool) -> Void)?
+    var onRefused: ((String) -> Void)?
+    var onReplaceScreen: (() -> Void)?
     var claims: [Size] = []
 
     func connect() {}

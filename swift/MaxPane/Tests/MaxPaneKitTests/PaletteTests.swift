@@ -273,7 +273,7 @@ struct PaletteTests {
         Lane(id: "l", ordinal: 1, widthPt: 600, title: "Latest commit changes", projectRoot: "/tmp",
              projectSource: .cwd, createdAt: 0, lastFocusAt: 0, keepLive: false, dock: nil, span: 1,
              panes: [Pane(id: "p", laneId: "l", position: 0, kind: .pty,
-                          relaySessionId: "a", url: nil, scrollY: nil, dataStoreId: nil,
+                          relaySessionId: "a", relayServer: nil, url: nil, scrollY: nil, dataStoreId: nil,
                           snapshotPath: nil, state: .live, heightWeight: 1, zoom: 1, mobile: false)])
     }
 }

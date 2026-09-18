@@ -94,7 +94,7 @@ public final class StripViewController: NSViewController {
     private var isColdLaunch = true
     /// Latest session telemetry, so a lane materialised mid-stream is not blank
     /// until the next poll.
-    private var laneTelemetry: [String: SessionTelemetry] = [:]
+    private var laneTelemetry: [SessionKey: SessionTelemetry] = [:]
     /// Path → the editor session opened on it, so a second ⌘-click on the same
     /// file goes back to the buffer you already have rather than opening a
     /// rival copy of it.
@@ -203,9 +203,14 @@ public final class StripViewController: NSViewController {
     /// explaining.
     private let dockShadows: [DockSide: DockShadowView] = [.left: DockShadowView(), .right: DockShadowView()]
 
-    public init(store: StripStore, config: Config) {
+    /// The remote servers a pane may be attached through. Nil — tests, and a
+    /// launch with no `[[servers]]` — is every pane on the Unix socket.
+    private let servers: RelayServers?
+
+    public init(store: StripStore, config: Config, servers: RelayServers? = nil) {
         self.store = store
         self.config = config
+        self.servers = servers
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -1986,7 +1991,7 @@ public final class StripViewController: NSViewController {
         sizeTransitionEnds.removeValue(forKey: lane.id)?()
         // The title the lane's own header is showing, from the same two sources.
         let title = LaneHeaderModel(
-            lane: lane, telemetry: laneView.currentSessionId.flatMap { laneTelemetry[$0] }).title
+            lane: lane, telemetry: laneView.currentSessionKey.flatMap { laneTelemetry[$0] }).title
         maximizer.maximize(
             paneId: paneId, view: controller.view, in: laneView, title: title,
             animated: !Motion.isReduced && view.window != nil)
@@ -2328,8 +2333,10 @@ public final class StripViewController: NSViewController {
             controller.onSessionExit = { [weak self] _ in
                 self?.paneDidExit(pane.id)
             }
-            if let sessionId = pane.relaySessionId {
-                controller.attach(SpikeRemote.adapter(for: sessionId) ?? RelayAttachmentAdapter(sessionId: sessionId))
+            // The adapter is chosen by the pane's server: a WebSocket to a
+            // named remote, the Unix socket for this Mac (ADR-0020).
+            if let key = pane.sessionKey {
+                controller.attach(servers?.adapter(for: key) ?? RelayAttachmentAdapter(sessionId: key.id))
             } else {
                 Log.warn("pty pane \(pane.id) has no relay session")
             }
@@ -2377,6 +2384,15 @@ public final class StripViewController: NSViewController {
     /// actually tall enough for.
     private func open(_ token: TerminalToken, from paneId: String) {
         guard let laneId = store.lane(containing: paneId)?.id else { return }
+        // A path in a remote lane is a path on the remote machine. Opening it
+        // here would open whatever this Mac has at that path, or nothing;
+        // the server's file API is Phase 4 of the remote plan. A URL is a URL
+        // wherever it was printed, and still opens.
+        if case .file = token, let server = store.pane(paneId)?.relayServer {
+            (paneControllers[paneId] as? TerminalPaneController)?
+                .showNotice("\(server): files on a remote server cannot be opened yet")
+            return
+        }
         switch FileOpen.plan(for: token, editor: config.editor) {
         case .web(let url):
             do {
@@ -3046,14 +3062,22 @@ public final class StripViewController: NSViewController {
 
     /// A pty pane's current working directory, for spawning a sibling in the
     /// right place (PRD §7.1).
+    ///
+    /// Nil for a remote pane: its cwd is a directory on another machine, and
+    /// nothing spawned here can start in it. Until spawning reaches remote
+    /// servers, a sibling of a remote lane starts where a sibling of no lane
+    /// would.
     public func cwd(ofPane paneId: String) -> String? {
-        (paneControllers[paneId] as? TerminalPaneController)?.currentCwd
+        guard store.pane(paneId)?.relayServer == nil else { return nil }
+        return (paneControllers[paneId] as? TerminalPaneController)?.currentCwd
     }
 
     /// Which lane holds the terminal attached to `sessionId`, for the
-    /// `maxpane-open` shim.
+    /// `maxpane-open` shim. Local only: the shim reaches this Mac's socket,
+    /// which a remote shell cannot, so the id it carries is a local one.
     public func lane(forRelaySession sessionId: String) -> String? {
-        store.state.lanes.first { $0.panes.contains { $0.relaySessionId == sessionId } }?.id
+        let key = SessionKey(id: sessionId)
+        return store.state.lanes.first { $0.panes.contains { $0.sessionKey == key } }?.id
     }
 
     /// RelayTTY's session directory changed.
@@ -3061,8 +3085,8 @@ public final class StripViewController: NSViewController {
     /// A session that has gone leaves its lane exactly where it is (PRD §11:
     /// "the lane and ordinal are unaffected"); the pane says so instead. A
     /// session that has come back is reattached.
-    public func sessionsChanged(_ telemetry: [String: SessionTelemetry]) {
-        let live = Set(telemetry.values.filter(\.isRunning).map(\.sessionId))
+    public func sessionsChanged(_ telemetry: [SessionKey: SessionTelemetry]) {
+        let live = Set(telemetry.values.filter(\.isRunning).map(\.key))
         laneTelemetry = telemetry
         // An editor that has quit stops being a place to send the next
         // ⌘-click. Swept here rather than only on lookup, so a map of paths
@@ -3079,9 +3103,11 @@ public final class StripViewController: NSViewController {
         }
         for (paneId, controller) in paneControllers {
             guard let terminal = controller as? TerminalPaneController,
-                  let sessionId = store.pane(paneId)?.relaySessionId
+                  let pane = store.pane(paneId), let key = pane.sessionKey
             else { continue }
-            terminal.sessionAvailabilityChanged(live.contains(sessionId))
+            terminal.sessionAvailabilityChanged(live.contains(key))
+            // A remote pane's cwd comes from its server's list, not the disk.
+            if pane.relayServer != nil, let cwd = telemetry[key]?.cwd { terminal.adoptRemoteCwd(cwd) }
         }
     }
 }

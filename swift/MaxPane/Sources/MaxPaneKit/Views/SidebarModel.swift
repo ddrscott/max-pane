@@ -65,7 +65,10 @@ enum SidebarModel {
         /// same kind of decision as every other column: a fact about the rows,
         /// worth a test.
         var paneId: String?
-        var sessionId: String?
+        /// The session this row is about, on whichever server; nil for a web
+        /// lane. `sessionId` is its id alone, for the tooltip and the clipboard.
+        var sessionKey: SessionKey?
+        var sessionId: String? { sessionKey?.id }
         /// `SessionTelemetry.state` — relay's verdict corrected by the title —
         /// and the only source for the chip.
         var state: AgentState
@@ -98,6 +101,15 @@ enum SidebarModel {
         /// bookmarks section, whose rows are not sessions and for which
         /// "0 CLOSED" would be both true and meaningless.
         var countOverride: String?
+        /// How the remote server this group is on is doing; nil for a local
+        /// group, and for a remote whose state is not known. Printed in the
+        /// header when it is anything but connected: a header that said
+        /// CONNECTED all day would spend a word on something always true.
+        var serverState: ServerState?
+
+        /// The server this group is on — `yorkshire` of `yorkshire:/home` —
+        /// or nil for a group on this Mac.
+        var server: String? { LaneHeaderPath.splitServer(path)?.server }
 
         /// `~/code/max-pane` → `~/CODE/MAX-PANE`; the loose-web sentinel → `WEB`.
         var header: String {
@@ -113,9 +125,16 @@ enum SidebarModel {
         /// fact you cannot afford to have hidden.
         var countText: String {
             if let countOverride { return countOverride }
-            if blocked > 0 { return "\(blocked) BLOCKED" }
-            return running > 0 ? "\(running) RUNNING" : "\(total) CLOSED"
+            let count = blocked > 0 ? "\(blocked) BLOCKED" : (running > 0 ? "\(running) RUNNING" : "\(total) CLOSED")
+            // A remote group whose server is not reachable says so ahead of
+            // the count, because the count is then what the server last
+            // said, not what is true now.
+            if let serverState, serverState != .connected { return "\(serverState.label) · \(count)" }
+            return count
         }
+
+        /// The header's state is worth a colour: the server is not connected.
+        var serverIsOff: Bool { serverState.map { $0 != .connected } ?? false }
     }
 
     /// One node of the bookmarks tree, as a row.
@@ -203,39 +222,40 @@ enum SidebarModel {
     /// whose session has gone.
     static func rows(
         lanes: [Lane],
-        telemetry: [String: SessionTelemetry],
-        created: [String: Double] = [:],
+        telemetry: [SessionKey: SessionTelemetry],
+        created: [SessionKey: Double] = [:],
         bookmarks: [Bookmark] = [],
         controls: Controls = Controls(),
+        servers: [String: ServerState] = [:],
         now: Date = Date()
     ) -> [Row] {
         // The *pane* as well as the lane: a click on a row has to be able to
         // hand the keyboard to the pane whose session the row names, and in a
         // split lane that is not the same thing as the lane's first pane.
-        var laneForSession: [String: (lane: Lane, pane: Pane)] = [:]
+        var laneForSession: [SessionKey: (lane: Lane, pane: Pane)] = [:]
         for lane in lanes {
             for pane in lane.panes {
-                if let sid = pane.relaySessionId, laneForSession[sid] == nil {
-                    laneForSession[sid] = (lane, pane)
+                if let key = pane.sessionKey, laneForSession[key] == nil {
+                    laneForSession[key] = (lane, pane)
                 }
             }
         }
 
         var grouped: [String: [Entry]] = [:]
-        for (id, t) in telemetry {
-            let attached = laneForSession[id]
+        for (key, t) in telemetry {
+            let attached = laneForSession[key]
             let lane = attached?.lane
             let split = splitGlyph(displayTitle(t))
             // Only where pty-host has no opinion at all does the agent's own
             // title mark get to fill the glyph column — and never the chip.
             let glyph = t.state == .unknown ? (split.glyph ?? t.state.glyph) : t.state.glyph
             let entry = Entry(
-                id: "session:\(id)",
+                id: "session:\(key)",
                 kind: .session,
                 title: split.title,
                 laneId: lane?.id,
                 paneId: attached?.pane.id,
-                sessionId: id,
+                sessionKey: key,
                 state: t.state,
                 glyph: glyph,
                 chip: t.state.chipText,
@@ -244,7 +264,7 @@ enum SidebarModel {
                 age: t.ageText,
                 isRunning: t.isRunning,
                 pinned: lane?.keepLive ?? false,
-                createdAt: created[id] ?? (t.lastActivity?.timeIntervalSince1970 ?? 0),
+                createdAt: created[key] ?? (t.lastActivity?.timeIntervalSince1970 ?? 0),
                 activityAt: t.lastActivity?.timeIntervalSince1970 ?? 0)
             grouped[t.groupPath, default: []].append(entry)
         }
@@ -252,8 +272,8 @@ enum SidebarModel {
         for lane in lanes {
             // A pty lane whose session Relay has already forgotten still deserves
             // a row; without one the strip would hold a lane the browser denies.
-            let sessionIds = lane.panes.compactMap(\.relaySessionId)
-            if sessionIds.contains(where: { telemetry[$0] != nil }) { continue }
+            let sessionKeys = lane.panes.compactMap(\.sessionKey)
+            if sessionKeys.contains(where: { telemetry[$0] != nil }) { continue }
             guard let pane = lane.panes.first else { continue }
             let kind: Kind
             switch pane.kind {
@@ -271,7 +291,7 @@ enum SidebarModel {
                 // This row is the lane, not a session — so it names the pane the
                 // lane's own header names, which is its first.
                 paneId: pane.id,
-                sessionId: sessionIds.first,
+                sessionKey: sessionKeys.first,
                 state: state,
                 glyph: kind == .session ? state.glyph : "",
                 chip: kind == .session ? state.chipText : "",
@@ -317,7 +337,8 @@ enum SidebarModel {
                 blocked: kept.filter(\.needsAttention).count,
                 total: kept.count,
                 collapsed: collapsed,
-                countOverride: nil)))
+                countOverride: nil,
+                serverState: LaneHeaderPath.splitServer(path).flatMap { servers[$0.server] })))
             guard !collapsed else { continue }
             out.append(contentsOf: sorted(kept, controls).map(Row.entry))
         }
@@ -636,16 +657,16 @@ enum SidebarModel {
     /// "2/10 SESSIONS" — how many of everything Relay is running are on the
     /// strip. The second number is the bar's "10 sessions"; the first is the one
     /// that tells you what you are *not* watching.
-    static func footerCount(telemetry: [String: SessionTelemetry], lanes: [Lane]) -> String {
+    static func footerCount(telemetry: [SessionKey: SessionTelemetry], lanes: [Lane]) -> String {
         let total = telemetry.count
-        let attachedIds = Set(lanes.flatMap(\.panes).compactMap(\.relaySessionId))
-        let on = telemetry.keys.filter { attachedIds.contains($0) }.count
+        let attachedKeys = Set(lanes.flatMap(\.panes).compactMap(\.sessionKey))
+        let on = telemetry.keys.filter { attachedKeys.contains($0) }.count
         let word = total == 1 ? "SESSION" : "SESSIONS"
         return "\(on)/\(total) \(word)"
     }
 
     /// Sessions waiting on a human, for the footer's alarm.
-    static func blockedCount(_ telemetry: [String: SessionTelemetry]) -> Int {
+    static func blockedCount(_ telemetry: [SessionKey: SessionTelemetry]) -> Int {
         telemetry.values.filter { $0.isRunning && $0.needsAttention }.count
     }
 }

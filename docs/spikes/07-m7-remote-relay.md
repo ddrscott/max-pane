@@ -426,8 +426,11 @@ credential-less upgrade — which is one `probe` away from being a test.
 - **A web lane control.** Removed from the brief by the owner on 2026-09-17;
   the comparison with the web app is feature for feature in the plan's §0.
 - **The lane in the running app.** `build/spike.app` was built and not
-  launched, by the rules. To run it, from a terminal of his own, with the
-  token read the way the task file says:
+  launched, by the rules. *(Phase 1 replaced the `MAXPANE_SPIKE_REMOTE` hook
+  below with `[[servers]]` in `config.toml` and `maxpane server add`; the
+  recipe is kept as the record of how the spike build was meant to be run.)*
+  To run it, from a terminal of his own, with the token read the way the
+  task file says:
 
   ```sh
   MAXPANE_SPIKE_REMOTE="https://yourslug.relaytty.com|0368d543|$(ssh yorkshire-wsl 'grep -o "callback?token=[A-Za-z0-9._-]*" ~/relay-server.log | tail -1 | cut -d= -f2')" \

@@ -30,8 +30,33 @@ enum LaneHeaderPath {
 
     /// The header string for `path` in a field `maxChars` monospace cells wide.
     /// Returns `""` when there is not enough room to say anything true.
+    ///
+    /// A remote path is `server:/path`. The server's name is the one mark that
+    /// tells a remote lane from a local one, so it is never the part that is
+    /// dropped: the path after it shrinks by the rules below in the room the
+    /// name leaves, and is never abbreviated against *this* Mac's `$HOME`.
     static func fit(_ path: String, maxChars: Int) -> String {
-        let abbreviated = abbreviate(path)
+        if let (server, rest) = splitServer(path) {
+            let room = maxChars - server.count - 1
+            guard room > 0 else { return String(server.prefix(max(maxChars, 0))) }
+            let tail = fit(rest, maxChars: room, abbreviating: false)
+            return tail.isEmpty ? server : "\(server):\(tail)"
+        }
+        return fit(path, maxChars: maxChars, abbreviating: true)
+    }
+
+    /// `yorkshire:/home/spierce` → `("yorkshire", "/home/spierce")`; nil for a
+    /// local path. A server name has no `/` and no space, which is how it is
+    /// told from a path that merely contains a colon.
+    static func splitServer(_ path: String) -> (server: String, path: String)? {
+        guard let colon = path.firstIndex(of: ":"), colon > path.startIndex else { return nil }
+        let server = path[..<colon]
+        guard !server.contains("/"), !server.contains(" "), !server.contains("~") else { return nil }
+        return (String(server), String(path[path.index(after: colon)...]))
+    }
+
+    private static func fit(_ path: String, maxChars: Int, abbreviating: Bool) -> String {
+        let abbreviated = abbreviating ? abbreviate(path) : trimmed(path)
         guard maxChars > 0, !abbreviated.isEmpty else { return "" }
         if abbreviated.count <= maxChars { return abbreviated }
 
@@ -60,10 +85,15 @@ enum LaneHeaderPath {
     /// by it; if the two ever disagreed, a lane and its sidebar row would claim
     /// to be in different directories.
     static func abbreviate(_ path: String) -> String {
-        var path = path
-        // A trailing slash is never information; it is just a wasted cell.
-        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
+        let path = trimmed(path)
         guard !path.isEmpty else { return "" }
         return SessionTelemetry.abbreviate(path)
+    }
+
+    /// A trailing slash is never information; it is just a wasted cell.
+    private static func trimmed(_ path: String) -> String {
+        var path = path
+        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
+        return path
     }
 }

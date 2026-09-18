@@ -96,6 +96,26 @@ public final class ConfigStore {
         write(next)
     }
 
+    /// Add a `[[servers]]` table, or point an existing one of that name at a
+    /// new URL in place. The token is not the file's business.
+    public func addServer(_ entry: RelayServerEntry) {
+        var next = document
+        if let table = next.arrayTables(ConfigField.serversTable).first(where: {
+            if case .success(.string(let name)) = next.entry("name", in: $0)?.value { return name == entry.name }
+            return false
+        }) {
+            next.set("url", in: table, to: .string(entry.url))
+            next.set("enabled", in: table, to: .bool(entry.enabled))
+        } else {
+            next.appendArrayTable(ConfigField.serversTable, [
+                (key: "name", value: .string(entry.name)),
+                (key: "url", value: .string(entry.url)),
+                (key: "enabled", value: .bool(entry.enabled)),
+            ])
+        }
+        write(next)
+    }
+
     /// The file, created with a header comment if there is none yet — so that
     /// "Reveal" and "Open in editor" always have something to show.
     @discardableResult

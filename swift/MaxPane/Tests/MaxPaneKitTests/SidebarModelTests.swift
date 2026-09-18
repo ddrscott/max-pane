@@ -31,7 +31,7 @@ struct SidebarModelTests {
             createdAt: created, lastFocusAt: created, keepLive: pinned, dock: nil, span: 1,
             panes: [Pane(
                 id: "p-" + id, laneId: id, position: 0, kind: kind,
-                relaySessionId: session, url: url, scrollY: nil,
+                relaySessionId: session, relayServer: nil, url: url, scrollY: nil,
                 dataStoreId: nil, snapshotPath: nil, state: state, heightWeight: 1, zoom: 1, mobile: false)])
     }
 
@@ -332,7 +332,7 @@ struct SidebarModelTests {
             "c": telemetry("c", title: "three", cwd: home),
         ]
         #expect(SidebarModel.footerCount(telemetry: t, lanes: [lane("L1", session: "b")]) == "1/3 SESSIONS")
-        #expect(SidebarModel.footerCount(telemetry: [:], lanes: []) == "0/0 SESSIONS")
+        #expect(SidebarModel.footerCount(telemetry: [SessionKey: SessionTelemetry](), lanes: []) == "0/0 SESSIONS")
     }
 
     /// Two pty panes stacked in one lane, the way ⇧⌘D leaves them.
@@ -344,7 +344,7 @@ struct SidebarModelTests {
             panes: sessions.enumerated().map { position, session in
                 Pane(
                     id: "\(id)-p\(position)", laneId: id, position: UInt32(position), kind: .pty,
-                    relaySessionId: session, url: nil, scrollY: nil,
+                    relaySessionId: session, relayServer: nil, url: nil, scrollY: nil,
                     dataStoreId: nil, snapshotPath: nil, state: .live, heightWeight: 1, zoom: 1, mobile: false)
             })
     }

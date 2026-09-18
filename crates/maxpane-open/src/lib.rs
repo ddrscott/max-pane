@@ -125,6 +125,11 @@ commands:
   open URL              open URL as a web lane, right of the calling terminal
   run [COMMAND...]      new terminal lane running COMMAND (default: your shell)
   ls                    list what is on the strip
+  server add NAME URL   add a remote relay-tty server: NAME is what the lane
+                        header shows, URL is the auth URL the server printed
+                        at startup (…/api/auth/callback?token=…); the token
+                        goes to the Keychain, the rest to config.toml
+  server ls             list the configured servers and how they are doing
   socket                print the control socket path
   profile               print which profile this would talk to
 
@@ -166,6 +171,7 @@ pub fn run() {
         Some("open") => open_command(&args[1..], &profile),
         Some("run") => run_command(&args[1..], &profile),
         Some("ls") => list_command(&profile),
+        Some("server") => server_command(&args[1..], &profile),
         Some(other) => {
             eprintln!("maxpane: unknown command {other:?}");
             usage()
@@ -276,6 +282,47 @@ fn run_command(args: &[String], profile: &str) {
         Err(reason) => {
             eprintln!("maxpane: {reason}");
             std::process::exit(1);
+        }
+    }
+}
+
+// ---- server ----------------------------------------------------------------
+
+/// `maxpane server add NAME URL` and `maxpane server ls`.
+///
+/// The URL carries the server's token. It goes to the app over the
+/// owner-only socket and from there to the Keychain; it is never printed,
+/// and the reply echoes the base URL only.
+fn server_command(args: &[String], profile: &str) {
+    match args.first().map(String::as_str) {
+        Some("add") => {
+            let (Some(name), Some(url)) = (args.get(1), args.get(2)) else {
+                eprintln!("maxpane: server add needs NAME and the server's auth URL");
+                usage();
+            };
+            let payload = format!(
+                "{{\"op\":\"server-add\",\"name\":{},\"url\":{}}}",
+                json_string(name),
+                json_string(url)
+            );
+            match request(&payload, profile) {
+                Ok(reply) => print!("{}", field(&reply, "lanes").unwrap_or_default()),
+                Err(reason) => {
+                    eprintln!("maxpane: {reason}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Some("ls") | None => match request("{\"op\":\"server-ls\"}", profile) {
+            Ok(reply) => print!("{}", field(&reply, "lanes").unwrap_or_default()),
+            Err(reason) => {
+                eprintln!("maxpane: {reason}");
+                std::process::exit(1);
+            }
+        },
+        Some(other) => {
+            eprintln!("maxpane: unknown server command {other:?}");
+            usage();
         }
     }
 }

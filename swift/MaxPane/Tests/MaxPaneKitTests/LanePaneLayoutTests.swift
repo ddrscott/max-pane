@@ -23,7 +23,7 @@ struct LanePaneLayoutTests {
         Lane(id: "L", ordinal: 0, widthPt: width, title: nil,
              projectRoot: nil, projectSource: .cwd, createdAt: 0, lastFocusAt: 0,
              keepLive: false, dock: dock, span: 1,
-             panes: [Pane(id: "P", laneId: "L", position: 0, kind: .web, relaySessionId: nil,
+             panes: [Pane(id: "P", laneId: "L", position: 0, kind: .web, relaySessionId: nil, relayServer: nil,
                           url: "https://e.com", scrollY: 0, dataStoreId: nil,
                           snapshotPath: nil, state: .live, heightWeight: 1, zoom: 1, mobile: false)])
     }

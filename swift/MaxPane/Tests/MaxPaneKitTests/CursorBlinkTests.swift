@@ -105,6 +105,8 @@ struct CursorBlinkSurfaceTests {
         var onTitle: ((String) -> Void)?
         var onExit: ((Int32) -> Void)?
         var onConnectionChange: ((Bool) -> Void)?
+        var onRefused: ((String) -> Void)?
+        var onReplaceScreen: (() -> Void)?
         var sent: [UInt8] = []
         var claims = 0
 

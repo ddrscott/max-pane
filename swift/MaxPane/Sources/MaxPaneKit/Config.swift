@@ -198,6 +198,25 @@ public struct Config: Codable, Equatable {
     /// who has one puts its URL here.
     public var blockingListUrl: String = "https://easylist-downloads.adblockplus.org/easylist_content_blocker.json"
 
+    /// Remote relay-tty servers, one `[[servers]]` table each:
+    ///
+    /// ```toml
+    /// [[servers]]
+    /// name = "yorkshire"
+    /// url = "https://yourslug.relaytty.com"
+    /// enabled = true
+    /// ```
+    ///
+    /// The local server is never listed — it is implicit, and an empty list
+    /// is the app exactly as it was before servers existed (ADR-0020). The
+    /// token is not here: it lives in the Keychain against the server's host,
+    /// put there by `maxpane server add`. The second nesting the file earns,
+    /// after `[keys]`: a server is three facts that belong together, and
+    /// `server_1_url` keys would be worse to read and worse to write.
+    /// Hand-edited in this phase; Settings gets a Servers section in the
+    /// next. Read at launch.
+    public var servers: [RelayServerEntry] = []
+
     /// `$XDG_CONFIG_HOME/maxpane/config.toml` for the default profile,
     /// `…/maxpane/profiles/<profile>/config.toml` for any other.
     ///
@@ -261,6 +280,14 @@ public struct Config: Codable, Equatable {
         theme = read(.theme, d.theme)
         blocking = read(.blocking, d.blocking)
         blockingListUrl = read(.blockingListUrl, d.blockingListUrl)
+        servers = read(.servers, d.servers)
+    }
+
+    /// The servers that are switched on, by name, with the names that appear
+    /// twice reported so nothing is silently keyed on the wrong one.
+    public var enabledServers: [RelayServerEntry] {
+        var seen = Set<String>()
+        return servers.filter { $0.enabled && seen.insert($0.name).inserted }
     }
 
     /// The lane width bounds, already ordered, so a config with min > max does
@@ -283,6 +310,44 @@ public struct Config: Codable, Equatable {
     public var webMemoryHardBytes: UInt64 { UInt64(physicalMemory * webMemoryHardFraction) }
     /// Evict down to here once evicting, so the cooldown has something to hold.
     public var webMemoryTargetBytes: UInt64 { UInt64(physicalMemory * webMemoryTargetFraction) }
+}
+
+/// One `[[servers]]` table. See `Config.servers`.
+public struct RelayServerEntry: Codable, Equatable, Sendable {
+    /// What the lane header and the sidebar group print. Short, because it
+    /// sits where a directory tag sits.
+    public var name: String
+    /// `https://<slug>.relaytty.com` or `http://host:port`. Scheme and host;
+    /// a path is ignored.
+    public var url: String
+    public var enabled: Bool
+
+    public init(name: String, url: String, enabled: Bool = true) {
+        self.name = name
+        self.url = url
+        self.enabled = enabled
+    }
+
+    /// The base URL, or nil when `url` is not one a server could be at.
+    public var baseURL: URL? {
+        guard var c = URLComponents(string: url), let scheme = c.scheme?.lowercased(),
+              scheme == "http" || scheme == "https", let host = c.host, !host.isEmpty
+        else { return nil }
+        c.scheme = scheme
+        c.path = ""
+        c.query = nil
+        c.fragment = nil
+        return c.url
+    }
+
+    /// Why this entry cannot be used, or nil when it can.
+    public var complaint: String? {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return "name is empty" }
+        if trimmed.contains(":") || trimmed.contains("/") { return "name may not contain ':' or '/'" }
+        if baseURL == nil { return "url must be http:// or https:// with a host" }
+        return nil
+    }
 }
 
 /// `cursor_blink` in the config file. See `Config.cursorBlink`.
