@@ -1636,6 +1636,20 @@ maxpane server add NAME URL   # a remote relay-tty server, from its startup Auth
 maxpane server ls             # the configured servers and how they are doing
 ```
 
+**Driving it without the screen.** The control socket reaches remote servers
+too, which matters when the Mac is locked and you are talking to it over Relay
+TTY:
+
+```sh
+maxpane sessions                  # every session, here and on each server
+maxpane attach yorkshire:0368d543 # a running session becomes a lane
+maxpane run @yorkshire claude     # start something there, as a lane here
+maxpane ls                        # a remote lane reads pty:yorkshire:0368d543
+```
+
+`run @NAME` is ⌘O's grammar. It answers before the server does, so the lane
+turns up in `maxpane ls` a moment later rather than in the reply.
+
 `run` takes a command and its arguments as **separate words**, the way `relay`
 itself is invoked — not a shell line. There is no shell between you and the
 program, so `maxpane run "yes | head"` is a request for a program named

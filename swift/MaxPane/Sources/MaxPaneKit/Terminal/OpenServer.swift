@@ -23,6 +23,17 @@ public final class OpenServer: @unchecked Sendable {
         case run(command: String, args: [String], sessionId: String, cwd: String)
         /// What is on the strip.
         case list
+        /// `maxpane run @NAME COMMAND…`: the same, on a configured remote
+        /// server. Its own case rather than a field on `run`, because a remote
+        /// spawn answers later than this socket does: the reply says it has
+        /// started asking, and the lane arrives when the server answers.
+        case runOn(server: String, command: String, args: [String])
+        /// `maxpane sessions`: every session the registry knows, local and on
+        /// every server, attached or not.
+        case listSessions
+        /// `maxpane attach [SERVER:]ID`: put a running session on the strip,
+        /// or go to the lane that already holds it.
+        case attach(server: String?, id: String)
         /// `maxpane server add NAME URL`: a remote relay-tty server, from the
         /// auth URL it printed at startup. The token inside `url` goes to the
         /// Keychain and nowhere else; the app is the one that stores it, so
@@ -178,6 +189,12 @@ public final class OpenServer: @unchecked Sendable {
             return .open(url: url, sessionId: sessionId, cwd: cwd)
 
         case "run":
+            if let server = object["server"] as? String, !server.isEmpty {
+                return .runOn(
+                    server: server,
+                    command: object["command"] as? String ?? "",
+                    args: object["args"] as? [String] ?? [])
+            }
             return .run(
                 command: object["command"] as? String ?? "",
                 args: object["args"] as? [String] ?? [],
@@ -186,6 +203,14 @@ public final class OpenServer: @unchecked Sendable {
 
         case "ls":
             return .list
+
+        case "sessions":
+            return .listSessions
+
+        case "attach":
+            guard let id = object["id"] as? String, !id.isEmpty else { return nil }
+            let server = (object["server"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            return .attach(server: server, id: id)
 
         case "server-add":
             guard let name = object["name"] as? String, !name.isEmpty,

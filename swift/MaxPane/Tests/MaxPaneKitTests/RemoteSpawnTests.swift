@@ -98,6 +98,32 @@ struct RemoteSpawnLiveTests {
         #expect(server.requestLines == ["POST /api/sessions HTTP/1.1", "GET /api/sessions/c0ffee01 HTTP/1.1"])
     }
 
+    /// How every caller in the app spawns: `try spawner(at: place).spawn(…)`,
+    /// a spawner made for one spawn and let go on the same line. The first
+    /// version captured itself weakly, so by the time the server answered it
+    /// was gone and the completion was never called: a session started on the
+    /// box, no lane here, and no error. Found by driving the installed app over
+    /// its socket; every test above holds its spawner in a `let`, which is why
+    /// none of them saw it.
+    @Test("a spawner nobody holds still answers, for a success and for a refusal")
+    func aTemporarySpawnerCompletes() async throws {
+        let server = try FakeRelayServer()
+        defer { server.stop() }
+        server.nextSpawnId = "c0ffee02"
+        let endpoint = RelayServer(baseURL: server.baseURL, token: server.token)
+        var result: Result<SpawnedSession, Error>?
+        RemoteSpawner(name: "yorkshire", endpoint: endpoint)
+            .spawn(cwd: nil, command: nil, args: [], cols: 80, rows: 24) { result = $0 }
+        #expect(await spin(5) { result != nil }, "the completion was never called")
+        #expect(try result?.get().key == SessionKey(server: "yorkshire", id: "c0ffee02"))
+
+        server.spawnRefusal = (status: 500, error: "no")
+        var refused: Result<SpawnedSession, Error>?
+        RemoteSpawner(name: "yorkshire", endpoint: endpoint)
+            .spawn(cwd: nil, command: nil, args: [], cols: 80, rows: 24) { refused = $0 }
+        #expect(await spin(5) { refused != nil }, "the refusal was never reported")
+    }
+
     @Test("a refusal is one line naming the server and the server's error body")
     func refusedOnFake() async throws {
         let server = try FakeRelayServer()
@@ -488,5 +514,42 @@ struct LiveRemoteSpawnTests {
             done.signal()
         }.resume()
         _ = done.wait(timeout: .now() + 15)
+    }
+}
+
+/// The control socket's doors for a remote server. The owner drives the app
+/// over Relay TTY with the screen locked; a socket is the only hand he has.
+@Suite("the CLI's remote doors")
+struct RemoteCLIDoorTests {
+    @Test("run with a server is its own request, and without one is the run it always was")
+    func runOn() {
+        guard case .runOn(let server, let command, let args)? = OpenServer.parse(
+            #"{"op":"run","server":"yorkshire","command":"claude","args":["--model","sonnet"]}"#)
+        else { Issue.record("not runOn"); return }
+        #expect(server == "yorkshire" && command == "claude" && args == ["--model", "sonnet"])
+
+        guard case .run(let local, _, _, _)? = OpenServer.parse(#"{"op":"run","server":"","command":"htop"}"#)
+        else { Issue.record("an empty server is local"); return }
+        #expect(local == "htop")
+    }
+
+    @Test("attach takes a bare id or a server and an id, and refuses no id")
+    func attach() {
+        guard case .attach(let server, let id)? = OpenServer.parse(#"{"op":"attach","server":"yorkshire","id":"0368d543"}"#)
+        else { Issue.record("not attach"); return }
+        #expect(server == "yorkshire" && id == "0368d543")
+
+        guard case .attach(let none, let local)? = OpenServer.parse(#"{"op":"attach","server":"","id":"a7ab2d3b"}"#)
+        else { Issue.record("not attach"); return }
+        #expect(none == nil && local == "a7ab2d3b")
+
+        #expect(OpenServer.parse(#"{"op":"attach","server":"yorkshire"}"#) == nil)
+    }
+
+    @Test("sessions is a request")
+    func sessions() {
+        guard case .listSessions? = OpenServer.parse(#"{"op":"sessions"}"#) else {
+            Issue.record("not listSessions"); return
+        }
     }
 }

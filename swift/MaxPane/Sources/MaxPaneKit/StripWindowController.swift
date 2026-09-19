@@ -359,6 +359,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return runFromCLI(command: command, args: args, sessionId: sessionId, cwd: cwd)
         case .list:
             return OpenServer.Reply(ok: true, lanes: describeStrip())
+        case .runOn(let server, let command, let args):
+            return runOnServerFromCLI(server: server, command: command, args: args)
+        case .listSessions:
+            return OpenServer.Reply(ok: true, lanes: describeSessions())
+        case .attach(let server, let id):
+            return attachFromCLI(SessionKey(server: server, id: id))
         case .addServer(let name, let url):
             return addServer(name: name, startupURL: url)
         case .listServers:
@@ -386,6 +392,72 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     }
 
     /// One line per configured server: name, URL, and how it is doing.
+    /// `maxpane sessions`. One line per session, tab-separated: where it is,
+    /// its state, whether a lane holds it, its directory, its title. Local
+    /// sessions first, then each server's, the order the sidebar uses.
+    private func describeSessions() -> String {
+        sessions.sessions.values
+            .sorted { $0.key < $1.key }
+            .map { t in
+                let lane = store.lane(holdingSession: t.key) != nil ? "lane" : "-"
+                let state = t.isRunning ? "\(t.state)" : "exited"
+                return "\(t.key)\t\(state)\t\(lane)\t\(t.cwd)\t\(t.title)\n"
+            }.joined()
+    }
+
+    /// `maxpane attach [SERVER:]ID`. The sidebar's and ⌘O's own `attach`, with
+    /// the one check they do not need: a row there exists because the registry
+    /// has the session, and a typed id may name nothing.
+    private func attachFromCLI(_ key: SessionKey) -> OpenServer.Reply {
+        guard let telemetry = sessions.telemetry(for: key) else {
+            if let server = key.server, serverBook?.entries.contains(where: { $0.name == server }) != true {
+                return .refused("\(server): not a configured server (maxpane server ls)")
+            }
+            return .refused("\(key): no such session (maxpane sessions)")
+        }
+        guard telemetry.isRunning else { return .refused("\(key): that session has exited") }
+        attach(key)
+        guard store.lane(holdingSession: key) != nil else {
+            return .refused("\(key): could not be attached")
+        }
+        return OpenServer.Reply(ok: true, session: key.description)
+    }
+
+    /// `maxpane run @SERVER COMMAND…`. The CLI is handed argv, as `run` is, so
+    /// it goes to the spawner as a program and its arguments; the spawner sends
+    /// the no-exec wrapper either way (ADR-0022). The server answers after this
+    /// socket has, so the reply is that the asking has started, and a failure
+    /// is the alert a failed ⌘T beside a remote lane shows.
+    private func runOnServerFromCLI(server: String, command: String, args: [String]) -> OpenServer.Reply {
+        let place = SpawnPlace(server: server, cwd: nil)
+        let near = store.focusedLane?.id
+        do {
+            let size = newSessionSize()
+            try spawner(at: place).spawn(
+                cwd: nil, command: command.isEmpty ? nil : command, args: args,
+                cols: size.cols, rows: size.rows
+            ) { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .success(let session):
+                    do {
+                        try self.store.newTerminalLane(session: session.key, near: near)
+                        if let laneId = self.store.lane(holdingSession: session.key)?.id {
+                            self.strip.reveal(laneId: laneId, flash: true)
+                        }
+                    } catch {
+                        self.showError(error)
+                    }
+                case .failure(let error):
+                    self.showError(error)
+                }
+            }
+            return OpenServer.Reply(ok: true, lanes: "\(server)\tstarting; the lane arrives when the server answers (maxpane ls)\n")
+        } catch {
+            return .refused(Self.describe(error))
+        }
+    }
+
     private func describeServers() -> String {
         guard let serverBook else { return "" }
         return serverBook.entries.map { entry in
@@ -485,7 +557,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             }
             let kinds = lane.panes.map { pane -> String in
                 switch pane.kind {
-                case .pty: return pane.relaySessionId.map { "pty:\($0)" } ?? "pty"
+                // `pty:yorkshire:0368d543` for a session on a server: the one
+                // mark, and what `maxpane attach` takes back.
+                case .pty: return pane.sessionKey.map { "pty:\($0)" } ?? "pty"
                 case .web: return "web"
                 case .placeholder: return "web(evicted)"
                 }

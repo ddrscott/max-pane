@@ -312,7 +312,12 @@ final class RemoteSpawner: SessionSpawning {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         let name = name
-        urlSession.dataTask(with: request) { [weak self] data, response, error in
+        // `self` strongly, on purpose. Every caller makes a spawner for one
+        // spawn and lets it go (`try spawner(at: place).spawn(…)`), so a weak
+        // capture is nil by the time the server answers: the session starts
+        // over there, the completion is never called, and no lane and no error
+        // ever turn up. The request holds the spawner until it has answered.
+        urlSession.dataTask(with: request) { [self] data, response, error in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             let result: Result<(String, String), Error>
             if let error {
@@ -325,7 +330,6 @@ final class RemoteSpawner: SessionSpawning {
                 result = .failure(SpawnError.badReply(server: name))
             }
             Task { @MainActor in
-                guard let self else { return }
                 switch result {
                 case .failure(let error):
                     completion(.failure(error))

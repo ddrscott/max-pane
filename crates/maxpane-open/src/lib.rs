@@ -124,7 +124,10 @@ fn usage() -> ! {
 commands:
   open URL              open URL as a web lane, right of the calling terminal
   run [COMMAND...]      new terminal lane running COMMAND (default: your shell)
+  run @NAME [COMMAND...] the same, on a remote server (maxpane server ls)
   ls                    list what is on the strip
+  sessions              list every session, here and on each server
+  attach [NAME:]ID      put a running session on the strip as a lane
   server add NAME URL   add a remote relay-tty server: NAME is what the lane
                         header shows, URL is the auth URL the server printed
                         at startup (…/api/auth/callback?token=…); the token
@@ -171,6 +174,8 @@ pub fn run() {
         Some("open") => open_command(&args[1..], &profile),
         Some("run") => run_command(&args[1..], &profile),
         Some("ls") => list_command(&profile),
+        Some("sessions") => sessions_command(&profile),
+        Some("attach") => attach_command(&args[1..], &profile),
         Some("server") => server_command(&args[1..], &profile),
         Some(other) => {
             eprintln!("maxpane: unknown command {other:?}");
@@ -261,6 +266,10 @@ fn normalize_url(raw: &str) -> String {
 /// environment and gets `BROWSER` pointed back at this binary. Starting it here
 /// would produce a session with no lane attached to it.
 fn run_command(args: &[String], profile: &str) {
+    // `@NAME` first, ⌘O's own grammar: run it on that server.
+    if let Some(server) = args.first().and_then(|a| a.strip_prefix('@')) {
+        return run_on_server(server, &args[1..], profile);
+    }
     let command = args.first().cloned().unwrap_or_default();
     let rest: Vec<String> = args.iter().skip(1).cloned().collect();
     let json_args: String = rest.iter().map(|a| json_string(a)).collect::<Vec<_>>().join(",");
@@ -279,6 +288,68 @@ fn run_command(args: &[String], profile: &str) {
             let shown = if command.is_empty() { "$SHELL".to_string() } else { args.join(" ") };
             println!("{id}\t{shown}");
         }
+        Err(reason) => {
+            eprintln!("maxpane: {reason}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `maxpane run @yorkshire claude`. No session id comes back: the server
+/// answers the app after the app has answered this, so the lane turns up in
+/// `maxpane ls` a moment later.
+fn run_on_server(server: &str, args: &[String], profile: &str) {
+    if server.is_empty() || server == "local" {
+        return run_command(args, profile);
+    }
+    let command = args.first().cloned().unwrap_or_default();
+    let json_args: String =
+        args.iter().skip(1).map(|a| json_string(a)).collect::<Vec<_>>().join(",");
+    let payload = format!(
+        "{{\"op\":\"run\",\"server\":{},\"command\":{},\"args\":[{}]}}",
+        json_string(server),
+        json_string(&command),
+        json_args
+    );
+    match request(&payload, profile) {
+        Ok(reply) => print!("{}", field(&reply, "lanes").unwrap_or_default()),
+        Err(reason) => {
+            eprintln!("maxpane: {reason}");
+            std::process::exit(1);
+        }
+    }
+}
+
+// ---- sessions, attach --------------------------------------------------------
+
+/// One line per session the app knows about, here and on every server.
+fn sessions_command(profile: &str) {
+    match request("{\"op\":\"sessions\"}", profile) {
+        Ok(reply) => print!("{}", field(&reply, "lanes").unwrap_or_default()),
+        Err(reason) => {
+            eprintln!("maxpane: {reason}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `maxpane attach a7ab2d3b`, `maxpane attach yorkshire:0368d543`.
+fn attach_command(args: &[String], profile: &str) {
+    let Some(key) = args.first() else {
+        eprintln!("maxpane: attach needs a session id (maxpane sessions)");
+        usage();
+    };
+    let (server, id) = match key.split_once(':') {
+        Some((server, id)) => (server, id),
+        None => ("", key.as_str()),
+    };
+    let payload = format!(
+        "{{\"op\":\"attach\",\"server\":{},\"id\":{}}}",
+        json_string(server),
+        json_string(id)
+    );
+    match request(&payload, profile) {
+        Ok(reply) => println!("{}", field(&reply, "session").unwrap_or_default()),
         Err(reason) => {
             eprintln!("maxpane: {reason}");
             std::process::exit(1);
