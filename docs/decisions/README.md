@@ -26,6 +26,7 @@ implemented (PRD §0.7).
 | [0020](0020-a-session-belongs-to-a-server.md) | A session belongs to a server and is keyed on `(server, id)`, never a synthesised id; the local server is implicit and never named; a remote project root is `host:path` | Accepted |
 | [0021](0021-servers-are-a-pasted-url-and-a-keychain-item.md) | A remote server is added by pasting the one line its server printed; the token lives in the Keychain and nowhere else; `[[servers]]` applies live through the config store, from the window, the CLI and a hand edit alike | Accepted |
 | [0022](0022-a-remote-spawn-sends-the-wrapper-and-the-cwd-is-the-root.md) | A remote spawn is `POST /api/sessions` carrying the no-`exec` wrapper through `$SHELL`, so a remote agent can be BLOCKED; a line runs where the focused lane is unless `@server` says otherwise; a remote project root is `host:` plus the cwd itself, with no git walk | Accepted |
+| [0023](0023-one-truth-per-server-and-the-server-chip.md) | A server's state is one truth held by the registry and stamped on its sessions, so a dead server shows at once on its header, rows, lanes, tiles and counts; silent death is noticed in ≤ 13.5 s (4 s timeout, two failures, a ping on `/ws/events`) and a lane and the list tell each other; offline typing is not sent and the banner says so; the one mark of a remote session is the server chip, and the path stops repeating the server | Accepted |
 
 Each ADR states the decision, what evidence decided it (usually a spike, by
 number), what was rejected and why, and what would make us revisit.

@@ -137,6 +137,18 @@ struct OmniCandidate: Equatable {
 
     var urgent: Bool { telemetry.map { $0.isRunning && $0.needsAttention } ?? false }
 
+    /// The remote server Return will reach — the session's, or the one the
+    /// line will run on — for the row's server chip. Nil for anything on
+    /// this Mac, and then the row has no chip. Read off the action, so a
+    /// row cannot wear one server's chip and start something on another.
+    var server: String? {
+        switch action {
+        case .open: return nil
+        case .run(_, let place): return place.server
+        case .attach(let key): return key.server
+        }
+    }
+
     /// One row per thing, however many sources describe it. `maxpane open x`
     /// writes a `Recent` *and* a visit, so without this every page you launched
     /// from a terminal appears twice.
@@ -374,7 +386,8 @@ enum OmniRanking {
     private static func typedDetail(_ action: OmniAction, shellName: String, unknown: String?) -> String {
         guard case .run(let line, let place) = action else { return "" }
         if let unknown { return "@\(unknown) is not a server" }
-        if let label = place.label, place.isRemote { return label }
+        // The directory over there; the row's chip says which server.
+        if place.isRemote { return place.cwd ?? "~" }
         if case .shellLine? = TypedCommand.parse(line) {
             return "through \(shellName)"
         }
@@ -420,7 +433,7 @@ enum OmniRanking {
                     action: .run(recent.value, at: place),
                     kind: .command,
                     headline: recent.value,
-                    detail: place.isRemote ? (place.label ?? "") : place.cwd.map(OmniText.tilde) ?? "",
+                    detail: place.isRemote ? (place.cwd ?? "~") : place.cwd.map(OmniText.tilde) ?? "",
                     quality: quality,
                     chosenAt: recent.lastUsedAt,
                     count: recent.useCount,
@@ -500,15 +513,20 @@ enum OmniRanking {
         let name = t.title.isEmpty ? t.command : t.title
         guard let quality = MatchQuality.of(query, inAny: [name, t.command, t.groupPath])
         else { return nil }
-        // The id, and the server before it for a remote session — the one
-        // mark, in the place the directory sits on a local row.
-        let short = t.server.map { "\($0):\(t.sessionId.prefix(8))" } ?? String(t.sessionId.prefix(8))
+        // The id. Which server is the row's chip (ADR-0023), so the detail
+        // line is the same shape as a local row's: a remote directory is
+        // the path the server gave, with no `name:` in front of it.
+        let short = String(t.sessionId.prefix(8))
         let repeats = name.hasPrefix(t.command) || t.command.isEmpty
+        let place = t.server == nil ? t.groupPath : t.cwd
+        let detail = repeats ? "\(short) · \(place)" : "\(short) · \(t.command)"
         return OmniCandidate(
             action: .attach(t.key),
             kind: .session,
             headline: name.isEmpty ? short : name,
-            detail: repeats ? "\(short) · \(t.groupPath)" : "\(short) · \(t.command)",
+            // A session whose server is not answering is still listed — it
+            // has not gone anywhere — and says so rather than looking idle.
+            detail: t.isOffline ? "\(detail) · offline" : detail,
             quality: quality,
             chosenAt: Int64((t.lastActivity?.timeIntervalSince1970 ?? 0) * 1000),
             count: 0,
@@ -978,6 +996,10 @@ final class OmniPicker: PaletteController {
 /// change shape by source is three lists stacked up, and the whole point of ⌘O
 /// is that it is one.
 final class OmniPickerRow: NSTableCellView {
+    private var serverChip: ServerChip?
+    /// The server chip's text, for tests; nil when the row has none.
+    var serverChipText: String? { serverChip?.text }
+
     init(candidate: OmniCandidate, query: String, shortcut: String?) {
         super.init(frame: .zero)
 
@@ -996,7 +1018,7 @@ final class OmniPickerRow: NSTableCellView {
         let headline = NSTextField(labelWithAttributedString: PaletteStyle.highlighted(
             candidate.headline,
             matches: MatchQuality.offsets(query, in: candidate.headline, literal: literal),
-            color: candidate.telemetry.map { $0.isRunning ? .labelColor : Theme.dimText }
+            color: candidate.telemetry.map { ($0.isRunning && !$0.isOffline) ? .labelColor : Theme.dimText }
                 ?? .labelColor))
         headline.usesSingleLineMode = true
         headline.lineBreakMode = .byTruncatingTail
@@ -1039,6 +1061,17 @@ final class OmniPickerRow: NSTableCellView {
         detail.translatesAutoresizingMaskIntoConstraints = false
 
         for v in [key, glyph, headline, tag, chip, count, age, detail] { addSubview(v) }
+        // The server chip leads the detail line on a remote row, where the
+        // directory is; a local row has none and is laid out as it always was.
+        let serverChip = candidate.server.map { ServerChip(server: $0) }
+        self.serverChip = serverChip
+        if let serverChip {
+            addSubview(serverChip)
+            NSLayoutConstraint.activate([
+                serverChip.leadingAnchor.constraint(equalTo: headline.leadingAnchor),
+                serverChip.centerYAnchor.constraint(equalTo: detail.centerYAnchor),
+            ])
+        }
         NSLayoutConstraint.activate([
             key.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             key.topAnchor.constraint(equalTo: topAnchor, constant: 7),
@@ -1068,7 +1101,8 @@ final class OmniPickerRow: NSTableCellView {
             age.widthAnchor.constraint(equalToConstant: 84),
             age.firstBaselineAnchor.constraint(equalTo: headline.firstBaselineAnchor),
 
-            detail.leadingAnchor.constraint(equalTo: headline.leadingAnchor),
+            detail.leadingAnchor.constraint(
+                equalTo: serverChip?.trailingAnchor ?? headline.leadingAnchor, constant: serverChip == nil ? 0 : 6),
             detail.topAnchor.constraint(equalTo: headline.bottomAnchor, constant: 3),
             detail.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -18),
         ])

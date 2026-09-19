@@ -126,6 +126,25 @@ public final class WebSocketTransport: NSObject, RelayTransport, URLSessionWebSo
     /// than at the next tick.
     public func pingNow() { sendPing() }
 
+    /// A `PING` now, and a verdict `deadline` seconds later: no inbound
+    /// frame of any kind since the ping is a zombie, closed as one. For when
+    /// something else already says the server is gone (its session list
+    /// stopped answering) and 45 s is too long to wait to agree with it. A
+    /// live wire answers with a `PONG` in one round trip and nothing happens.
+    public func pingNow(deadline: TimeInterval) {
+        queue.async { [weak self] in
+            guard let self, !self.closed else { return }
+            let asked = now()
+            self.sendPing()
+            self.queue.asyncAfter(deadline: .now() + deadline) { [weak self] in
+                guard let self, !self.closed, self.lastInbound < asked else { return }
+                self.pinger?.cancel(); self.pinger = nil
+                self.task?.cancel(with: .goingAway, reason: nil)
+                self.finish(RelayClose(kind: .zombie))
+            }
+        }
+    }
+
     // MARK: - inbound
 
     private func receiveNext() {

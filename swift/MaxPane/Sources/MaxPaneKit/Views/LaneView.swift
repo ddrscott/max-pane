@@ -309,9 +309,47 @@ final class LaneView: NSView {
 
     /// Adopt the latest session telemetry, so the header can show what the
     /// attached session is doing.
-    func applyTelemetry(_ telemetry: [SessionKey: SessionTelemetry]) {
+    ///
+    /// `servers` is each remote server's state. The telemetry carries it
+    /// for a session the registry knows; a lane whose server was already
+    /// gone at launch has no telemetry at all, and would read EXITED — the
+    /// one thing it is not known to be.
+    func applyTelemetry(_ telemetry: [SessionKey: SessionTelemetry], servers: [String: ServerState] = [:]) {
         let key = currentSessionKey
+        header.serverState = key?.server.flatMap { servers[$0] }
         header.telemetry = key.flatMap { telemetry[$0] }
+        setOffline(header.isServerOff)
+    }
+
+    /// True while this lane's server is not answering.
+    private(set) var isOffline = false
+
+    /// A gallery tile of a lane on a dead server is visibly not live: its
+    /// panes drop to `offlineAlpha`, eased. A tile is a thumbnail, and no
+    /// chip survives the scale, so the dimming is the whole of the message
+    /// there — the gallery is where the owner looks for "which one needs
+    /// me", and this one cannot. On the strip the header's chip and the
+    /// pane's banner say it at full size, and the scrollback stays at full
+    /// strength because reading it is the one thing still possible.
+    static let offlineAlpha: CGFloat = 0.45
+
+    /// The panes' alpha as it should be now, for tests.
+    var paneAlphaTarget: CGFloat { (isOffline && isThumbnail) ? Self.offlineAlpha : 1 }
+
+    private func setOffline(_ offline: Bool) {
+        guard offline != isOffline else { return }
+        isOffline = offline
+        applyOfflineDimming()
+    }
+
+    private func applyOfflineDimming() {
+        let target = paneAlphaTarget
+        guard stack.alphaValue != target else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Motion.isReduced ? 0 : Motion.lane
+            context.timingFunction = Motion.easeOutTiming
+            stack.animator().alphaValue = target
+        }
     }
 
     /// The Relay session this lane's first pty pane is attached to, on
@@ -903,6 +941,7 @@ final class LaneView: NSView {
             guard thumbnailScale != oldValue else { return }
             resizeHandle.isHidden = isThumbnail
             updateSizeSwitchVisibility()
+            applyOfflineDimming()
             let scale = min(1, max(thumbnailScale ?? 1, 0.05))
             focusOutline.layer?.borderWidth = PaneFocusOutlineView.width / scale
             needsLayout = true
@@ -1043,6 +1082,8 @@ final class LaneHeaderView: NSView {
     private let title = NSTextField(labelWithString: "")
     private let badge = NSTextField(labelWithString: "")
     private let path = NSTextField(labelWithString: "")
+    /// Which server, beside the path it qualifies. See `ServerChip`.
+    private let serverChip = ServerChip()
     private let overflow = LaneHeaderMenuButton()
     /// `s | m | xl`. Internal rather than private so tests can press it.
     let sizeSwitch = LaneSizeSwitch()
@@ -1090,6 +1131,21 @@ final class LaneHeaderView: NSView {
     /// `rebuild` compares the rendered model rather than the telemetry: the
     /// value is unchanged on most ticks but the age it prints is not.
     var telemetry: SessionTelemetry? { didSet { rebuild() } }
+
+    /// How the lane's server is doing, for a lane whose session the registry
+    /// has never seen (the server was gone at launch). Set before
+    /// `telemetry`, which is what rebuilds.
+    var serverState: ServerState?
+
+    /// True while the lane's server is not answering, as last rebuilt.
+    var isServerOff: Bool { model.serverOff != nil }
+
+    /// The server chip beside the path, for tests: its text, or nil for none.
+    var serverChipText: String? { serverChip.server == nil ? nil : serverChip.text }
+    /// The state chip's text as drawn, for tests.
+    var chipText: String { chip.stringValue }
+    /// The path as fitted, for tests.
+    var pathText: String { path.stringValue }
 
     /// See `LaneView.drawnDockMode`. Held rather than folded into the model
     /// because it comes from the window's arithmetic, not from the snapshot,
@@ -1169,7 +1225,7 @@ final class LaneHeaderView: NSView {
         overflow.onPress = { [weak self] in self?.showOverflowMenu() }
         sizeSwitch.onPick = { [weak self] preset in self?.actions?.onSizePreset?(preset) }
 
-        for v in [kindGlyph, chip, markers, title, badge, path, sizeSwitch] as [NSView] {
+        for v in [kindGlyph, chip, markers, title, badge, path, serverChip, sizeSwitch] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = true
             addSubview(v)
         }
@@ -1189,14 +1245,16 @@ final class LaneHeaderView: NSView {
 
     private func rebuild() {
         guard let lane else { return }
-        let next = LaneHeaderModel(lane: lane, telemetry: telemetry)
+        let next = LaneHeaderModel(lane: lane, telemetry: telemetry, serverState: serverState)
         guard next != model else { return }
         // The chip and the badge change meaning in place; ease it rather than
         // cut. Not on an age tick, which changes the text and nothing else.
-        if next.state != model.state || next.badgeIsThroughput != model.badgeIsThroughput {
+        if next.state != model.state || next.badgeIsThroughput != model.badgeIsThroughput
+            || next.serverOff != model.serverOff {
             Motion.fade(layer)
         }
         model = next
+        serverChip.server = model.server
 
         kindGlyph.stringValue = Theme.glyph(for: model.kind)
         // The green $ marks a live terminal and nothing else. The muted green,
@@ -1238,6 +1296,20 @@ final class LaneHeaderView: NSView {
     /// therefore gets a neutral lift rather than an accent wash — a tinted
     /// header on a focused idle lane was exactly the collision.
     private func applyChip() {
+        if let off = model.serverOff {
+            // The server's state, where a state chip goes and in its shape:
+            // outlined, in the accent green — a state, in the one family
+            // every state uses — and never filled or moving, which is
+            // BLOCKED's alone. A glyph when there is no room for the word.
+            chip.isPulsing = false
+            chip.layerBackgroundColor = NSColor.clear
+            chip.stringValue = chipFits ? off.label : off.glyph
+            chip.font = chipFits ? Theme.mono(9, weight: .bold) : Theme.mono(11, weight: .bold)
+            chip.layerBorderColor = Theme.accent.withAlphaComponent(0.6)
+            chip.layer?.borderWidth = chipFits ? 1 : 0
+            chip.textColor = Theme.accent
+            return
+        }
         guard let state = model.state, state.hasChip else {
             chip.isPulsing = false
             chip.layerBackgroundColor = NSColor.clear
@@ -1335,12 +1407,25 @@ final class LaneHeaderView: NSView {
                 width: switchWidth, height: LaneSizeSwitch.height)
             rightEdge -= switchWidth + 8
         }
+        // The server chip sits at the right-hand end, beside the path it
+        // qualifies, and is never the part that gives: it is the one mark
+        // of a remote lane, and eight characters of path are worth less.
+        let serverChipWidth = serverChip.fittingWidth
+        if serverChipWidth > 0 {
+            let height = serverChip.fittingHeight
+            serverChip.frame = NSRect(
+                x: rightEdge - serverChipWidth, y: ((bounds.height - height) / 2).rounded(),
+                width: serverChipWidth, height: height)
+            rightEdge -= serverChipWidth + 6
+        }
+
         // The chip sits at a fixed x on every lane, so a strip of ten headers
         // has one column your eye runs along rather than ten places to look.
         let chipX = x
         var chipWidth: CGFloat = 0
-        if let state = model.state, state.hasChip {
-            let wordWidth = width(of: state.chipText, font: Theme.mono(9, weight: .bold)) + 10
+        let chipWord = model.serverOff?.label ?? model.state.flatMap { $0.hasChip ? $0.chipText : nil }
+        if let chipWord {
+            let wordWidth = width(of: chipWord, font: Theme.mono(9, weight: .bold)) + 10
             let glyphWidth = cell + 4
             // Words when the title and the path can still both be read beside
             // them; a coloured glyph when they cannot.
@@ -1360,7 +1445,9 @@ final class LaneHeaderView: NSView {
         let available = max(0, rightEdge - x)
 
         let titleWanted = width(of: model.title, font: Self.font)
-        let pathWanted = width(of: LaneHeaderPath.abbreviate(model.path), font: Self.smallFont)
+        let isRemote = model.server != nil
+        let pathWanted = width(
+            of: isRemote ? model.path : LaneHeaderPath.abbreviate(model.path), font: Self.smallFont)
         let badgeWanted = model.badge.isEmpty ? 0 : width(of: model.badge, font: Self.smallFont)
 
         // The badge is the first thing to go: it is the only field whose
@@ -1381,7 +1468,7 @@ final class LaneHeaderView: NSView {
         pathBudget = min(pathBudget, max(0, forTitleAndPath - advance * 6))
 
         let fitted = LaneHeaderPath.fit(
-            model.path, maxChars: Int((pathBudget / Self.smallAdvance).rounded(.down)))
+            model.path, maxChars: Int((pathBudget / Self.smallAdvance).rounded(.down)), remote: isRemote)
         path.stringValue = fitted
         // Dropping a whole component can leave the field wider than the string
         // that ended up in it. Hand the slack back to the title rather than

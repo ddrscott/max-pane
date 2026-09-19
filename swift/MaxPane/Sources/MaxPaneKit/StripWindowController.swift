@@ -321,13 +321,14 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 self.sessions.acknowledge(key)
             }
         }
+        strip.onLaneLostWire = { [weak self] server in self?.sessions.laneLostWire(server: server) }
         sessions.doneHold = config.doneHoldSeconds
         sessions.onStateChange = { [weak self] telemetry, _, to in
             self?.alert(telemetry, became: to)
         }
         sessions.observe { [weak self] telemetry in
             guard let self else { return }
-            self.strip.sessionsChanged(telemetry)
+            self.strip.sessionsChanged(telemetry, servers: self.sessions.serverStates)
             self.sidebar.sessionsChanged(telemetry)
             self.refreshStatus()
         }
@@ -380,6 +381,14 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     /// as soon as it answers. Nothing here prints or logs the token.
     private func addServer(name: String, startupURL: String) -> OpenServer.Reply {
         guard let serverBook else { return .refused("the config file is not open") }
+        // The same name again is a new token for that server — what a
+        // restarted server needs, and the only way to give it one from a
+        // shell with nobody at the screen. `pasteToken` refuses a line for
+        // another host, so a name cannot be pointed somewhere else this way.
+        if serverBook.entries.contains(where: { $0.name == name }) {
+            if let why = serverBook.pasteToken(name, pasted: startupURL) { return .refused(why) }
+            return OpenServer.Reply(ok: true, lanes: "\(name)\ttoken replaced in the Keychain; connecting\n")
+        }
         switch serverBook.add(pasted: startupURL, name: name) {
         case .failure(let why):
             return .refused(why.text)
@@ -400,7 +409,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             .sorted { $0.key < $1.key }
             .map { t in
                 let lane = store.lane(holdingSession: t.key) != nil ? "lane" : "-"
-                let state = t.isRunning ? "\(t.state)" : "exited"
+                // A session on a server that is not answering is `offline`,
+                // never the `idle` it last was: nobody can vouch for it.
+                let state = t.isOffline ? "offline" : (t.isRunning ? "\(t.state)" : "exited")
                 return "\(t.key)\t\(state)\t\(lane)\t\(t.cwd)\t\(t.title)\n"
             }.joined()
     }

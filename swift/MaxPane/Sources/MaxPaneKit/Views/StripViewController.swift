@@ -218,8 +218,27 @@ public final class StripViewController: NSViewController {
             guard let terminal = controller as? TerminalPaneController,
                   let key = terminal.sessionKey, key.server == name
             else { continue }
-            terminal.reattach(servers.adapter(for: key))
+            terminal.reattach(adapter(for: key))
+            if let state = serverStates[name] { terminal.serverStateChanged(state) }
         }
+    }
+
+    /// A lane's wire went on its own. Set by the window controller, which
+    /// has the registry: the lane's server is checked now, so the sidebar
+    /// and every other lane on it hear in one request's time (ADR-0023).
+    public var onLaneLostWire: ((String?) -> Void)?
+    /// Each remote server's state, as the registry last said.
+    private var serverStates: [String: ServerState] = [:]
+
+    /// The adapter a pane attaches through, wired to report a lost wire.
+    /// The strip holds no adapter; the pane controller does, and the
+    /// callback holds only the strip, weakly, which the window holds.
+    private func adapter(for key: SessionKey) -> RelayAttachmentAdapter {
+        let adapter = servers?.adapter(for: key) ?? RelayAttachmentAdapter(sessionId: key.id)
+        if let server = key.server {
+            adapter.onWireLost = { [weak self] in self?.onLaneLostWire?(server) }
+        }
+        return adapter
     }
 
     public init(store: StripStore, config: Config, servers: RelayServers? = nil) {
@@ -984,7 +1003,7 @@ public final class StripViewController: NSViewController {
         laneView.onCloseLane = { [weak self] in
             try? self?.store.closeLane(lane.id)
         }
-        laneView.applyTelemetry(laneTelemetry)
+        laneView.applyTelemetry(laneTelemetry, servers: serverStates)
         return laneView
     }
 
@@ -2351,7 +2370,10 @@ public final class StripViewController: NSViewController {
             // The adapter is chosen by the pane's server: a WebSocket to a
             // named remote, the Unix socket for this Mac (ADR-0020).
             if let key = pane.sessionKey {
-                controller.attach(servers?.adapter(for: key) ?? RelayAttachmentAdapter(sessionId: key.id))
+                controller.attach(adapter(for: key))
+                // A pane made while its server is already gone says so from
+                // its first frame, not after its own socket gives up.
+                if let state = key.server.flatMap({ serverStates[$0] }) { controller.serverStateChanged(state) }
             } else {
                 Log.warn("pty pane \(pane.id) has no relay session")
             }
@@ -3111,9 +3133,12 @@ public final class StripViewController: NSViewController {
     /// A session that has gone leaves its lane exactly where it is (PRD §11:
     /// "the lane and ordinal are unaffected"); the pane says so instead. A
     /// session that has come back is reattached.
-    public func sessionsChanged(_ telemetry: [SessionKey: SessionTelemetry]) {
+    public func sessionsChanged(
+        _ telemetry: [SessionKey: SessionTelemetry], servers serverStates: [String: ServerState] = [:]
+    ) {
         let live = Set(telemetry.values.filter(\.isRunning).map(\.key))
         laneTelemetry = telemetry
+        self.serverStates = serverStates
         // An editor that has quit stops being a place to send the next
         // ⌘-click. Swept here rather than only on lookup, so a map of paths
         // does not outlive the sessions it names for the life of the app.
@@ -3125,12 +3150,15 @@ public final class StripViewController: NSViewController {
         // takes its lane with it.
         pruneEditorSessions()
         for (_, laneView) in laneViews {
-            laneView.applyTelemetry(telemetry)
+            laneView.applyTelemetry(telemetry, servers: serverStates)
         }
         for (paneId, controller) in paneControllers {
             guard let terminal = controller as? TerminalPaneController,
                   let pane = store.pane(paneId), let key = pane.sessionKey
             else { continue }
+            // The server's verdict first: a lane on a server that has gone
+            // quiet says so now, whatever its own socket still believes.
+            if let state = key.server.flatMap({ serverStates[$0] }) { terminal.serverStateChanged(state) }
             terminal.sessionAvailabilityChanged(live.contains(key))
             // A remote pane's cwd comes from its server's list, not the disk.
             if pane.relayServer != nil, let cwd = telemetry[key]?.cwd { terminal.adoptRemoteCwd(cwd) }

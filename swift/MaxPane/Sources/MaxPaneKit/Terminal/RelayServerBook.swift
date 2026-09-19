@@ -105,7 +105,9 @@ public final class RelayServerBook {
             return Status(kind: .noToken, word: "no token", sessions: 0, detail: error, isTunnelled: tunnelled, hasToken: false)
         case .refused?:
             return Status(kind: .refused, word: "refused", sessions: 0, detail: error, isTunnelled: tunnelled, hasToken: hasToken)
-        case .reconnecting?, nil:
+        case .unreachable? where hasToken:
+            return Status(kind: .reconnecting, word: "unreachable", sessions: sessions, detail: error, isTunnelled: tunnelled, hasToken: true)
+        case .reconnecting?, .unreachable?, nil:
             let word = hasToken ? "reconnecting" : "no token"
             return Status(
                 kind: hasToken ? .reconnecting : .noToken, word: word, sessions: sessions,

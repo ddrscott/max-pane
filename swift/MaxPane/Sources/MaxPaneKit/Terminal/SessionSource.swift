@@ -66,9 +66,25 @@ public final class DiskSessionSource: SessionSource {
 /// is the one rule that is right on both wires.
 ///
 /// Errors are one line and name the server. A 401 is final: the token was
-/// refused, the source stops and stays `.refused` until relaunch. Anything
-/// else is `.reconnecting`, retried with backoff, and said once per
+/// refused, the source stops and stays `.refused` until the token is
+/// replaced. Anything else is `.reconnecting` — `.unreachable` once it has
+/// gone on past `unreachableAfter` — retried on the poll, and said once per
 /// transition rather than once per attempt.
+///
+/// **How fast a dead server is noticed, and why it does not flap**
+/// (ADR-0023). The tunnel's usual death is silent: the TCP stays up and
+/// nothing answers. So the list request gives up after `requestTimeout`
+/// (4 s: a healthy answer through relaytty.com is well under one), and a
+/// failure while connected is not believed at once — it is strike one, and
+/// the request is sent again half a second later; strike two is the verdict.
+/// With the default 5 s poll that is ≤ 5 + 4 + 0.5 + 4 = 13.5 s from death to
+/// `.reconnecting`, and one slow or dropped response costs nothing but the
+/// retry. Two other things make it check now rather than at the next poll:
+/// a protocol ping on `/ws/events` every `pingInterval` that gets no pong
+/// within `pongTimeout` (which also counts as strike one — it is the same
+/// evidence as a timed-out request), and a lane on this server losing its
+/// wire (`SessionRegistry.laneLostWire`). Recovery is the first list that
+/// arrives, on the same poll.
 @MainActor
 public final class RemoteSessionSource: NSObject, SessionSource {
     public let name: String
@@ -85,6 +101,26 @@ public final class RemoteSessionSource: NSObject, SessionSource {
 
     private let endpoint: RelayServer
     private let pollInterval: TimeInterval
+    /// How long one `GET /api/sessions` may take before it is a failure.
+    let requestTimeout: TimeInterval
+    /// The `/ws/events` protocol ping, and how long its pong may take.
+    let pingInterval: TimeInterval
+    let pongTimeout: TimeInterval
+    /// How long `.reconnecting` goes on before it is called `.unreachable`.
+    let unreachableAfter: TimeInterval
+    /// Failures in a row since the last list that arrived. One is a retry;
+    /// two is the verdict.
+    private var strikes = 0
+    /// When this outage began — the first verdict, or `start()` for a server
+    /// that has not answered yet.
+    private var offlineSince: Date?
+    private var pinger: Timer?
+    /// The one retry after a first failure, half a second later.
+    private var retry: Timer?
+    /// The ping whose pong is awaited; nil when none is.
+    private var pingAwaited: UUID?
+    /// The server's host, for the chip's tooltip and the error line.
+    public var host: String { endpoint.baseURL.host ?? name }
     private let urlSession: URLSession
     private var events: URLSessionWebSocketTask?
     private var poll: Timer?
@@ -101,15 +137,23 @@ public final class RemoteSessionSource: NSObject, SessionSource {
     public private(set) var fetches = 0
     public private(set) var updatesApplied = 0
 
-    public init(name: String, endpoint: RelayServer, pollInterval: TimeInterval = 5) {
+    public init(
+        name: String, endpoint: RelayServer, pollInterval: TimeInterval = 5,
+        requestTimeout: TimeInterval = 4, pingInterval: TimeInterval = 5, pongTimeout: TimeInterval = 4,
+        unreachableAfter: TimeInterval = 60
+    ) {
         self.name = name
         self.endpoint = endpoint
         self.pollInterval = pollInterval
+        self.requestTimeout = requestTimeout
+        self.pingInterval = pingInterval
+        self.pongTimeout = pongTimeout
+        self.unreachableAfter = unreachableAfter
         let config = URLSessionConfiguration.ephemeral
         config.httpShouldSetCookies = false
         config.httpCookieAcceptPolicy = .never
         config.waitsForConnectivity = false
-        config.timeoutIntervalForRequest = 15
+        config.timeoutIntervalForRequest = requestTimeout
         urlSession = URLSession(configuration: config)
         super.init()
     }
@@ -117,8 +161,12 @@ public final class RemoteSessionSource: NSObject, SessionSource {
     public func start() {
         guard !started else { return }
         started = true
+        offlineSince = Date()
         refresh()
         connectEvents()
+        pinger = Timer.scheduledTimer(withTimeInterval: pingInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.pingEvents() }
+        }
         poll = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
@@ -138,6 +186,9 @@ public final class RemoteSessionSource: NSObject, SessionSource {
     public func stop() {
         stopped = true
         poll?.invalidate(); poll = nil
+        pinger?.invalidate(); pinger = nil
+        retry?.invalidate(); retry = nil
+        pingAwaited = nil
         eventsTimer?.invalidate(); eventsTimer = nil
         events?.cancel(with: .goingAway, reason: nil); events = nil
         if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
@@ -165,6 +216,8 @@ public final class RemoteSessionSource: NSObject, SessionSource {
 
     private func request(_ url: URL) -> URLRequest {
         var request = URLRequest(url: url)
+        request.timeoutInterval = requestTimeout
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         if let token = endpoint.token {
             request.setValue("session=\(token)", forHTTPHeaderField: "Cookie")
         }
@@ -203,9 +256,15 @@ public final class RemoteSessionSource: NSObject, SessionSource {
         }
         saidUnreachable = false
         lastError = nil
-        state = .connected
-        known = Dictionary(uniqueKeysWithValues: list.filter(\.isRunning).map { ($0.id, $0) })
+        strikes = 0
+        offlineSince = nil
+        // The list before the state. The registry restamps this server's
+        // sessions the moment the state changes, and coming back it must
+        // find the fresh list there, not the one from before the outage —
+        // a stale BLOCKED shown for one turn is a Dock bounce for nothing.
+        known = Dictionary(list.filter(\.isRunning).map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
         emit()
+        state = .connected
     }
 
     /// `{"sessions": [...]}`, one session at a time so one row the decoder
@@ -233,6 +292,9 @@ public final class RemoteSessionSource: NSObject, SessionSource {
             : "token refused — paste the Auth URL from the server's startup output"
         state = .refused
         poll?.invalidate(); poll = nil
+        pinger?.invalidate(); pinger = nil
+        retry?.invalidate(); retry = nil
+        pingAwaited = nil
         eventsTimer?.invalidate(); eventsTimer = nil
         events?.cancel(with: .goingAway, reason: nil); events = nil
         if !known.isEmpty {
@@ -246,12 +308,67 @@ public final class RemoteSessionSource: NSObject, SessionSource {
     private var saidUnreachable = false
 
     private func unreachable(_ why: String) {
+        strikes += 1
+        // One failure while connected is not a verdict: a response can be
+        // slow or dropped once without the server being gone, and a sidebar
+        // that flips to RECONNECTING and back is worse than one that is a
+        // few seconds late. Ask again now; the second failure is believed.
+        if state == .connected, strikes < 2 {
+            Log.debug("server \(name): no answer (\(why)); asking once more before believing it")
+            // A beat first: a request that failed instantly (the network
+            // not up yet after a wake) would fail instantly again, and two
+            // failures a millisecond apart are one failure.
+            retry?.invalidate()
+            retry = Timer.scheduledTimer(withTimeInterval: min(0.5, requestTimeout / 8), repeats: false) { [weak self] _ in
+                Task { @MainActor in self?.refresh() }
+            }
+            return
+        }
         if !saidUnreachable {
             Log.warn("server \(name): unreachable — \(why); retrying every \(Int(pollInterval)) s")
             saidUnreachable = true
         }
-        lastError = "unreachable — \(endpoint.baseURL.host ?? name): \(why)"
-        state = .reconnecting
+        lastError = "unreachable — \(host): \(why)"
+        let began = offlineSince ?? Date()
+        offlineSince = began
+        state = Date().timeIntervalSince(began) >= unreachableAfter ? .unreachable : .reconnecting
+    }
+
+    // MARK: - the /ws/events ping
+
+    /// A protocol ping on the events socket. A pong that does not come
+    /// within `pongTimeout` is the same evidence as a list request that
+    /// timed out — strike one — and the list is asked for now, which is the
+    /// retry. Through a tunnel the edge may answer pings for a server that
+    /// is frozen behind it; then this proves nothing and the poll is what
+    /// notices, which is why it is a helper and not the detector.
+    private func pingEvents() {
+        guard !stopped, state == .connected, let events, pingAwaited == nil else { return }
+        let id = UUID()
+        pingAwaited = id
+        events.sendPing { [weak self] error in
+            Task { @MainActor in
+                guard let self, self.pingAwaited == id else { return }
+                self.pingAwaited = nil
+                if error != nil { self.pongMissed() }
+            }
+        }
+        Timer.scheduledTimer(withTimeInterval: pongTimeout, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.pingAwaited == id else { return }
+                self.pingAwaited = nil
+                self.pongMissed()
+            }
+        }
+    }
+
+    private func pongMissed() {
+        guard !stopped, state == .connected else { return }
+        Log.debug("server \(name): no pong on /ws/events within \(Int(pongTimeout)) s; checking now")
+        strikes = max(strikes, 1)
+        // The socket is no use either way; the failure path reopens it.
+        events?.cancel(with: .goingAway, reason: nil)
+        refresh()
     }
 
     private func emit() {
@@ -289,6 +406,10 @@ public final class RemoteSessionSource: NSObject, SessionSource {
                     self.receiveEvents(task)
                 case .failure:
                     self.events = nil
+                    self.pingAwaited = nil
+                    // The socket dropping is a reason to ask whether the
+                    // server is still there, now rather than at the poll.
+                    if self.state == .connected { self.refresh() }
                     let http = (task.response as? HTTPURLResponse)?.statusCode ?? 0
                     if http == 401 || http == 403 { self.refuse(http); return }
                     let delay = self.eventsRetry

@@ -21,8 +21,18 @@ struct LaneHeaderModel: Equatable {
     /// chip and no glyph — which is what keeps the one that does say something
     /// worth looking at.
     var state: AgentState?
+    /// The remote server this lane's session is on, for the server chip
+    /// beside the path; nil for a lane on this Mac.
+    var server: String?
+    /// How that server is doing when it is anything but connected, else
+    /// nil. It takes the state chip's place — `RECONNECTING` where `BLOCKED`
+    /// would be — because a dead server is the state of every lane on it,
+    /// and nothing the session last said can be vouched for (ADR-0023).
+    var serverOff: ServerState?
     var title: String = "untitled"
     /// Unabbreviated and untruncated. The view decides how much of it fits.
+    /// A remote lane's is the path alone, as the server gave it: the chip
+    /// says which server, and the path stops repeating it.
     var path: String = ""
     /// Throughput while output is moving, otherwise how long it has been quiet.
     /// Never the state's name, because the chip two columns to the left already
@@ -82,8 +92,11 @@ struct LaneHeaderModel: Equatable {
 
     init() {}
 
-    init(lane: LaneHeaderSource, telemetry: SessionTelemetry?) {
+    init(lane: LaneHeaderSource, telemetry: SessionTelemetry?, serverState: ServerState? = nil) {
         kind = lane.kind
+        server = telemetry?.server ?? lane.server
+        let connection = telemetry?.connection ?? serverState
+        serverOff = (server != nil && connection?.isOff == true) ? connection : nil
         isTerminal = lane.kind == .pty
         keepLive = lane.keepLive
         dock = lane.dock
@@ -100,14 +113,20 @@ struct LaneHeaderModel: Equatable {
 
         // The session's cwd is the truth — it follows `cd`. The project root is
         // a fallback for lanes with no session (a web lane, a dead terminal).
-        // A remote session's is `server:cwd`: the server's name sits where
-        // the directory does, and nowhere else (ADR-0020).
-        path = [telemetry?.headerPath, lane.projectRoot]
+        // A remote session's is its cwd on that server. The ledger's tag is
+        // `server:path` and stays so; the header shows the path and lets the
+        // chip name the server (ADR-0023).
+        let root = lane.projectRoot.map { root in
+            server != nil ? (LaneHeaderPath.splitServer(root)?.path ?? root) : root
+        }
+        path = [telemetry?.cwd, root]
             .compactMap { $0 }
             .first(where: { !$0.isEmpty }) ?? ""
 
         if let telemetry {
-            isLive = telemetry.isRunning
+            // An offline session is not known to be running: the square goes
+            // hollow with the rest of the row.
+            isLive = telemetry.isRunning && !telemetry.isOffline
             state = telemetry.state
             badge = telemetry.badgeIsThroughput
                 ? telemetry.throughputText
@@ -120,11 +139,18 @@ struct LaneHeaderModel: Equatable {
                 telemetry.headerPath,
                 // The rate only while it is working, as on the badge: an idle
                 // session's sixty-second trickle is not news.
-                [telemetry.state.rawValue, telemetry.ageText,
+                [telemetry.isOffline ? "offline" : telemetry.state.rawValue, telemetry.ageText,
                  telemetry.badgeIsThroughput ? telemetry.throughputText : ""]
                     .filter { !$0.isEmpty }.joined(separator: " · "),
                 telemetry.command,
             ].filter { !$0.isEmpty }.joined(separator: "\n")
+        } else if lane.hasRelaySession, let serverOff {
+            // The server was already gone when this lane was restored, so the
+            // registry has never heard of its session. That is not the same
+            // as the session having exited, and the header must not say so.
+            isLive = false
+            state = nil
+            tooltip = [title, path, serverOff.label.lowercased()].filter { !$0.isEmpty }.joined(separator: "\n")
         } else if lane.hasRelaySession {
             // A pty lane that names a session Relay has never heard of: the
             // session is gone, not quiet. Saying "live" here is the one lie the
@@ -156,11 +182,14 @@ protocol LaneHeaderSource {
     /// Relay still knows about it.
     var hasRelaySession: Bool { get }
     var isPrivate: Bool { get }
+    /// The remote server the lane's session is on, from the ledger's pane.
+    var server: String? { get }
 }
 
 extension LaneHeaderSource {
     /// A source that does not say is not private — `Lane` says for itself.
     var isPrivate: Bool { false }
+    var server: String? { nil }
 }
 
 extension Lane: LaneHeaderSource {
@@ -177,6 +206,8 @@ extension Lane: LaneHeaderSource {
     var host: String? { panes.first?.url.flatMap { URL(string: $0)?.host } }
 
     var hasLivePane: Bool { panes.contains { $0.state == .live } }
+
+    var server: String? { panes.first(where: { $0.kind == .pty })?.relayServer }
 
     var hasRelaySession: Bool {
         panes.contains { $0.kind == .pty && $0.relaySessionId != nil }

@@ -76,6 +76,14 @@ final class SidebarEntryView: NSTableCellView {
     private let badge = NSTextField(labelWithString: "")
     private let age = NSTextField(labelWithString: "")
     private let chip = PulseLabel(labelWithString: "")
+    /// Which server, on a remote session's row; nil on a local one, which
+    /// is then laid out exactly as it was before servers existed.
+    private var serverChip: ServerChip?
+
+    /// The server chip's text, for tests; nil when the row has none.
+    var serverChipText: String? { serverChip?.text }
+    /// The badge as drawn, for tests.
+    var badgeText: String { badge.stringValue }
 
     /// Whether this row's BLOCKED chip is breathing right now, for tests.
     var isBlockedMarkPulsing: Bool { chip.isAnimatingPulse }
@@ -94,7 +102,10 @@ final class SidebarEntryView: NSTableCellView {
         status.wantsLayer = true
         status.layer?.cornerRadius = 0
         let tint = Self.statusColor(entry)
-        if entry.isRunning && !isWeb {
+        // An offline session is not known to be running, so its square is
+        // hollow with the dead ones: the shape must not claim what the
+        // server cannot confirm.
+        if entry.isRunning && !isWeb && !entry.offline {
             status.layerBackgroundColor = tint
         } else {
             status.layer?.borderWidth = 1
@@ -167,6 +178,15 @@ final class SidebarEntryView: NSTableCellView {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
+        // The server chip leads the second line, under the start of the
+        // title: the title keeps every character it had and the state text
+        // on the right is not pushed, which leading or trailing the title
+        // itself could not promise at 260 pt. The state chip follows it.
+        if let server = entry.server {
+            let made = ServerChip(server: server, size: 8)
+            addSubview(made)
+            serverChip = made
+        }
 
         NSLayoutConstraint.activate([
             status.widthAnchor.constraint(equalToConstant: 7),
@@ -193,10 +213,17 @@ final class SidebarEntryView: NSTableCellView {
             age.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -9),
             age.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 1),
 
-            chip.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            chip.leadingAnchor.constraint(
+                equalTo: serverChip?.trailingAnchor ?? title.leadingAnchor, constant: serverChip == nil ? 0 : 5),
             chip.centerYAnchor.constraint(equalTo: age.centerYAnchor),
             chip.trailingAnchor.constraint(lessThanOrEqualTo: age.leadingAnchor, constant: -6),
         ])
+        if let serverChip {
+            NSLayoutConstraint.activate([
+                serverChip.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+                serverChip.centerYAnchor.constraint(equalTo: age.centerYAnchor),
+            ])
+        }
         // The title yields to nothing: a truncated title is still readable, a
         // truncated throughput reading is a wrong number.
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -212,7 +239,9 @@ final class SidebarEntryView: NSTableCellView {
         // are not on the strip was a mistake the first screenshot made obvious:
         // it greys out most of the browser, and those are the rows you are here
         // to find. The `$`/`+` marker carries "on the strip" instead.
-        let colour: NSColor = entry.isRunning ? .labelColor : SidebarInk.gone
+        // Offline drops with the dead ones to the at-rest grey: the row is
+        // still there to be found, and visibly not live.
+        let colour: NSColor = (entry.isRunning && !entry.offline) ? .labelColor : SidebarInk.gone
         // An attributed string carries its own paragraph style, and the field's
         // `lineBreakMode` does not reach it — without this the title clips flat
         // with no ellipsis to say it was cut.
@@ -251,7 +280,7 @@ final class SidebarEntryView: NSTableCellView {
     /// the same as no green at all; at rest a row is grey, and the eye goes to
     /// the few that are not.
     private static func statusColor(_ entry: SidebarModel.Entry) -> NSColor {
-        guard entry.isRunning else { return SidebarInk.gone }
+        guard entry.isRunning, !entry.offline else { return SidebarInk.gone }
         switch entry.kind {
         case .web, .placeholder: return SidebarInk.gone
         case .session:
@@ -289,6 +318,12 @@ final class SidebarGroupView: NSTableCellView {
     private let label = NSTextField(labelWithString: "")
     private let count = PulseLabel(labelWithString: "")
     private let rule = NSView()
+    /// A server's state when it is anything but connected, as a chip.
+    private let stateChip = NSTextField(labelWithString: "")
+
+    /// The header as drawn, for tests.
+    var labelText: String { label.stringValue }
+    var stateChipText: String { stateChip.isHidden ? "" : stateChip.stringValue.trimmingCharacters(in: .whitespaces) }
 
     static let height: CGFloat = 26
 
@@ -326,7 +361,7 @@ final class SidebarGroupView: NSTableCellView {
         // A server reconnecting or refused takes the accent green — a state,
         // in the family every other state uses — unless an agent in the group
         // is blocked, which is the louder of the two.
-        count.textColor = group.blocked > 0 ? Theme.blocked : (group.serverIsOff ? Theme.accent : Theme.dimText)
+        count.textColor = group.blocked > 0 ? Theme.blocked : Theme.dimText
         count.isPulsing = group.blocked > 0
         count.alignment = .right
 
@@ -360,7 +395,10 @@ final class SidebarGroupView: NSTableCellView {
             triangle.centerYAnchor.constraint(equalTo: centerYAnchor, constant: 2),
 
 
-            label.leadingAnchor.constraint(equalTo: triangle.trailingAnchor, constant: 6),
+            // A section has no triangle, and starts where one would.
+            group.isSection
+                ? label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9)
+                : label.leadingAnchor.constraint(equalTo: triangle.trailingAnchor, constant: 6),
             label.centerYAnchor.constraint(equalTo: triangle.centerYAnchor),
 
             count.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 6),
@@ -372,17 +410,54 @@ final class SidebarGroupView: NSTableCellView {
 
         toolTip = group.path == SidebarModel.looseWebGroup ? "Web lanes" : group.path
 
-        // A server's header: the one mark of a remote lane is the server's
-        // name where a directory sits (ADR-0020), and here it heads the
-        // block of that server's project groups. It does not fold, so no
-        // triangle; the name reads as a heading, not a path; the count slot
-        // carries the state, and a click opens Settings › Servers.
-        if group.isServer {
+        // A section header — a server's, or `// LOCAL` beside one — heads a
+        // block of project groups, so this Mac and each server read as
+        // separate, parallel blocks. It gets the house `// CAPS` mark the
+        // path groups deliberately do not: it is a name, not a path, so the
+        // slashes cannot be misread as one. It does not fold, so no
+        // triangle, and the label starts where the triangle would.
+        //
+        // A server's state, when it is anything but connected, is a chip in
+        // the accent green beside the count — a state, in the family every
+        // state uses, outlined and still because filled and moving are
+        // BLOCKED's alone — with the last error as the tooltip. A click
+        // opens Settings › Servers.
+        stateChip.isHidden = true
+        if group.isSection {
             triangle.isHidden = true
-            label.font = Theme.mono(10, weight: .medium)
-            label.textColor = .labelColor
+            let mark = NSMutableAttributedString(
+                string: "// ",
+                attributes: [.foregroundColor: Theme.accent, .font: Theme.mono(10, weight: .bold)])
+            mark.append(NSAttributedString(
+                string: group.header,
+                attributes: [.foregroundColor: NSColor.secondaryLabelColor, .font: Theme.mono(10, weight: .bold)]))
+            label.attributedStringValue = mark
             label.lineBreakMode = .byTruncatingTail
-            toolTip = "\(group.header) — \(group.countText.lowercased()); click for Settings › Servers"
+            toolTip = group.isLocalSection
+                ? "This Mac — \(group.countText.lowercased())"
+                : "\(group.server ?? group.header) — \(group.countText.lowercased()); click for Settings › Servers"
+        }
+        if let state = group.stateChip {
+            stateChip.isHidden = false
+            stateChip.stringValue = " \(state) "
+            stateChip.font = Theme.mono(8, weight: .bold)
+            stateChip.textColor = Theme.accent
+            stateChip.isBezeled = false
+            stateChip.drawsBackground = false
+            stateChip.wantsLayer = true
+            stateChip.layer?.cornerRadius = 0
+            stateChip.layer?.borderWidth = 1
+            stateChip.layerBorderColor = Theme.accent.withAlphaComponent(0.6)
+            stateChip.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(stateChip)
+            NSLayoutConstraint.activate([
+                stateChip.trailingAnchor.constraint(equalTo: count.leadingAnchor, constant: -6),
+                stateChip.centerYAnchor.constraint(equalTo: count.centerYAnchor),
+                stateChip.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 6),
+            ])
+            stateChip.setContentCompressionResistancePriority(.required, for: .horizontal)
+            let why = group.serverError ?? state.lowercased()
+            toolTip = "\(group.server ?? group.header) — \(why); click for Settings › Servers"
         }
     }
 

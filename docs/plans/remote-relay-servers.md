@@ -41,9 +41,16 @@ are the server's own and stay the fuller ones until Phase 4.
 **Feels local, distinguished simply.** A remote session is a lane exactly like
 a local one: same header, same chips, same keys, same menu, same behaviour in
 the gallery and in a dock. The difference is one mark, used consistently:
-the server's name, in the lane header where the directory tag sits and on the
-sidebar group that holds it, and nothing else. No second colour family, no
-icon language, no "remote mode". If a thing cannot work on a remote lane yet,
+the **server chip** — a small grey outlined square with the server's name —
+on the session's sidebar row, beside the path in the lane header, and on its
+⌘O and ⌘P rows, with the sidebar's servers as `// NAME` sections; the path
+beside it no longer repeats the name. (Amended 2026-09-19 by
+[ADR-0023](../decisions/0023-one-truth-per-server-and-the-server-chip.md):
+the first rule was the server's name where the directory tag sits, and in
+use that was not enough.) No second colour family, no icon language, no
+"remote mode", no colour per server. A server that stops answering says so
+at once, in the accent green, on its header, its rows, its lanes and its
+tiles. If a thing cannot work on a remote lane yet,
 the lane says so in one line when the thing is tried, not with a permanent
 badge. The test of the design is that a user who has never read this plan
 can tell which box a lane is on at a glance and otherwise never thinks about it.

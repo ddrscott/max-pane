@@ -17,6 +17,10 @@ public final class StatusBar: NSView {
     private let sessions = NSTextField(labelWithString: "")
     private let attention = PulseLabel(labelWithString: "")
 
+    /// The sessions readout as drawn, for tests.
+    var sessionsText: String { sessions.stringValue }
+    var attentionText: String { attention.stringValue }
+
     /// Whether the attention count is breathing right now, for tests.
     var isAttentionPulsing: Bool { attention.isAnimatingPulse }
     private let memory = NSTextField(labelWithString: "")
@@ -176,7 +180,14 @@ public final class StatusBar: NSView {
             : "\(laneCount) lanes · \(paneCount) panes"
 
         let running = telemetry.values.filter(\.isRunning)
+        // Sessions on a server that is not answering are still sessions, and
+        // are said to be what they are: nobody can vouch for them. Their
+        // BLOCKED and WORKING are not counted below — `state` is `.unknown`
+        // while offline — so the alarm never points at a prompt that cannot
+        // be answered (ADR-0023).
+        let offline = running.filter(\.isOffline).count
         sessions.stringValue = "\(running.count) session\(running.count == 1 ? "" : "s")"
+            + (offline > 0 ? " · \(offline) offline" : "")
 
         // The number that actually changes behaviour. Not "idle" — idle is the
         // resting state of every session and counting it would light this up

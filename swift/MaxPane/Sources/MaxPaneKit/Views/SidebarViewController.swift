@@ -397,7 +397,8 @@ final class SidebarViewController: NSViewController {
             created: createdAt,
             bookmarks: bookmarks,
             controls: controls,
-            servers: registry?.serverStates ?? [:])
+            servers: registry?.serverStates ?? [:],
+            serverErrors: registry?.serverErrors ?? [:])
         updateFooter(state)
         guard next != rows else {
             syncSelection(state)
@@ -458,6 +459,8 @@ final class SidebarViewController: NSViewController {
                 onOpenServer?(server)
                 return
             }
+            // `// LOCAL` heads a block and folds nothing.
+            if group.isSection { return }
             if controls.collapsed.contains(group.path) {
                 controls.collapsed.remove(group.path)
             } else {
@@ -538,7 +541,7 @@ final class SidebarViewController: NSViewController {
     @objc private func toggleFold() {
         // A server's header never folds — it has no rows of its own.
         let paths = Set(rows.compactMap {
-            if case .group(let g) = $0, !g.isServer { return g.path } else { return nil }
+            if case .group(let g) = $0, !g.isSection { return g.path } else { return nil }
         })
         let folding = !paths.isEmpty && !paths.isSubset(of: controls.collapsed)
         controls.collapsed = folding ? controls.collapsed.union(paths) : []
@@ -700,7 +703,7 @@ final class SidebarViewController: NSViewController {
     }
 
     @objc private func collapseAll() {
-        controls.collapsed = Set(rows.compactMap { if case .group(let g) = $0, !g.isServer { return g.path } else { return nil } })
+        controls.collapsed = Set(rows.compactMap { if case .group(let g) = $0, !g.isSection { return g.path } else { return nil } })
         rebuild(store.state)
     }
 

@@ -433,11 +433,14 @@ struct SidebarServerHeaderTests {
     @Test("a refused server is a header with the state and no rows; a disabled one is nothing")
     func refusedHeader() {
         let rows = SidebarModel.rows(lanes: [], telemetry: [:], servers: ["yorkshire": .refused])
-        #expect(rows.count == 1)
-        guard case .group(let g) = rows[0] else { Issue.record("not a group"); return }
+        // `// LOCAL` heads this Mac's block once there is a server beside it.
+        #expect(rows.count == 2)
+        guard case .group(let local) = rows[0], case .group(let g) = rows[1] else { Issue.record("not groups"); return }
+        #expect(local.isLocalSection && local.header == "LOCAL")
         #expect(g.isServer)
-        #expect(g.header == "yorkshire")
-        #expect(g.countText == "TOKEN REFUSED")
+        #expect(g.header == "YORKSHIRE")
+        #expect(g.stateChip == "TOKEN REFUSED")
+        #expect(g.countText == "0 SESSIONS")
         #expect(g.serverIsOff)
         #expect(g.total == 0)
         #expect(SidebarModel.rows(lanes: [], telemetry: [:], servers: [:]).isEmpty)
@@ -456,13 +459,15 @@ struct SidebarServerHeaderTests {
         ]
         var rows = SidebarModel.rows(lanes: [], telemetry: telemetry, servers: ["yorkshire": .connected])
         var groups = rows.compactMap { if case .group(let g) = $0 { return g } else { return nil } }
-        #expect(groups.map(\.path) == ["yorkshire:", "yorkshire:/home/a", "yorkshire:/home/b"])
+        #expect(groups.map(\.path) == [SidebarModel.localSection, "yorkshire:", "yorkshire:/home/a", "yorkshire:/home/b"])
+        groups.removeFirst()
         #expect(groups[0].countText == "2 SESSIONS")
+        #expect(groups[0].stateChip == nil)
         #expect(!groups[0].serverIsOff)
 
         let blocked = telemetry.merging([SessionKey(server: "yorkshire", id: "c"): t("c", "/home/a", .blocked)]) { $1 }
         rows = SidebarModel.rows(lanes: [], telemetry: blocked, servers: ["yorkshire": .connected])
-        groups = rows.compactMap { if case .group(let g) = $0 { return g } else { return nil } }
+        groups = rows.compactMap { if case .group(let g) = $0, !g.isLocalSection { return g } else { return nil } }
         #expect(groups[0].countText == "1 BLOCKED")
         #expect(groups[0].blocked == 1)
     }

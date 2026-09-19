@@ -32,6 +32,15 @@ final class RelayAttachmentAdapter: RelayAttachment {
     /// The emulator should be cleared before the next replay is fed to it:
     /// the server sent the whole ring where a delta was due.
     var onReplaceScreen: (() -> Void)?
+    /// The wire went without anyone asking it to — a zombie, a failed read,
+    /// a reconnect that could not open. Whoever watches this session's
+    /// server checks it now (`SessionRegistry.laneLostWire`), so one lane
+    /// noticing is every lane and the sidebar noticing (ADR-0023).
+    var onWireLost: (() -> Void)?
+    /// Input held while the wire was down was dropped rather than sent: how
+    /// many bytes. The pane says so in one line; see `PendingInput` for why
+    /// old keystrokes are not replayed into a session that has moved on.
+    var onInputDropped: ((Int) -> Void)?
 
     private var session: RelaySession?
     private var reconnectDelay: TimeInterval = 0.5
@@ -82,6 +91,38 @@ final class RelayAttachmentAdapter: RelayAttachment {
         }
     }
 
+    /// How long a lane gives its wire to answer a `PING` once its server's
+    /// list has stopped answering, before it agrees and shows the banner.
+    static let serverOffPongDeadline: TimeInterval = 4
+    /// The deadline this adapter uses; a test shortens it.
+    var pongDeadline: TimeInterval = RelayAttachmentAdapter.serverOffPongDeadline
+
+    /// The session's server stopped answering its list, or started again —
+    /// the source's verdict, handed down by the strip.
+    ///
+    /// **Off:** the wire is asked to prove itself now. A half-open socket —
+    /// the tunnel's usual death — fails that in `serverOffPongDeadline` and
+    /// closes as a zombie, which is the banner and the reconnect loop 4 s
+    /// after the sidebar said so rather than 45. A wire that answers is left
+    /// alone: the list being down is no reason to cut a session that works.
+    ///
+    /// **On:** a lane waiting out a backoff of up to 15 s reconnects now, and
+    /// one whose attempt is hanging is tested the same way.
+    func serverStateChanged(_ state: ServerState) {
+        guard wantsConnection else { return }
+        if state.isOff {
+            webSocket?.pingNow(deadline: pongDeadline)
+        } else if session == nil {
+            reconnectDelay = Self.minimumDelay
+            openSession()
+        } else if !isAttached {
+            // An attempt opened while the server was gone can sit on an edge
+            // that said 101 and nothing else for 45 s. It proves itself now
+            // or makes way for one that will.
+            webSocket?.pingNow(deadline: pongDeadline)
+        }
+    }
+
     /// `sessionId`, or `server:sessionId`, for the log.
     private var label: String { server.map { "\($0):\(sessionId)" } ?? sessionId }
 
@@ -113,8 +154,10 @@ final class RelayAttachmentAdapter: RelayAttachment {
     /// input from turning into a surprise later.
     func send(_ bytes: ArraySlice<UInt8>) {
         guard let session, isAttached else {
+            let held = pending.bytes.count + bytes.count
             if !pending.hold(bytes) {
                 Log.warn("\(sessionId): dropped input buffered while disconnected — over \(PendingInput.limit)B")
+                onInputDropped?(held)
             }
             return
         }
@@ -227,6 +270,7 @@ final class RelayAttachmentAdapter: RelayAttachment {
             }
             self.session = nil
             onConnectionChange?(false)
+            onWireLost?()
             scheduleReconnect()
         }
     }
@@ -256,8 +300,10 @@ final class RelayAttachmentAdapter: RelayAttachment {
     /// Send what was held while the socket was down, or decide against it.
     private func flushPendingInput() {
         guard let session, !pending.isEmpty else { return }
+        let held = pending.bytes.count
         guard let bytes = pending.take() else {
             Log.warn("\(sessionId): dropped input buffered more than \(Int(PendingInput.maxAge))s ago")
+            onInputDropped?(held)
             return
         }
         Log.debug("\(sessionId): flushed \(bytes.count)B of input held while disconnected")
@@ -283,6 +329,7 @@ final class RelayAttachmentAdapter: RelayAttachment {
             return
         }
         if let reason { Log.debug("\(label): connection \(reason); reconnecting") }
+        onWireLost?()
         scheduleReconnect()
     }
 

@@ -1727,7 +1727,9 @@ session is identified once there is more than one server,
 [ADR-0021](docs/decisions/0021-servers-are-a-pasted-url-and-a-keychain-item.md)
 why a server is added by pasting one line and where its token lives, and
 [ADR-0022](docs/decisions/0022-a-remote-spawn-sends-the-wrapper-and-the-cwd-is-the-root.md)
-what a remote spawn sends and why.
+what a remote spawn sends and why, and
+[ADR-0023](docs/decisions/0023-one-truth-per-server-and-the-server-chip.md)
+how a remote session is marked and what happens when its server goes quiet.
 
 **Adding one.** The server prints an auth URL when it starts:
 
@@ -1751,7 +1753,7 @@ main thread), and the row says what came back:
 | `connected · 3 sessions` | the list arrived; its sessions are in the sidebar |
 | `refused` — *token refused — paste the Auth URL from the server's startup output* | 401: the token is wrong or the server minted a new secret; **paste token** takes a new line |
 | `no token` — *paste the Auth URL…* | the table is in the file but the Keychain has no item for its host |
-| `reconnecting` — *unreachable — host: why* | no answer; retried on `session_poll_seconds` |
+| `reconnecting` — *unreachable — host: why* | no answer; retried on `session_poll_seconds`; reads `unreachable` once it has gone on a minute |
 | `disabled` | `enabled = false`: kept, ignored, not shown in the sidebar |
 
 **Remove** asks first, then takes the table out of the file and the token out of
@@ -1781,21 +1783,65 @@ the app is exactly what it was before servers existed. A server with no name,
 a URL that is not `http(s)://` with a host, or a name already used is skipped
 with the reason on its row and on stderr.
 
-**In the sidebar.** Local project groups come first; then each enabled server
-as its own header — the server's name, and its state (`TOKEN REFUSED`,
-`RECONNECTING`) when it is anything but connected, else `N SESSIONS` or the
-BLOCKED count — with that server's project groups under it. A refused or
-unreachable server is a header with no rows; a disabled one is not there. A
-click on the header opens Settings › Servers on that row. BLOCKED counts in the
-footer and the status bar include remote sessions.
+**In the sidebar.** With at least one server configured the list is blocks:
+`// LOCAL` and this Mac's project groups, then each enabled server as its own
+`// NAME` section — its session count (or BLOCKED count), and its state as a
+chip when it is anything but connected — with that server's project groups
+under it. A refused or unreachable server is a header with its chip and
+whatever it last held; a disabled one is not there. A click on a server's
+header opens Settings › Servers on that row. BLOCKED counts in the footer and
+the status bar include remote sessions, while their server is answering.
 
-**The one mark.** A remote lane is a local lane with the server's name where
-the directory sits: `yorkshire:/home/spierce` in the lane header, on the
-sidebar group, and before the id on a ⌘O row. No other colour, glyph or badge.
-Its project tag is `yorkshire:/home/spierce/m7out` — `host:path`, never the
-result of walking this Mac's tree for a directory that only exists over
-there — so a remote project gathers with itself and never with a local path
-that happens to match.
+**The one mark: the server chip.** A remote session wears a small grey
+outlined square with its server's name — `WSL` — and it is the same chip
+everywhere: under the title on its sidebar row, beside the path in its lane
+header (so on its gallery tile too), and on its ⌘O and ⌘P rows. Past ten
+characters the name is cut with an ellipsis; the tooltip is the server's
+host. It is grey because it is identity, not state, and there is no colour
+per server. With the chip there, the path stops repeating the server: the
+group reads `/home/spierce` and the header `/home/spierce/m7out`, as the
+server gave them and never as `~` for *this* Mac's home. Underneath, nothing
+moved: the project tag is still `yorkshire:/home/spierce/m7out` —
+`host:path`, never the result of walking this Mac's tree for a directory that
+only exists over there — so a remote project gathers with itself and never
+with a local path that happens to match.
+[ADR-0023](docs/decisions/0023-one-truth-per-server-and-the-server-chip.md).
+
+**When a server stops answering.** The relaytty.com tunnel usually dies
+silently — the connection stays up and nothing answers — so Max Pane asks:
+the session list gives up after 4 s, a failure is retried once, half a second later, before
+it is believed (one slow response never flips anything), and a ping on
+`/ws/events` every 5 s makes it ask sooner. From death to the sidebar saying
+so is at most 13.5 s with the default `session_poll_seconds`; measured against
+the real server frozen with `kill -STOP`, 10–12 s, and under a second to come
+back. A much longer `session_poll_seconds` can slow that down. The verdict is
+one truth per server, and everything shows it in the same turn:
+
+| where | what it shows |
+|---|---|
+| the server's `// NAME` header | a green outlined chip: `RECONNECTING`, then `UNREACHABLE` once it has gone on a minute, or `TOKEN REFUSED`; the last error is the tooltip, and is on the row in Settings |
+| every session row under it | at-rest grey, a hollow square, `—` for the state and `OFFLINE` where the rate was; no stale `working`, no BLOCKED chip; the group counts `N OFFLINE` |
+| the lane header | the same chip where `BLOCKED`/`DONE` go, and a hollow status square |
+| the pane | the banner: `RECONNECTING · INPUT IS NOT BEING SENT` |
+| a gallery tile | dimmed |
+| the status bar | `5 sessions · 3 offline`; a dead server's BLOCKED is not counted, and does not bounce the Dock |
+| `maxpane sessions` / `server ls` | `offline`; `reconnecting` or `unreachable` with the error |
+
+The lanes and the list tell each other: when the list goes quiet every lane
+on that server tests its own connection within 4 s instead of waiting out its
+45 s zombie timer, and a lane that loses its connection makes the list check
+at once. Coming back is quiet: the chip goes, the rows take their state from
+a fresh list, the lanes re-attach at once and replay from their offset.
+
+**Typing into an offline lane is not sent**, and the banner says so. What
+you type in the last five seconds before the connection returns is delivered,
+so a blip loses nothing; anything older is dropped, and the pane says how
+many bytes in one line when that happens. It is not queued for the length of
+an outage on purpose: the other end is usually an agent at a prompt, and a
+`y⏎` typed at one question must not land on another a minute later. If the
+server came back with a new token (a restart mints one), Settings › Servers ›
+paste token, or `maxpane server add NAME '<the new line>'` with the same
+name, replaces it.
 
 **Starting things there.** A line runs where the focused lane is. With a
 remote lane focused, ⌘O `claude` ↩ starts Claude Code on that lane's server,
@@ -1811,8 +1857,8 @@ where instead:
 | `@local claude` | on this Mac, whatever lane is focused |
 | `@nope claude` | as typed, here; the row says `@nope is not a server` |
 
-The row's second line says where before you press Return
-(`yorkshire:/home/spierce/proj`, or `yorkshire:~` for the server's home), and
+The row's second line says where before you press Return — the server's chip
+and the directory (`/home/spierce/proj`, or `~` for the server's home) — and
 the ⌘/ sheet lists the grammar. A directory over there is never guessed from
 this Mac: when Max Pane does not know one, it sends none, the server starts
 the session in its own home and says which directory that was. A command
@@ -1842,7 +1888,8 @@ listed, attached, typed into, resized, reconnected (with the whole scrollback
 replaced rather than appended when the server answers a missed `RESUME` with
 the full ring), shown with its agent state, and back after a relaunch. The
 server's sessions are read from `GET /api/sessions` and kept current by
-`/ws/events`, polled on `session_poll_seconds` as the fallback. **Not yet:**
+`/ws/events`, polled on `session_poll_seconds` as the fallback, and a server
+that stops answering says so everywhere within seconds (above). **Not yet:**
 ⌘-clicking a path in a remote lane, which says so in one line — the path is a
 path on the other machine, and the server's file API is Phase 4 — and
 `maxpane` inside a remote shell.

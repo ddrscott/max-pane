@@ -35,7 +35,11 @@ enum LaneHeaderPath {
     /// tells a remote lane from a local one, so it is never the part that is
     /// dropped: the path after it shrinks by the rules below in the room the
     /// name leaves, and is never abbreviated against *this* Mac's `$HOME`.
-    static func fit(_ path: String, maxChars: Int) -> String {
+    ///
+    /// `remote` is a path on another machine, shown beside that server's
+    /// chip: the same shrinking, and never `~` for *this* Mac's `$HOME`.
+    static func fit(_ path: String, maxChars: Int, remote: Bool = false) -> String {
+        if remote { return fit(path, maxChars: maxChars, abbreviating: false) }
         if let (server, rest) = splitServer(path) {
             let room = maxChars - server.count - 1
             guard room > 0 else { return String(server.prefix(max(maxChars, 0))) }

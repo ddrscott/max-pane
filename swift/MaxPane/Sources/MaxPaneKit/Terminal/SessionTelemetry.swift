@@ -158,18 +158,37 @@ public enum ServerState: Equatable, Sendable {
     case connected
     /// Unreachable, and being retried on the source's cadence.
     case reconnecting
+    /// Still unreachable after `RemoteSessionSource.unreachableAfter` of
+    /// retrying, and still being retried. The same condition as
+    /// `.reconnecting` with a more honest word on it: a minute in, nobody
+    /// believes "reconnecting" (ADR-0023).
+    case unreachable
     /// The server answered 401: the token was refused, and retrying would
-    /// only be refused again. Stays until the app is relaunched.
+    /// only be refused again. Stays until the token is replaced.
     case refused
 
-    /// The word the group header prints, in the green family.
+    /// The word the state chip prints, in the green family.
     public var label: String {
         switch self {
         case .connected: return "CONNECTED"
         case .reconnecting: return "RECONNECTING"
+        case .unreachable: return "UNREACHABLE"
         case .refused: return "TOKEN REFUSED"
         }
     }
+
+    /// One cell, for a header too narrow for the word.
+    public var glyph: String {
+        switch self {
+        case .connected: return ""
+        case .reconnecting, .unreachable: return "↻"
+        case .refused: return "⊘"
+        }
+    }
+
+    /// Anything but connected: nothing this server last said can be vouched
+    /// for, and nothing typed at it is going anywhere.
+    public var isOff: Bool { self != .connected }
 }
 
 /// Everything known about one session's liveness, in one value.
@@ -197,10 +216,31 @@ public struct SessionTelemetry: Sendable, Equatable {
     /// pty-host says DONE but the user has looked, or the hold ran out. Its
     /// file keeps saying `done` until something attaches, which nothing may.
     public var doneDismissed = false
+    /// How the session's server is doing: nil for this Mac, which is never
+    /// anything but there. Stamped by the registry from the server's source,
+    /// on every reading and on every change of the server's state, so it is
+    /// the one truth every surface that holds a telemetry value already has
+    /// (ADR-0023).
+    public var connection: ServerState?
+    /// The server is not answering, so everything else in this value is the
+    /// last thing it said and may no longer be so.
+    public var isOffline: Bool { connection?.isOff ?? false }
     /// What the session is doing, and the only state any surface reads:
     /// sidebar rows and chips, lane headers, gallery tiles, ⌘P, the status bar.
     /// See `AgentState.derived`, then `doneSince` laid over it.
-    public var state: AgentState {
+    ///
+    /// **Offline is `.unknown`.** A server that has stopped answering cannot
+    /// vouch for `working` or `blocked`, and a stale BLOCKED is worse than
+    /// none: it pulls the owner across the room to a prompt he cannot
+    /// answer. Masking it here rather than at each surface is what keeps the
+    /// sidebar, the header, the tile, ⌘O, ⌘P, the status bar and the Dock
+    /// bounce from disagreeing about it.
+    public var state: AgentState { isOffline ? .unknown : reportedState }
+
+    /// `state` as the server last reported it, offline or not. The registry
+    /// decides DONE on this, so an agent that finished during an outage is
+    /// DONE when the server comes back rather than never.
+    var reportedState: AgentState {
         let derived = AgentState.derived(title: title, relay: relayState)
         if doneSince != nil, derived == .idle || derived == .done { return .done }
         if doneDismissed, derived == .done { return .idle }
@@ -268,7 +308,13 @@ public struct SessionTelemetry: Sendable, Equatable {
     /// forever; a rate is only shown while the derived state is WORKING. A
     /// session can read `idle` here and `BLOCKED` on its chip at the same time
     /// — the combination worth walking across the room for.
-    public var badgeText: String { badgeIsThroughput ? throughputText : "idle" }
+    ///
+    /// `offline` when the server is not answering: the one word that is
+    /// still true of a session nobody can ask about.
+    public var badgeText: String {
+        if isOffline { return "offline" }
+        return badgeIsThroughput ? throughputText : "idle"
+    }
 
     public var badgeIsThroughput: Bool { state == .working && !throughputText.isEmpty }
 
@@ -296,17 +342,19 @@ public struct SessionTelemetry: Sendable, Equatable {
     /// abbreviated to `~` the way the bar does.
     ///
     /// A remote session's group is `server:path`, the path as the server
-    /// gave it: `$HOME` here says nothing about `/home/spierce` there, and
-    /// the server's name is the one mark that tells a remote lane from a
-    /// local one. The same `server:path` is the lane's project root, so the
-    /// session and its lane file under one header.
+    /// gave it: `$HOME` here says nothing about `/home/spierce` there. This
+    /// is the group's *key* — the same `server:path` is the lane's project
+    /// root, so the session and its lane file under one header — and not
+    /// what the header prints: that is the path alone, under the server's
+    /// section and beside the server chip (ADR-0023).
     public var groupPath: String {
         guard let server else { return Self.abbreviate(cwd) }
         return cwd.isEmpty ? server : "\(server):\(cwd)"
     }
 
-    /// The path the lane header prints: the cwd, with the server's name in
-    /// front of it for a remote session. Unabbreviated; the header decides.
+    /// `server:cwd` for a remote session, the cwd for a local one: the long
+    /// form, for the lane header's tooltip. The header itself prints the cwd
+    /// and lets the server chip name the server (ADR-0023).
     public var headerPath: String {
         guard let server else { return cwd }
         return cwd.isEmpty ? server : "\(server):\(cwd)"
@@ -447,17 +495,56 @@ public final class SessionRegistry {
         source.start()
     }
 
+    /// A server went quiet, or came back. Its sessions are restamped at
+    /// once, so every surface holding a telemetry value says so in the same
+    /// turn: rows go `offline`, a stale BLOCKED stops counting, and the
+    /// lanes are told by whoever observes (ADR-0023). A change of shown
+    /// state this causes is reported like any other.
     private func serverChanged(_ server: String?, to state: ServerState) {
         guard let server, serverStates[server] != state else { return }
         serverStates[server] = state
+        var changes: [(SessionTelemetry, AgentState, AgentState)] = []
+        for (key, var t) in sessions where key.server == server {
+            let from = t.state
+            t.connection = state
+            sessions[key] = t
+            if from != t.state { changes.append((t, from, t.state)) }
+        }
         notify()
+        onServerStateChange?(server, state)
+        for (t, from, to) in changes { onStateChange?(t, from, to) }
     }
+
+    /// A server's state changed: its name and the new state, after the
+    /// sessions were restamped and observers told. The strip hangs its
+    /// lanes' attachments off this, so a lane learns its server is gone
+    /// from the list's verdict rather than waiting out its own zombie timer.
+    public var onServerStateChange: ((String, ServerState) -> Void)?
 
     /// Ask every remote source for a fresh list now — after a wake, or when
     /// a lane has just attached and wants the state the wire will not send
     /// until it changes.
     public func refreshRemotes() {
         for source in sources where source.server != nil { source.refresh() }
+    }
+
+    /// A lane on `server` lost its wire — a zombie, a failed reconnect. The
+    /// server's source checks now rather than at its next poll, so the
+    /// sidebar and every other lane on that server hear of it in one
+    /// request's time. Local lanes have no source to ask.
+    public func laneLostWire(server: String?) {
+        guard let server else { return }
+        for source in sources where source.server == server { source.refresh() }
+    }
+
+    /// The host each remote server is at, by name, for the server chip's
+    /// tooltip.
+    public var serverHosts: [String: String] {
+        var out: [String: String] = [:]
+        for source in sources {
+            if let remote = source as? RemoteSessionSource { out[remote.name] = remote.host }
+        }
+        return out
     }
 
     @discardableResult
@@ -490,6 +577,9 @@ public final class SessionRegistry {
             return (path: path, sessions: inGroup)
         }
     }
+
+    /// Sessions on a server that is not answering.
+    public var offlineCount: Int { sessions.values.filter(\.isOffline).count }
 
     public var runningCount: Int { sessions.values.filter(\.isRunning).count }
 
@@ -554,8 +644,12 @@ public final class SessionRegistry {
             for info in infos {
                 let key = SessionKey(server: server, id: info.id)
                 var t = SessionTelemetry(info, server: server, isAttached: attached.contains(key))
-                let fresh = t.state
-                let previous = sessions[key]?.state
+                t.connection = server.flatMap { serverStates[$0] }
+                // DONE is decided on what the server reported, offline or
+                // not; what changed on screen is decided on what is shown.
+                let fresh = t.reportedState
+                let previous = sessions[key]?.reportedState
+                let shownBefore = sessions[key]?.state
                 switch fresh {
                 case .idle:
                     if previous == .working { doneSince[key] = now }
@@ -571,7 +665,7 @@ public final class SessionRegistry {
                 t.doneSince = doneSince[key]
                 t.doneDismissed = dismissed.contains(key)
                 next[key] = t
-                if let previous, previous != t.state { changes.append((t, previous, t.state)) }
+                if let shownBefore, shownBefore != t.state { changes.append((t, shownBefore, t.state)) }
             }
         }
         doneSince = doneSince.filter { next[$0.key] != nil }

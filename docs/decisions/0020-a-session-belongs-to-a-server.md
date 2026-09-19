@@ -77,6 +77,9 @@ reading as they did.
 - The one mark of a remote lane is the server's name where the directory
   sits: `yorkshire:/home/spierce` in the lane header, on the sidebar group,
   and before the id on a ⌘O row. Nothing else changes colour or shape.
+  **[SUPERSEDED 2026-09-19 by [ADR-0023](0023-one-truth-per-server-and-the-server-chip.md):**
+  the mark is the server chip, and the displayed path no longer repeats the
+  server. The `host:path` tag above is unchanged.**]**
 - The token is not part of the key and not in the file: it is a Keychain
   item against the server's host (`RelayServerTokens`), which is why a
   server is a name and a URL and nothing more in `config.toml`.

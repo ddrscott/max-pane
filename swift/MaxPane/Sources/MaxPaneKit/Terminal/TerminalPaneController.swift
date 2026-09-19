@@ -24,6 +24,13 @@ protocol RelayAttachment: AnyObject {
     /// Clear the emulator before the next bytes: what follows is the whole
     /// scrollback again, not a continuation of it.
     var onReplaceScreen: (() -> Void)? { get set }
+    /// Input held while the wire was down was dropped, not sent: how many
+    /// bytes. Only the real adapter holds input, so only it calls this.
+    var onInputDropped: ((Int) -> Void)? { get set }
+
+    /// The session's server stopped answering, or started again. A local
+    /// attachment has no server and never hears this.
+    func serverStateChanged(_ state: ServerState)
 
     func connect()
     func disconnect()
@@ -33,6 +40,11 @@ protocol RelayAttachment: AnyObject {
     /// to the session, the phone included, which is why it is debounced to the
     /// size the user settles on. See ADR-0007.
     func claimSize(cols: Int, rows: Int)
+}
+
+extension RelayAttachment {
+    var onInputDropped: ((Int) -> Void)? { get { nil } set {} }
+    func serverStateChanged(_ state: ServerState) {}
 }
 
 /// A terminal pane: Ghostty's terminal core attached to a RelayTTY session.
@@ -284,11 +296,43 @@ final class TerminalPaneController: NSObject, PaneController {
             Task { @MainActor in
                 guard let self, case .notice = self.status.state else { return }
                 Motion.fade(self.status.layer)
-                self.status.setState(self.isSessionAvailable ? .connected : .reconnecting)
+                self.status.setState(self.restingBanner)
             }
         }
     }
     private var noticeTimer: Timer?
+
+    /// How this pane's server is doing, as its session list has it; nil for
+    /// a local pane and for a server that is answering. Laid over the
+    /// attachment's own report, so every lane on a dead server says so the
+    /// moment the sidebar does, whatever its own socket still believes
+    /// (ADR-0023).
+    private var serverOff: ServerState?
+    /// Whether the attachment last reported its wire up.
+    private var isWireUp = true
+
+    /// What the banner says when nothing sticky (an exit, a refusal, a
+    /// notice) is on it.
+    private var restingBanner: ReconnectingBanner.State {
+        if let serverOff { return .offline(serverOff) }
+        return (isWireUp && isSessionAvailable) ? .connected : .reconnecting
+    }
+
+    /// The server's state, from the registry by way of the strip. The
+    /// attachment is told as well: it tests its own wire now rather than in
+    /// 45 s, and reconnects now when the server is back.
+    func serverStateChanged(_ state: ServerState) {
+        let off: ServerState? = state.isOff ? state : nil
+        guard off != serverOff else { return }
+        serverOff = off
+        attachment?.serverStateChanged(state)
+        switch status.state {
+        case .exited, .refused, .notice: return
+        case .connected, .reconnecting, .offline: break
+        }
+        Motion.fade(status.layer)
+        status.setState(restingBanner)
+    }
 
     /// Attach to the live session. Separate from `init` so a lane can exist —
     /// with its ordinal, its tag and its place on the strip — while Relay is
@@ -316,9 +360,14 @@ final class TerminalPaneController: NSObject, PaneController {
         attachment.onConnectionChange = { [weak self] connected in
             guard let self else { return }
             // A refusal is final and outlives every later disconnect report.
+            self.isWireUp = connected
             if case .refused = self.status.state { return }
-            self.status.isHidden = connected
-            self.status.setState(connected ? .connected : .reconnecting)
+            self.status.setState(self.restingBanner)
+        }
+        attachment.onInputDropped = { [weak self] count in
+            // Said, not swallowed: the pane looked alive while these were
+            // typed. Old input is dropped on purpose (`PendingInput`).
+            self?.showNotice("\(count) byte\(count == 1 ? "" : "s") typed while disconnected \(count == 1 ? "was" : "were") not sent")
         }
         attachment.onRefused = { [weak self] why in
             self?.status.isHidden = false
@@ -430,8 +479,8 @@ final class TerminalPaneController: NSObject, PaneController {
         self.attachment?.disconnect()
         self.attachment = nil
         Motion.fade(status.layer)
-        status.setState(.reconnecting)
-        status.isHidden = false
+        isWireUp = false
+        status.setState(restingBanner)
         attach(attachment)
     }
 
@@ -474,12 +523,8 @@ final class TerminalPaneController: NSObject, PaneController {
         // A refused attachment stays refused; the registry's view of the
         // session coming and going does not change what the server said.
         if case .refused = status.state { return }
-        if available {
-            status.setState(.connected)
-            attachment?.connect()
-        } else {
-            status.setState(.reconnecting)
-        }
+        status.setState(restingBanner)
+        if available { attachment?.connect() }
     }
 
     // MARK: - size
@@ -1036,7 +1081,20 @@ final class ReconnectingBanner: NSView {
         case refused(String)
         /// Something could not be done here, said once and then gone.
         case notice(String)
+        /// The session's server is not answering its session list: the
+        /// state the sidebar and the lane header are showing, in the same
+        /// word, and what that means for the keyboard.
+        case offline(ServerState)
     }
+
+    /// What the banner says about typing while the wire is down, and it is
+    /// the truth: nothing typed now is going anywhere. The adapter holds
+    /// input for `PendingInput.maxAge` so a blip of a reconnect loses
+    /// nothing, and drops anything older rather than replaying it into a
+    /// session that has moved on — a `y⏎` typed at one prompt must not land
+    /// on another a minute later. A drop is said in one line when it
+    /// happens (ADR-0023).
+    static let inputNotSent = "INPUT IS NOT BEING SENT"
 
     private(set) var state: State = .connected
     private let label = NSTextField(labelWithString: "")
@@ -1063,7 +1121,12 @@ final class ReconnectingBanner: NSView {
             isHidden = true
         case .reconnecting:
             isHidden = false
-            label.stringValue = "RECONNECTING"
+            label.stringValue = "RECONNECTING · \(Self.inputNotSent)"
+            label.textColor = Theme.accent
+            layerBackgroundColor = Theme.accent.withAlphaComponent(0.12)
+        case .offline(let server):
+            isHidden = false
+            label.stringValue = "\(server.label) · \(Self.inputNotSent)"
             label.textColor = Theme.accent
             layerBackgroundColor = Theme.accent.withAlphaComponent(0.12)
         case .exited(let code):

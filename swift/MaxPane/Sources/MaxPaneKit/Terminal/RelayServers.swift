@@ -89,6 +89,9 @@ public final class RelayServers {
         }
         endpoints = kept
         self.names = names
+        // The server chip's tooltip is the URL's host; this is the one place
+        // a name and a URL meet.
+        ServerChip.hosts = kept.compactMapValues { $0.baseURL.host }
         entries = Dictionary(uniqueKeysWithValues: next.filter { kept[$0.name] != nil }.map { ($0.name, $0) })
         return delta
     }

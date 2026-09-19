@@ -25,6 +25,12 @@ enum SidebarModel {
     /// is this.
     static let bookmarksGroup = "\u{FFFE}bookmarks"
 
+    /// The `// LOCAL` section header's path: not a directory, and not a
+    /// server. It exists only while at least one server is configured, so
+    /// this Mac and each server read as parallel blocks; with none, the
+    /// sidebar is exactly what it was before servers existed.
+    static let localSection = "\u{FFFD}local"
+
     enum Kind: Equatable {
         /// A RelayTTY session, whether or not a lane is attached to it.
         case session
@@ -69,6 +75,14 @@ enum SidebarModel {
         /// lane. `sessionId` is its id alone, for the tooltip and the clipboard.
         var sessionKey: SessionKey?
         var sessionId: String? { sessionKey?.id }
+        /// The remote server the session is on, for the row's server chip;
+        /// nil for this Mac, and then there is no chip.
+        var server: String? { sessionKey?.server }
+        /// The session's server is not answering: the row goes to the
+        /// at-rest grey, carries no state, and reads `offline` where the
+        /// state text was. What it last said is not repeated as if it were
+        /// still so.
+        var offline = false
         /// `SessionTelemetry.state` — relay's verdict corrected by the title —
         /// and the only source for the chip.
         var state: AgentState
@@ -106,6 +120,23 @@ enum SidebarModel {
         /// header when it is anything but connected: a header that said
         /// CONNECTED all day would spend a word on something always true.
         var serverState: ServerState?
+        /// Why the server is not connected, in one line; the header's
+        /// tooltip. Nil while connected. Never carries the token.
+        var serverError: String?
+
+        /// A section header — a server's, or `// LOCAL` — rather than a
+        /// project group: it heads a block, has no rows of its own, and
+        /// never folds.
+        var isSection: Bool { isServer || isLocalSection }
+        var isLocalSection: Bool { path == SidebarModel.localSection }
+
+        /// The server's state as a chip, when it is anything but connected:
+        /// `RECONNECTING`, `UNREACHABLE`, `TOKEN REFUSED`. A header that said
+        /// CONNECTED all day would spend a word on something always true.
+        var stateChip: String? {
+            guard isServer, let serverState, serverState.isOff else { return nil }
+            return serverState.label
+        }
 
         /// The server this group is on — `yorkshire` of `yorkshire:/home` —
         /// or nil for a group on this Mac.
@@ -126,7 +157,13 @@ enum SidebarModel {
             // called ~/CODE/MAX-PANE names nothing on this disk.
             if path == SidebarModel.looseWebGroup { return "Web" }
             if path == SidebarModel.bookmarksGroup { return "Bookmarks" }
-            if isServer { return server ?? path }
+            if isLocalSection { return "LOCAL" }
+            if isServer { return (server ?? path).uppercased() }
+            // A remote project is its path on that server. The section above
+            // it and the chip on every row say which server; `WSL:` in front
+            // of each path as well was the same word three times. The path
+            // is as the server gave it — never `~` for this Mac's `$HOME`.
+            if let remote = LaneHeaderPath.splitServer(path) { return remote.path }
             return path
         }
 
@@ -134,19 +171,23 @@ enum SidebarModel {
         /// fact you cannot afford to have hidden.
         var countText: String {
             if let countOverride { return countOverride }
-            if isServer {
-                // The server's line: its state when it is anything but
-                // connected, else what it holds. `total` is its session
-                // count across every project on it.
-                if let serverState, serverState != .connected { return serverState.label }
+            if isSection {
+                // The section's line: what it holds. `total` is its session
+                // count across every project in it. A server's state is its
+                // own chip beside this (`stateChip`), not a word in its place.
                 if blocked > 0 { return "\(blocked) BLOCKED" }
                 return "\(total) SESSION\(total == 1 ? "" : "S")"
             }
+            // Under a server that is not answering, RUNNING is a claim nobody
+            // can back. What is known is how many there were.
+            if serverIsOffline { return "\(total) OFFLINE" }
             return blocked > 0 ? "\(blocked) BLOCKED" : (running > 0 ? "\(running) RUNNING" : "\(total) CLOSED")
         }
 
         /// The header's state is worth a colour: the server is not connected.
-        var serverIsOff: Bool { isServer && (serverState.map { $0 != .connected } ?? false) }
+        var serverIsOff: Bool { isServer && (serverState?.isOff ?? false) }
+        /// A project group on a server that is not connected.
+        var serverIsOffline: Bool { !isSection && (serverState?.isOff ?? false) }
     }
 
     /// One node of the bookmarks tree, as a row.
@@ -239,6 +280,7 @@ enum SidebarModel {
         bookmarks: [Bookmark] = [],
         controls: Controls = Controls(),
         servers: [String: ServerState] = [:],
+        serverErrors: [String: String] = [:],
         now: Date = Date()
     ) -> [Row] {
         // The *pane* as well as the lane: a click on a row has to be able to
@@ -260,8 +302,12 @@ enum SidebarModel {
             let split = splitGlyph(displayTitle(t))
             // Only where pty-host has no opinion at all does the agent's own
             // title mark get to fill the glyph column — and never the chip.
-            let glyph = t.state == .unknown ? (split.glyph ?? t.state.glyph) : t.state.glyph
-            let entry = Entry(
+            // An offline row says `—`: not the agent's own title mark, which
+            // is as stale as everything else the server last said.
+            let glyph = t.isOffline
+                ? "—"
+                : (t.state == .unknown ? (split.glyph ?? t.state.glyph) : t.state.glyph)
+            var entry = Entry(
                 id: "session:\(key)",
                 kind: .session,
                 title: split.title,
@@ -278,6 +324,7 @@ enum SidebarModel {
                 pinned: lane?.keepLive ?? false,
                 createdAt: created[key] ?? (t.lastActivity?.timeIntervalSince1970 ?? 0),
                 activityAt: t.lastActivity?.timeIntervalSince1970 ?? 0)
+            entry.offline = t.isOffline
             grouped[t.groupPath, default: []].append(entry)
         }
 
@@ -294,8 +341,13 @@ enum SidebarModel {
             case .placeholder: kind = .placeholder
             }
             let live = lane.panes.contains { $0.state == .live }
-            let state: AgentState = kind == .session ? .exited : .unknown
-            let entry = Entry(
+            // A remote lane the registry has never seen a session for, on a
+            // server that is not answering: the server was gone at launch.
+            // That is `offline`, not `gone` — nobody knows it exited.
+            let offline = kind == .session
+                && (sessionKeys.first?.server.flatMap { servers[$0] }?.isOff ?? false)
+            let state: AgentState = (kind == .session && !offline) ? .exited : .unknown
+            var entry = Entry(
                 id: "lane:\(lane.id)",
                 kind: kind,
                 title: laneTitle(lane),
@@ -305,9 +357,9 @@ enum SidebarModel {
                 paneId: pane.id,
                 sessionKey: sessionKeys.first,
                 state: state,
-                glyph: kind == .session ? state.glyph : "",
+                glyph: kind == .session ? (offline ? "—" : state.glyph) : "",
                 chip: kind == .session ? state.chipText : "",
-                badge: kind == .session ? "gone" : (live ? "web" : "evicted"),
+                badge: kind == .session ? (offline ? "offline" : "gone") : (live ? "web" : "evicted"),
                 badgeIsThroughput: false,
                 age: SessionTelemetry.age(
                     since: Date(timeIntervalSince1970: Double(lane.lastFocusAt) / 1000), now: now),
@@ -318,6 +370,7 @@ enum SidebarModel {
                 pinned: lane.keepLive,
                 createdAt: Double(lane.createdAt) / 1000,
                 activityAt: Double(lane.lastFocusAt) / 1000)
+            entry.offline = offline
             grouped[group(for: lane), default: []].append(entry)
         }
 
@@ -372,6 +425,21 @@ enum SidebarModel {
             guard !collapsed else { return }
             out.append(contentsOf: sorted(kept, controls).map(Row.entry))
         }
+        // `// LOCAL`, only beside at least one server: the blocks are then
+        // parallel. With none configured there is no header and nothing
+        // else here changes, pixel for pixel.
+        if !servers.isEmpty {
+            let entries = local.filter { $0 != looseWebGroup }
+                .flatMap { grouped[$0]! }.filter { $0.kind == .session && matches($0, controls) }
+            out.append(.group(Group(
+                path: localSection,
+                running: entries.filter(\.isRunning).count,
+                blocked: entries.filter(\.needsAttention).count,
+                total: entries.count,
+                collapsed: false,
+                countOverride: nil,
+                serverState: nil)))
+        }
         for path in local { emit(path) }
         for server in Set(servers.keys).union(byServer.keys).sorted() {
             let paths = byServer[server] ?? []
@@ -383,7 +451,8 @@ enum SidebarModel {
                 total: entries.count,
                 collapsed: false,
                 countOverride: nil,
-                serverState: servers[server])))
+                serverState: servers[server],
+                serverError: serverErrors[server])))
             for path in paths { emit(path) }
         }
         return out
@@ -624,8 +693,14 @@ enum SidebarModel {
         for case .entry(let e) in old { before[e.id] = e }
         for case .entry(let e) in new {
             guard let was = before[e.id] else { continue }
-            if was.state != e.state || was.chip != e.chip
+            if was.state != e.state || was.chip != e.chip || was.offline != e.offline
                 || was.badgeIsThroughput != e.badgeIsThroughput { return true }
+        }
+        // A server going quiet or coming back is a change of state too.
+        var chips: [String: String?] = [:]
+        for case .group(let g) in old where g.isServer { chips[g.path] = g.stateChip }
+        for case .group(let g) in new where g.isServer {
+            if let was = chips[g.path], was != g.stateChip { return true }
         }
         return false
     }

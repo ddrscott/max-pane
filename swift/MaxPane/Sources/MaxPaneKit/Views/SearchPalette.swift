@@ -526,11 +526,18 @@ final class PaletteLaunchRow: NSTableCellView {
 /// readout are separate columns because they answer different questions: does
 /// it need me, and is anything still coming out of it.
 final class PaletteSessionRow: NSTableCellView {
+    private var serverChip: ServerChip?
+    /// The server chip's text, for tests; nil when the row has none.
+    var serverChipText: String? { serverChip?.text }
+
     init(_ session: PaletteSession) {
         super.init(frame: .zero)
         let t = session.telemetry
 
-        let dot = PaletteStyle.label("●", Theme.mono(9), PaletteStyle.dotColor(running: t.isRunning))
+        // Offline is not known to be running: the dot and the title go to
+        // the at-rest grey with the dead ones, and the badge says `offline`.
+        let dot = PaletteStyle.label(
+            "●", Theme.mono(9), PaletteStyle.dotColor(running: t.isRunning && !t.isOffline))
         dot.alignment = .center
 
         let glyph = PaletteStyle.label(
@@ -548,14 +555,18 @@ final class PaletteSessionRow: NSTableCellView {
         let title = NSTextField(labelWithAttributedString: PaletteStyle.highlighted(
             t.title.isEmpty ? t.command : t.title,
             matches: session.titleMatches,
-            color: t.isRunning ? .labelColor : Theme.dimText))
+            color: (t.isRunning && !t.isOffline) ? .labelColor : Theme.dimText))
         title.lineBreakMode = .byTruncatingTail
         title.translatesAutoresizingMaskIntoConstraints = false
 
         // The id is how every other tool on this machine names the session
         // (`relay attach 4f2a…`), and the command only earns its place when the
         // title is not already it — Relay titles fall back to the argv.
-        let short = t.server.map { "\($0):\(t.sessionId.prefix(8))" } ?? String(t.sessionId.prefix(8))
+        // Which server is the chip before it (ADR-0023); a local row has
+        // none and is laid out exactly as it was.
+        let short = String(t.sessionId.prefix(8))
+        let serverChip = t.server.map { ServerChip(server: $0) }
+        self.serverChip = serverChip
         let repeats = t.title.hasPrefix(t.command) || t.command.isEmpty
         let command = PaletteStyle.label(
             repeats ? short : "\(short) · \(t.command)",
@@ -572,6 +583,13 @@ final class PaletteSessionRow: NSTableCellView {
         age.alignment = .right
 
         for v in [dot, glyph, attached, title, command, chip, badge, age] { addSubview(v) }
+        if let serverChip {
+            addSubview(serverChip)
+            NSLayoutConstraint.activate([
+                serverChip.leadingAnchor.constraint(equalTo: title.trailingAnchor, constant: 10),
+                serverChip.centerYAnchor.constraint(equalTo: centerYAnchor),
+            ])
+        }
         NSLayoutConstraint.activate([
             chip.trailingAnchor.constraint(equalTo: badge.leadingAnchor, constant: -10),
             chip.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -592,7 +610,8 @@ final class PaletteSessionRow: NSTableCellView {
             title.leadingAnchor.constraint(equalTo: attached.trailingAnchor, constant: 6),
             title.centerYAnchor.constraint(equalTo: centerYAnchor),
 
-            command.leadingAnchor.constraint(equalTo: title.trailingAnchor, constant: 10),
+            command.leadingAnchor.constraint(
+                equalTo: serverChip?.trailingAnchor ?? title.trailingAnchor, constant: serverChip == nil ? 10 : 8),
             command.firstBaselineAnchor.constraint(equalTo: title.firstBaselineAnchor),
 
             badge.trailingAnchor.constraint(equalTo: age.leadingAnchor, constant: -14),
@@ -617,6 +636,9 @@ final class PaletteSessionRow: NSTableCellView {
 /// actually matched underneath. A hit in 8 000 lines of scrollback is useless
 /// if you cannot see which lane it came from or whether that lane is alive.
 final class PaletteSearchRow: NSTableCellView {
+    private var serverChip: ServerChip?
+    var serverChipText: String? { serverChip?.text }
+
     init(hit: SearchHit, laneTitle: String, path: String, telemetry: SessionTelemetry?, isFocused: Bool,
          isPrivate: Bool = false) {
         super.init(frame: .zero)
@@ -658,11 +680,25 @@ final class PaletteSearchRow: NSTableCellView {
             matched == laneTitle || hit.field == .projectRoot ? "" : matched,
             Theme.mono(11), Theme.dimText)
 
-        let where_ = PaletteStyle.label(path, Theme.mono(10), Theme.dimText.withAlphaComponent(0.8))
+        // A hit in a remote lane: the path as the server gave it, and the
+        // server as its chip before it, the same mark as everywhere else.
+        let remote = LaneHeaderPath.splitServer(path)
+        let serverChip = remote.map { ServerChip(server: $0.server) }
+        self.serverChip = serverChip
+        let where_ = PaletteStyle.label(
+            remote?.path ?? path, Theme.mono(10), Theme.dimText.withAlphaComponent(0.8))
         where_.alignment = .right
         where_.lineBreakMode = .byTruncatingHead
 
         for v in [glyph, focus, title, chip, state, age, field, excerpt, where_] { addSubview(v) }
+        if let serverChip {
+            addSubview(serverChip)
+            NSLayoutConstraint.activate([
+                serverChip.trailingAnchor.constraint(equalTo: where_.leadingAnchor, constant: -6),
+                serverChip.centerYAnchor.constraint(equalTo: where_.centerYAnchor),
+                serverChip.leadingAnchor.constraint(greaterThanOrEqualTo: excerpt.trailingAnchor, constant: 12),
+            ])
+        }
         NSLayoutConstraint.activate([
             chip.trailingAnchor.constraint(equalTo: state.leadingAnchor, constant: -10),
             chip.centerYAnchor.constraint(equalTo: title.centerYAnchor),

@@ -267,9 +267,12 @@ struct OmniServerGrammarTests {
         let remote = launch(build("claude", place: SpawnPlace(server: "yorkshire", cwd: "/home/s/proj")))
         #expect(remote?.action == .run("claude", at: SpawnPlace(server: "yorkshire", cwd: "/home/s/proj")))
         #expect(remote?.headline == "claude")
-        #expect(remote?.detail == "yorkshire:/home/s/proj")
+        #expect(remote?.detail == "/home/s/proj")
+        #expect(remote?.server == "yorkshire", "the chip says which server; the line says which directory")
+        #expect(local?.server == nil)
         let unknownDir = launch(build("yes | head", place: SpawnPlace(server: "yorkshire", cwd: nil)))
-        #expect(unknownDir?.detail == "yorkshire:~", "the server's home, and no local shell named for a remote line")
+        #expect(unknownDir?.detail == "~", "the server's home, and no local shell named for a remote line")
+        #expect(unknownDir?.server == "yorkshire")
     }
 
     @Test("@server moves the line to that server, in its home from a local lane; @local brings it back")
@@ -277,7 +280,8 @@ struct OmniServerGrammarTests {
         let there = launch(build("@yorkshire claude", place: SpawnPlace(server: nil, cwd: "/here/code")))
         #expect(there?.headline == "claude")
         #expect(there?.action == .run("claude", at: SpawnPlace(server: "yorkshire", cwd: nil)))
-        #expect(there?.detail == "yorkshire:~")
+        #expect(there?.detail == "~")
+        #expect(there?.server == "yorkshire")
         let here = launch(build("@local claude", place: SpawnPlace(server: "yorkshire", cwd: "/home/s")))
         #expect(here?.action == .run("claude", at: .local))
         #expect(here?.detail == "")
@@ -303,7 +307,8 @@ struct OmniServerGrammarTests {
         let rows = build("", recents: recents).compactMap(\.candidate)
         #expect(rows.map(\.headline) == ["claude", "htop"], "the alien recent is not offered while alien is not connected")
         #expect(rows[0].action == .run("claude", at: SpawnPlace(server: "yorkshire", cwd: "/home/s/proj")))
-        #expect(rows[0].detail == "yorkshire:/home/s/proj")
+        #expect(rows[0].detail == "/home/s/proj")
+        #expect(rows[0].server == "yorkshire")
         #expect(rows[1].action == .run("htop", at: SpawnPlace(server: nil, cwd: "/here/code")))
 
         // Connected now: offered, with its place.

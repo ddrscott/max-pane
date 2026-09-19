@@ -36,6 +36,22 @@ final class FakeRelayServer: @unchecked Sendable {
     /// Whether the server checks the cookie at all (LAN-direct does; a
     /// tunnel does not, for the WebSocket).
     var requiresCookie = true
+    /// The tunnel's usual death: the TCP connection is accepted and nothing
+    /// is ever said on it — no response to a request, no pong to a ping.
+    var silent: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return _silent }
+        set { lock.lock(); _silent = newValue; lock.unlock() }
+    }
+    private var _silent = false
+    /// How long to sit on the next `GET /api/sessions` before answering it,
+    /// once each: a slow response, not a dead server.
+    var listDelays: [TimeInterval] {
+        get { lock.lock(); defer { lock.unlock() }; return _delays }
+        set { lock.lock(); _delays = newValue; lock.unlock() }
+    }
+    private var _delays: [TimeInterval] = []
+    /// Accepted connections nobody answered, held so they stay open.
+    private var parked: [NWConnection] = []
 
     init() throws {
         listener = try NWListener(using: .tcp, on: .any)
@@ -54,7 +70,7 @@ final class FakeRelayServer: @unchecked Sendable {
 
     func stop() {
         listener.cancel()
-        lock.lock(); let cs = events; events = []; lock.unlock()
+        lock.lock(); let cs = events + parked; events = []; parked = []; lock.unlock()
         for c in cs { c.cancel() }
     }
 
@@ -114,6 +130,10 @@ final class FakeRelayServer: @unchecked Sendable {
             guard let colon = line.firstIndex(of: ":") else { continue }
             headers[line[..<colon].lowercased()] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
         }
+        if silent {
+            lock.lock(); parked.append(conn); lock.unlock()
+            return
+        }
         let path = requestLine.split(separator: " ").dropFirst().first.map(String.init) ?? ""
         let authorised = !requiresCookie || headers["cookie"] == "session=\(token)"
         let isUpgrade = headers["upgrade"]?.lowercased() == "websocket"
@@ -165,9 +185,14 @@ final class FakeRelayServer: @unchecked Sendable {
             return
         }
         if path.hasPrefix("/api/sessions") {
-            lock.lock(); let rows = sessions; lock.unlock()
+            lock.lock()
+            let rows = sessions
+            let delay = _delays.isEmpty ? 0 : _delays.removeFirst()
+            lock.unlock()
             let body = try! JSONSerialization.data(withJSONObject: ["sessions": rows])
-            respond(conn, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n", body)
+            queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.respond(conn, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n", body)
+            }
             return
         }
         respond(conn, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
@@ -183,13 +208,44 @@ final class FakeRelayServer: @unchecked Sendable {
 
     /// Read and discard the client's frames (it sends none but pings and a
     /// close), so the connection stays alive.
-    private func drainFrames(_ conn: NWConnection) {
-        conn.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] _, _, done, error in
+    ///
+    /// A protocol ping (opcode 9) gets its pong (opcode 10) with the same
+    /// payload, as any WebSocket server's does — unless the server has gone
+    /// `silent`, which is the point of that.
+    private func drainFrames(_ conn: NWConnection, buffered: Data = Data()) {
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, done, error in
             guard let self, error == nil, !done else {
                 self?.lock.lock(); self?.events.removeAll { $0 === conn }; self?.lock.unlock()
                 return
             }
-            self.drainFrames(conn)
+            var buf = buffered
+            if let data { buf.append(data) }
+            // Client frames are masked: [fin|opcode][mask|len][ext len][key x4][payload].
+            while buf.count >= 2 {
+                let bytes = [UInt8](buf)
+                let opcode = bytes[0] & 0x0f
+                var length = Int(bytes[1] & 0x7f)
+                var at = 2
+                if length == 126 {
+                    guard bytes.count >= 4 else { break }
+                    length = Int(bytes[2]) << 8 | Int(bytes[3]); at = 4
+                } else if length == 127 {
+                    break   // nothing the client sends here is that long
+                }
+                let masked = bytes[1] & 0x80 != 0
+                let total = at + (masked ? 4 : 0) + length
+                guard bytes.count >= total else { break }
+                var payload = Array(bytes[(at + (masked ? 4 : 0))..<total])
+                if masked {
+                    let key = Array(bytes[at..<at + 4])
+                    for i in payload.indices { payload[i] ^= key[i % 4] }
+                }
+                if opcode == 9, !self.silent {
+                    conn.send(content: self.frame(opcode: 10, Data(payload)), completion: .contentProcessed { _ in })
+                }
+                buf = Data(bytes[total...])
+            }
+            self.drainFrames(conn, buffered: buf)
         }
     }
 
@@ -515,23 +571,24 @@ struct RemoteLaneTests {
             SessionKey(server: "yorkshire", id: "0368d543"): telemetry("0368d543", server: "yorkshire", cwd: "/home/spierce", state: .blocked),
             "0368d543": telemetry("0368d543", cwd: NSHomeDirectory() + "/code/max-pane"),
         ]
-        let rows = SidebarModel.rows(lanes: lanes, telemetry: t, servers: ["yorkshire": .reconnecting])
+        let rows = SidebarModel.rows(lanes: lanes, telemetry: t, servers: ["yorkshire": .connected])
         let groups = rows.compactMap { if case .group(let g) = $0 { return g } else { return nil } }
         let entries = rows.compactMap { if case .entry(let e) = $0 { return e } else { return nil } }
 
-        // Local first; then the server's header, then its project groups.
-        #expect(groups.map(\.path) == ["~/code/max-pane", "yorkshire:", "yorkshire:/home/spierce"])
-        #expect(groups[0].server == nil)
-        #expect(groups[0].countText == "1 RUNNING")
-        #expect(groups[1].isServer)
-        #expect(groups[1].server == "yorkshire")
-        #expect(groups[1].header == "yorkshire")
-        #expect(groups[1].countText == "RECONNECTING")
-        #expect(groups[1].serverIsOff)
+        // `// LOCAL` and its groups; then the server's header and its groups.
+        #expect(groups.map(\.path) == [SidebarModel.localSection, "~/code/max-pane", "yorkshire:", "yorkshire:/home/spierce"])
+        #expect(groups[0].header == "LOCAL" && groups[0].countText == "1 SESSION")
+        #expect(groups[1].server == nil)
+        #expect(groups[1].countText == "1 RUNNING")
+        #expect(groups[2].isServer)
         #expect(groups[2].server == "yorkshire")
-        #expect(!groups[2].isServer)
-        #expect(groups[2].countText == "1 BLOCKED", "the project group says the state twice")
-        #expect(!groups[2].serverIsOff)
+        #expect(groups[2].header == "YORKSHIRE")
+        #expect(groups[2].countText == "1 BLOCKED")
+        #expect(groups[3].server == "yorkshire")
+        #expect(!groups[3].isServer)
+        // The path stops repeating the server; the key (and the ledger's tag) keeps it.
+        #expect(groups[3].header == "/home/spierce")
+        #expect(groups[3].countText == "1 BLOCKED")
         let remote = try #require(entries.first { $0.sessionKey?.server == "yorkshire" })
         let local = try #require(entries.first { $0.sessionKey?.server == nil })
         #expect(remote.laneId == lanes[0].id, "the remote row did not find its lane")
@@ -546,10 +603,13 @@ struct RemoteLaneTests {
         let rows = OmniRanking.build(query: "", scope: .sessions, recents: [], pages: [], bookmarks: [], sessions: [t], destination: "")
         let candidate = rows.compactMap(\.candidate).first { $0.kind == .session }
         #expect(candidate?.action == .attach(SessionKey(server: "yorkshire", id: "0368d543")))
-        #expect(candidate?.detail.hasPrefix("yorkshire:0368d543") == true, Comment(rawValue: candidate?.detail ?? ""))
+        // The server is the row's chip; the detail line is a local row's shape.
+        #expect(candidate?.server == "yorkshire")
+        #expect(candidate?.detail.hasPrefix("0368d543 · ") == true, Comment(rawValue: candidate?.detail ?? ""))
+        #expect(candidate?.detail.contains("yorkshire") == false)
     }
 
-    @Test("the header path of a remote lane is server:cwd")
+    @Test("the header of a remote lane names the server as its chip and shows the path alone")
     func headerModel() {
         let lane = Lane(
             id: "L", ordinal: 1, widthPt: 500, title: nil, projectRoot: "yorkshire:/home/spierce",
@@ -560,9 +620,13 @@ struct RemoteLaneTests {
                 url: nil, scrollY: nil, dataStoreId: nil, snapshotPath: nil, state: .live, heightWeight: 1,
                 zoom: 1, mobile: false)])
         let with = LaneHeaderModel(lane: lane, telemetry: telemetry("0368d543", server: "yorkshire", cwd: "/home/spierce/m7out"))
-        #expect(with.path == "yorkshire:/home/spierce/m7out")
+        #expect(with.path == "/home/spierce/m7out")
+        #expect(with.server == "yorkshire")
         let without = LaneHeaderModel(lane: lane, telemetry: nil)
-        #expect(without.path == "yorkshire:/home/spierce")
+        #expect(without.path == "/home/spierce")
+        #expect(without.server == "yorkshire", "the ledger's pane says which server when the registry cannot")
+        // The ledger's tag is untouched: this is presentation.
+        #expect(lane.projectRoot == "yorkshire:/home/spierce")
     }
 
     @Test("the adapter for a pane is chosen by its server")
