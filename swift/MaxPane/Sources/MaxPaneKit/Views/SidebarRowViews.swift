@@ -76,12 +76,19 @@ final class SidebarEntryView: NSTableCellView {
     private let badge = NSTextField(labelWithString: "")
     private let age = NSTextField(labelWithString: "")
     private let chip = PulseLabel(labelWithString: "")
-    /// Which server, on a remote session's row; nil on a local one, which
-    /// is then laid out exactly as it was before servers existed.
-    private var serverChip: ServerChip?
+    /// Which server, on a remote session's row: the square in that server's
+    /// colour, and no name — the row is already under `// WSL` (ADR-0025).
+    /// Nil on a local row, which is then laid out exactly as it was before
+    /// servers existed.
+    private var serverMark: ServerMark?
 
-    /// The server chip's text, for tests; nil when the row has none.
-    var serverChipText: String? { serverChip?.text }
+    /// The row never names its server; the section above it does. For tests.
+    var serverChipText: String? { nil }
+    /// The server whose square the row carries, its colour, and whether it
+    /// is hollow; nil when the row has none. For tests.
+    var serverMarkServer: String? { serverMark?.server }
+    var serverMarkColour: ServerColour? { serverMark?.colour }
+    var serverMarkIsHollow: Bool? { serverMark?.isHollow }
     /// The badge as drawn, for tests.
     var badgeText: String { badge.stringValue }
 
@@ -178,14 +185,16 @@ final class SidebarEntryView: NSTableCellView {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
-        // The server chip leads the second line, under the start of the
-        // title: the title keeps every character it had and the state text
-        // on the right is not pushed, which leading or trailing the title
-        // itself could not promise at 260 pt. The state chip follows it.
+        // The server's square leads the second line, under the start of the
+        // title, where the grey name chip was: the row keeps its grid, the
+        // title keeps every character and the state text on the right is not
+        // pushed. It sits apart from the status square on purpose — that one
+        // is state and stays green or grey. Hollow while the server is not
+        // answering. The state chip follows it.
         if let server = entry.server {
-            let made = ServerChip(server: server, size: 8)
+            let made = ServerMark(server: server, side: 8, offline: entry.offline)
             addSubview(made)
-            serverChip = made
+            serverMark = made
         }
 
         NSLayoutConstraint.activate([
@@ -214,14 +223,16 @@ final class SidebarEntryView: NSTableCellView {
             age.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 1),
 
             chip.leadingAnchor.constraint(
-                equalTo: serverChip?.trailingAnchor ?? title.leadingAnchor, constant: serverChip == nil ? 0 : 5),
+                equalTo: serverMark?.trailingAnchor ?? title.leadingAnchor, constant: serverMark == nil ? 0 : 5),
             chip.centerYAnchor.constraint(equalTo: age.centerYAnchor),
             chip.trailingAnchor.constraint(lessThanOrEqualTo: age.leadingAnchor, constant: -6),
         ])
-        if let serverChip {
+        if let serverMark {
             NSLayoutConstraint.activate([
-                serverChip.leadingAnchor.constraint(equalTo: title.leadingAnchor),
-                serverChip.centerYAnchor.constraint(equalTo: age.centerYAnchor),
+                serverMark.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+                serverMark.centerYAnchor.constraint(equalTo: age.centerYAnchor),
+                serverMark.widthAnchor.constraint(equalToConstant: serverMark.side),
+                serverMark.heightAnchor.constraint(equalToConstant: serverMark.side),
             ])
         }
         // The title yields to nothing: a truncated title is still readable, a
@@ -323,6 +334,9 @@ final class SidebarGroupView: NSTableCellView {
 
     /// The header as drawn, for tests.
     var labelText: String { label.stringValue }
+    /// The colour of a server section's `//`; nil for `// LOCAL` (the accent
+    /// green) and for a path group (no slashes).
+    private(set) var slashColour: ServerColour?
     var stateChipText: String { stateChip.isHidden ? "" : stateChip.stringValue.trimmingCharacters(in: .whitespaces) }
 
     static let height: CGFloat = 26
@@ -448,9 +462,16 @@ final class SidebarGroupView: NSTableCellView {
         // opens Settings › Servers.
         stateChip.isHidden = true
         if group.isSection {
+            // A server's slashes are in that server's colour (ADR-0025): the
+            // header is where the colour is introduced, beside the name it
+            // stands for on every row below. `// LOCAL` has no colour and
+            // keeps the accent green. The name and the state chip are as
+            // they were: the chip is state, and state is green.
+            let slashes = group.server.map { Theme.server(ServerColours.colour(of: $0)) } ?? Theme.accent
+            slashColour = group.server.map(ServerColours.colour(of:))
             let mark = NSMutableAttributedString(
                 string: "// ",
-                attributes: [.foregroundColor: Theme.accent, .font: Theme.mono(10, weight: .bold)])
+                attributes: [.foregroundColor: slashes, .font: Theme.mono(10, weight: .bold)])
             mark.append(NSAttributedString(
                 string: group.header,
                 attributes: [.foregroundColor: NSColor.secondaryLabelColor, .font: Theme.mono(10, weight: .bold)]))

@@ -999,6 +999,8 @@ final class OmniPickerRow: NSTableCellView {
     private var serverChip: ServerChip?
     /// The server chip's text, for tests; nil when the row has none.
     var serverChipText: String? { serverChip?.text }
+    var serverChipColour: ServerColour? { serverChip?.colour }
+    var serverChipIsOffline: Bool { serverChip?.offline ?? false }
 
     init(candidate: OmniCandidate, query: String, shortcut: String?) {
         super.init(frame: .zero)
@@ -1063,7 +1065,9 @@ final class OmniPickerRow: NSTableCellView {
         for v in [key, glyph, headline, tag, chip, count, age, detail] { addSubview(v) }
         // The server chip leads the detail line on a remote row, where the
         // directory is; a local row has none and is laid out as it always was.
-        let serverChip = candidate.server.map { ServerChip(server: $0) }
+        let serverChip = candidate.server.map {
+            ServerChip(server: $0, offline: candidate.telemetry?.isOffline ?? false)
+        }
         self.serverChip = serverChip
         if let serverChip {
             addSubview(serverChip)

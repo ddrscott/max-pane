@@ -132,7 +132,11 @@ commands:
                         header shows, URL is the auth URL the server printed
                         at startup (…/api/auth/callback?token=…); the token
                         goes to the Keychain, the rest to config.toml
-  server ls             list the configured servers and how they are doing
+  server ls             list the configured servers, their colour and how
+                        they are doing
+  server color NAME COLOR
+                        the colour NAME is known by: slate, cyan, blue,
+                        violet, magenta, rose, lemon or ink
   socket                print the control socket path
   profile               print which profile this would talk to
 
@@ -359,7 +363,19 @@ fn attach_command(args: &[String], profile: &str) {
 
 // ---- server ----------------------------------------------------------------
 
-/// `maxpane server add NAME URL` and `maxpane server ls`.
+/// The request for `maxpane server color NAME COLOR`. The app knows the
+/// eight colours and says so when this is not one of them; nothing here
+/// keeps a second list to fall out of step.
+fn server_color_payload(name: &str, color: &str) -> String {
+    format!(
+        "{{\"op\":\"server-color\",\"name\":{},\"color\":{}}}",
+        json_string(name),
+        json_string(color)
+    )
+}
+
+/// `maxpane server add NAME URL`, `maxpane server ls` and
+/// `maxpane server color NAME COLOR`.
 ///
 /// The URL carries the server's token. It goes to the app over the
 /// owner-only socket and from there to the Keychain; it is never printed,
@@ -377,6 +393,21 @@ fn server_command(args: &[String], profile: &str) {
                 json_string(url)
             );
             match request(&payload, profile) {
+                Ok(reply) => print!("{}", field(&reply, "lanes").unwrap_or_default()),
+                Err(reason) => {
+                    eprintln!("maxpane: {reason}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        // `colour` too: the owner spells it that way, and a CLI that refuses
+        // a spelling is a CLI that gets aliased.
+        Some("color") | Some("colour") => {
+            let (Some(name), Some(color)) = (args.get(1), args.get(2)) else {
+                eprintln!("maxpane: server color needs NAME and a colour");
+                usage();
+            };
+            match request(&server_color_payload(name, color), profile) {
                 Ok(reply) => print!("{}", field(&reply, "lanes").unwrap_or_default()),
                 Err(reason) => {
                     eprintln!("maxpane: {reason}");
@@ -520,6 +551,18 @@ mod tests {
         // escape so the expectation cannot be mangled in turn.
         let expected = String::from("\"") + "\\u0001" + "\"";
         assert_eq!(json_string("\u{1}"), expected);
+    }
+
+    #[test]
+    fn server_color_is_one_request_with_the_name_and_the_colour() {
+        assert_eq!(
+            server_color_payload("WSL", "violet"),
+            r#"{"op":"server-color","name":"WSL","color":"violet"}"#
+        );
+        // Whatever is typed is quoted, never spliced.
+        let odd = server_color_payload("a\"b", "x\ny");
+        assert_eq!(odd, r#"{"op":"server-color","name":"a\"b","color":"x\ny"}"#);
+        assert_eq!(odd.matches('\n').count(), 0);
     }
 
     #[test]

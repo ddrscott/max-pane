@@ -33,6 +33,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 pollInterval: config.sessionPollSeconds)
             book.onServerChanged = { [weak self] name in self?.strip.reattachPanes(onServer: name) }
             serverBook = book
+            sidebar.serverBook = book
             // `sidebar_collapse_hides_lanes` applies as the file is saved:
             // off, every hidden lane is back; on, the folds take effect.
             configObserver = NotificationCenter.default.addObserver(
@@ -213,6 +214,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         // A server's header in the sidebar is the state of that server, and
         // the place to do something about it is Settings › Servers.
         sidebar.onOpenServer = { [weak self] name in self?.showSettings(server: name) }
+        sidebar.onRenameServer = { [weak self] old, new in self?.renameServerInLedger(from: old, to: new) }
         // Through `launch`, so a kept page lands exactly where a ⌘O page lands:
         // a new lane, immediately right of the one you are in.
         sidebar.onOpenBookmark = { [weak self] url in
@@ -400,6 +402,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return addServer(name: name, startupURL: url)
         case .listServers:
             return OpenServer.Reply(ok: true, lanes: describeServers())
+        case .colourServer(let name, let colour):
+            return colourServer(name: name, colour: colour)
         }
     }
 
@@ -499,6 +503,17 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         }
     }
 
+    /// `maxpane server color NAME COLOUR`: the same door as the sidebar
+    /// header's menu and the swatches in Settings (`RelayServerBook.setColour`).
+    private func colourServer(name: String, colour typed: String) -> OpenServer.Reply {
+        guard let serverBook else { return .refused("the config file is not open") }
+        guard let colour = ServerColour(rawValue: typed.lowercased()) else {
+            return .refused("\(typed) is not a server colour: \(ServerColour.names)")
+        }
+        if let why = serverBook.setColour(name, colour) { return .refused(why) }
+        return OpenServer.Reply(ok: true, lanes: "\(name)\t\(colour.rawValue)\n")
+    }
+
     private func describeServers() -> String {
         guard let serverBook else { return "" }
         return serverBook.entries.map { entry in
@@ -506,7 +521,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             var state = status.word
             if status.kind == .connected { state += " · \(status.sessions) session\(status.sessions == 1 ? "" : "s")" }
             if let detail = status.detail { state += " — \(detail)" }
-            return "\(entry.name)\t\(entry.url)\t\(state)\n"
+            return "\(entry.name)\t\(entry.url)\t\(entry.colour.rawValue)\t\(state)\n"
         }.joined()
     }
 
@@ -1405,17 +1420,21 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         panel?.mark(server: server)
     }
 
+    /// The ledger's half of a server rename, for Settings › Servers and for
+    /// the sidebar header's Rename… alike.
+    private func renameServerInLedger(from old: String, to new: String) {
+        do { try store.renameServer(from: old, to: new) } catch {
+            Log.warn("server \(old) → \(new): the ledger's panes were not renamed: \(error.localizedDescription)")
+        }
+    }
+
     @discardableResult
     private func openSettings() -> SettingsWindow? {
         guard let configStore else { return nil }
         let panel = SettingsWindow(store: configStore, servers: serverBook) { [weak self] file in
             self?.openInEditor(file)
         }
-        panel.onRenameServer = { [weak self] old, new in
-            do { try self?.store.renameServer(from: old, to: new) } catch {
-                Log.warn("server \(old) → \(new): the ledger's panes were not renamed: \(error.localizedDescription)")
-            }
-        }
+        panel.onRenameServer = { [weak self] old, new in self?.renameServerInLedger(from: old, to: new) }
         settingsWindow = panel
         panel.present(over: window)
         return panel

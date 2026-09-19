@@ -100,6 +100,10 @@ BLOCKED fill ≥ 4.5:1, and the order of loudness in each appearance.
 
 ## Revisit if
 
+- *Revisited once, 2026-09-19:* [ADR-0025](0025-a-server-has-a-colour.md) gives
+  each remote server a colour. It is identity, never state, and is held to a
+  measured distance from every colour in this family and from DONE.
+
 - Relay's web client changes its BLOCKED colour and the owner wants the two to
   match.
 - A fourth state needs a highlight. The family has no room for another shade

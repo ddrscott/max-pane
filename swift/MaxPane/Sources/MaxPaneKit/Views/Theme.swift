@@ -53,6 +53,33 @@ enum Theme {
     /// have to be findable without reading a word.
     static let done = green(dark: 0xE85D00, light: 0xB84800)
 
+    /// A remote server's colour (ADR-0025): identity, never state.
+    ///
+    /// The one exception to the green family, and a bounded one. It is drawn
+    /// only by `ServerMark` (the small square), by `ServerChip`'s outline and
+    /// text, and by the `//` of that server's sidebar section; never on a
+    /// status square, a state chip, a focus outline, a lane border or a
+    /// terminal. `slate` is the at-rest grey the chip had before servers had
+    /// colours. Every other value is at least ΔE 40 (CIE76) from each green
+    /// and from DONE's orange, and ΔE 25 from each of the others, in both
+    /// appearances; `ServerColourTests` holds those numbers, and 4.5:1 on a
+    /// lane and on the strip, because the chip's name is text in this colour.
+    static func server(_ colour: ServerColour) -> NSColor {
+        guard let hex = serverPalette[colour] else { return dimText }
+        return green(dark: hex.dark, light: hex.light)
+    }
+
+    /// `slate` has no entry: it is `dimText`, whatever the system says grey is.
+    static let serverPalette: [ServerColour: (dark: UInt32, light: UInt32)] = [
+        .cyan: (0x22D3EE, 0x006BA0),
+        .blue: (0x60A5FA, 0x1D4ED8),
+        .violet: (0x9F85FF, 0x6D28D9),
+        .magenta: (0xF06BE0, 0xB5179E),
+        .rose: (0xFB7185, 0xBE185D),
+        .lemon: (0xFDE047, 0x7A6200),
+        .ink: (0xF4F4F5, 0x18181B),
+    ]
+
     private static func green(dark: UInt32, light: UInt32) -> NSColor {
         NSColor(name: nil) { appearance in
             let hex = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light

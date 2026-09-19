@@ -319,10 +319,13 @@ struct DisconnectedLookTests {
         #expect(!local.offline && local.chip == "BLOCKED")
         #expect(SidebarModel.blockedCount(telemetry) == 1, "only the local one")
 
-        // The view: the chip is there, the badge says OFFLINE.
+        // The view: the server's square is there, hollow, and the badge says
+        // OFFLINE. The row does not name its server; `// WSL` above it does
+        // (ADR-0025).
         let view = SidebarEntryView(entry: try #require(entries.first { $0.server == "wsl" }))
         #expect(view.badgeText == "OFFLINE")
-        #expect(view.serverChipText == "wsl")
+        #expect(view.serverChipText == nil)
+        #expect(view.serverMarkServer == "wsl" && view.serverMarkIsHollow == true)
         #expect(!view.isBlockedMarkPulsing)
         let headerView = SidebarGroupView(group: header)
         #expect(headerView.stateChipText == "RECONNECTING")
@@ -443,15 +446,17 @@ struct ServerChipTests {
         _ = RelayServers(entries: [], token: { _ in nil })
     }
 
-    @Test("present on a remote sidebar row, lane header, ⌘O row and ⌘P rows; absent on the local ones")
+    @Test("the name is on a remote ⌘O row and ⌘P rows; a sidebar row carries the square and no name; local ones neither")
     func whereItIs() throws {
         let remote = t("a1", "WSL", "/home/spierce")
         let local = t("b1", nil, NSHomeDirectory() + "/code")
         let rows = SidebarModel.rows(
             lanes: [], telemetry: [remote.key: remote, local.key: local], servers: ["WSL": .connected])
         let entries = rows.compactMap { if case .entry(let e) = $0 { return e } else { return nil } }
-        #expect(SidebarEntryView(entry: try #require(entries.first { $0.server == "WSL" })).serverChipText == "WSL")
-        #expect(SidebarEntryView(entry: try #require(entries.first { $0.server == nil })).serverChipText == nil)
+        let remoteRow = SidebarEntryView(entry: try #require(entries.first { $0.server == "WSL" }))
+        #expect(remoteRow.serverChipText == nil && remoteRow.serverMarkServer == "WSL")
+        let localRow = SidebarEntryView(entry: try #require(entries.first { $0.server == nil }))
+        #expect(localRow.serverChipText == nil && localRow.serverMarkServer == nil)
 
         // ⌘O: the session row and the launch row.
         let omni = OmniRanking.build(

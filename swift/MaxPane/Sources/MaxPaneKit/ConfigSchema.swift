@@ -254,7 +254,7 @@ public struct ConfigField {
     /// The array of tables the remote servers live in.
     public static let serversTable = "servers"
     /// The keys one `[[servers]]` element may carry.
-    public static let serverKeys: Set<String> = ["name", "url", "enabled"]
+    public static let serverKeys: Set<String> = ["name", "url", "enabled", "color"]
 }
 
 /// Something in the file that was not used, and why.
@@ -294,7 +294,7 @@ public enum ConfigFile {
         var bindings: [String: [String]] = [:]
         // `[[servers]]` elements, by index, each a partial entry until every
         // key has been seen.
-        var servers: [Int: (name: String?, url: String?, enabled: Bool, line: Int)] = [:]
+        var servers: [Int: (name: String?, url: String?, enabled: Bool, color: ServerColour?, line: Int)] = [:]
         for entry in document.entries {
             let table = entry.table
             let identity = "\(table ?? "").\(entry.key)"
@@ -306,13 +306,29 @@ public enum ConfigFile {
             seen.insert(identity)
 
             if let table, let element = TomlDocument.arrayElement(table), element.name == ConfigField.serversTable {
-                var server = servers[element.index] ?? (nil, nil, true, entry.line)
+                var server = servers[element.index] ?? (nil, nil, true, nil, entry.line)
                 switch (entry.key, entry.value) {
                 case (_, .failure(let error)):
                     problems.append(.init(key: shown, line: entry.line, reason: error.reason))
                 case ("name", .success(.string(let s))): server.name = s
                 case ("url", .success(.string(let s))): server.url = s
                 case ("enabled", .success(.bool(let b))): server.enabled = b
+                case ("color", .success(.string(let s))):
+                    // A colour nobody defined costs that colour, never the
+                    // server: it is drawn in slate and the row says why.
+                    if let colour = ServerColour(rawValue: s.lowercased()) {
+                        server.color = colour
+                    } else {
+                        server.color = .fallback
+                        problems.append(.init(
+                            key: shown, line: entry.line,
+                            reason: "\"\(s)\" is not a server colour (\(ServerColour.names)) — using slate"))
+                    }
+                case ("color", .success(let v)):
+                    server.color = .fallback
+                    problems.append(.init(
+                        key: shown, line: entry.line,
+                        reason: "expected a colour name, got \(v.kind) — using slate"))
                 case ("name", .success(let v)), ("url", .success(let v)):
                     problems.append(.init(key: shown, line: entry.line, reason: "expected a string, got \(v.kind)"))
                 case ("enabled", .success(let v)):
@@ -372,7 +388,8 @@ public enum ConfigFile {
         for index in servers.keys.sorted() {
             let partial = servers[index]!
             let shown = "\(ConfigField.serversTable)[\(index)]"
-            let entry = RelayServerEntry(name: partial.name ?? "", url: partial.url ?? "", enabled: partial.enabled)
+            let entry = RelayServerEntry(
+                name: partial.name ?? "", url: partial.url ?? "", enabled: partial.enabled, color: partial.color)
             if partial.name == nil {
                 problems.append(.init(key: shown, line: partial.line, reason: "a server needs a name; skipped"))
             } else if partial.url == nil {

@@ -1,6 +1,6 @@
 # ADR 0023 — One truth per server, shown everywhere at once; the one mark of a remote session is the server chip
 
-**Status:** Accepted · 2026-09-19
+**Status:** Accepted · 2026-09-19 · **Amended by [ADR-0025](0025-a-server-has-a-colour.md)** (§5: a server now has a colour; the grey name chip on a sidebar row became a colour square, and the chip that remains elsewhere is tinted)
 **Decides:** how fast a dead remote server is noticed and by whom; how the
 session list's verdict and a lane's own wire inform each other; what a
 disconnected server looks like on every surface; what happens to typing while

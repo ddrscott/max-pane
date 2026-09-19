@@ -941,6 +941,7 @@ final class LaneView: NSView {
             guard thumbnailScale != oldValue else { return }
             resizeHandle.isHidden = isThumbnail
             updateSizeSwitchVisibility()
+            header.thumbnailScale = thumbnailScale
             applyOfflineDimming()
             let scale = min(1, max(thumbnailScale ?? 1, 0.05))
             focusOutline.layer?.borderWidth = PaneFocusOutlineView.width / scale
@@ -1142,6 +1143,20 @@ final class LaneHeaderView: NSView {
 
     /// The server chip beside the path, for tests: its text, or nil for none.
     var serverChipText: String? { serverChip.server == nil ? nil : serverChip.text }
+    /// Its colour, whether the name is showing or the square alone, and
+    /// whether it is drawn offline. For tests.
+    var serverChipColour: ServerColour? { serverChip.server == nil ? nil : serverChip.colour }
+    var serverChipShowsName: Bool { serverChip.showsName }
+    var serverChipIsOffline: Bool { serverChip.offline }
+
+    /// The gallery's scale for this lane's tile, or nil on the strip. Below
+    /// `serverNameMinScale` a 9 pt name is under six points on screen and is
+    /// not a name any more: the chip becomes the square alone, drawn larger
+    /// in lane points so it lands at about its size on the strip (ADR-0025).
+    var thumbnailScale: CGFloat? {
+        didSet { if thumbnailScale != oldValue { needsLayout = true } }
+    }
+    static let serverNameMinScale: CGFloat = 0.6
     /// The state chip's text as drawn, for tests.
     var chipText: String { chip.stringValue }
     /// The path as fitted, for tests.
@@ -1255,6 +1270,7 @@ final class LaneHeaderView: NSView {
         }
         model = next
         serverChip.server = model.server
+        serverChip.offline = model.serverOff != nil
 
         kindGlyph.stringValue = Theme.glyph(for: model.kind)
         // The green $ marks a live terminal and nothing else. The muted green,
@@ -1410,6 +1426,14 @@ final class LaneHeaderView: NSView {
         // The server chip sits at the right-hand end, beside the path it
         // qualifies, and is never the part that gives: it is the one mark
         // of a remote lane, and eight characters of path are worth less.
+        if serverChip.server != nil {
+            let scale = min(1, max(thumbnailScale ?? 1, 0.05))
+            // The square alone when the name cannot be read (a small tile)
+            // or cannot be afforded (the title would lose its ten characters).
+            let noRoom = rightEdge - x - serverChip.namedWidth - 6 < advance * 10
+            serverChip.compactSide = min(bounds.height - 12, (ServerMark.side / scale).rounded())
+            serverChip.compact = scale < Self.serverNameMinScale || noRoom
+        }
         let serverChipWidth = serverChip.fittingWidth
         if serverChipWidth > 0 {
             let height = serverChip.fittingHeight

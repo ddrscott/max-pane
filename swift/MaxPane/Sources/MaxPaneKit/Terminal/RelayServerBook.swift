@@ -37,6 +37,7 @@ public final class RelayServerBook {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.reconcile() }
         }
+        assignMissingColours()
     }
 
     /// Every server the file names, enabled or not, in file order.
@@ -49,6 +50,7 @@ public final class RelayServerBook {
     /// written, so their endpoint is rebuilt with the new credential even
     /// though the file did not change.
     public func reconcile(tokenChanged: Set<String> = []) {
+        assignMissingColours()
         let delta = servers.reload(entries: store.config.enabledServers, tokenChanged: tokenChanged)
         for name in delta.removed { registry.removeRemote(named: name) }
         for name in delta.added {
@@ -57,7 +59,45 @@ public final class RelayServerBook {
             }
         }
         for name in Set(delta.removed).union(delta.added) { onServerChanged?(name) }
-        if !delta.isEmpty { onChange?() }
+        if !delta.isEmpty || !delta.recoloured.isEmpty { onChange?() }
+    }
+
+    // MARK: - colour
+
+    private var assigning = false
+
+    /// A server whose table has no `color` line gets the first colour no
+    /// other server is using, written to the file once: two servers are told
+    /// apart without anyone opening a menu, and a table written before
+    /// colours existed gains one the first time it is read (ADR-0025). A
+    /// colour somebody chose — `slate` included — is never touched, and
+    /// neither is a bad value, which stays as typed with its reason beside
+    /// it.
+    ///
+    /// Each write comes back through the store's notification and into
+    /// `reconcile`, which is why this does not run inside itself; a write
+    /// that fails is tried again at the next change and not before.
+    private func assignMissingColours() {
+        guard !assigning else { return }
+        assigning = true
+        defer { assigning = false }
+        for entry in store.config.servers where entry.color == nil {
+            let used = store.config.servers.compactMap(\.color)
+            store.setServerColor(named: entry.name, ServerColour.firstUnused(by: used))
+            if store.writeError != nil { return }
+        }
+    }
+
+    /// The one door a colour comes through: the sidebar header's menu,
+    /// the swatches in Settings › Servers and `maxpane server color`. It is a
+    /// line in the file, so it reaches every mark the way a hand edit does.
+    /// Returns why it could not, or nil.
+    @discardableResult
+    public func setColour(_ name: String, _ colour: ServerColour) -> String? {
+        guard entries.contains(where: { $0.name == name }) else { return "no server named \(name)" }
+        store.setServerColor(named: name, colour)
+        if let error = store.writeError { return "could not write \(store.path.path): \(error)" }
+        return nil
     }
 
     // MARK: - what Settings shows
@@ -136,7 +176,9 @@ public final class RelayServerBook {
         let name = given.trimmingCharacters(in: .whitespaces).isEmpty
             ? RelayServerTokens.defaultName(for: parsed.base)
             : given.trimmingCharacters(in: .whitespaces)
-        let entry = RelayServerEntry(name: name, url: parsed.base.absoluteString, enabled: true)
+        let entry = RelayServerEntry(
+            name: name, url: parsed.base.absoluteString, enabled: true,
+            color: ServerColour.firstUnused(by: entries.compactMap(\.color)))
         if let why = entry.complaint { return .failure(Refusal(text: why)) }
         if entries.contains(where: { $0.name == name }) {
             return .failure(Refusal(text: "a server is already named \(name); rename it or pick another name"))

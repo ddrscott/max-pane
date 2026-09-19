@@ -529,6 +529,8 @@ final class PaletteSessionRow: NSTableCellView {
     private var serverChip: ServerChip?
     /// The server chip's text, for tests; nil when the row has none.
     var serverChipText: String? { serverChip?.text }
+    var serverChipColour: ServerColour? { serverChip?.colour }
+    var serverChipIsOffline: Bool { serverChip?.offline ?? false }
 
     init(_ session: PaletteSession) {
         super.init(frame: .zero)
@@ -565,7 +567,7 @@ final class PaletteSessionRow: NSTableCellView {
         // Which server is the chip before it (ADR-0023); a local row has
         // none and is laid out exactly as it was.
         let short = String(t.sessionId.prefix(8))
-        let serverChip = t.server.map { ServerChip(server: $0) }
+        let serverChip = t.server.map { ServerChip(server: $0, offline: t.isOffline) }
         self.serverChip = serverChip
         let repeats = t.title.hasPrefix(t.command) || t.command.isEmpty
         let command = PaletteStyle.label(
@@ -638,6 +640,8 @@ final class PaletteSessionRow: NSTableCellView {
 final class PaletteSearchRow: NSTableCellView {
     private var serverChip: ServerChip?
     var serverChipText: String? { serverChip?.text }
+    var serverChipColour: ServerColour? { serverChip?.colour }
+    var serverChipIsOffline: Bool { serverChip?.offline ?? false }
 
     init(hit: SearchHit, laneTitle: String, path: String, telemetry: SessionTelemetry?, isFocused: Bool,
          isPrivate: Bool = false) {

@@ -77,6 +77,15 @@ final class SidebarViewController: NSViewController {
     var onAttach: ((SessionKey) -> Void)?
     /// Click a remote server's header → Settings › Servers, on that row.
     var onOpenServer: ((String) -> Void)?
+    /// The servers, for a server header's menu: its colour, its name and
+    /// whether it is on are changed through the same book Settings › Servers
+    /// uses (ADR-0021, ADR-0025), so there is no second way to do any of it.
+    /// Nil until the config file is open, and then the header has no such
+    /// items.
+    weak var serverBook: RelayServerBook?
+    /// The ledger's half of a rename, the window controller's, exactly as
+    /// the settings window is handed it.
+    var onRenameServer: ((String, String) -> Void)?
     /// A kept page was clicked. The sidebar does not know where a page should
     /// go — `StripWindowController.launch` owns that, and it is the same
     /// decision ⌘O makes.
@@ -370,8 +379,20 @@ final class SidebarViewController: NSViewController {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
     }
 
+    /// A server's colour changed: the rows are the same rows, so `rebuild`
+    /// would find nothing to do. Every cell is made again, eased, and the
+    /// header's slashes and each row's square come up in the new colour.
+    @objc private func serverColoursChanged() {
+        guard isViewLoaded else { return }
+        Motion.fade(table.layer)
+        table.reloadData()
+        syncSelection(store.state)
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(serverColoursChanged), name: ServerColours.didChange, object: nil)
         observer = store.observe { [weak self] state in self?.rebuild(state) }
         // Its own subscription, because bookmarks are not the strip: a page
         // being starred may not bump `revision` and make 150 lanes diff. See
@@ -785,7 +806,14 @@ extension SidebarViewController: NSMenuDelegate {
             add(kept.isFolder ? "Delete Folder…" : "Stop Keeping", #selector(removeBookmarkClicked))
             return
         }
-        if group(at: table.clickedRow) != nil {
+        if let group = group(at: table.clickedRow) {
+            // A server's header is where that server is dealt with: its
+            // colour first, then what Settings › Servers does to it.
+            if group.isServer, let server = group.server {
+                let items = serverMenuItems(for: server)
+                for item in items { menu.addItem(item) }
+                if !items.isEmpty { menu.addItem(.separator()) }
+            }
             add("Collapse All", #selector(collapseAll))
             add("Expand All", #selector(expandAll))
             return
@@ -808,6 +836,82 @@ extension SidebarViewController: NSMenuDelegate {
             menu.addItem(.separator())
             add("Close Lane", #selector(closeLane))
         }
+    }
+}
+
+// MARK: - a server header's menu
+
+extension SidebarViewController {
+    /// **Color ▸** the eight, each with its square and its name, the current
+    /// one ticked; **Rename…**, **Disable**, **Server Settings…**. Opened by a
+    /// right-click on `// WSL`, in the menu every header already has — the
+    /// sidebar's headers have no `⋯`, so none was invented. Internal, so a
+    /// test can read it and press it without a mouse.
+    func serverMenuItems(for server: String) -> [NSMenuItem] {
+        guard let entry = serverBook?.entries.first(where: { $0.name == server }) else { return [] }
+        let colour = NSMenuItem(title: "Color", action: nil, keyEquivalent: "")
+        let palette = NSMenu(title: "Color")
+        for choice in ServerColour.allCases {
+            let item = NSMenuItem(title: choice.title, action: #selector(pickServerColour(_:)), keyEquivalent: "")
+            item.target = self
+            item.image = ServerMark.swatch(choice)
+            item.state = choice == entry.colour ? .on : .off
+            item.representedObject = [server, choice.rawValue]
+            palette.addItem(item)
+        }
+        colour.submenu = palette
+        let rename = NSMenuItem(title: "Rename…", action: #selector(renameServerClicked(_:)), keyEquivalent: "")
+        let disable = NSMenuItem(title: "Disable", action: #selector(disableServerClicked(_:)), keyEquivalent: "")
+        let settings = NSMenuItem(
+            title: "Server Settings…", action: #selector(serverSettingsClicked(_:)), keyEquivalent: "")
+        for item in [rename, disable, settings] {
+            item.target = self
+            item.representedObject = server
+        }
+        return [colour, .separator(), rename, disable, settings]
+    }
+
+    @objc private func pickServerColour(_ sender: NSMenuItem) {
+        guard let pair = sender.representedObject as? [String], pair.count == 2,
+              let colour = ServerColour(rawValue: pair[1])
+        else { return }
+        serverBook?.setColour(pair[0], colour)
+    }
+
+    @objc private func renameServerClicked(_ sender: NSMenuItem) {
+        guard let server = sender.representedObject as? String else { return }
+        askForServerName(server, problem: nil)
+    }
+
+    /// The same rename the name field in Settings › Servers commits
+    /// (`RelayServerBook.rename`, the ledger's half first). A refusal asks
+    /// again with the reason where the hint was.
+    private func askForServerName(_ server: String, problem: String?) {
+        ConfirmPopup.ask(
+            over: view.window, title: "Rename \(server)",
+            detail: problem.map { "$ " + $0 }
+                ?? "Its lanes and their project tags follow; nothing detaches.",
+            text: server, action: "Rename"
+        ) { [weak self] typed in
+            guard let self, let typed else { return }
+            if let why = self.renameServer(server, to: typed) { self.askForServerName(server, problem: why) }
+        }
+    }
+
+    /// Why it could not, or nil. Internal for the tests.
+    func renameServer(_ server: String, to name: String) -> String? {
+        guard let serverBook else { return "the config file is not open" }
+        return serverBook.rename(server, to: name, ledger: onRenameServer)
+    }
+
+    @objc private func disableServerClicked(_ sender: NSMenuItem) {
+        guard let server = sender.representedObject as? String else { return }
+        serverBook?.setEnabled(server, false)
+    }
+
+    @objc private func serverSettingsClicked(_ sender: NSMenuItem) {
+        guard let server = sender.representedObject as? String else { return }
+        onOpenServer?(server)
     }
 }
 

@@ -42,6 +42,10 @@ public final class OpenServer: @unchecked Sendable {
         case addServer(name: String, url: String)
         /// `maxpane server ls`.
         case listServers
+        /// `maxpane server color NAME COLOUR`: the colour a server is known
+        /// by (ADR-0025). The colour arrives as typed; the handler says what
+        /// the eight are when it is not one of them.
+        case colourServer(name: String, colour: String)
     }
 
     /// What goes back. `session` carries the id of a session just started;
@@ -220,6 +224,12 @@ public final class OpenServer: @unchecked Sendable {
 
         case "server-ls":
             return .listServers
+
+        case "server-color":
+            guard let name = object["name"] as? String, !name.isEmpty,
+                  let colour = object["color"] as? String, !colour.isEmpty
+            else { return nil }
+            return .colourServer(name: name, colour: colour)
 
         default:
             return nil

@@ -133,6 +133,10 @@ final class ServersSection: NSStackView {
             guard let self else { return nil }
             return self.book.rename(old, to: new, ledger: self.onRename)
         }
+        row.onColour = { [weak self] colour in
+            guard let self, let name = row.currentName else { return }
+            if let why = self.book.setColour(name, colour) { row.showProblem(why) }
+        }
         row.onPaste = { [weak self] in self?.askForToken(row) }
         row.onRemove = { [weak self] in self?.confirmRemove(row) }
         return row
@@ -211,6 +215,10 @@ final class ServerRow: NSView, NSTextFieldDelegate {
     var onRename: ((String, String) -> String?)?
     var onPaste: (() -> Void)?
     var onRemove: (() -> Void)?
+    /// A swatch was pressed. The same door as the sidebar header's menu.
+    var onColour: ((ServerColour) -> Void)?
+    /// The eight, for the tests to read and press.
+    let swatches = ServerSwatches()
 
     private(set) var currentName: String?
     private let dot = NSTextField(labelWithString: "●")
@@ -260,6 +268,7 @@ final class ServerRow: NSView, NSTextFieldDelegate {
         paste.onClick = { [weak self] in self?.onPaste?() }
         paste.toolTip = "Paste the server's Auth URL again: a new token replaces the one in the Keychain"
         remove.onClick = { [weak self] in self?.onRemove?() }
+        swatches.onChoose = { [weak self] colour in self?.onColour?(colour) }
 
         // A spacer between the words and the buttons, so the buttons keep
         // to the right edge whatever the state says.
@@ -289,7 +298,20 @@ final class ServerRow: NSView, NSTextFieldDelegate {
         detailLine.isHidden = true
         let noticeLine = indented(notice)
         noticeLine.isHidden = true
-        let column = NSStackView(views: [top, detailLine, noticeLine])
+        // The colour this server is known by, under its name: the same eight
+        // the sidebar header's menu offers, as squares (ADR-0025).
+        let colourGap = NSView()
+        colourGap.widthAnchor.constraint(equalToConstant: 12).isActive = true
+        let colourWord = NSTextField(labelWithString: "color")
+        colourWord.font = Theme.mono(10)
+        colourWord.textColor = Theme.dimText
+        let colourLine = NSStackView(views: [colourGap, colourWord, swatches])
+        colourLine.orientation = .horizontal
+        colourLine.alignment = .centerY
+        colourLine.spacing = 0
+        colourLine.setCustomSpacing(8, after: colourWord)
+        colourLine.translatesAutoresizingMaskIntoConstraints = false
+        let column = NSStackView(views: [top, colourLine, detailLine, noticeLine])
         column.orientation = .vertical
         column.alignment = .leading
         column.spacing = 4
@@ -362,6 +384,7 @@ final class ServerRow: NSView, NSTextFieldDelegate {
         state.textColor = colour
         dot.textColor = colour
         segments.select(entry.enabled ? 0 : 1, animated: animated)
+        swatches.select(entry.colour, animated: animated)
         // Paste is offered where a token would change something: no token,
         // refused, or reconnecting (a token typed wrong reads as unreachable
         // through some proxies). Never on a disabled or skipped row.
@@ -421,4 +444,102 @@ final class ServerRow: NSView, NSTextFieldDelegate {
             showProblem(why)
         }
     }
+}
+
+/// The eight server colours as a row of squares, the chosen one framed.
+///
+/// Squares because the mark is a square. The chosen one wears a
+/// full-perimeter outline a point off its edge — never a bar on one side —
+/// and a change of choice eases. Each square's tooltip is its name, which is
+/// also what `color = "…"` takes in the file.
+@MainActor
+final class ServerSwatches: NSView {
+    var onChoose: ((ServerColour) -> Void)?
+    private(set) var selected: ServerColour = .fallback
+    private var cells: [ServerColour: SwatchCell] = [:]
+
+    static let cell: CGFloat = 18
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        translatesAutoresizingMaskIntoConstraints = false
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.spacing = 4
+        row.translatesAutoresizingMaskIntoConstraints = false
+        for colour in ServerColour.allCases {
+            let cell = SwatchCell(colour: colour)
+            cell.onClick = { [weak self] in self?.onChoose?(colour) }
+            cells[colour] = cell
+            row.addArrangedSubview(cell)
+        }
+        addSubview(row)
+        NSLayoutConstraint.activate([
+            row.topAnchor.constraint(equalTo: topAnchor),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+        select(.fallback, animated: false)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not a nib") }
+
+    func select(_ colour: ServerColour, animated: Bool) {
+        guard colour != selected || cells[colour]?.isChosen != true else { return }
+        selected = colour
+        if animated, window != nil { Motion.fade(layer) }
+        for (each, cell) in cells { cell.isChosen = each == colour }
+    }
+
+    /// Press one, as a click would. For tests.
+    func press(_ colour: ServerColour) { cells[colour]?.onClick?() }
+}
+
+/// One square of `ServerSwatches`: the colour, inset in a frame that shows
+/// only when it is the chosen one.
+@MainActor
+final class SwatchCell: NSView {
+    let colour: ServerColour
+    var onClick: (() -> Void)?
+    private let square = NSView()
+
+    var isChosen = false {
+        didSet {
+            layer?.borderWidth = isChosen ? 1 : 0
+            setAccessibilityValue(isChosen ? "selected" : nil)
+        }
+    }
+
+    init(colour: ServerColour) {
+        self.colour = colour
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 0
+        layerBorderColor = NSColor.labelColor
+        translatesAutoresizingMaskIntoConstraints = false
+        ServerMark.paint(square, colour: colour, hollow: false)
+        square.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(square)
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: ServerSwatches.cell),
+            heightAnchor.constraint(equalToConstant: ServerSwatches.cell),
+            square.centerXAnchor.constraint(equalTo: centerXAnchor),
+            square.centerYAnchor.constraint(equalTo: centerYAnchor),
+            square.widthAnchor.constraint(equalToConstant: ServerSwatches.cell - 8),
+            square.heightAnchor.constraint(equalToConstant: ServerSwatches.cell - 8),
+        ])
+        toolTip = colour.rawValue
+        setAccessibilityElement(true)
+        setAccessibilityRole(.radioButton)
+        setAccessibilityLabel("\(colour.title) server colour")
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not a nib") }
+
+    override func mouseDown(with event: NSEvent) { onClick?() }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }

@@ -106,12 +106,13 @@ public final class ConfigStore {
         }) {
             next.set("url", in: table, to: .string(entry.url))
             next.set("enabled", in: table, to: .bool(entry.enabled))
+            if let color = entry.color { next.set("color", in: table, to: .string(color.rawValue)) }
         } else {
             next.appendArrayTable(ConfigField.serversTable, [
                 (key: "name", value: .string(entry.name)),
                 (key: "url", value: .string(entry.url)),
                 (key: "enabled", value: .bool(entry.enabled)),
-            ])
+            ] + (entry.color.map { [(key: "color", value: TomlValue.string($0.rawValue))] } ?? []))
         }
         write(next)
     }
@@ -140,6 +141,15 @@ public final class ConfigStore {
         var next = document
         guard let table = serverTable(named: name, in: next) else { return }
         next.set("enabled", in: table, to: .bool(enabled))
+        write(next)
+    }
+
+    /// `color = "violet"` on one server, in place; a table with no `color`
+    /// line gains one. American in the file, like every other key.
+    public func setServerColor(named name: String, _ colour: ServerColour) {
+        var next = document
+        guard let table = serverTable(named: name, in: next) else { return }
+        next.set("color", in: table, to: .string(colour.rawValue))
         write(next)
     }
 

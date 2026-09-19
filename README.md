@@ -1686,7 +1686,8 @@ maxpane run               # a terminal lane running your shell
 maxpane open google.com   # a web lane
 maxpane ls                # what is on the strip
 maxpane server add NAME URL   # a remote relay-tty server, from its startup Auth URL; see "Remote servers"
-maxpane server ls             # the configured servers and how they are doing
+maxpane server ls             # the configured servers, their colour and how they are doing
+maxpane server color WSL violet   # the colour a server is known by: slate cyan blue violet magenta rose lemon ink
 ```
 
 **Driving it without the screen.** The control socket reaches remote servers
@@ -1780,9 +1781,11 @@ session is identified once there is more than one server,
 [ADR-0021](docs/decisions/0021-servers-are-a-pasted-url-and-a-keychain-item.md)
 why a server is added by pasting one line and where its token lives, and
 [ADR-0022](docs/decisions/0022-a-remote-spawn-sends-the-wrapper-and-the-cwd-is-the-root.md)
-what a remote spawn sends and why, and
+what a remote spawn sends and why,
 [ADR-0023](docs/decisions/0023-one-truth-per-server-and-the-server-chip.md)
-how a remote session is marked and what happens when its server goes quiet.
+what happens when its server goes quiet, and
+[ADR-0025](docs/decisions/0025-a-server-has-a-colour.md) how a remote session
+is marked: by its server's colour.
 
 **Adding one.** The server prints an auth URL when it starts:
 
@@ -1813,8 +1816,11 @@ main thread), and the row says what came back:
 the Keychain (unless another server shares the host). **on | off** writes
 `enabled`. The name is a field: type a new one and leave it to rename — the
 lanes attached to that server and their `host:path` project tags follow, so
-nothing detaches and nothing stops gathering. `maxpane server add NAME '<line>'`
-and `maxpane server ls` do the same from a shell, through the same door.
+nothing detaches and nothing stops gathering. Under the name, **color** is a
+row of eight square swatches, the current one framed (see *A server has a
+colour*, below). `maxpane server add NAME '<line>'`, `maxpane server ls` and
+`maxpane server color NAME COLOR` do the same from a shell, through the same
+door.
 
 **Everything applies live.** Adding, removing, enabling, disabling, renaming or
 pasting a token takes effect the moment the file is written: the registry gains
@@ -1829,37 +1835,81 @@ watch the settings window already uses. The file's shape:
 name = "yorkshire"                      # what the lane header shows
 url = "https://yourslug.relaytty.com"   # https://<slug>.relaytty.com, or http://host:port
 enabled = true                          # optional; false keeps the entry and ignores it
+color = "violet"                        # optional; slate cyan blue violet magenta rose lemon ink
 ```
 
 The local server is never listed; it is implicit, and with no `[[servers]]`
 the app is exactly what it was before servers existed. A server with no name,
 a URL that is not `http(s)://` with a host, or a name already used is skipped
-with the reason on its row and on stderr.
+with the reason on its row and on stderr. A `color` that is not one of the
+eight costs only the colour: the server is kept and drawn in slate, and the
+file's problems say which line and what the eight are.
 
 **In the sidebar.** With at least one server configured the list is blocks:
 `// LOCAL` and this Mac's project groups, then each enabled server as its own
 `// NAME` section — its session count (or BLOCKED count), and its state as a
 chip when it is anything but connected — with that server's project groups
 under it. A refused or unreachable server is a header with its chip and
-whatever it last held; a disabled one is not there. A click on a server's
-header opens Settings › Servers on that row, and its triangle folds the whole
+whatever it last held; a disabled one is not there. The header's `//` is in
+the server's colour. A click on a server's header opens Settings › Servers on
+that row, a right-click opens its menu (below), and its triangle folds the whole
 server, as `// LOCAL`'s folds this Mac (see [Folding a group puts its lanes
 away](#folding-a-group-puts-its-lanes-away)). BLOCKED counts in the footer and
 the status bar include remote sessions, while their server is answering.
 
-**The one mark: the server chip.** A remote session wears a small grey
-outlined square with its server's name — `WSL` — and it is the same chip
-everywhere: under the title on its sidebar row, beside the path in its lane
-header (so on its gallery tile too), and on its ⌘O and ⌘P rows. Past ten
-characters the name is cut with an ellipsis; the tooltip is the server's
-host. It is grey because it is identity, not state, and there is no colour
-per server. With the chip there, the path stops repeating the server: the
+**A server has a colour, and the colour is the mark.** Each server is known
+by one of eight colours, and a small solid square in that colour marks
+everything that belongs to it. The name appears once per context, not once per
+row:
+
+| surface | what it shows |
+|---|---|
+| sidebar header `// WSL` | the `//` in the server's colour; the name, the count and the state chip as they were (the chip is state, so it is green) |
+| sidebar rows under it | the 8 pt colour square on the second line, where the grey name chip used to be, and no name: the row is already under `// WSL`. Its tooltip is the server's name |
+| lane header, and so the gallery tile | the name chip stays, outlined and lettered in the server's colour: nothing above a lane says which server it is. On a tile shrunk past reading (under 0.6×), or a header too narrow to keep ten characters of title, the square alone |
+| ⌘O and ⌘P rows | the same tinted chip, because those lists mix servers |
+| `// LOCAL` and everything local | unchanged: this Mac has no colour and no square |
+| a server that is not answering | the square goes hollow, an outline in the same colour at reduced alpha, and the chip dims with it: still that server, visibly not live |
+
+| colour | dark | light |
+|---|---|---|
+| `slate` | the at-rest grey | the at-rest grey |
+| `cyan` | `#22D3EE` | `#006BA0` |
+| `blue` | `#60A5FA` | `#1D4ED8` |
+| `violet` | `#9F85FF` | `#6D28D9` |
+| `magenta` | `#F06BE0` | `#B5179E` |
+| `rose` | `#FB7185` | `#BE185D` |
+| `lemon` | `#FDE047` | `#7A6200` |
+| `ink` | `#F4F4F5` | `#18181B` |
+
+The colour is identity and never state: state stays green and DONE stays
+orange, and the status square, the focus outline, lane borders and the terminal
+are never tinted. Each of the seven hues is at least ΔE 40 from every green and
+from DONE's orange in both appearances, and 4.5:1 as text on a lane and on the
+strip; `amber` and `teal` were tried and dropped because they read as DONE and
+as working. A new server gets the first colour no other server is using, and a
+`[[servers]]` table with no `color` line gets one the first time it is read,
+written to the file once; a colour you chose, `slate` included, is never
+changed for you.
+
+**Picking it.** Right-click the server's header in the sidebar: **Color ▸** the
+eight, each with its square and its name and the current one ticked, then
+**Rename…**, **Disable** and **Server Settings…**, which are the actions of
+Settings › Servers and go through the same code. The swatches on the server's
+row in Settings and `maxpane server color WSL violet` are the other two ways,
+and `maxpane server ls` prints the colour between the URL and the state.
+A change cross-fades on every surface at once; nothing relaunches and no lane
+re-attaches.
+
+Past ten characters the chip's name is cut with an ellipsis; the tooltip is
+the server's host. With the server marked, the path stops repeating it: the
 group reads `/home/spierce` and the header `/home/spierce/m7out`, as the
 server gave them and never as `~` for *this* Mac's home. Underneath, nothing
 moved: the project tag is still `yorkshire:/home/spierce/m7out` —
 `host:path`, never the result of walking this Mac's tree for a directory that
 only exists over there — so a remote project gathers with itself and never
 with a local path that happens to match.
+[ADR-0025](docs/decisions/0025-a-server-has-a-colour.md), amending
 [ADR-0023](docs/decisions/0023-one-truth-per-server-and-the-server-chip.md).
 
 **When a server stops answering.** The relaytty.com tunnel usually dies
@@ -2007,7 +2057,10 @@ Light mode has its own greens because the dark ones fail on a light ground:
 `#4ADE80` is 1.7:1 on white. There, BLOCKED is the strongest ink rather than the
 lightest one. Two colours outside the family are kept on purpose. Amber marks
 an insecure `http://` or a missing saved password in the web bars, because
-green would read as *safe*. Red marks memory past the hard limit.
+green would read as *safe*. Red marks memory past the hard limit. And a remote
+server has a colour of its own, which is identity and never state: see
+[Remote servers](#remote-servers) and
+[ADR-0025](docs/decisions/0025-a-server-has-a-colour.md).
 
 ### Light and dark
 
@@ -2078,7 +2131,8 @@ finder** shows the file, and **open in editor** opens it in a terminal lane with
 your `editor` setting, the same way ⌘-clicking a path does.
 
 `theme` and `sidebar_collapse_hides_lanes` apply at once, and so does
-everything under Servers (see [Remote servers](#remote-servers)). Every other
+everything under Servers — each `[[servers]]` table's `name`, `url`, `enabled`
+and `color` (see [Remote servers](#remote-servers)). Every other
 key, the keyboard included, applies on
 the next launch, and the window marks a changed one `$ relaunch to apply` until
 then.

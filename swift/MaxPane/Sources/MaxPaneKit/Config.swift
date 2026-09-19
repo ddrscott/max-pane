@@ -213,6 +213,7 @@ public struct Config: Codable, Equatable {
     /// name = "yorkshire"
     /// url = "https://yourslug.relaytty.com"
     /// enabled = true
+    /// color = "violet"
     /// ```
     ///
     /// The local server is never listed — it is implicit, and an empty list
@@ -330,11 +331,19 @@ public struct RelayServerEntry: Codable, Equatable, Sendable {
     /// a path is ignored.
     public var url: String
     public var enabled: Bool
+    /// `color = "violet"`: the colour this server is known by (ADR-0025).
+    /// Nil is a table with no `color` line, which reads as `slate` until the
+    /// server book gives it the first colour nobody else has and writes it.
+    public var color: ServerColour?
 
-    public init(name: String, url: String, enabled: Bool = true) {
+    /// What every surface draws: the file's colour, or `slate`.
+    public var colour: ServerColour { color ?? .fallback }
+
+    public init(name: String, url: String, enabled: Bool = true, color: ServerColour? = nil) {
         self.name = name
         self.url = url
         self.enabled = enabled
+        self.color = color
     }
 
     /// The base URL, or nil when `url` is not one a server could be at.

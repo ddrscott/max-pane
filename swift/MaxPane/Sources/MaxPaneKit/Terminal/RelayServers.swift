@@ -22,6 +22,8 @@ public final class RelayServers {
     /// "no token" row in Settings.
     public private(set) var hasToken: [String: Bool] = [:]
     private var entries: [String: RelayServerEntry] = [:]
+    /// Each server's colour, by name, as the file has it now.
+    public private(set) var colours: [String: ServerColour] = [:]
     private let token: (URL) -> String?
 
     public convenience init(entries: [RelayServerEntry]) {
@@ -47,6 +49,9 @@ public final class RelayServers {
     public struct Delta: Equatable {
         public var added: [String] = []
         public var removed: [String] = []
+        /// Servers whose colour changed and nothing else: no endpoint is
+        /// rebuilt and no lane re-attaches, so they are not in `isEmpty`.
+        public var recoloured: [String] = []
         public var isEmpty: Bool { added.isEmpty && removed.isEmpty }
     }
 
@@ -93,6 +98,13 @@ public final class RelayServers {
         // a name and a URL meet.
         ServerChip.hosts = kept.compactMapValues { $0.baseURL.host }
         entries = Dictionary(uniqueKeysWithValues: next.filter { kept[$0.name] != nil }.map { ($0.name, $0) })
+        // The colours, to the one place every mark reads them. Only the
+        // names this set holds are touched, so two sets (a test's and
+        // another test's) never take each other's colours away.
+        let colours = entries.mapValues(\.colour)
+        delta.recoloured = colours.filter { self.colours[$0.key] != nil && self.colours[$0.key] != $0.value }.map(\.key).sorted()
+        ServerColours.replace(self.colours, with: colours)
+        self.colours = colours
         return delta
     }
 
