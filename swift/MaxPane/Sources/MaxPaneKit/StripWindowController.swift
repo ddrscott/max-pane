@@ -33,12 +33,21 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 pollInterval: config.sessionPollSeconds)
             book.onServerChanged = { [weak self] name in self?.strip.reattachPanes(onServer: name) }
             serverBook = book
+            // `sidebar_collapse_hides_lanes` applies as the file is saved:
+            // off, every hidden lane is back; on, the folds take effect.
+            configObserver = NotificationCenter.default.addObserver(
+                forName: ConfigStore.didChange, object: configStore, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.store.refreshHidden() }
+            }
         }
     }
     /// Every add, remove, enable, rename and pasted token for a remote
     /// server goes through this (ADR-0021), from Settings, the CLI and a
     /// hand edit of the file alike.
     public private(set) var serverBook: RelayServerBook?
+    /// Held for the life of the window, like `splitResizeObserver`.
+    private var configObserver: Any?
     /// Held only so a second ⌥⌘Y raises the wizard already on screen instead of
     /// stacking another one over it; the wizard keeps itself alive otherwise.
     private var importWizard: ImportHistoryWizard?
@@ -94,6 +103,19 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         // The strip is the interface; the menu bar is an interruption.
         window.collectionBehavior = [.fullScreenPrimary, .managed]
         super.init(window: window)
+
+        // Before any view reads the store: which lanes a folded sidebar group
+        // hides is a question about sessions and a setting, and both live on
+        // this side (ADR-0024). Counted once now, so the first strip drawn
+        // agrees with a setting that was changed while the app was shut.
+        store.hidingInputs = { [weak self] in
+            guard let self else { return StripStore.HidingInputs() }
+            return StripStore.HidingInputs(
+                enabled: (self.configStore?.config ?? self.config).sidebarCollapseHidesLanes,
+                telemetry: self.sessions.sessions,
+                hasServers: !self.sessions.serverStates.isEmpty)
+        }
+        store.refreshHidden()
 
         stripToolbar.onLayout = { [weak self] gallery in
             self?.strip.setLayout(gallery ? .gallery : .lanes)
@@ -176,14 +198,14 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         sidebar.registry = sessions
         sidebar.onSelect = { [weak self] laneId, paneId in
             guard let self else { return }
-            self.leaveGather(ifItHides: laneId)
+            self.bringBack(laneId: laneId)
             _ = self.strip.select(laneId: laneId, paneId: paneId)
         }
         // In the gallery a double click expands that lane's tile in place. On
         // the strip it is the same select a second click always ran.
         sidebar.onOpen = { [weak self] laneId, paneId in
             guard let self else { return }
-            self.leaveGather(ifItHides: laneId)
+            self.bringBack(laneId: laneId)
             self.strip.openLane(laneId: laneId, paneId: paneId)
         }
         sidebar.onNewSession = { [weak self] in self?.perform(.openAnything) }
@@ -328,13 +350,21 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         }
         sessions.observe { [weak self] telemetry in
             guard let self else { return }
+            // First: a session that moved directory may have moved group, and
+            // the strip below should be told about sessions on the lanes it
+            // is about to have.
+            self.store.refreshHidden()
             self.strip.sessionsChanged(telemetry, servers: self.sessions.serverStates)
             self.sidebar.sessionsChanged(telemetry)
             self.refreshStatus()
         }
         statusBar.onClickSessions = { [weak self] in self?.perform(.openSessions) }
         statusBar.onClickMemory = { [weak self] in self?.perform(.showMemory) }
-        statusBar.onClickAsking = { [weak self] in self?.strip.revealNextAsking() }
+        // ASKING first, as the bar reads; then the agents that are BLOCKED.
+        statusBar.onClickAsking = { [weak self] in
+            guard let self, !self.strip.revealNextAsking() else { return }
+            self.revealNextBlocked()
+        }
         // Pushed rather than polled. The status timer would pick this up within
         // a second or two, and a second or two is exactly how long a page that
         // has stopped dead looks broken for — the whole reason this signal
@@ -1097,6 +1127,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         let controller = SearchPaletteController(store: store, registry: sessions) { [weak self] hit in
             guard let self, let hit else { return }
             // PRD §7.5: focus the pane, centre its lane, flash the border.
+            // A lane a folded group or a gather is hiding comes back first.
+            self.bringBack(laneId: hit.laneId)
             try? self.store.focusPane(hit.paneId)
             self.strip.reveal(laneId: hit.laneId, flash: true)
         }
@@ -1130,6 +1162,21 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         NSApp.requestUserAttention(.informationalRequest)
     }
 
+    /// Go to the next BLOCKED agent that has a lane, after the one the
+    /// keyboard is in. Through `attach`, so a lane a folded sidebar group or
+    /// a gather is hiding comes back first: the count in the status bar may
+    /// be the only thing on screen that knows it is there.
+    private func revealNextBlocked() {
+        let blocked = sessions.sessions.values
+            .filter { $0.isRunning && $0.needsAttention }
+            .map(\.key).sorted()
+            .filter { store.lane(holdingSession: $0) != nil }
+        guard !blocked.isEmpty else { return }
+        let here = store.state.focusedPaneId.flatMap { store.pane($0)?.sessionKey }
+        let next = here.flatMap { blocked.firstIndex(of: $0) }.map { blocked[($0 + 1) % blocked.count] }
+        attach(next ?? blocked[0])
+    }
+
     /// Tell the registry which sessions have lanes, so the picker can hide them
     /// and the sidebar can mark them.
     private func syncAttachedSessions() {
@@ -1153,7 +1200,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     /// that gets repeated.
     private func attach(_ key: SessionKey) {
         if let lane = store.lane(holdingSession: key) {
-            leaveGather(ifItHides: lane.id)
+            bringBack(laneId: lane.id)
             let pane = lane.panes.first { $0.sessionKey == key }
             _ = strip.select(laneId: lane.id, paneId: pane?.id)
             return
@@ -1171,7 +1218,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
     /// Leave a gather view when it is what stands between the user and a lane —
     /// the same way ⌘P already ignores one.
-    private func leaveGather(ifItHides laneId: String) {
+    ///
+    /// A lane can be off the strip for a second reason, a folded sidebar
+    /// group (ADR-0024), and the answer is the same: whatever is in the way
+    /// gets out of it. The group expands, then you are there.
+    private func bringBack(laneId: String) {
+        store.expandGroups(hiding: laneId)
         guard store.isGathered, store.lane(laneId) == nil,
               store.allLanes.contains(where: { $0.id == laneId })
         else { return }

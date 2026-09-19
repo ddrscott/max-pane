@@ -24,6 +24,7 @@
 //!    persisted.
 
 use crate::model::{Lane, PaneKind, PaneState};
+use std::collections::BTreeSet;
 
 /// Whether the policy may destroy this lane's web panes.
 ///
@@ -203,6 +204,25 @@ pub fn plan(
     hysteresis: &mut Hysteresis,
     now: i64,
 ) -> Vec<PaneDirective> {
+    plan_with_hidden(lanes, &BTreeSet::new(), viewport, memory, hysteresis, now)
+}
+
+/// A lane a collapsed sidebar group hides (ADR-0024) is on no screen and in no
+/// slot. It must not advance the strip index — the viewport indexes the lanes
+/// the shell laid out, and it laid out none of these — and its distance is not
+/// a number of lanes but "further than any": unparented, never rehydrated
+/// while hidden, and the first to go under pressure.
+const HIDDEN_DISTANCE: u32 = u32::MAX;
+
+/// [`plan`], told which of `lanes` a collapsed sidebar group is hiding.
+pub fn plan_with_hidden(
+    lanes: &[Lane],
+    hidden: &BTreeSet<String>,
+    viewport: &Viewport,
+    memory: &MemoryReport,
+    hysteresis: &mut Hysteresis,
+    now: i64,
+) -> Vec<PaneDirective> {
     let mut directives: Vec<PaneDirective> = Vec::new();
     // (distance, lane index, pane index) for things we are allowed to evict.
     let mut candidates: Vec<(u32, usize, usize)> = Vec::new();
@@ -222,6 +242,8 @@ pub fn plan(
             // the next memory sample. The page the user is looking at goes grey
             // and the music stops.
             0
+        } else if hidden.contains(&lane.id) {
+            HIDDEN_DISTANCE
         } else {
             let d = distance(strip_index, viewport);
             strip_index += 1;

@@ -126,10 +126,11 @@ public struct ConfigField {
     }
 
     private static func bool(
-        _ name: String, _ path: WritableKeyPath<Config, Bool>, _ group: ConfigGroup, _ summary: String
+        _ name: String, _ path: WritableKeyPath<Config, Bool>, _ group: ConfigGroup,
+        appliesLive: Bool = false, _ summary: String
     ) -> ConfigField {
         ConfigField(
-            name: name, group: group, control: .toggle, summary: summary, appliesLive: false,
+            name: name, group: group, control: .toggle, summary: summary, appliesLive: appliesLive,
             read: { .bool($0[keyPath: path]) },
             apply: { config, value in
                 guard case .bool(let b) = value else { return "expected true or false, got \(value.kind)" }
@@ -201,6 +202,8 @@ public struct ConfigField {
                      "The sliver of the next lane a settled strip always shows. 0 centres exactly."),
             bool("stripEdgeRails", \.stripEdgeRails, .lanes,
                  "The rails at either edge that count the lanes off screen."),
+            bool("sidebarCollapseHidesLanes", \.sidebarCollapseHidesLanes, .lanes, appliesLive: true,
+                 "Collapsing a group in the session sidebar takes its lanes off the strip; expanding brings them back. Off, it only folds the rows."),
             bool("snapToLanes", \.snapToLanes, .galleryMotion,
                  "Settle a sideways scroll with the nearest lane centred."),
             double("snapSeconds", \.snapSeconds, .galleryMotion, 0...2, step: 0.02,

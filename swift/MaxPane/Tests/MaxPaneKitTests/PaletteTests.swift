@@ -254,7 +254,7 @@ struct PaletteTests {
         withMotion(reduced: false) {
             let bar = StatusBar(frame: NSRect(x: 0, y: 0, width: 600, height: StatusBar.height))
             let window = host(bar)
-            let state = StripState(lanes: [], scrollX: 0, focusedPaneId: nil, gatherFilter: nil, revision: 0)
+            let state = StripState(lanes: [], scrollX: 0, focusedPaneId: nil, gatherFilter: nil, hiddenLaneIds: [], revision: 0)
             bar.update(
                 state: state,
                 telemetry: ["a": SessionTelemetry(sessionId: "a", command: "claude", state: .blocked)],

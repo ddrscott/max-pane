@@ -26,6 +26,7 @@ use error::{CoreError, Result};
 use ledger::Ledger;
 use model::*;
 use parking_lot::Mutex;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 /// PRD §8. Both ends of the allowed lane width, in points.
@@ -85,6 +86,10 @@ pub const DOCK_MAX_PT: u32 = LANE_MAX_PT;
 const KEY_SCROLL_X: &str = "strip_scroll_x";
 const KEY_FOCUSED_PANE: &str = "focused_pane_id";
 const KEY_LAYOUT: &str = "strip_layout";
+/// The lanes a collapsed sidebar group hides, as a JSON array of lane ids.
+const KEY_HIDDEN_LANES: &str = "hidden_lane_ids";
+/// The sidebar's collapsed groups and sections, as a JSON array of their keys.
+const KEY_SIDEBAR_COLLAPSED: &str = "sidebar_collapsed";
 
 pub fn now_ms() -> i64 {
     std::time::SystemTime::now()
@@ -122,6 +127,16 @@ struct Inner {
     visits: history::VisitMemo,
     /// `Some(project_root)` while the user is in a gather view. View-only.
     gather: Option<String>,
+    /// Lanes a collapsed sidebar group hides (ADR-0024). The second reason a
+    /// lane can be narrowed out of the snapshot, and like the first it is
+    /// view-only: no ordinal, width or pane is written because of it. Unlike
+    /// the first it is persisted, because a collapse is — a relaunch comes
+    /// back with the same lanes out of the way.
+    ///
+    /// Lane ids rather than project tags: a sidebar group is a session's
+    /// *cwd*, which only the shell hears about, so the shell says which lanes
+    /// and this says what being hidden means.
+    hidden: BTreeSet<String>,
     /// The width a new lane is born with.
     ///
     /// Deliberately *not* persisted: the user's config file already persists it,
@@ -162,12 +177,16 @@ impl Core {
                 }
             }
         }
+        // Before the first `state()`: the strip the shell draws first is the
+        // strip as it was left, hidden lanes and all.
+        let hidden = Self::stored_set(&ledger, KEY_HIDDEN_LANES)?;
         Ok(std::sync::Arc::new(Core {
             inner: Mutex::new(Inner {
                 ledger,
                 index: search::Index::default(),
                 visits: history::VisitMemo::default(),
                 gather: None,
+                hidden,
                 default_lane_width: LANE_DEFAULT_PT,
                 revision: 0,
                 hysteresis: eviction::Hysteresis::default(),
@@ -186,6 +205,7 @@ impl Core {
                 index: search::Index::default(),
                 visits: history::VisitMemo::default(),
                 gather: None,
+                hidden: BTreeSet::new(),
                 default_lane_width: LANE_DEFAULT_PT,
                 revision: 0,
                 hysteresis: eviction::Hysteresis::default(),
@@ -1651,6 +1671,75 @@ impl Core {
         Self::snapshot(&inner)
     }
 
+    // ---- hidden lanes (ADR-0024) ------------------------------------------
+
+    /// Hide exactly these lanes from the snapshot: the lanes of the sidebar
+    /// groups the user has collapsed. The gather filter's sibling, through
+    /// the same door (`snapshot`), so everything that already copes with a
+    /// lane the snapshot leaves out — `all_lanes`, search, export, the
+    /// eviction plan — copes with these.
+    ///
+    /// Nothing about a lane is written: not its ordinal, its width, its
+    /// panes or its state. The set itself is, so a relaunch agrees.
+    ///
+    /// A docked lane is never hidden, for gather's reason: it is not in the
+    /// strip, and dropping it from the snapshot is how the shell destroys it.
+    ///
+    /// `hand_off_focus` is for the collapse itself: when the lane with the
+    /// keyboard is one of those going, focus moves to the nearest lane still
+    /// on the strip to its right, else to its left — the rule closing a lane
+    /// follows. Without it (a recount after a session moved directory) focus
+    /// is left alone, and the shell is expected not to hide the focused lane.
+    pub fn set_hidden_lanes(&self, lane_ids: Vec<String>, hand_off_focus: bool) -> Result<StripState> {
+        let mut inner = self.inner.lock();
+        let next: BTreeSet<String> = lane_ids.into_iter().collect();
+        if next == inner.hidden {
+            return Self::snapshot(&inner);
+        }
+        if hand_off_focus {
+            let lanes = inner.ledger.lanes()?;
+            let focused = inner.ledger.app_state(KEY_FOCUSED_PANE)?;
+            let visible = |l: &Lane| {
+                l.dock.is_none()
+                    && !next.contains(&l.id)
+                    && inner.gather.as_deref().is_none_or(|root| l.project_root.as_deref() == Some(root))
+            };
+            let at = focused
+                .as_deref()
+                .and_then(|pane| lanes.iter().position(|l| l.panes.iter().any(|p| p.id == pane)));
+            if let Some(at) = at.filter(|&at| lanes[at].dock.is_none() && next.contains(&lanes[at].id)) {
+                let heir = lanes[at + 1..].iter().find(|l| visible(l)).or_else(|| lanes[..at].iter().rev().find(|l| visible(l)));
+                if let Some(pane) = heir.and_then(|l| l.panes.first()) {
+                    inner.ledger.touch_focus(&pane.lane_id, now_ms())?;
+                    inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane.id)?;
+                }
+            }
+        }
+        let stored = serde_json::to_string(&next.iter().collect::<Vec<_>>()).unwrap_or_else(|_| "[]".into());
+        inner.ledger.set_app_state(KEY_HIDDEN_LANES, &stored)?;
+        inner.hidden = next;
+        Self::bump(&mut inner);
+        Self::snapshot(&inner)
+    }
+
+    /// The sidebar's collapsed groups and sections, as the shell last stored
+    /// them. Opaque here: the keys are the sidebar's (a directory, `host:path`,
+    /// `host:`, the local section), and only the shell can say which lanes a
+    /// key covers.
+    pub fn sidebar_collapsed(&self) -> Result<Vec<String>> {
+        let inner = self.inner.lock();
+        Ok(Self::stored_set(&inner.ledger, KEY_SIDEBAR_COLLAPSED)?.into_iter().collect())
+    }
+
+    /// Store the sidebar's collapsed groups. No revision bump: the strip's
+    /// shape changes only through [`Core::set_hidden_lanes`].
+    pub fn set_sidebar_collapsed(&self, groups: Vec<String>) -> Result<()> {
+        let inner = self.inner.lock();
+        let set: BTreeSet<String> = groups.into_iter().collect();
+        let stored = serde_json::to_string(&set.iter().collect::<Vec<_>>()).unwrap_or_else(|_| "[]".into());
+        inner.ledger.set_app_state(KEY_SIDEBAR_COLLAPSED, &stored)
+    }
+
     // ---- search ------------------------------------------------------------
 
     /// Hand `laned-core` a pty pane's recent scrollback so ⌘P can find it.
@@ -1700,9 +1789,19 @@ impl Core {
         // showing, so this has to see the same list — including the gather
         // filter. Planning against the unfiltered strip while the shell is
         // gathered would evict whatever happens to sit at those indices.
-        let lanes = Self::snapshot(&inner)?.lanes;
+        //
+        // A lane a collapsed group hides is the exception, and is handed over
+        // with the rest: it is on no screen, so it is planned for as a lane
+        // further away than any the strip holds — unparented, first in line
+        // under memory pressure, never rehydrated until it is back. Leaving it
+        // out would make a hidden page the one thing the budget cannot reach.
+        let mut lanes = inner.ledger.lanes()?;
+        if let Some(root) = &inner.gather {
+            lanes.retain(|l| l.dock.is_some() || l.project_root.as_deref() == Some(root.as_str()));
+        }
+        let hidden = inner.hidden.clone();
         let now = now_ms();
-        Ok(eviction::plan(&lanes, &viewport, &memory, &mut inner.hysteresis, now))
+        Ok(eviction::plan_with_hidden(&lanes, &hidden, &viewport, &memory, &mut inner.hysteresis, now))
     }
 
     // ---- housekeeping ------------------------------------------------------
@@ -2106,6 +2205,15 @@ impl Core {
         Self::snapshot(&inner)
     }
 
+    /// A JSON array of strings out of `app_state`; anything unreadable is empty.
+    fn stored_set(ledger: &Ledger, key: &str) -> Result<BTreeSet<String>> {
+        Ok(ledger
+            .app_state(key)?
+            .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+            .map(|v| v.into_iter().collect())
+            .unwrap_or_default())
+    }
+
     fn bump(inner: &mut Inner) {
         inner.revision += 1;
     }
@@ -2123,12 +2231,26 @@ impl Core {
             // the layout would be doing exactly what it is told.
             lanes.retain(|l| l.dock.is_some() || l.project_root.as_deref() == Some(root.as_str()));
         }
+        // The second narrowing, after the first: what is reported as hidden is
+        // what a collapse took out of *this* view, so a lane a gather had
+        // already left out is not counted twice.
+        let mut hidden_lane_ids = Vec::new();
+        if !inner.hidden.is_empty() {
+            lanes.retain(|l| {
+                let hide = l.dock.is_none() && inner.hidden.contains(&l.id);
+                if hide {
+                    hidden_lane_ids.push(l.id.clone());
+                }
+                !hide
+            });
+        }
         let scroll_x = inner.ledger.app_state(KEY_SCROLL_X)?.and_then(|s| s.parse().ok()).unwrap_or(0.0);
         Ok(StripState {
             lanes,
             scroll_x,
             focused_pane_id: inner.ledger.app_state(KEY_FOCUSED_PANE)?,
             gather_filter: inner.gather.clone(),
+            hidden_lane_ids,
             revision: inner.revision,
         })
     }

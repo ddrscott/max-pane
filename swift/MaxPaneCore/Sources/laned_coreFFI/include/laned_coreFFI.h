@@ -604,6 +604,11 @@ RustBuffer uniffi_laned_core_fn_method_core_set_dock_mode(uint64_t ptr, RustBuff
 RustBuffer uniffi_laned_core_fn_method_core_set_dock_width(uint64_t ptr, RustBuffer lane_id, uint32_t width_pt, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_HIDDEN_LANES
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_HIDDEN_LANES
+RustBuffer uniffi_laned_core_fn_method_core_set_hidden_lanes(uint64_t ptr, RustBuffer lane_ids, int8_t hand_off_focus, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_KEEP_LIVE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_KEEP_LIVE
 RustBuffer uniffi_laned_core_fn_method_core_set_keep_live(uint64_t ptr, RustBuffer lane_id, int8_t keep_live, RustCallStatus *_Nonnull out_status
@@ -674,9 +679,19 @@ void uniffi_laned_core_fn_method_core_set_pane_zoom(uint64_t ptr, RustBuffer pan
 void uniffi_laned_core_fn_method_core_set_scroll_x(uint64_t ptr, double scroll_x, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_SIDEBAR_COLLAPSED
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_SIDEBAR_COLLAPSED
+void uniffi_laned_core_fn_method_core_set_sidebar_collapsed(uint64_t ptr, RustBuffer groups, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_SITE_PERMISSION
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_SITE_PERMISSION
 void uniffi_laned_core_fn_method_core_set_site_permission(uint64_t ptr, RustBuffer data_store_id, RustBuffer origin, RustBuffer feature, int8_t allowed, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SIDEBAR_COLLAPSED
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SIDEBAR_COLLAPSED
+RustBuffer uniffi_laned_core_fn_method_core_sidebar_collapsed(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SITE_PERMISSION
@@ -1377,6 +1392,12 @@ uint16_t uniffi_laned_core_checksum_method_core_set_dock_width(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_HIDDEN_LANES
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_HIDDEN_LANES
+uint16_t uniffi_laned_core_checksum_method_core_set_hidden_lanes(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_KEEP_LIVE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_KEEP_LIVE
 uint16_t uniffi_laned_core_checksum_method_core_set_keep_live(void
@@ -1461,9 +1482,21 @@ uint16_t uniffi_laned_core_checksum_method_core_set_scroll_x(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_SIDEBAR_COLLAPSED
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_SIDEBAR_COLLAPSED
+uint16_t uniffi_laned_core_checksum_method_core_set_sidebar_collapsed(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_SITE_PERMISSION
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_SITE_PERMISSION
 uint16_t uniffi_laned_core_checksum_method_core_set_site_permission(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SIDEBAR_COLLAPSED
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SIDEBAR_COLLAPSED
+uint16_t uniffi_laned_core_checksum_method_core_sidebar_collapsed(void
     
 );
 #endif

@@ -33,6 +33,9 @@ public final class StatusBar: NSView {
     /// Scroll to the next lane whose page has stopped to ask something. The one
     /// way to reach a dialog in a lane that is off screen — see `WebAskCenter`
     /// for why nothing scrolls there on its own.
+    ///
+    /// Also what a click on `N BLOCKED` runs, when no page is asking: the
+    /// receiver tries the asking pages first and the blocked agents second.
     public var onClickAsking: (() -> Void)?
 
     /// The one control that has to be reachable while the thing it controls is
@@ -149,7 +152,7 @@ public final class StatusBar: NSView {
         // tested against its own frame rather than against a fraction of the
         // bar: it is the only way to reach a dialog in a lane you cannot see,
         // and "roughly the left third" is not good enough for that.
-        if isAsking, attention.convert(attention.bounds, to: self).insetBy(dx: -6, dy: -4).contains(point) {
+        if isAlarmed, attention.convert(attention.bounds, to: self).insetBy(dx: -6, dy: -4).contains(point) {
             onClickAsking?()
             return
         }
@@ -160,6 +163,12 @@ public final class StatusBar: NSView {
     /// True while the attention field is showing pages waiting on a person, as
     /// opposed to blocked agents or nothing at all.
     private var isAsking = false
+    /// True while it is showing either alarm. Both are a place to go: a
+    /// BLOCKED agent may be in a lane a folded sidebar group is hiding, and
+    /// the count is then the one thing on screen that leads to it.
+    private var isAlarmed = false
+    /// The lanes readout as drawn, for tests.
+    var lanesText: String { lanes.stringValue }
 
     public func update(state: StripState, telemetry: [SessionKey: SessionTelemetry], webBytes: UInt64) {
         update(state: state, telemetry: telemetry, webBytes: webBytes, asking: 0)
@@ -175,9 +184,23 @@ public final class StatusBar: NSView {
     ) {
         let laneCount = state.lanes.count
         let paneCount = state.lanes.reduce(0) { $0 + $1.panes.count }
-        lanes.stringValue = laneCount == paneCount
+        // Lanes a folded sidebar group is keeping off the strip (ADR-0024).
+        // Said here because this line is on screen whatever the sidebar is
+        // doing, including shut: a strip that is short of lanes always says
+        // so, and how many.
+        let hidden = state.hiddenLaneIds.count
+        let shown = (laneCount == paneCount
             ? "\(laneCount) lane\(laneCount == 1 ? "" : "s")"
-            : "\(laneCount) lanes · \(paneCount) panes"
+            : "\(laneCount) lanes · \(paneCount) panes")
+            + (hidden > 0 ? " · \(hidden) hidden" : "")
+        // Into or out of "hidden" is a change of meaning in place; ease it.
+        if (hidden > 0) != lanes.stringValue.contains("hidden"), !lanes.stringValue.isEmpty {
+            Motion.fade(lanes.layer)
+        }
+        lanes.stringValue = shown
+        lanes.toolTip = hidden > 0
+            ? "\(hidden) lane\(hidden == 1 ? " is" : "s are") in a collapsed sidebar group, still running. Expand the group to bring \(hidden == 1 ? "it" : "them") back."
+            : nil
 
         let running = telemetry.values.filter(\.isRunning)
         // Sessions on a server that is not answering are still sessions, and
@@ -203,12 +226,15 @@ public final class StatusBar: NSView {
         if asking > 0 { parts.append("\(asking) ASKING") }
         if blocked > 0 { parts.append("\(blocked) BLOCKED") }
         let alarmed = !parts.isEmpty
+        isAlarmed = alarmed
         // Into or out of the alarm is a change of meaning in place; ease it.
         if alarmed != (attention.isPulsing) { Motion.fade(attention.layer) }
         if alarmed {
             attention.stringValue = parts.joined(separator: " · ")
             attention.textColor = Theme.blocked
-            attention.toolTip = asking > 0 ? "Click to go to the page that is asking" : nil
+            attention.toolTip = asking > 0
+                ? "Click to go to the page that is asking"
+                : "Click to go to the agent that is waiting"
         } else {
             let working = running.filter { $0.state == .working }.count
             attention.stringValue = working > 0 ? "\(working) working" : ""

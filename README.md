@@ -1216,6 +1216,59 @@ focused lane's header is lifted a shade instead, which is what still says
 hairline, and flashes green only for the ⌘P jump, which is a place to look
 rather than a place to type.
 
+### Folding a group puts its lanes away
+
+Folding a directory in the sidebar, a server's directory, or a whole section
+(`// LOCAL`, `// NAME`) means *I am not working on this right now*: its lanes
+leave the strip and the gallery, and opening it brings them back where they
+were, same order, same widths. With three projects and a remote server on one
+strip, this is how the strip gets back to the lanes that matter this hour.
+
+**Hidden is not closed.** Nothing is written to a lane or sent to a session.
+The agents run on, the terminals stay attached and the pages stay loaded, so
+coming back rebuilds nothing; a hidden page is treated by the memory policy as
+a lane a long way off, first to be evicted under pressure and reloaded when it
+is back. The folds and the hidden lanes are in the ledger, so a relaunch comes
+back the same way.
+
+**You can always tell.** A folded header that is holding lanes reads
+`3 LANES HIDDEN`, grey and at rest, and when an agent under it is BLOCKED it
+says `1 BLOCKED` beside that in the blocked green, breathing like every other
+BLOCKED. The status bar reads `4 lanes · 3 hidden`, and its `N BLOCKED` and the
+sidebar footer's count every session, folded or not. An empty strip that is
+empty because everything is folded says that instead of offering to start
+something.
+
+**Which lanes.** The ones whose rows are under the header. A terminal files
+under its session's directory, a web lane under its project tag beside the
+agent that opened it. A split lane with panes in two groups goes only when
+both are folded. An untagged web lane (`-` in `maxpane ls`, the `Web` group)
+is never hidden, and neither is a docked lane: folding `Web` folds its rows,
+as it always did. Folding the bookmarks section has nothing to do with any of
+this. A page an agent in a hidden lane opens (`open`, through the shim) is not
+hidden with it: it lands at the end of the strip, untagged, where you will see
+it, because a page an agent opens is often one it needs you for.
+
+**Reaching a hidden lane opens its group, and then you are there.** ⌘P, a
+session picked in ⌘O, `maxpane attach`, a click on `N ASKING`, and a click on
+`N BLOCKED` in the status bar — which goes to the next blocked agent with a
+lane — all do it. So does focus arriving by any other road: the lane with the
+keyboard is never hidden behind your back, so if the terminal you are typing
+in does `cd` into a folded project, the project opens. Folding the group you
+are *in* is the one thing that takes the focused lane away, and the keyboard
+goes to the nearest lane still on the strip, to the right first, then the left
+— the rule closing a lane follows.
+
+Lanes leave and return by the strip's own column close and open, and the lane
+you are in holds still while they do, wherever on the strip the folded project
+was. In the gallery the tiles slide to their new places. Under Reduce Motion
+everything lands at once.
+
+`sidebar_collapse_hides_lanes = false` makes a fold what it was before: the
+sidebar's rows fold and the strip is left alone. It applies as you save it.
+Why the hidden lanes sit beside the gather filter rather than inside it is
+[ADR-0024](docs/decisions/0024-a-folded-sidebar-group-hides-its-lanes.md).
+
 ### Moving a pane or a lane
 
 **Drag a lane by its header** — anywhere on it except the `⋯` and the
@@ -1789,7 +1842,9 @@ with the reason on its row and on stderr.
 chip when it is anything but connected — with that server's project groups
 under it. A refused or unreachable server is a header with its chip and
 whatever it last held; a disabled one is not there. A click on a server's
-header opens Settings › Servers on that row. BLOCKED counts in the footer and
+header opens Settings › Servers on that row, and its triangle folds the whole
+server, as `// LOCAL`'s folds this Mac (see [Folding a group puts its lanes
+away](#folding-a-group-puts-its-lanes-away)). BLOCKED counts in the footer and
 the status bar include remote sessions, while their server is answering.
 
 **The one mark: the server chip.** A remote session wears a small grey
@@ -2009,6 +2064,7 @@ snap_to_lanes = true
 lane_default_pt = 656
 lane_peek_pt = 28
 strip_edge_rails = true
+sidebar_collapse_hides_lanes = true
 font_name = "JetBrains Mono"
 font_size = 13
 copy_on_select = false
@@ -2021,8 +2077,9 @@ your keys and keys it does not know all survive
 finder** shows the file, and **open in editor** opens it in a terminal lane with
 your `editor` setting, the same way ⌘-clicking a path does.
 
-`theme` applies at once, and so does everything under Servers (see [Remote
-servers](#remote-servers)). Every other key, the keyboard included, applies on
+`theme` and `sidebar_collapse_hides_lanes` apply at once, and so does
+everything under Servers (see [Remote servers](#remote-servers)). Every other
+key, the keyboard included, applies on
 the next launch, and the window marks a changed one `$ relaunch to apply` until
 then.
 
@@ -2109,6 +2166,12 @@ with a count of the lanes hidden that way (`◀ 7`, `5 ▶`), and a plain wall w
 there are none. A sliver says *there is more, this way*; it cannot say how many,
 and at the ends of the strip there is nothing to show a sliver of. `false`
 removes both rails and gives their 36 points back to the lanes.
+
+`sidebar_collapse_hides_lanes` is whether folding a group in the session
+sidebar takes its lanes off the strip and out of the gallery (see [Folding a
+group puts its lanes away](#folding-a-group-puts-its-lanes-away)). On by
+default; `false` folds the sidebar's rows and nothing else, and any lanes a
+fold was holding come straight back.
 
 Every field of `Config` is a key here, and every key is a row in the window. A
 skipped value also prints a line on stderr.

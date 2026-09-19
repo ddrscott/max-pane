@@ -449,3 +449,45 @@ enum StripGeometry {
         return origins
     }
 }
+
+/// The lane held still while lanes a sidebar fold hides leave the strip or
+/// come back to it (ADR-0024).
+///
+/// A close or an arrival happens beside the lane you are in, by construction.
+/// A fold does not: it takes a whole project, wherever its lanes sit, and any
+/// of them left of the window would pull everything you can see sideways by
+/// their width. So one lane is chosen and kept at the same place in the
+/// window, and the strip scrolls under it by exactly what came or went.
+struct StripAnchor: Equatable {
+    var laneId: String
+    /// Its left edge, measured from the left of the visible window.
+    var x: CGFloat
+
+    /// The focused lane when it is on screen and staying; otherwise the first
+    /// lane on screen that is staying; nil when nothing on screen survives,
+    /// and then focus moving to its heir is what brings the strip to rest.
+    static func pick(
+        before: [Lane], after: [Lane], focusedLaneId: String?, offset: CGFloat, width: CGFloat
+    ) -> StripAnchor? {
+        let staying = Set(after.map(\.id))
+        let origins = StripGeometry.origins(of: before)
+        let onScreen = before.filter { lane in
+            guard staying.contains(lane.id), let x = origins[lane.id] else { return false }
+            return x + CGFloat(lane.widthPt) > offset && x < offset + width
+        }
+        guard let lane = onScreen.first(where: { $0.id == focusedLaneId }) ?? onScreen.first,
+              let x = origins[lane.id] else { return nil }
+        return StripAnchor(laneId: lane.id, x: x - offset)
+    }
+
+    /// Where `laneId` starts in a layout whose columns may be part-way open
+    /// or shut: `slots` is each such lane's current width.
+    static func origin(of laneId: String, in lanes: [Lane], slots: [String: CGFloat]) -> CGFloat? {
+        var x: CGFloat = 0
+        for lane in lanes {
+            if lane.id == laneId { return x }
+            x += (slots[lane.id] ?? CGFloat(lane.widthPt)) + Theme.borderWidth
+        }
+        return nil
+    }
+}

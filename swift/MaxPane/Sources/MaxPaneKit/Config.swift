@@ -57,6 +57,14 @@ public struct Config: Codable, Equatable {
 
     /// PRD §10.2 — lanes off-screen before a web pane is unparented.
     public var releaseDistance: UInt32 = 6
+    /// Collapsing a group or a section in the session sidebar takes its lanes
+    /// off the strip and out of the gallery, and expanding it brings them
+    /// back where they were (ADR-0024). Nothing is closed: the sessions run
+    /// on and the header says how many lanes it is holding. Off, a collapse
+    /// folds the sidebar's rows and nothing else. Read every time the hidden
+    /// lanes are counted, so a change applies as the file is saved.
+    public var sidebarCollapseHidesLanes: Bool = true
+
     /// PRD §10.3 — lanes away before an evicted pane is rehydrated.
     public var rehydrateDistance: UInt32 = 2
 
@@ -258,6 +266,7 @@ public struct Config: Codable, Equatable {
         laneDefaultPt = read(.laneDefaultPt, d.laneDefaultPt)
         lanePeekPt = read(.lanePeekPt, d.lanePeekPt)
         stripEdgeRails = read(.stripEdgeRails, d.stripEdgeRails)
+        sidebarCollapseHidesLanes = read(.sidebarCollapseHidesLanes, d.sidebarCollapseHidesLanes)
         releaseDistance = read(.releaseDistance, d.releaseDistance)
         rehydrateDistance = read(.rehydrateDistance, d.rehydrateDistance)
         dataStoreCount = read(.dataStoreCount, d.dataStoreCount)

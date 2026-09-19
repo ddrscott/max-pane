@@ -322,6 +322,10 @@ pub struct StripState {
     /// `Some(project_root)` while a gather view is active. Purely a view filter:
     /// no ordinal is ever written because of it.
     pub gather_filter: Option<String>,
+    /// The lanes a collapsed sidebar group has taken out of `lanes`, in
+    /// ordinal order (ADR-0024). Empty nearly always. They are in the ledger,
+    /// running and unchanged; they are only not drawn.
+    pub hidden_lane_ids: Vec<String>,
     /// Bumped on every mutation so the shell can cheaply reject stale snapshots.
     pub revision: u64,
 }

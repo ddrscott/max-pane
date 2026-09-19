@@ -326,6 +326,17 @@ final class SidebarGroupView: NSTableCellView {
     var stateChipText: String { stateChip.isHidden ? "" : stateChip.stringValue.trimmingCharacters(in: .whitespaces) }
 
     static let height: CGFloat = 26
+    /// How far in from the left a click still counts as on the triangle: the
+    /// triangle, its inset, and the gap after it. Only a server's header asks,
+    /// because only there does the rest of the row do something else.
+    static let triangleReach: CGFloat = 24
+    /// `2 BLOCKED` beside `3 LANES HIDDEN`: what a header that is keeping
+    /// lanes off the strip has to say as well. Breathes, as any BLOCKED does.
+    private let blockedCount = PulseLabel(labelWithString: "")
+    var blockedText: String { blockedCount.isHidden ? "" : blockedCount.stringValue }
+    var countText: String { count.stringValue }
+    var isBlockedPulsing: Bool { blockedCount.isPulsing || count.isPulsing }
+    var hasTriangle: Bool { !triangle.isHidden }
 
     init(group: SidebarModel.Group) {
         super.init(frame: .zero)
@@ -357,13 +368,25 @@ final class SidebarGroupView: NSTableCellView {
         // left to say "there is an agent in here waiting on you", so when there
         // is one it takes the blocked green, breathing, and the rest stays quiet.
         count.stringValue = group.countText
-        count.font = Theme.mono(9, weight: group.blocked > 0 ? .bold : .regular)
+        // A header that is hiding lanes says that in the count, at rest and
+        // grey, and says BLOCKED beside it in the blocked green: two facts,
+        // and only one of them is an alarm.
+        let alarmInCount = group.blocked > 0 && group.blockedText == nil
+        count.font = Theme.mono(9, weight: alarmInCount ? .bold : .regular)
         // A server reconnecting or refused takes the accent green — a state,
         // in the family every other state uses — unless an agent in the group
         // is blocked, which is the louder of the two.
-        count.textColor = group.blocked > 0 ? Theme.blocked : Theme.dimText
-        count.isPulsing = group.blocked > 0
+        count.textColor = alarmInCount ? Theme.blocked : Theme.dimText
+        count.isPulsing = alarmInCount
         count.alignment = .right
+
+        blockedCount.isHidden = group.blockedText == nil
+        blockedCount.stringValue = group.blockedText ?? ""
+        blockedCount.font = Theme.mono(9, weight: .bold)
+        blockedCount.textColor = Theme.blocked
+        blockedCount.isPulsing = group.blockedText != nil
+        blockedCount.isBezeled = false
+        blockedCount.drawsBackground = false
 
         // A hairline above the header instead of padding: the strip is made of
         // hard edges, and so is its index.
@@ -378,7 +401,7 @@ final class SidebarGroupView: NSTableCellView {
         }
         // Set after `usesSingleLineMode`, which would otherwise reset it.
         label.lineBreakMode = .byTruncatingHead
-        for v: NSView in [triangle, label, count, rule] {
+        for v: NSView in [triangle, label, count, blockedCount, rule] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -395,18 +418,19 @@ final class SidebarGroupView: NSTableCellView {
             triangle.centerYAnchor.constraint(equalTo: centerYAnchor, constant: 2),
 
 
-            // A section has no triangle, and starts where one would.
-            group.isSection
-                ? label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9)
-                : label.leadingAnchor.constraint(equalTo: triangle.trailingAnchor, constant: 6),
+            label.leadingAnchor.constraint(equalTo: triangle.trailingAnchor, constant: 6),
             label.centerYAnchor.constraint(equalTo: triangle.centerYAnchor),
 
+            blockedCount.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 6),
+            blockedCount.trailingAnchor.constraint(equalTo: count.leadingAnchor, constant: -8),
+            blockedCount.centerYAnchor.constraint(equalTo: triangle.centerYAnchor),
             count.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 6),
             count.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -9),
             count.centerYAnchor.constraint(equalTo: triangle.centerYAnchor),
         ])
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         count.setContentCompressionResistancePriority(.required, for: .horizontal)
+        blockedCount.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         toolTip = group.path == SidebarModel.looseWebGroup ? "Web lanes" : group.path
 
@@ -414,8 +438,8 @@ final class SidebarGroupView: NSTableCellView {
         // block of project groups, so this Mac and each server read as
         // separate, parallel blocks. It gets the house `// CAPS` mark the
         // path groups deliberately do not: it is a name, not a path, so the
-        // slashes cannot be misread as one. It does not fold, so no
-        // triangle, and the label starts where the triangle would.
+        // slashes cannot be misread as one. It folds every project under
+        // it, so it has the triangle the projects have (ADR-0024).
         //
         // A server's state, when it is anything but connected, is a chip in
         // the accent green beside the count — a state, in the family every
@@ -424,7 +448,6 @@ final class SidebarGroupView: NSTableCellView {
         // opens Settings › Servers.
         stateChip.isHidden = true
         if group.isSection {
-            triangle.isHidden = true
             let mark = NSMutableAttributedString(
                 string: "// ",
                 attributes: [.foregroundColor: Theme.accent, .font: Theme.mono(10, weight: .bold)])
@@ -433,9 +456,13 @@ final class SidebarGroupView: NSTableCellView {
                 attributes: [.foregroundColor: NSColor.secondaryLabelColor, .font: Theme.mono(10, weight: .bold)]))
             label.attributedStringValue = mark
             label.lineBreakMode = .byTruncatingTail
+            let fold = group.collapsed ? "the triangle opens it" : "the triangle folds it"
             toolTip = group.isLocalSection
-                ? "This Mac — \(group.countText.lowercased())"
-                : "\(group.server ?? group.header) — \(group.countText.lowercased()); click for Settings › Servers"
+                ? "This Mac — \(group.countText.lowercased()); click to \(group.collapsed ? "open" : "fold") it"
+                : "\(group.server ?? group.header) — \(group.countText.lowercased()); click for Settings › Servers, \(fold)"
+        }
+        if group.hiddenLanes > 0 {
+            toolTip = (toolTip ?? "") + " — \(group.hiddenLanes) lane\(group.hiddenLanes == 1 ? "" : "s") off the strip, still running; open this to bring \(group.hiddenLanes == 1 ? "it" : "them") back"
         }
         if let state = group.stateChip {
             stateChip.isHidden = false
@@ -451,7 +478,7 @@ final class SidebarGroupView: NSTableCellView {
             stateChip.translatesAutoresizingMaskIntoConstraints = false
             addSubview(stateChip)
             NSLayoutConstraint.activate([
-                stateChip.trailingAnchor.constraint(equalTo: count.leadingAnchor, constant: -6),
+                stateChip.trailingAnchor.constraint(equalTo: (group.blockedText == nil ? count : blockedCount).leadingAnchor, constant: -6),
                 stateChip.centerYAnchor.constraint(equalTo: count.centerYAnchor),
                 stateChip.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 6),
             ])

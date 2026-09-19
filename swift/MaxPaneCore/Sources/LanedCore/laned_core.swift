@@ -1335,6 +1335,27 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func setDockWidth(laneId: String, widthPt: UInt32) throws  -> StripState
     
     /**
+     * Hide exactly these lanes from the snapshot: the lanes of the sidebar
+     * groups the user has collapsed. The gather filter's sibling, through
+     * the same door (`snapshot`), so everything that already copes with a
+     * lane the snapshot leaves out — `all_lanes`, search, export, the
+     * eviction plan — copes with these.
+     *
+     * Nothing about a lane is written: not its ordinal, its width, its
+     * panes or its state. The set itself is, so a relaunch agrees.
+     *
+     * A docked lane is never hidden, for gather's reason: it is not in the
+     * strip, and dropping it from the snapshot is how the shell destroys it.
+     *
+     * `hand_off_focus` is for the collapse itself: when the lane with the
+     * keyboard is one of those going, focus moves to the nearest lane still
+     * on the strip to its right, else to its left — the rule closing a lane
+     * follows. Without it (a recount after a session moved directory) focus
+     * is left alone, and the shell is expected not to hide the focused lane.
+     */
+    func setHiddenLanes(laneIds: [String], handOffFocus: Bool) throws  -> StripState
+    
+    /**
      * Protect a lane's web panes from the eviction policy (⇧⌘P).
      *
      * This is `set_pinned` under the name the word "pinned" had to give up
@@ -1449,11 +1470,25 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func setScrollX(scrollX: Double) throws 
     
     /**
+     * Store the sidebar's collapsed groups. No revision bump: the strip's
+     * shape changes only through [`Core::set_hidden_lanes`].
+     */
+    func setSidebarCollapsed(groups: [String]) throws 
+    
+    /**
      * Remember an answer. Only ever called with a decision a person made —
      * nothing here infers one from a dismissal, because a dialog dismissed by
      * Esc is "not now", not "never".
      */
     func setSitePermission(dataStoreId: String, origin: String, feature: SiteFeature, allowed: Bool) throws 
+    
+    /**
+     * The sidebar's collapsed groups and sections, as the shell last stored
+     * them. Opaque here: the keys are the sidebar's (a directory, `host:path`,
+     * `host:`, the local section), and only the shell can say which lanes a
+     * key covers.
+     */
+    func sidebarCollapsed() throws  -> [String]
     
     /**
      * Has this site, in this cookie jar, already been answered about this
@@ -2849,6 +2884,36 @@ open func setDockWidth(laneId: String, widthPt: UInt32)throws  -> StripState  {
 }
     
     /**
+     * Hide exactly these lanes from the snapshot: the lanes of the sidebar
+     * groups the user has collapsed. The gather filter's sibling, through
+     * the same door (`snapshot`), so everything that already copes with a
+     * lane the snapshot leaves out — `all_lanes`, search, export, the
+     * eviction plan — copes with these.
+     *
+     * Nothing about a lane is written: not its ordinal, its width, its
+     * panes or its state. The set itself is, so a relaunch agrees.
+     *
+     * A docked lane is never hidden, for gather's reason: it is not in the
+     * strip, and dropping it from the snapshot is how the shell destroys it.
+     *
+     * `hand_off_focus` is for the collapse itself: when the lane with the
+     * keyboard is one of those going, focus moves to the nearest lane still
+     * on the strip to its right, else to its left — the rule closing a lane
+     * follows. Without it (a recount after a session moved directory) focus
+     * is left alone, and the shell is expected not to hide the focused lane.
+     */
+open func setHiddenLanes(laneIds: [String], handOffFocus: Bool)throws  -> StripState  {
+    return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_set_hidden_lanes(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceString.lower(laneIds),
+        FfiConverterBool.lower(handOffFocus),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * Protect a lane's web panes from the eviction policy (⇧⌘P).
      *
      * This is `set_pinned` under the name the word "pinned" had to give up
@@ -3080,6 +3145,19 @@ open func setScrollX(scrollX: Double)throws   {try rustCallWithError(FfiConverte
 }
     
     /**
+     * Store the sidebar's collapsed groups. No revision bump: the strip's
+     * shape changes only through [`Core::set_hidden_lanes`].
+     */
+open func setSidebarCollapsed(groups: [String])throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_set_sidebar_collapsed(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceString.lower(groups),uniffiCallStatus
+    )
+}
+}
+    
+    /**
      * Remember an answer. Only ever called with a decision a person made —
      * nothing here infers one from a dismissal, because a dialog dismissed by
      * Esc is "not now", not "never".
@@ -3094,6 +3172,21 @@ open func setSitePermission(dataStoreId: String, origin: String, feature: SiteFe
         FfiConverterBool.lower(allowed),uniffiCallStatus
     )
 }
+}
+    
+    /**
+     * The sidebar's collapsed groups and sections, as the shell last stored
+     * them. Opaque here: the keys are the sidebar's (a directory, `host:path`,
+     * `host:`, the local section), and only the shell can say which lanes a
+     * key covers.
+     */
+open func sidebarCollapsed()throws  -> [String]  {
+    return try  FfiConverterSequenceString.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_sidebar_collapsed(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
 }
     
     /**
@@ -5576,6 +5669,12 @@ public struct StripState: Equatable, Hashable {
      */
     public var gatherFilter: String?
     /**
+     * The lanes a collapsed sidebar group has taken out of `lanes`, in
+     * ordinal order (ADR-0024). Empty nearly always. They are in the ledger,
+     * running and unchanged; they are only not drawn.
+     */
+    public var hiddenLaneIds: [String]
+    /**
      * Bumped on every mutation so the shell can cheaply reject stale snapshots.
      */
     public var revision: UInt64
@@ -5603,12 +5702,18 @@ public struct StripState: Equatable, Hashable {
          * no ordinal is ever written because of it.
          */gatherFilter: String?, 
         /**
+         * The lanes a collapsed sidebar group has taken out of `lanes`, in
+         * ordinal order (ADR-0024). Empty nearly always. They are in the ledger,
+         * running and unchanged; they are only not drawn.
+         */hiddenLaneIds: [String], 
+        /**
          * Bumped on every mutation so the shell can cheaply reject stale snapshots.
          */revision: UInt64) {
         self.lanes = lanes
         self.scrollX = scrollX
         self.focusedPaneId = focusedPaneId
         self.gatherFilter = gatherFilter
+        self.hiddenLaneIds = hiddenLaneIds
         self.revision = revision
     }
 
@@ -5632,6 +5737,7 @@ public struct FfiConverterTypeStripState: FfiConverterRustBuffer {
                 scrollX: FfiConverterDouble.read(from: &buf), 
                 focusedPaneId: FfiConverterOptionString.read(from: &buf), 
                 gatherFilter: FfiConverterOptionString.read(from: &buf), 
+                hiddenLaneIds: FfiConverterSequenceString.read(from: &buf), 
                 revision: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -5641,6 +5747,7 @@ public struct FfiConverterTypeStripState: FfiConverterRustBuffer {
         FfiConverterDouble.write(value.scrollX, into: &buf)
         FfiConverterOptionString.write(value.focusedPaneId, into: &buf)
         FfiConverterOptionString.write(value.gatherFilter, into: &buf)
+        FfiConverterSequenceString.write(value.hiddenLaneIds, into: &buf)
         FfiConverterUInt64.write(value.revision, into: &buf)
     }
 }
@@ -7758,6 +7865,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_set_dock_width() != 12169) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_set_hidden_lanes() != 45869) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_set_keep_live() != 52968) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -7800,7 +7910,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_set_scroll_x() != 34624) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_set_sidebar_collapsed() != 61402) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_set_site_permission() != 10286) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_sidebar_collapsed() != 49463) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_site_permission() != 2813) {

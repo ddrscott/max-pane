@@ -48,6 +48,15 @@ public final class StripViewController: NSViewController {
     /// handed a whole new world each time — so without this the app can only
     /// cut.
     private var lastLanes: [Lane] = []
+    /// The hidden lanes of the snapshot last applied, to notice a fold.
+    private var lastHiddenLaneIds: [String] = []
+    /// The lane held still while folded lanes leave or come back (ADR-0024),
+    /// and where in the visible window its left edge stays. A project folded
+    /// away to the *left* of what you are reading would otherwise drag the
+    /// page you are reading off the screen with it. Set by `apply` when the
+    /// hidden lanes change, honoured by `relayout`, and let go when the last
+    /// column has finished moving or the strip is sent somewhere on purpose.
+    private var heldAnchor: StripAnchor?
     /// Lanes the ledger no longer has, whose columns are still closing. They
     /// keep their slot in the layout until the collapse ends; see `laneLayout`.
     private var departingLanes: [(index: Int, lane: Lane)] = []
@@ -575,6 +584,31 @@ public final class StripViewController: NSViewController {
         // departure is that the view survives it, which is `beginDockDeparture`.
         let diff = StripDiff.between(previousStrip.map(\.id), strip.map(\.id))
 
+        // A fold in the sidebar took lanes away or brought them back. Hold
+        // the lane you are in where it is, and judge what is "on screen" for
+        // the arrivals from where the strip will be rather than where it was.
+        var arrivalOffset: CGFloat? = nil
+        if state.hiddenLaneIds != lastHiddenLaneIds {
+            lastHiddenLaneIds = state.hiddenLaneIds
+            // In the gallery the tiles that stay slide to their new places by
+            // the tile motion; the ones that go or come have nowhere to slide
+            // from, so the grid they leave or join cross-fades instead of
+            // cutting.
+            if isGallery, !isColdLaunch { Motion.fade(gallery.layer, duration: Motion.lane) }
+            if !isGallery, !isColdLaunch, view.window != nil, arrivalScroll == nil {
+                let window = viewport
+                heldAnchor = StripAnchor.pick(
+                    before: previousStrip, after: strip,
+                    focusedLaneId: previous.first { lane in
+                        lane.panes.contains { $0.id == state.focusedPaneId }
+                    }?.id,
+                    offset: window.offset, width: window.width)
+                if let heldAnchor, let origin = StripGeometry.origins(of: strip)[heldAnchor.laneId] {
+                    arrivalOffset = origin - heldAnchor.x
+                }
+            }
+        }
+
         // **Before anything else touches a view.** A pane that changed lane has
         // its view *moved*, never rebuilt: a Ghostty surface and a `WKWebView`
         // both die badly when they are torn down and made again, and the
@@ -588,7 +622,7 @@ public final class StripViewController: NSViewController {
         // What arrived, before anything is laid out: a lane whose column is
         // about to open must never take its full slot first, not even for the
         // one frame between here and its first animation tick.
-        beginArrivals(diff.inserted, in: strip)
+        beginArrivals(diff.inserted, in: strip, offset: arrivalOffset)
 
         // Lanes that left the row. A lane whose column is still closing keeps
         // its view and its slot; one that is not animating goes now.
@@ -615,6 +649,7 @@ public final class StripViewController: NSViewController {
         // still closing for another fifth of a second, and "nothing here yet"
         // printed across a column that is visibly leaving says two things at
         // once.
+        emptyState.hiddenLanes = state.hiddenLaneIds.count
         emptyState.isHidden = !state.lanes.isEmpty || !departingLanes.isEmpty
 
         relayout()
@@ -754,6 +789,11 @@ public final class StripViewController: NSViewController {
     /// on screen is still showing it" is.
     private func reapPaneControllers(_ state: StripState) {
         var live = Set(state.lanes.flatMap(\.panes).map(\.id))
+        // A lane a folded sidebar group hides is in the ledger and off the
+        // strip (ADR-0024). Its terminals stay attached and its pages stay
+        // loaded: coming back must cost nothing, and "the ledger has no such
+        // pane" is not true of it.
+        for lane in store.hiddenLanes { live.formUnion(lane.panes.map(\.id)) }
         for ghost in departingLanes { live.formUnion(ghost.lane.panes.map(\.id)) }
         live.formUnion(departingPanes)
 
@@ -1672,12 +1712,37 @@ public final class StripViewController: NSViewController {
             xOffsets: xOffsets,
             height: scrollView.contentView.bounds.height)
         document.layOut(content: content, margins: stripMargins)
-        if let keep, before != stripMargins {
+        holdAnchor(in: lanes ?? laneLayout)
+        if let keep, before != stripMargins, heldAnchor == nil {
             let clip = scrollView.contentView
             clip.setBoundsOrigin(NSPoint(x: clipOrigin(forVisible: keep), y: clip.bounds.origin.y))
             scrollView.reflectScrolledClipView(clip)
         }
         maximizer.layout()
+    }
+
+    /// Keep the held lane where it was in the window while columns around it
+    /// open and close, frame by frame, from the slots the layout just used.
+    /// Let go once nothing is moving: the strip is then wherever this left it,
+    /// and the next scroll is the user's.
+    private func holdAnchor(in lanes: [Lane]) {
+        guard let held = heldAnchor else { return }
+        let slots = laneOverrides.mapValues(\.slot)
+        if let origin = StripAnchor.origin(of: held.laneId, in: lanes, slots: slots) {
+            let clip = scrollView.contentView
+            let limit = max(0, document.frame.width - clip.bounds.width)
+            let target = min(max(0, clipOrigin(forVisible: origin - held.x)), limit)
+            if abs(clip.bounds.origin.x - target) > 0.5 {
+                // The snap must not answer this: nothing was scrolled, the
+                // strip was held.
+                suppressSnapUntil = CFAbsoluteTimeGetCurrent() + Motion.lane + 0.4
+                clip.setBoundsOrigin(NSPoint(x: target, y: clip.bounds.origin.y))
+                scrollView.reflectScrolledClipView(clip)
+            }
+        }
+        if laneOverrides.isEmpty && departingLanes.isEmpty && pendingArrivals.isEmpty {
+            heldAnchor = nil
+        }
     }
 
     /// Whether a change at this index is worth animating.
@@ -1688,11 +1753,11 @@ public final class StripViewController: NSViewController {
     /// narrate something they cannot see. On screen or one lane past the edge
     /// (where the eye is already heading, because that is where ⌘T puts things)
     /// gets the motion; everything else is instant and correct.
-    private func shouldAnimate(laneAt index: Int, in lanes: [Lane]) -> Bool {
+    private func shouldAnimate(laneAt index: Int, in lanes: [Lane], offset: CGFloat? = nil) -> Bool {
         // The strip's motion is the strip's: a column opening or closing means
         // nothing in a grid of tiles, which simply re-lay themselves out.
         guard !isGallery, !isColdLaunch, !Motion.isReduced, view.window != nil else { return false }
-        let visible = visibleLaneRange(in: lanes)
+        let visible = visibleLaneRange(in: lanes, offset: offset)
         return index >= visible.lowerBound - 1 && index <= visible.upperBound
     }
 
@@ -1707,10 +1772,10 @@ public final class StripViewController: NSViewController {
     /// the timer starts later: the view does not exist until materialization has
     /// run, and a single frame at full width before the animation begins is the
     /// cut this is replacing.
-    private func beginArrivals(_ laneIds: [String], in lanes: [Lane]) {
+    private func beginArrivals(_ laneIds: [String], in lanes: [Lane], offset: CGFloat? = nil) {
         for id in laneIds {
             guard let index = lanes.firstIndex(where: { $0.id == id }),
-                  shouldAnimate(laneAt: index, in: lanes)
+                  shouldAnimate(laneAt: index, in: lanes, offset: offset)
             else { continue }
             laneOverrides[id] = LaneOverride(slot: 0, masked: true)
             pendingArrivals.insert(id)
@@ -2298,9 +2363,12 @@ public final class StripViewController: NSViewController {
     /// of the pane's own container and lane views are recycled around it.
     @discardableResult
     public func revealNextAsking() -> Bool {
+        // Every lane, not the ones on the strip: a page can stop to ask from
+        // a lane a folded sidebar group is hiding, and then the group opens.
         guard let paneId = WebAskCenter.shared.next(),
-              let laneId = store.lane(containing: paneId)?.id
+              let laneId = store.allLanes.first(where: { $0.panes.contains { $0.id == paneId } })?.id
         else { return false }
+        store.expandGroups(hiding: laneId)
         reveal(laneId: laneId, flash: true)
         try? store.focusPane(paneId)
         return true
@@ -2689,9 +2757,13 @@ public final class StripViewController: NSViewController {
     /// `lanes` is always `stripLanes`. Every index this returns is an index into
     /// the array the strip actually laid out, which is the invariant the whole
     /// eviction guarantee rests on — see `StripStore.stripLanes`.
-    private func visibleLaneRange(in lanes: [Lane]) -> Range<Int> {
+    ///
+    /// `offset` asks the question about a window that starts somewhere other
+    /// than where the clip view is now: where it will be once lanes coming
+    /// back from a fold have pushed the held lane along.
+    private func visibleLaneRange(in lanes: [Lane], offset: CGFloat? = nil) -> Range<Int> {
         let window = viewport
-        let origin = window.offset
+        let origin = offset ?? window.offset
         let width = window.width
         guard width > 0 else { return 0..<min(lanes.count, 1) }
 
@@ -2871,6 +2943,9 @@ public final class StripViewController: NSViewController {
     /// wrote down, which is a quarter of a frame's worth of disagreement between
     /// a lane opening and the strip moving to show it.
     private func scroll(to target: CGFloat, revealing laneId: String, flash: Bool) {
+        // The strip is being sent somewhere on purpose, which outranks holding
+        // it still.
+        heldAnchor = nil
         let clip = scrollView.contentView
         // `target` came from `StripReveal`, which works in the strip's visible
         // window. Everything below is in that space and converts once, at the

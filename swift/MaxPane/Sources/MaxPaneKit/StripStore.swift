@@ -69,6 +69,10 @@ public final class StripStore {
     /// strip is the one cost worth never paying.
     private func publish(_ next: StripState) {
         guard next.revision != state.revision || next.gatherFilter != state.gatherFilter else { return }
+        // Before anyone sees it: a snapshot goes out with the hidden lanes
+        // already right for it, so a lane born into a folded group never
+        // opens its column only to close it again.
+        let next = settleHidden(next, handOffFocus: false)
         let jarsBefore = Self.privateJars(in: state.lanes)
         state = next
         releasePrivateJars(heldBefore: jarsBefore)
@@ -309,8 +313,16 @@ public final class StripStore {
     /// same gather then hid. Free when nothing is gathered, which is nearly
     /// always, because then the snapshot already is every lane.
     var allLanes: [Lane] {
-        guard state.gatherFilter != nil else { return state.lanes }
+        guard state.gatherFilter != nil || !state.hiddenLaneIds.isEmpty else { return state.lanes }
         return (try? core.allLanes()) ?? state.lanes
+    }
+
+    /// The lanes a collapsed sidebar group is keeping off the strip, whole.
+    /// Their panes are alive and their controllers must stay so (ADR-0024).
+    var hiddenLanes: [Lane] {
+        guard !state.hiddenLaneIds.isEmpty else { return [] }
+        let ids = Set(state.hiddenLaneIds)
+        return allLanes.filter { ids.contains($0.id) }
     }
 
     /// The lane a Relay session is in, gathered out of view or not.
@@ -701,7 +713,8 @@ public final class StripStore {
         // Keep the in-memory snapshot's revision in step without a full fetch.
         state = StripState(
             lanes: state.lanes, scrollX: state.scrollX, focusedPaneId: paneId,
-            gatherFilter: state.gatherFilter, revision: core.revision())
+            gatherFilter: state.gatherFilter, hiddenLaneIds: state.hiddenLaneIds,
+            revision: core.revision())
         for body in observers.values { body(state) }
     }
 
@@ -730,6 +743,123 @@ public final class StripStore {
     func gather(projectRoot: String) throws { publish(try core.gather(projectRoot: projectRoot)) }
     func ungather() throws { publish(try core.ungather()) }
     var isGathered: Bool { state.gatherFilter != nil }
+
+    // MARK: - lanes a collapsed sidebar group hides (ADR-0024)
+
+    /// What only the shell knows about which lanes a fold covers.
+    struct HidingInputs {
+        /// `sidebar_collapse_hides_lanes`. Off, nothing is ever hidden.
+        var enabled = true
+        /// A session's sidebar group is its cwd, and this is where that is.
+        var telemetry: [SessionKey: SessionTelemetry] = [:]
+        /// `// LOCAL` is a header only beside a server.
+        var hasServers = false
+    }
+
+    /// Asked every time the hidden lanes are counted, so the setting and the
+    /// sessions are read as they are now. The window installs the real one.
+    var hidingInputs: () -> HidingInputs = { HidingInputs() }
+
+    /// The sidebar's folded groups and sections, by their keys. In the
+    /// ledger, so a relaunch comes back folded the same way — and with the
+    /// same lanes off the strip.
+    private(set) lazy var collapsedGroups: Set<String> = Set((try? core.sidebarCollapsed()) ?? [])
+
+    /// The user folded or opened something in the sidebar. The one door that
+    /// may take the keyboard's own lane off the strip, so the one that hands
+    /// focus on: nearest lane still there to the right, else to the left.
+    func setCollapsedGroups(_ next: Set<String>) {
+        guard next != collapsedGroups else { return }
+        collapsedGroups = next
+        try? core.setSidebarCollapsed(groups: next.sorted())
+        adopt(settleHidden(state, handOffFocus: true))
+    }
+
+    /// Open whatever fold is keeping `laneId` off the strip. How ⌘P, a
+    /// sidebar row, `maxpane attach` and a click on an alarm reach a lane:
+    /// the group expands, then you are there. Nothing to do for a lane that
+    /// is on the strip, or that a gather is hiding rather than a fold.
+    func expandGroups(hiding laneId: String) {
+        guard state.hiddenLaneIds.contains(laneId),
+              let lane = allLanes.first(where: { $0.id == laneId }) else { return }
+        let keys = SidebarModel.keysToExpand(
+            toShow: lane, telemetry: hidingInputs().telemetry, collapsed: collapsedGroups)
+        guard !keys.isEmpty else { return }
+        setCollapsedGroups(collapsedGroups.subtracting(keys))
+    }
+
+    /// Count the hidden lanes again: a session changed directory, a server
+    /// appeared, the setting was switched. Never moves focus.
+    func refreshHidden() {
+        let folds = collapsedGroups
+        let next = settleHidden(state, handOffFocus: false)
+        // Once a second, from the telemetry tick, and nearly always nothing.
+        guard next.revision != state.revision || folds != collapsedGroups else { return }
+        adopt(next)
+    }
+
+    private func adopt(_ next: StripState) {
+        guard next.revision != state.revision else {
+            // Nothing on the strip moved, but a fold did: the sidebar draws
+            // its triangles off this same notification.
+            for body in observers.values { body(state) }
+            return
+        }
+        let jarsBefore = Self.privateJars(in: state.lanes)
+        state = next
+        releasePrivateJars(heldBefore: jarsBefore)
+        for body in observers.values { body(next) }
+    }
+
+    /// `snapshot`, with the core's hidden lanes brought into line with the
+    /// folds. Returns `snapshot` itself when they already are, which is
+    /// nearly always.
+    ///
+    /// **The lane with the keyboard is never hidden by a recount.** If focus
+    /// has landed in a folded group — ⌘P went there, a new lane was born
+    /// there, the terminal you are typing in did `cd` into it — the group
+    /// opens instead. Only the fold itself (`handOffFocus`) may take the
+    /// focused lane away, and then the core moves the keyboard first.
+    private func settleHidden(_ snapshot: StripState, handOffFocus: Bool) -> StripState {
+        let inputs = hidingInputs()
+        guard inputs.enabled, !collapsedGroups.isEmpty else {
+            guard !coreHidden.isEmpty else { return snapshot }
+            coreHidden = []
+            return (try? core.setHiddenLanes(laneIds: [], handOffFocus: false)) ?? snapshot
+        }
+        let lanes = (snapshot.gatherFilter == nil && snapshot.hiddenLaneIds.isEmpty)
+            ? snapshot.lanes : ((try? core.allLanes()) ?? snapshot.lanes)
+        func wanted() -> Set<String> {
+            SidebarModel.hiddenLanes(
+                lanes: lanes, telemetry: inputs.telemetry,
+                collapsed: collapsedGroups, hasServers: inputs.hasServers)
+        }
+        var hidden = wanted()
+        // "Landed" is the word: focus that was already in a hidden lane and
+        // has not moved — every group folded at once leaves it nowhere to go
+        // — is not a reason to reopen what the user just folded.
+        if !handOffFocus, let focused = snapshot.focusedPaneId,
+           let lane = lanes.first(where: { $0.panes.contains { $0.id == focused } }),
+           lane.dock == nil, hidden.contains(lane.id),
+           !coreHidden.contains(lane.id) || focused != state.focusedPaneId {
+            let keys = SidebarModel.keysToExpand(
+                toShow: lane, telemetry: inputs.telemetry, collapsed: collapsedGroups)
+            collapsedGroups.subtract(keys)
+            try? core.setSidebarCollapsed(groups: collapsedGroups.sorted())
+            hidden = wanted()
+        }
+        // What the core is holding, docked lanes included — not what the
+        // snapshot reports, which leaves those out.
+        guard hidden != coreHidden else { return snapshot }
+        coreHidden = hidden
+        return (try? core.setHiddenLanes(laneIds: hidden.sorted(), handOffFocus: handOffFocus)) ?? snapshot
+    }
+
+    /// The set last handed to the core. Seeded from the first snapshot, which
+    /// is the ledger's; a docked lane in a folded group is in the core's set
+    /// and not in any snapshot, so the first recount may hand over a set the
+    /// core already has, which it treats as nothing.
+    private lazy var coreHidden: Set<String> = Set(state.hiddenLaneIds)
 
     // MARK: - search (§7.5)
 

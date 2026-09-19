@@ -21,6 +21,11 @@ final class SidebarViewController: NSViewController {
     private let table = NSTableView()
     private var rows: [SidebarModel.Row] = []
     private var controls = SidebarModel.Controls()
+    /// Folds that are the sidebar's own business: the bookmarks section and
+    /// the folders in it. The project groups' and the sections' folds are the
+    /// store's (`collapsedGroups`), because those take lanes off the strip and
+    /// survive a relaunch (ADR-0024); these do neither, as before.
+    private var bookmarkFolds: Set<String> = []
     private var observer: UUID?
     private var bookmarkObserver: UUID?
     private var bookmarks: [Bookmark] = []
@@ -391,6 +396,10 @@ final class SidebarViewController: NSViewController {
     private func rebuild(_ state: StripState) {
         // Every lane, not the gathered few: a row reads "not on the strip" off
         // this list, and a click on such a row attaches the session again.
+        // Read each time: a fold can open from outside this view — ⌘P, an
+        // attach, the focus landing in a folded group — and the triangle has
+        // to follow.
+        controls.collapsed = bookmarkFolds.union(store.collapsedGroups)
         let next = SidebarModel.rows(
             lanes: store.allLanes,
             telemetry: telemetry,
@@ -398,8 +407,10 @@ final class SidebarViewController: NSViewController {
             bookmarks: bookmarks,
             controls: controls,
             servers: registry?.serverStates ?? [:],
-            serverErrors: registry?.serverErrors ?? [:])
+            serverErrors: registry?.serverErrors ?? [:],
+            hiddenLanes: Set(state.hiddenLaneIds))
         updateFooter(state)
+        syncFoldButton(Self.projectPaths(in: next))
         guard next != rows else {
             syncSelection(state)
             return
@@ -455,30 +466,22 @@ final class SidebarViewController: NSViewController {
     @objc private func rowClicked() {
         let row = table.clickedRow
         if let group = group(at: row) {
-            if group.isServer, let server = group.server {
+            // A server's header is two targets: its triangle folds the whole
+            // server, and the rest of it is still the way to Settings ›
+            // Servers (ADR-0023). `// LOCAL` has nowhere to go, so all of it
+            // folds.
+            if group.isServer, let server = group.server, !clickIsOnTriangle() {
                 onOpenServer?(server)
                 return
             }
-            // `// LOCAL` heads a block and folds nothing.
-            if group.isSection { return }
-            if controls.collapsed.contains(group.path) {
-                controls.collapsed.remove(group.path)
-            } else {
-                controls.collapsed.insert(group.path)
-            }
-            rebuild(store.state)
+            flipFold(of: group.path)
             return
         }
         if let kept = bookmark(at: row) {
             // A folder opens; a page opens. Same click, and the only two things
             // a row here can be.
             if kept.isFolder {
-                if controls.collapsed.contains(kept.id) {
-                    controls.collapsed.remove(kept.id)
-                } else {
-                    controls.collapsed.insert(kept.id)
-                }
-                rebuild(store.state)
+                flipFold(of: kept.id)
             } else if let url = kept.url {
                 onOpenBookmark?(url)
             }
@@ -538,17 +541,64 @@ final class SidebarViewController: NSViewController {
 
     /// Collapse everything, or open everything back up — the bar's second
     /// button, and the only way to get ten projects onto one screen.
-    @objc private func toggleFold() {
-        // A server's header never folds — it has no rows of its own.
-        let paths = Set(rows.compactMap {
-            if case .group(let g) = $0, !g.isSection { return g.path } else { return nil }
-        })
-        let folding = !paths.isEmpty && !paths.isSubset(of: controls.collapsed)
-        controls.collapsed = folding ? controls.collapsed.union(paths) : []
-        foldButton.isOn = folding
-        foldButton.setText(folding ? "⌄⌃" : "⌃⌄")
-        foldButton.toolTip = folding ? "Expand all projects" : "Collapse all projects"
+    /// Whether the click that is being handled landed on a header's triangle.
+    private func clickIsOnTriangle() -> Bool {
+        guard let event = NSApp.currentEvent else { return false }
+        return table.convert(event.locationInWindow, from: nil).x <= SidebarGroupView.triangleReach
+    }
+
+    /// Fold or open one header. A project group's or a section's fold goes to
+    /// the store, which is what takes the lanes off the strip and remembers
+    /// it; the bookmarks' folds stay here.
+    private func flipFold(of key: String) {
+        if key == SidebarModel.bookmarksGroup || bookmarks.contains(where: { $0.id == key }) {
+            bookmarkFolds.formSymmetricDifference([key])
+        } else {
+            store.setCollapsedGroups(store.collapsedGroups.symmetricDifference([key]))
+        }
         rebuild(store.state)
+    }
+
+    /// Every project group on screen, the bookmarks section apart. The
+    /// sections are left out: folding each project under one says the same
+    /// thing and leaves the headers to open them by.
+    private var projectPaths: Set<String> { Self.projectPaths(in: rows) }
+
+    private static func projectPaths(in rows: [SidebarModel.Row]) -> Set<String> {
+        Set(rows.compactMap {
+            if case .group(let g) = $0, !g.isSection, g.path != SidebarModel.bookmarksGroup {
+                return g.path
+            }
+            return nil
+        })
+    }
+
+    @objc private func toggleFold() {
+        let folded = controls.collapsed
+        let paths = projectPaths
+        let folding = !paths.isEmpty && !paths.isSubset(of: folded)
+        setAllFolded(folding)
+    }
+
+    private func setAllFolded(_ folding: Bool) {
+        if folding {
+            if !bookmarks.isEmpty { bookmarkFolds.insert(SidebarModel.bookmarksGroup) }
+            store.setCollapsedGroups(store.collapsedGroups.union(projectPaths))
+        } else {
+            bookmarkFolds = []
+            store.setCollapsedGroups([])
+        }
+        rebuild(store.state)
+    }
+
+    /// The button says what the sidebar is, whoever folded it.
+    private func syncFoldButton(_ paths: Set<String>) {
+        guard foldButton != nil else { return }
+        let folded = !paths.isEmpty && paths.isSubset(of: controls.collapsed)
+        guard foldButton.isOn != folded else { return }
+        foldButton.isOn = folded
+        foldButton.setText(folded ? "⌄⌃" : "⌃⌄")
+        foldButton.toolTip = folded ? "Expand all projects" : "Collapse all projects"
     }
 
     @objc private func toggleFilter() {
@@ -702,15 +752,9 @@ final class SidebarViewController: NSViewController {
         try? store.closeLane(lane.id)
     }
 
-    @objc private func collapseAll() {
-        controls.collapsed = Set(rows.compactMap { if case .group(let g) = $0, !g.isSection { return g.path } else { return nil } })
-        rebuild(store.state)
-    }
+    @objc private func collapseAll() { setAllFolded(true) }
 
-    @objc private func expandAll() {
-        controls.collapsed.removeAll()
-        rebuild(store.state)
-    }
+    @objc private func expandAll() { setAllFolded(false) }
 }
 
 // MARK: - menu

@@ -123,10 +123,15 @@ enum SidebarModel {
         /// Why the server is not connected, in one line; the header's
         /// tooltip. Nil while connected. Never carries the token.
         var serverError: String?
+        /// How many lanes this header's collapse is keeping off the strip
+        /// (ADR-0024). Zero when it is open, when the setting is off, and
+        /// when every lane under it is held on screen by something else: a
+        /// dock, or a pane from a group that is still open.
+        var hiddenLanes = 0
 
         /// A section header — a server's, or `// LOCAL` — rather than a
-        /// project group: it heads a block, has no rows of its own, and
-        /// never folds.
+        /// project group: it heads a block and has no rows of its own.
+        /// Folding one folds every project under it.
         var isSection: Bool { isServer || isLocalSection }
         var isLocalSection: Bool { path == SidebarModel.localSection }
 
@@ -171,6 +176,12 @@ enum SidebarModel {
         /// fact you cannot afford to have hidden.
         var countText: String {
             if let countOverride { return countOverride }
+            // A collapse that is holding lanes off the strip says so, in the
+            // place the count was: the rows are folded away, so what they
+            // were doing is not on show, and what is missing from the strip
+            // is the thing to know. BLOCKED is never folded into this; it
+            // has its own text beside it (`blockedText`).
+            if hiddenLanes > 0 { return "\(hiddenLanes) LANE\(hiddenLanes == 1 ? "" : "S") HIDDEN" }
             if isSection {
                 // The section's line: what it holds. `total` is its session
                 // count across every project in it. A server's state is its
@@ -182,6 +193,14 @@ enum SidebarModel {
             // can back. What is known is how many there were.
             if serverIsOffline { return "\(total) OFFLINE" }
             return blocked > 0 ? "\(blocked) BLOCKED" : (running > 0 ? "\(running) RUNNING" : "\(total) CLOSED")
+        }
+
+        /// `2 BLOCKED`, beside a count that is saying something else: only a
+        /// header hiding lanes has both to say. Everywhere else `countText`
+        /// already leads with it.
+        var blockedText: String? {
+            guard hiddenLanes > 0, blocked > 0 else { return nil }
+            return "\(blocked) BLOCKED"
         }
 
         /// The header's state is worth a colour: the server is not connected.
@@ -281,6 +300,7 @@ enum SidebarModel {
         controls: Controls = Controls(),
         servers: [String: ServerState] = [:],
         serverErrors: [String: String] = [:],
+        hiddenLanes: Set<String> = [],
         now: Date = Date()
     ) -> [Row] {
         // The *pane* as well as the lane: a click on a row has to be able to
@@ -410,6 +430,12 @@ enum SidebarModel {
                 local.append(path)
             }
         }
+        // Lanes, not rows: a split lane is two rows and one lane, and the
+        // header counts what is missing from the strip.
+        func hiding(_ entries: [Entry]) -> Int {
+            guard !hiddenLanes.isEmpty else { return 0 }
+            return Set(entries.compactMap(\.laneId)).intersection(hiddenLanes).count
+        }
         func emit(_ path: String) {
             let kept = grouped[path]!.filter { matches($0, controls) }
             guard !kept.isEmpty else { return }
@@ -421,13 +447,15 @@ enum SidebarModel {
                 total: kept.count,
                 collapsed: collapsed,
                 countOverride: nil,
-                serverState: LaneHeaderPath.splitServer(path).flatMap { servers[$0.server] })))
+                serverState: LaneHeaderPath.splitServer(path).flatMap { servers[$0.server] },
+                hiddenLanes: collapsed ? hiding(grouped[path]!) : 0)))
             guard !collapsed else { return }
             out.append(contentsOf: sorted(kept, controls).map(Row.entry))
         }
         // `// LOCAL`, only beside at least one server: the blocks are then
         // parallel. With none configured there is no header and nothing
         // else here changes, pixel for pixel.
+        let localFolded = !servers.isEmpty && controls.collapsed.contains(localSection)
         if !servers.isEmpty {
             let entries = local.filter { $0 != looseWebGroup }
                 .flatMap { grouped[$0]! }.filter { $0.kind == .session && matches($0, controls) }
@@ -436,23 +464,30 @@ enum SidebarModel {
                 running: entries.filter(\.isRunning).count,
                 blocked: entries.filter(\.needsAttention).count,
                 total: entries.count,
-                collapsed: false,
+                collapsed: localFolded,
                 countOverride: nil,
-                serverState: nil)))
+                serverState: nil,
+                hiddenLanes: localFolded
+                    ? hiding(local.filter { $0 != looseWebGroup }.flatMap { grouped[$0]! }) : 0)))
         }
-        for path in local { emit(path) }
+        // A folded section folds every project under it. The loose web group
+        // is under no section — `// LOCAL` never counted it — and stays.
+        for path in local where !localFolded || path == looseWebGroup { emit(path) }
         for server in Set(servers.keys).union(byServer.keys).sorted() {
             let paths = byServer[server] ?? []
             let entries = paths.flatMap { grouped[$0]! }.filter { matches($0, controls) }
+            let folded = controls.collapsed.contains(Group.serverPath(server))
             out.append(.group(Group(
                 path: Group.serverPath(server),
                 running: entries.filter(\.isRunning).count,
                 blocked: entries.filter(\.needsAttention).count,
                 total: entries.count,
-                collapsed: false,
+                collapsed: folded,
                 countOverride: nil,
                 serverState: servers[server],
-                serverError: serverErrors[server])))
+                serverError: serverErrors[server],
+                hiddenLanes: folded ? hiding(paths.flatMap { grouped[$0]! }) : 0)))
+            guard !folded else { continue }
             for path in paths { emit(path) }
         }
         return out
@@ -769,6 +804,76 @@ enum SidebarModel {
             }
             return ascending ? lhs : !lhs
         }
+    }
+
+    // MARK: - which lanes a collapse hides (ADR-0024)
+
+    /// The sidebar groups a lane files under: where its rows are.
+    ///
+    /// The same rule `rows` follows, so a header hides exactly the lanes whose
+    /// rows fold under it. A session the registry knows files under its own
+    /// directory, which is its cwd and may not be the lane's project tag; a
+    /// lane none of whose sessions the registry knows — a web lane, a
+    /// terminal whose session has gone, a remote one not heard from yet —
+    /// files under its tag. A split lane can therefore be in two groups.
+    static func groups(of lane: Lane, telemetry: [SessionKey: SessionTelemetry]) -> Set<String> {
+        let known = lane.panes.compactMap(\.sessionKey).compactMap { telemetry[$0]?.groupPath }
+        return known.isEmpty ? [group(for: lane)] : Set(known)
+    }
+
+    /// The section a group sits under: its server's header, or `// LOCAL`.
+    static func section(of group: String) -> String {
+        LaneHeaderPath.splitServer(group).map { Group.serverPath($0.server) } ?? localSection
+    }
+
+    /// Whether `group` is folded, by its own header or by its section's.
+    ///
+    /// `// LOCAL` exists only beside a server (`hasServers`). Without one
+    /// there is no header to click, so a stored fold of it folds nothing —
+    /// otherwise removing the last server would strand every local lane
+    /// behind a header that is no longer drawn.
+    static func isFolded(_ group: String, collapsed: Set<String>, hasServers: Bool) -> Bool {
+        if collapsed.contains(group) { return true }
+        let section = section(of: group)
+        if section == localSection && !hasServers { return false }
+        return collapsed.contains(section)
+    }
+
+    /// The lanes the collapsed headers take off the strip.
+    ///
+    /// A lane goes only when **every** group it is in is folded: a split
+    /// lane with one pane in an open group is still a lane you are working
+    /// in. An untagged lane — the loose web group, `-` in `maxpane ls` —
+    /// never goes: it belongs to no project, so no project being put away
+    /// can take it, and folding `Web` folds its rows as it always did.
+    static func hiddenLanes(
+        lanes: [Lane], telemetry: [SessionKey: SessionTelemetry],
+        collapsed: Set<String>, hasServers: Bool
+    ) -> Set<String> {
+        guard !collapsed.isEmpty else { return [] }
+        var out: Set<String> = []
+        for lane in lanes {
+            let groups = groups(of: lane, telemetry: telemetry)
+            if groups.contains(looseWebGroup) { continue }
+            if groups.allSatisfy({ isFolded($0, collapsed: collapsed, hasServers: hasServers) }) {
+                out.insert(lane.id)
+            }
+        }
+        return out
+    }
+
+    /// The headers to open so that `lane` is on the strip again: every
+    /// folded key that covers one of its groups. Opening all of them, not
+    /// just enough of them, because "the group expands, then you are there"
+    /// should leave the sidebar showing the row you came for.
+    static func keysToExpand(
+        toShow lane: Lane, telemetry: [SessionKey: SessionTelemetry], collapsed: Set<String>
+    ) -> Set<String> {
+        var keys: Set<String> = []
+        for group in groups(of: lane, telemetry: telemetry) {
+            keys.formUnion([group, section(of: group)])
+        }
+        return keys.intersection(collapsed)
     }
 
     // MARK: - counts for the footer
