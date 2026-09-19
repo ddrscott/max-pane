@@ -23,6 +23,16 @@ final class FakeRelayServer: @unchecked Sendable {
     var token = "t0k3n"
     /// What `/api/sessions` answers with, as the JSON rows.
     var sessions: [[String: Any]] = []
+    /// Every `POST /api/sessions` body, decoded, in order.
+    private var posted: [[String: Any]] = []
+    var spawnBodies: [[String: Any]] { lock.lock(); defer { lock.unlock() }; return posted }
+    /// The home the fake server starts a session in when the body names no
+    /// `cwd` — what relay-tty does with `process.env.HOME`.
+    var home = "/home/fake"
+    /// Answer every spawn with this status and `{"error": …}` instead of 201.
+    var spawnRefusal: (status: Int, error: String)?
+    /// The id the next spawn gets.
+    var nextSpawnId = "5eed0001"
     /// Whether the server checks the cookie at all (LAN-direct does; a
     /// tunnel does not, for the WebSocket).
     var requiresCookie = true
@@ -66,14 +76,36 @@ final class FakeRelayServer: @unchecked Sendable {
             buf.append(data)
             if let range = buf.range(of: Data("\r\n\r\n".utf8)) {
                 let head = String(decoding: buf[..<range.lowerBound], as: UTF8.self)
-                self.handle(conn, head: head)
+                // A POST carries a body: read to Content-Length before answering.
+                let wanted = head.components(separatedBy: "\r\n")
+                    .first { $0.lowercased().hasPrefix("content-length:") }
+                    .flatMap { Int($0.split(separator: ":")[1].trimmingCharacters(in: .whitespaces)) } ?? 0
+                let body = buf[range.upperBound...]
+                if body.count >= wanted {
+                    self.handle(conn, head: head, body: Data(body.prefix(wanted)))
+                } else {
+                    self.readBody(conn, head: head, wanted: wanted, buffered: Data(body))
+                }
             } else if !done {
                 self.readHead(conn, buffered: buf)
             }
         }
     }
 
-    private func handle(_ conn: NWConnection, head: String) {
+    private func readBody(_ conn: NWConnection, head: String, wanted: Int, buffered: Data) {
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, done, error in
+            guard let self, error == nil, let data else { return }
+            var buf = buffered
+            buf.append(data)
+            if buf.count >= wanted {
+                self.handle(conn, head: head, body: Data(buf.prefix(wanted)))
+            } else if !done {
+                self.readBody(conn, head: head, wanted: wanted, buffered: buf)
+            }
+        }
+    }
+
+    private func handle(_ conn: NWConnection, head: String, body: Data = Data()) {
         let lines = head.components(separatedBy: "\r\n")
         let requestLine = lines.first ?? ""
         lock.lock(); requests.append(requestLine); lock.unlock()
@@ -99,8 +131,42 @@ final class FakeRelayServer: @unchecked Sendable {
             drainFrames(conn)
             return
         }
+        let method = requestLine.split(separator: " ").first.map(String.init) ?? ""
+        if method == "POST", path == "/api/sessions" {
+            let request = (try? JSONSerialization.jsonObject(with: body) as? [String: Any]) ?? [:]
+            lock.lock(); posted.append(request); lock.unlock()
+            if let refusal = spawnRefusal {
+                let out = try! JSONSerialization.data(withJSONObject: ["error": refusal.error])
+                respond(conn, "HTTP/1.1 \(refusal.status) Nope\r\nContent-Type: application/json\r\nContent-Length: \(out.count)\r\nConnection: close\r\n\r\n", out)
+                return
+            }
+            // What relay-tty does: `$SHELL` resolved, no cwd means HOME, a
+            // session row in `pending` until pty-host writes its file.
+            let command = (request["command"] as? String) == "$SHELL" ? "/usr/bin/zsh" : (request["command"] as? String ?? "")
+            let session = Self.session(
+                nextSpawnId, cwd: request["cwd"] as? String ?? home, command: command,
+                args: request["args"] as? [String] ?? [],
+                cols: request["cols"] as? Int ?? 80, rows: request["rows"] as? Int ?? 24)
+            lock.lock(); sessions.append(session); lock.unlock()
+            let out = try! JSONSerialization.data(withJSONObject: ["session": session, "url": "\(baseURL)/sessions/\(nextSpawnId)"])
+            respond(conn, "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: \(out.count)\r\nConnection: close\r\n\r\n", out)
+            return
+        }
+        if method == "GET", path.hasPrefix("/api/sessions/") {
+            let id = String(path.dropFirst("/api/sessions/".count).prefix { $0 != "?" })
+            lock.lock(); let found = sessions.first { ($0["id"] as? String) == id }; lock.unlock()
+            guard let found else {
+                let out = Data("{\"error\":\"Session not found\"}".utf8)
+                respond(conn, "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: \(out.count)\r\nConnection: close\r\n\r\n", out)
+                return
+            }
+            let out = try! JSONSerialization.data(withJSONObject: ["session": found])
+            respond(conn, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(out.count)\r\nConnection: close\r\n\r\n", out)
+            return
+        }
         if path.hasPrefix("/api/sessions") {
-            let body = try! JSONSerialization.data(withJSONObject: ["sessions": sessions])
+            lock.lock(); let rows = sessions; lock.unlock()
+            let body = try! JSONSerialization.data(withJSONObject: ["sessions": rows])
             respond(conn, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n", body)
             return
         }
@@ -157,10 +223,12 @@ final class FakeRelayServer: @unchecked Sendable {
     }
 
     static func session(_ id: String, cwd: String = "/home/spierce", status: String = "running",
-                        agentState: String = "idle", title: String? = nil) -> [String: Any] {
+                        agentState: String = "idle", title: String? = nil,
+                        command: String = "claude", args: [String] = [],
+                        cols: Int = 80, rows: Int = 24) -> [String: Any] {
         var row: [String: Any] = [
-            "id": id, "command": "claude", "args": [], "cwd": cwd, "createdAt": 1_700_000_000_000,
-            "lastActivity": 1_700_000_100_000, "status": status, "cols": 80, "rows": 24,
+            "id": id, "command": command, "args": args, "cwd": cwd, "createdAt": 1_700_000_000_000,
+            "lastActivity": 1_700_000_100_000, "status": status, "cols": cols, "rows": rows,
             "pid": 4242, "agentState": agentState,
         ]
         if let title { row["title"] = title }

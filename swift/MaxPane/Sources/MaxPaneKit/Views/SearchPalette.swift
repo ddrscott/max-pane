@@ -186,6 +186,18 @@ class PaletteController: Popup, NSTextFieldDelegate {
         reload()
     }
 
+    /// Put `text` in the field as if it had been typed, cursor at the end.
+    /// Both the cell and the field editor, for the reason `query` gives:
+    /// while the field is being edited the editor's text is the truth.
+    func setQuery(_ text: String) {
+        query = text
+        field.stringValue = text
+        if let editor = field.currentEditor() {
+            editor.string = text
+            editor.selectedRange = NSRange(location: (text as NSString).length, length: 0)
+        }
+    }
+
     func reload() {
         table.reloadData()
         layOutRows()

@@ -132,6 +132,24 @@ final class HelpPanel: Popup {
             blank()
         }
 
+        // The picker's own grammar. Three things and no more, because a
+        // field that reads one line should need one line to explain.
+        heading("In \(describe(.openAnything))")
+        out.append(NSAttributedString(
+            string: """
+                a line          run it here, or open it — both readings are always offered
+                @server line    run it on that relay-tty server (Settings › Servers), in its home —
+                                or in the focused lane's directory, when that lane is on it
+                @local line     run it on this Mac, whatever lane is focused
+                ⇥               pages, commands or sessions only     ⌘1–⌘0  the numbered row
+                ⌘⌫              forget the selected row
+
+                With no @, a line runs where the focused lane is. The row's second line
+                says where before you press Return.
+
+                """,
+            attributes: [.foregroundColor: NSColor.labelColor, .font: Theme.mono(12)]))
+
         heading("From a terminal")
         out.append(NSAttributedString(
             string: """

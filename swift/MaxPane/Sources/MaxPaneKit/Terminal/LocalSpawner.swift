@@ -1,6 +1,8 @@
 import Foundation
 
-/// Starts a new RelayTTY session by spawning `relay-pty-host` directly.
+/// Starts a new RelayTTY session on this Mac by spawning `relay-pty-host`
+/// directly. The local half of `SessionSpawning`; `RemoteSpawner` is the
+/// other, and the two build the same wrapper (see `buildArgs`).
 ///
 /// This is what RelayTTY's own CLI and server both do, and it needs no running
 /// Node server: `~/.config/relay-tty/server.json` is only removed on a *clean*
@@ -9,7 +11,7 @@ import Foundation
 /// the phone client like any other.
 ///
 /// Nothing about the wire protocol is touched. This is the documented argv.
-public struct RelaySessionSpawner {
+public struct LocalSpawner {
     enum SpawnError: LocalizedError {
         case binaryNotFound
         case notAProgram(String)
@@ -186,10 +188,16 @@ public struct RelaySessionSpawner {
         // Leaving the shell in place costs one extra process and buys the
         // signal. It also means the lane survives the agent exiting, which is
         // what you want from a supervision surface.
-        let inner = args.isEmpty
+        return head + [userShell(), "-li", "-c", shellWrapped(programLine(command, args: args))]
+    }
+
+    /// A program and its arguments as one line the wrapper shell reads back
+    /// to exactly those words: every word single-quoted, so nothing in an
+    /// argument is expanded, split or globbed a second time.
+    static func programLine(_ command: String, args: [String]) -> String {
+        args.isEmpty
             ? shellEscape(command)
             : shellEscape(command) + " " + args.map(shellEscape).joined(separator: " ")
-        return head + [userShell(), "-li", "-c", shellWrapped(inner)]
     }
 
     /// `relay-pty-host <id> <cols> <rows> <cwd> $SHELL -li -c <line>`.
@@ -499,7 +507,7 @@ public struct RelaySessionSpawner {
     }
 }
 
-extension RelaySessionSpawner {
+extension LocalSpawner {
     /// `maxpane-open`, which ships in the bundle's `Helpers` directory.
     ///
     /// Not `Contents/MacOS`: macOS filesystems are case-insensitive by default,
@@ -517,65 +525,63 @@ extension RelaySessionSpawner {
     }
 }
 
-extension RelaySessionSpawner {
-    /// What one line of typed text asks for.
-    ///
-    /// # Why ⌘O reads a shell line and `maxpane run` refuses one
-    ///
-    /// The two doors are handed different things, and that is the whole of the
-    /// difference. `maxpane run npm run build` arrives as **argv** — a list of
-    /// words some other shell has already separated, quoted and expanded — so
-    /// interpreting them a second time would be the classic double-evaluation
-    /// bug: a script's `maxpane run "$editor" "$file"` must open a file called
-    /// `; rm -rf ~`, not run one. That door therefore passes argv through
-    /// literally and refuses a command *word* that could only be a shell line,
-    /// which is `isShellLine` and the reason it exists.
-    ///
-    /// ⌘O is handed **one string that nothing has interpreted yet**, typed by
-    /// the owner at his own keyboard. Something has to read it, and the only
-    /// correct reader of a command line is a shell. What it used to do instead
-    /// was a third thing, worse than either: `line.split(separator: " ")`, a
-    /// shell imitation that got pipelines, quoting and globbing all wrong and
-    /// was silent about it. `yes | head` became `yes` with the literal arguments
-    /// `|` and `head`, which is not an error — it is a lane spewing `y` forever.
-    ///
-    /// # Why not hand *every* typed line to the shell
-    ///
-    /// Because a bare `zsh` should still be a login shell that pty-host can poll
-    /// for `cd` (see `spawn` and `buildArgs`), and wrapping it would make it a
-    /// non-leader and freeze the lane's directory tag. A line with no shell
-    /// syntax in it means exactly the same thing either way, so the cheaper and
-    /// better-behaved reading wins.
-    enum TypedCommand: Equatable {
-        /// A program and its arguments, passed as argv and escaped — the same
-        /// thing `maxpane run <program> <args…>` does with the same words.
-        case program(String, args: [String])
-        /// A line only a shell can read, handed to the user's login shell whole.
-        case shellLine(String)
+/// What one line of typed text asks for.
+///
+/// # Why ⌘O reads a shell line and `maxpane run` refuses one
+///
+/// The two doors are handed different things, and that is the whole of the
+/// difference. `maxpane run npm run build` arrives as **argv** — a list of
+/// words some other shell has already separated, quoted and expanded — so
+/// interpreting them a second time would be the classic double-evaluation
+/// bug: a script's `maxpane run "$editor" "$file"` must open a file called
+/// `; rm -rf ~`, not run one. That door therefore passes argv through
+/// literally and refuses a command *word* that could only be a shell line,
+/// which is `isShellLine` and the reason it exists.
+///
+/// ⌘O is handed **one string that nothing has interpreted yet**, typed by
+/// the owner at his own keyboard. Something has to read it, and the only
+/// correct reader of a command line is a shell. What it used to do instead
+/// was a third thing, worse than either: `line.split(separator: " ")`, a
+/// shell imitation that got pipelines, quoting and globbing all wrong and
+/// was silent about it. `yes | head` became `yes` with the literal arguments
+/// `|` and `head`, which is not an error — it is a lane spewing `y` forever.
+///
+/// # Why not hand *every* typed line to the shell
+///
+/// Because a bare `zsh` should still be a login shell that pty-host can poll
+/// for `cd` (see `spawn` and `buildArgs`), and wrapping it would make it a
+/// non-leader and freeze the lane's directory tag. A line with no shell
+/// syntax in it means exactly the same thing either way, so the cheaper and
+/// better-behaved reading wins.
+enum TypedCommand: Equatable {
+    /// A program and its arguments, passed as argv and escaped — the same
+    /// thing `maxpane run <program> <args…>` does with the same words.
+    case program(String, args: [String])
+    /// A line only a shell can read, handed to the user's login shell whole.
+    case shellLine(String)
 
-        /// Which of the two `text` is, or nil when there is nothing in it.
-        ///
-        /// The test is the presence of any character whose job is to change the
-        /// meaning of the words around it. Splitting on whitespace is correct
-        /// only when none of them is there, and wrong the instant one is.
-        static func parse(_ text: String) -> TypedCommand? {
-            let line = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !line.isEmpty else { return nil }
-            if line.rangeOfCharacter(from: shellSyntax) != nil { return .shellLine(line) }
-            let words = line.split(whereSeparator: \.isWhitespace).map(String.init)
-            guard let program = words.first else { return nil }
-            return .program(program, args: Array(words.dropFirst()))
-        }
-
-        /// Characters that make a line a shell's business: pipelines and lists
-        /// (`| & ;`), redirection (`< >`), subshells and grouping (`( ) { }`),
-        /// expansion (`$` and a backquote), quoting (`' " \`), globbing
-        /// (`* ? [ ]`), `~` for home, and `=` for an environment prefix.
-        ///
-        /// `#` is deliberately absent. It is a comment to a shell, but a line
-        /// containing one — `open example.com/#top` — already works as argv, and
-        /// routing it through a shell would truncate it. The rule only moves a
-        /// line to the shell when the shell reading is the *better* one.
-        private static let shellSyntax = CharacterSet(charactersIn: "|&;<>()${}`'\"\\*?[]~=\n\t")
+    /// Which of the two `text` is, or nil when there is nothing in it.
+    ///
+    /// The test is the presence of any character whose job is to change the
+    /// meaning of the words around it. Splitting on whitespace is correct
+    /// only when none of them is there, and wrong the instant one is.
+    static func parse(_ text: String) -> TypedCommand? {
+        let line = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !line.isEmpty else { return nil }
+        if line.rangeOfCharacter(from: shellSyntax) != nil { return .shellLine(line) }
+        let words = line.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard let program = words.first else { return nil }
+        return .program(program, args: Array(words.dropFirst()))
     }
+
+    /// Characters that make a line a shell's business: pipelines and lists
+    /// (`| & ;`), redirection (`< >`), subshells and grouping (`( ) { }`),
+    /// expansion (`$` and a backquote), quoting (`' " \`), globbing
+    /// (`* ? [ ]`), `~` for home, and `=` for an environment prefix.
+    ///
+    /// `#` is deliberately absent. It is a comment to a shell, but a line
+    /// containing one — `open example.com/#top` — already works as argv, and
+    /// routing it through a shell would truncate it. The rule only moves a
+    /// line to the shell when the shell reading is the *better* one.
+    private static let shellSyntax = CharacterSet(charactersIn: "|&;<>()${}`'\"\\*?[]~=\n\t")
 }

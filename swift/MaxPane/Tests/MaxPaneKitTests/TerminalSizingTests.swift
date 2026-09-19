@@ -185,11 +185,11 @@ struct PtyHostSelectionTests {
         try Data("...binary...Do you want to proceed...more".utf8).write(to: withIt)
         try Data("...binary...nothing of interest...".utf8).write(to: without)
 
-        #expect(RelaySessionSpawner.hasAgentClassifier(at: withIt.path))
-        #expect(!RelaySessionSpawner.hasAgentClassifier(at: without.path))
+        #expect(LocalSpawner.hasAgentClassifier(at: withIt.path))
+        #expect(!LocalSpawner.hasAgentClassifier(at: without.path))
         // A path that is not there must not throw or crash — it is the common
         // case on a machine with no RelayTTY checkout.
-        #expect(!RelaySessionSpawner.hasAgentClassifier(at: dir.appendingPathComponent("absent").path))
+        #expect(!LocalSpawner.hasAgentClassifier(at: dir.appendingPathComponent("absent").path))
     }
 
     @Test("an explicit override always wins")
@@ -203,8 +203,8 @@ struct PtyHostSelectionTests {
         try Data("anything".utf8).write(to: mine)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: mine.path)
 
-        #expect(RelaySessionSpawner.locatePtyHost(override: mine.path) == mine.path)
+        #expect(LocalSpawner.locatePtyHost(override: mine.path) == mine.path)
         // A non-executable override is ignored rather than used and failing later.
-        #expect(RelaySessionSpawner.locatePtyHost(override: "/nope/nothing") != "/nope/nothing")
+        #expect(LocalSpawner.locatePtyHost(override: "/nope/nothing") != "/nope/nothing")
     }
 }

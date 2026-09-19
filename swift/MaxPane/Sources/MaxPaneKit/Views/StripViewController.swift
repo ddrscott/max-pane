@@ -2434,7 +2434,7 @@ public final class StripViewController: NSViewController {
         let size = TerminalPaneController.newSessionSize(
             config: config, viewHeight: view.bounds.height)
         do {
-            let session = try RelaySessionSpawner(config: config)
+            let session = try LocalSpawner(config: config)
                 .spawn(cwd: cwd, shellLine: shellLine, cols: size.cols, rows: size.rows)
             try store.newTerminalLane(relaySessionId: session, near: laneId)
             editorSessions[path] = session
@@ -3075,16 +3075,27 @@ public final class StripViewController: NSViewController {
         (paneControllers[paneId] as? TerminalPaneController)?.claimSessionAtLaneWidth()
     }
 
-    /// A pty pane's current working directory, for spawning a sibling in the
-    /// right place (PRD §7.1).
+    /// A pty pane's current working directory *on this Mac*, for spawning a
+    /// sibling in the right place (PRD §7.1).
     ///
     /// Nil for a remote pane: its cwd is a directory on another machine, and
-    /// nothing spawned here can start in it. Until spawning reaches remote
-    /// servers, a sibling of a remote lane starts where a sibling of no lane
-    /// would.
+    /// nothing spawned here can start in it. `maxpane run` from a local
+    /// shell is the caller that must stay local; ⌘T, ⌘D and ⌘O ask
+    /// `spawnPlace(ofPane:)`, which carries the server as well.
     public func cwd(ofPane paneId: String) -> String? {
         guard store.pane(paneId)?.relayServer == nil else { return nil }
         return (paneControllers[paneId] as? TerminalPaneController)?.currentCwd
+    }
+
+    /// Where a sibling of `paneId` starts: the pane's server, and its
+    /// directory over there — the one the server reported, since a remote
+    /// shell sends no OSC 7. A web pane, or a terminal whose directory is
+    /// not known yet, is its server's home (`nil`). The lane's project tag
+    /// is deliberately not used: a manual tag is a name, not a path.
+    func spawnPlace(ofPane paneId: String) -> SpawnPlace {
+        guard let pane = store.pane(paneId) else { return .local }
+        let cwd = (paneControllers[paneId] as? TerminalPaneController)?.currentCwd
+        return SpawnPlace(server: pane.relayServer, cwd: cwd)
     }
 
     /// Which lane holds the terminal attached to `sessionId`, for the

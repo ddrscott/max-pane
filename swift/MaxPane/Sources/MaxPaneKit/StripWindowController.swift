@@ -443,7 +443,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             : cwd
         do {
             let size = newSessionSize()
-            let session = try RelaySessionSpawner(config: config).spawn(
+            let session = try LocalSpawner(config: config).spawn(
                 cwd: workingDirectory,
                 command: command.isEmpty ? nil : command,
                 args: args,
@@ -664,11 +664,20 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 // "Same kind as focused" (PRD §7.1). A web split needs a URL, so
                 // a terminal split is the only one that can happen silently.
                 if pane.kind == .pty {
-                    let cwd = strip.cwd(ofPane: focused) ?? FileManager.default.homeDirectoryForCurrentUser.path
+                    // Beside a remote pane, on that pane's server in that
+                    // pane's directory — the same rule as ⌘T, one pane down.
+                    let place = strip.spawnPlace(ofPane: focused)
                     let size = newSessionSize()
-                    let session = try RelaySessionSpawner(config: config)
-                        .spawn(cwd: cwd, cols: size.cols, rows: size.rows)
-                    try store.addPane(to: lane.id, kind: .pty, relaySessionId: session, url: nil)
+                    try spawner(at: place).spawn(
+                        cwd: place.cwd, command: nil, args: [], cols: size.cols, rows: size.rows
+                    ) { [weak self] result in
+                        guard let self else { return }
+                        do {
+                            try self.store.addTerminalPane(to: lane.id, session: try result.get().key)
+                        } catch {
+                            self.showError(error)
+                        }
+                    }
                 } else {
                     // The same picker, pointed at this lane instead of a new
                     // one. Splitting a web pane used to open an `NSAlert` with
@@ -850,13 +859,45 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     // MARK: - helpers
 
     private func newTerminal(near lane: Lane?) throws {
-        // PRD §7.1: the new session starts in the focused pane's cwd.
-        let cwd = store.state.focusedPaneId.flatMap { strip.cwd(ofPane: $0) }
-            ?? FileManager.default.homeDirectoryForCurrentUser.path
+        // PRD §7.1: the new session starts in the focused pane's cwd — and,
+        // beside a remote lane, on that lane's server, because a shell here
+        // in a directory that only exists over there is not a sibling of
+        // anything.
+        let place = store.state.focusedPaneId.map { strip.spawnPlace(ofPane: $0) } ?? .local
         let size = newSessionSize()
-        let session = try RelaySessionSpawner(config: config)
-            .spawn(cwd: cwd, cols: size.cols, rows: size.rows)
-        try store.newTerminalLane(relaySessionId: session, near: lane?.id)
+        try spawner(at: place).spawn(
+            cwd: place.cwd, command: nil, args: [], cols: size.cols, rows: size.rows
+        ) { [weak self] result in
+            guard let self else { return }
+            do {
+                try self.store.newTerminalLane(session: try result.get().key, near: lane?.id)
+            } catch {
+                self.showError(error)
+            }
+        }
+    }
+
+    /// The spawner for `place`, or the one line for a server the file no
+    /// longer configures — a lane on such a server is still on the strip
+    /// (with its banner), so ⌘T beside it is a real thing to try.
+    private func spawner(at place: SpawnPlace) throws -> SessionSpawning {
+        guard let spawner = servers.spawner(for: place.server, config: config) else {
+            throw ServerNotConfigured(name: place.server ?? "")
+        }
+        return spawner
+    }
+
+    struct ServerNotConfigured: LocalizedError {
+        let name: String
+        var errorDescription: String? {
+            "\(name): not in config.toml — add the server in Settings › Servers, then try again"
+        }
+    }
+
+    /// Where a ⌘O line runs with nothing else said: the focused lane's
+    /// server and directory, or this Mac's home with no lane.
+    private var focusedPlace: SpawnPlace {
+        store.state.focusedPaneId.map { strip.spawnPlace(ofPane: $0) } ?? .local
     }
 
     /// ⌘O (and ⌘T, ⌘Y, ⌥⌘O) — the picker, and what to do with what it
@@ -866,8 +907,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     /// subtle difference: the picker prints where the result will land in the
     /// header above the first row, so there is never a question of which of two
     /// identical-looking windows you are in.
-    private func showOmniPicker(scope: OmniScope, near lane: Lane?) {
-        present(scope: scope, destination: "→ new lane") { [weak self] action in
+    private func showOmniPicker(scope: OmniScope, near lane: Lane?, prefill: String? = nil, notice: String? = nil) {
+        present(scope: scope, destination: "→ new lane", prefill: prefill, notice: notice) { [weak self] action in
             self?.launch(action, near: lane)
         }
     }
@@ -885,16 +926,20 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     }
 
     private func present(
-        scope: OmniScope, destination: String, onChoose: @escaping (OmniAction) -> Void
+        scope: OmniScope, destination: String, prefill: String? = nil, notice: String? = nil,
+        onChoose: @escaping (OmniAction) -> Void
     ) {
         let controller = OmniPicker(
-            store: store, registry: sessions, scope: scope, destination: destination
+            store: store, registry: sessions, scope: scope, destination: destination,
+            place: focusedPlace, servers: servers.names
         ) { action in
             guard let action else { return }
             onChoose(action)
         }
         omni = controller
         controller.present(over: window)
+        if let prefill { controller.prefill(prefill) }
+        if let notice { controller.showNotice(notice) }
     }
 
     /// Put a choice on the strip, immediately right of `lane`.
@@ -906,7 +951,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 try store.newWebLane(url: url, near: lane?.id)
                 store.noteRecent(.url, url)
 
-            case .run(let line, let remembered):
+            case .run(let line, let place):
                 // Not `line.split(separator: " ")`. ⌘O is handed one line of
                 // text, and a whitespace split is a shell imitation that gets
                 // pipelines, quoting and globbing wrong without saying so:
@@ -914,20 +959,42 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 // `head`, which is a lane spewing `y` forever rather than an
                 // error. `TypedCommand` decides, and says why the CLI's door
                 // decides differently.
-                guard let typed = RelaySessionSpawner.TypedCommand.parse(line) else { return }
-                // A remembered command carries the directory it last ran in,
-                // which is usually the only place it makes sense — `npm test`
-                // in the wrong repo is a failure, not a command. It loses to
-                // the focused lane only when that directory is gone.
-                let cwd = remembered.flatMap { path in
-                    FileManager.default.fileExists(atPath: path) ? path : nil
-                } ?? store.state.focusedPaneId.flatMap { strip.cwd(ofPane: $0) }
-                    ?? FileManager.default.homeDirectoryForCurrentUser.path
+                guard let typed = TypedCommand.parse(line) else { return }
+                // The picker has already decided where (`SpawnPlace.resolve`):
+                // a remembered command carries the directory — and the
+                // server — it last ran in, which is usually the only place it
+                // makes sense; `@name` overrides; the focused lane's place is
+                // the fallback.
                 let size = newSessionSize()
-                let session = try RelaySessionSpawner(config: config)
-                    .spawn(cwd: cwd, typed: typed, cols: size.cols, rows: size.rows)
-                try store.newTerminalLane(relaySessionId: session, near: lane?.id)
-                store.noteRecent(.command, line, cwd: cwd)
+                try spawner(at: place).spawn(
+                    cwd: place.cwd, typed: typed, cols: size.cols, rows: size.rows
+                ) { [weak self] result in
+                    guard let self else { return }
+                    switch result {
+                    case .success(let session):
+                        do {
+                            try self.store.newTerminalLane(session: session.key, near: lane?.id)
+                            let ran = SpawnPlace(server: session.key.server, cwd: session.cwd)
+                            self.store.noteRecent(.command, line, cwd: ran.remembered)
+                        } catch {
+                            self.showError(error)
+                        }
+                    case .failure(let error):
+                        // A remote spawn fails after the picker has gone,
+                        // so the picker comes back with the line as typed
+                        // and the server's one line under it: nothing to
+                        // retype, and the reason where the choice is made.
+                        // A local failure is the alert it always was, since
+                        // it happened before the picker had finished leaving.
+                        if let server = place.server {
+                            self.showOmniPicker(
+                                scope: .everything, near: lane,
+                                prefill: "@\(server) \(line)", notice: Self.describe(error))
+                        } else {
+                            self.showError(error)
+                        }
+                    }
+                }
 
             case .attach(let key):
                 // PRD §7.1: attaching an existing session creates a lane at the
@@ -1226,7 +1293,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         else { return }
         let size = newSessionSize()
         do {
-            let session = try RelaySessionSpawner(config: config)
+            let session = try LocalSpawner(config: config)
                 .spawn(cwd: file.deletingLastPathComponent().path, shellLine: line, cols: size.cols, rows: size.rows)
             try store.newTerminalLane(relaySessionId: session, near: store.focusedLane?.id)
         } catch {

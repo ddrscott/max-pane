@@ -102,7 +102,7 @@ struct OpenServerParsingTests {
 struct RelaySpawnTests {
     @Test("panes do not inherit Claude Code's child-session markers")
     func scrubsClaudeMarkers() {
-        let env = RelaySessionSpawner.scrubClaudeMarkers([
+        let env = LocalSpawner.scrubClaudeMarkers([
             "CLAUDECODE": "1", "CLAUDE_CODE_CHILD_SESSION": "1", "CLAUDE_CODE_SESSION_ID": "x",
             "CLAUDE_PID": "1", "CLAUDE_EFFORT": "medium",
             "PATH": "/bin", "SHELL": "/bin/zsh", "ANTHROPIC_API_KEY": "k", "CLAUDE_CONFIG_DIR": "d",
@@ -112,7 +112,7 @@ struct RelaySpawnTests {
 
     @Test("a shell session gets --login so cwd tracking works")
     func shellSessionGetsLogin() {
-        let argv = RelaySessionSpawner.buildArgs(
+        let argv = LocalSpawner.buildArgs(
             id: "a1b2c3d4", cols: 80, rows: 40, cwd: "/Users/s/code",
             command: "/bin/zsh", args: [])
         #expect(argv == ["a1b2c3d4", "80", "40", "/Users/s/code", "/bin/zsh", "--login"])
@@ -120,7 +120,7 @@ struct RelaySpawnTests {
 
     @Test("a non-shell command is wrapped in the user's login shell")
     func nonShellIsWrapped() {
-        let argv = RelaySessionSpawner.buildArgs(
+        let argv = LocalSpawner.buildArgs(
             id: "a1b2c3d4", cols: 80, rows: 40, cwd: "/Users/s/code",
             command: "claude", args: ["--dangerously-skip-permissions"])
         #expect(argv.count == 8)
@@ -136,7 +136,7 @@ struct RelaySpawnTests {
 
     @Test("arguments with quotes cannot break out of the wrapper")
     func shellEscapingHolds() {
-        let argv = RelaySessionSpawner.buildArgs(
+        let argv = LocalSpawner.buildArgs(
             id: "a1b2c3d4", cols: 80, rows: 40, cwd: "/tmp",
             command: "echo", args: ["it's; rm -rf /"])
         #expect(argv.last == #"'echo' 'it'\''s; rm -rf /'; exit $?"#)
@@ -146,13 +146,13 @@ struct RelaySpawnTests {
         "/bin/zsh", "/bin/bash", "/usr/local/bin/fish", "sh", "/bin/dash",
     ])
     func recognisesShells(_ path: String) {
-        #expect(RelaySessionSpawner.isShellCommand(path))
+        #expect(LocalSpawner.isShellCommand(path))
     }
 
     @Test("a command that merely lives in a shell-ish path is not a shell")
     func doesNotMistakeCommandsForShells() {
-        #expect(!RelaySessionSpawner.isShellCommand("/bin/zshfoo"))
-        #expect(!RelaySessionSpawner.isShellCommand("claude"))
+        #expect(!LocalSpawner.isShellCommand("/bin/zshfoo"))
+        #expect(!LocalSpawner.isShellCommand("claude"))
     }
 
     @Test("a quoted shell line is refused rather than run as a program name", arguments: [
@@ -167,7 +167,7 @@ struct RelaySpawnTests {
         // Each of these arrives from `maxpane run "…"` as one argv word, and the
         // wrapper would ask zsh for a program of that name — exit 127, roughly a
         // second after the CLI has already been told the session is ready.
-        #expect(RelaySessionSpawner.isShellLine(command), "let through: \(command)")
+        #expect(LocalSpawner.isShellLine(command), "let through: \(command)")
     }
 
     @Test("a program name is not mistaken for a shell line", arguments: [
@@ -177,7 +177,7 @@ struct RelaySpawnTests {
         "myfunc", "cd", "echo",
     ])
     func allowsProgramNames(_ command: String) {
-        #expect(!RelaySessionSpawner.isShellLine(command), "refused: \(command)")
+        #expect(!LocalSpawner.isShellLine(command), "refused: \(command)")
     }
 
     @Test("an executable that really does have a space in its path is let through")
@@ -193,12 +193,12 @@ struct RelaySpawnTests {
         try "#!/bin/sh\nexit 0\n".write(to: tool, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tool.path)
 
-        #expect(!RelaySessionSpawner.isShellLine(tool.path))
+        #expect(!LocalSpawner.isShellLine(tool.path))
     }
 
     @Test("the refusal says what to type instead")
     func refusalIsActionable() {
-        let message = RelaySessionSpawner.SpawnError.notAProgram("yes | head").errorDescription ?? ""
+        let message = LocalSpawner.SpawnError.notAProgram("yes | head").errorDescription ?? ""
         #expect(message.contains("yes | head"))
         // The escape hatch is real: `run zsh -c '…'` takes the isShellCommand
         // branch, and a pipeline through it exits 0 with output.
@@ -212,8 +212,8 @@ struct RelaySpawnTests {
         // session id exists to hand back and no lane is written for one.
         let before = (try? FileManager.default.contentsOfDirectory(
             atPath: RelaySessionDirectory.sessionsDir.path))?.count ?? 0
-        #expect(throws: RelaySessionSpawner.SpawnError.self) {
-            try RelaySessionSpawner(config: Config())
+        #expect(throws: LocalSpawner.SpawnError.self) {
+            try LocalSpawner(config: Config())
                 .spawn(cwd: "/tmp", command: "yes | head")
         }
         let after = (try? FileManager.default.contentsOfDirectory(
@@ -224,7 +224,7 @@ struct RelaySpawnTests {
     @Test("session ids are 8 lowercase hex characters")
     func sessionIdShape() {
         for _ in 0..<50 {
-            let id = RelaySessionSpawner.newSessionID()
+            let id = LocalSpawner.newSessionID()
             #expect(id.count == 8)
             #expect(id.allSatisfy { $0.isHexDigit && !$0.isUppercase })
         }
@@ -293,8 +293,8 @@ struct DataStoreShardingTests {
 /// the point: the bug this replaces could only be seen by watching a lane spew.
 @Suite("a line typed at ⌘O")
 struct TypedCommandTests {
-    private func parse(_ line: String) -> RelaySessionSpawner.TypedCommand? {
-        RelaySessionSpawner.TypedCommand.parse(line)
+    private func parse(_ line: String) -> TypedCommand? {
+        TypedCommand.parse(line)
     }
 
     @Test("the regression: a pipeline is a pipeline, not a program with two arguments")
@@ -357,10 +357,10 @@ struct TypedCommandTests {
     @Test("the typed line reaches -c as one argument and is not touched otherwise")
     func theLineIsWhatHeTyped() {
         let line = "yes | head"
-        let argv = RelaySessionSpawner.buildShellArgs(
+        let argv = LocalSpawner.buildShellArgs(
             id: "a1b2c3d4", cols: 80, rows: 40, cwd: "/Users/s/code", line: line)
         #expect(Array(argv.prefix(4)) == ["a1b2c3d4", "80", "40", "/Users/s/code"])
-        #expect(argv[4] == RelaySessionSpawner.userShell())
+        #expect(argv[4] == LocalSpawner.userShell())
         #expect(argv[5] == "-li")
         #expect(argv[6] == "-c")
         // Nothing around it, nothing inside it: the line, then a newline, then
@@ -374,12 +374,12 @@ struct TypedCommandTests {
         // Measured: `sleep 5 &; exit $?` is a syntax error in bash and sh, and
         // `ls # note; exit $?` swallows the exit into the comment in bash, sh
         // and zsh alike. A newline ends both the way Return at a prompt does.
-        let argv = RelaySessionSpawner.buildShellArgs(
+        let argv = LocalSpawner.buildShellArgs(
             id: "a1b2c3d4", cols: 80, rows: 40, cwd: "/tmp", line: "sleep 5 &")
         #expect(argv.last == "sleep 5 &\nexit $?")
         // The escaped-argv path keeps `;` — nothing we escape ourselves can end
         // in a `&` or a comment, and its expected string is asserted above.
-        #expect(RelaySessionSpawner.shellWrapped("'htop'") == "'htop'; exit $?")
+        #expect(LocalSpawner.shellWrapped("'htop'") == "'htop'; exit $?")
     }
 
     @Test("a program line goes down the same escaped path maxpane run uses")
@@ -387,7 +387,7 @@ struct TypedCommandTests {
         guard case .program(let program, let args)? = parse("claude --foo bar") else {
             return #expect(Bool(false), "not parsed as a program")
         }
-        let argv = RelaySessionSpawner.buildArgs(
+        let argv = LocalSpawner.buildArgs(
             id: "a1b2c3d4", cols: 80, rows: 40, cwd: "/tmp", command: program, args: args)
         #expect(argv.last == #"'claude' '--foo' 'bar'; exit $?"#)
     }
@@ -399,7 +399,7 @@ struct TypedCommandTests {
         // `maxpane run npm run build` is argv already; ⌘O's `npm run build` has
         // to become the same argv, and does.
         #expect(parse("npm run build") == .program("npm", args: ["run", "build"]))
-        #expect(!RelaySessionSpawner.isShellLine("npm"))
+        #expect(!LocalSpawner.isShellLine("npm"))
     }
 
     @Test("the doors differ only where they are handed different things")
@@ -407,12 +407,12 @@ struct TypedCommandTests {
         // One argv *word* containing shell syntax is refused by `maxpane run`:
         // a script's `maxpane run "$cmd"` must not have `$cmd` interpreted a
         // second time.
-        #expect(RelaySessionSpawner.isShellLine("yes | head"))
+        #expect(LocalSpawner.isShellLine("yes | head"))
         // The same characters typed at ⌘O are one uninterpreted line from the
         // owner's own keyboard, and a shell is the only correct reader of one.
         #expect(parse("yes | head") == .shellLine("yes | head"))
         // And the CLI's refusal names the spelling that works there.
-        let message = RelaySessionSpawner.SpawnError.notAProgram("yes | head").errorDescription ?? ""
+        let message = LocalSpawner.SpawnError.notAProgram("yes | head").errorDescription ?? ""
         #expect(message.contains("zsh -c"))
     }
 }
@@ -511,10 +511,10 @@ struct LoginShellPathTests {
     func parsesMarker() {
         let noisy = """
             nvm: version 22 in use
-            \(RelaySessionSpawner.pathMarker)/usr/local/bin:/opt/homebrew/bin
+            \(LocalSpawner.pathMarker)/usr/local/bin:/opt/homebrew/bin
             have a nice day
             """
-        #expect(RelaySessionSpawner.parseMarkedPath(noisy)
+        #expect(LocalSpawner.parseMarkedPath(noisy)
             == "/usr/local/bin:/opt/homebrew/bin")
     }
 
@@ -526,23 +526,23 @@ struct LoginShellPathTests {
     func parsesMarkerAfterTerminalIntegration() {
         let iterm = "\u{1b}]1337;RemoteHost=spierce@mbp\u{7}\u{1b}]1337;"
             + "ShellIntegrationVersion=5;shell=zsh\u{7}"
-            + "\(RelaySessionSpawner.pathMarker)/opt/homebrew/bin:/usr/bin\n"
-        #expect(RelaySessionSpawner.parseMarkedPath(iterm) == "/opt/homebrew/bin:/usr/bin")
+            + "\(LocalSpawner.pathMarker)/opt/homebrew/bin:/usr/bin\n"
+        #expect(LocalSpawner.parseMarkedPath(iterm) == "/opt/homebrew/bin:/usr/bin")
     }
 
     @Test("a sequence closed after the value does not land in the PATH")
     func stopsAtATrailingControlByte() {
-        let trailing = "\(RelaySessionSpawner.pathMarker)/usr/bin:/bin\u{1b}]1337;done\u{7}\n"
-        #expect(RelaySessionSpawner.parseMarkedPath(trailing) == "/usr/bin:/bin")
+        let trailing = "\(LocalSpawner.pathMarker)/usr/bin:/bin\u{1b}]1337;done\u{7}\n"
+        #expect(LocalSpawner.parseMarkedPath(trailing) == "/usr/bin:/bin")
     }
 
     /// The reason for the marker: the last line is not the answer, and neither
     /// is the first.
     @Test("output with no marker is no answer, not a wrong one")
     func refusesUnmarkedOutput() {
-        #expect(RelaySessionSpawner.parseMarkedPath("/usr/bin:/bin") == nil)
-        #expect(RelaySessionSpawner.parseMarkedPath("") == nil)
-        #expect(RelaySessionSpawner.parseMarkedPath("\(RelaySessionSpawner.pathMarker)") == nil)
+        #expect(LocalSpawner.parseMarkedPath("/usr/bin:/bin") == nil)
+        #expect(LocalSpawner.parseMarkedPath("") == nil)
+        #expect(LocalSpawner.parseMarkedPath("\(LocalSpawner.pathMarker)") == nil)
     }
 
     @Test("a real login shell answers with a real PATH")
@@ -550,13 +550,13 @@ struct LoginShellPathTests {
         // `/bin/sh`, not `$SHELL`: this has to be the same on every machine that
         // runs the suite, and it costs milliseconds rather than whatever the
         // tester's rc file costs.
-        let path = try #require(RelaySessionSpawner.readLoginShellPath(shell: "/bin/sh"))
+        let path = try #require(LocalSpawner.readLoginShellPath(shell: "/bin/sh"))
         #expect(path.contains("/bin"), "a PATH with no /bin in it is not a PATH")
     }
 
     @Test("a shell that cannot be run is nil, not a crash")
     func missingShellIsNil() {
-        #expect(RelaySessionSpawner.readLoginShellPath(shell: "/nope/not/a/shell") == nil)
+        #expect(LocalSpawner.readLoginShellPath(shell: "/nope/not/a/shell") == nil)
     }
 
     /// The actual regression: the walk finds both of this repo's own binaries
@@ -565,6 +565,6 @@ struct LoginShellPathTests {
     func fallsBackPastAnEmptyInheritedPath() throws {
         // `sh` exists on every machine and is never in launchd's PATH twice, so
         // it stands in for `relay` without depending on Relay being installed.
-        #expect(RelaySessionSpawner.which("sh") != nil)
+        #expect(LocalSpawner.which("sh") != nil)
     }
 }

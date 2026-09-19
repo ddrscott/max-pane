@@ -67,7 +67,7 @@ extension FileOpen {
     /// **Deliberately no `exec`.** An exec'd child becomes the session leader,
     /// pty-host then reports `foreground_process` as None, and the classifier's
     /// first rule turns every such session into `idle` forever — which is the
-    /// signal the sidebar exists to carry. See `RelaySessionSpawner.buildArgs`
+    /// signal the sidebar exists to carry. See `LocalSpawner.buildArgs`
     /// for the long version. `shellWrapped` appends `; exit $?`, so the lane
     /// still goes away when the editor quits.
     static let defaultEditorTemplate = "${VISUAL:-${EDITOR:-vi}} +%l -- %f"
@@ -112,7 +112,7 @@ extension FileOpen {
     /// branch, and no editor handed a bare `+`. Line 1 is where it would have
     /// opened anyway.
     static func expand(_ template: String, path: String, line: Int?, column: Int?) -> String {
-        let file = RelaySessionSpawner.shellEscape(path)
+        let file = LocalSpawner.shellEscape(path)
         var out = ""
         var rest = Substring(template)
         while let percent = rest.firstIndex(of: "%") {

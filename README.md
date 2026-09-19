@@ -1704,12 +1704,16 @@ A relay-tty server on another machine can be a source of lanes: its sessions
 appear in the sidebar and in ⌘O beside the local ones, and one of them attaches
 as an ordinary terminal lane — the same libghostty rendering, resize, replay,
 BLOCKED, DONE and reconnect as a local session — over a WebSocket to that
-server's `/ws/sessions/:id` instead of the Unix socket. Phases 1 and 2 of
+server's `/ws/sessions/:id` instead of the Unix socket. And you can start
+things there: ⌘O, ⌘T and ⌘D beside a remote lane run on that lane's server.
+Phases 1 to 3 of
 [`docs/plans/remote-relay-servers.md`](docs/plans/remote-relay-servers.md);
 [ADR-0020](docs/decisions/0020-a-session-belongs-to-a-server.md) says how a
-session is identified once there is more than one server, and
+session is identified once there is more than one server,
 [ADR-0021](docs/decisions/0021-servers-are-a-pasted-url-and-a-keychain-item.md)
-why a server is added by pasting one line and where its token lives.
+why a server is added by pasting one line and where its token lives, and
+[ADR-0022](docs/decisions/0022-a-remote-spawn-sends-the-wrapper-and-the-cwd-is-the-root.md)
+what a remote spawn sends and why.
 
 **Adding one.** The server prints an auth URL when it starts:
 
@@ -1779,26 +1783,70 @@ result of walking this Mac's tree for a directory that only exists over
 there — so a remote project gathers with itself and never with a local path
 that happens to match.
 
+**Starting things there.** A line runs where the focused lane is. With a
+remote lane focused, ⌘O `claude` ↩ starts Claude Code on that lane's server,
+in that lane's directory, as a lane here — and it goes BLOCKED in the sidebar
+when it asks something. ⌘T (a shell in a new lane) and ⌘D (a shell under this
+pane) do the same. From anywhere, a word at the front of ⌘O's field says
+where instead:
+
+| typed in ⌘O | runs |
+|---|---|
+| `claude` | where the focused lane is: its server, its directory; this Mac with no lane |
+| `@yorkshire claude` | on `yorkshire` — in the focused lane's directory if that lane is on `yorkshire`, else the server's home |
+| `@local claude` | on this Mac, whatever lane is focused |
+| `@nope claude` | as typed, here; the row says `@nope is not a server` |
+
+The row's second line says where before you press Return
+(`yorkshire:/home/spierce/proj`, or `yorkshire:~` for the server's home), and
+the ⌘/ sheet lists the grammar. A directory over there is never guessed from
+this Mac: when Max Pane does not know one, it sends none, the server starts
+the session in its own home and says which directory that was. A command
+remembers where it last ran, server included, so ⌘O ⌘1 on `claude` goes back
+to the same box and directory; a recent from a server that is not connected is
+not offered. If the server refuses, the picker comes back with the line still
+in the field and one line naming the server and its error.
+
+What is sent is `POST /api/sessions` with the cookie, and never the program's
+name as the command: the body is `{"command": "$SHELL", "args": ["-li", "-c",
+"<line>\nexit $?"]}`, the same no-`exec` wrapper a local session gets, for the
+same reason — relay-tty's own spawn `exec`s the program, an exec'd agent is
+the session leader, and the classifier never calls a session leader BLOCKED.
+A bare shell is `{"command": "$SHELL", "args": []}` and the server makes it a
+login shell. `maxpane run` from a local terminal still starts things on this
+Mac, even beside a remote lane; from a remote shell the CLI is not there
+(Phase 4).
+
+A remote lane's project is `server:` plus the session's directory as the
+server reports it — the directory itself, not a git root, because the server
+has no git-root answer and Max Pane does not type `git rev-parse` into your
+session. Two lanes in the same directory gather; a lane in a subdirectory of
+the same repository is its own project for now.
+
 **What works, and not yet.** A session *already running* on a remote server:
 listed, attached, typed into, resized, reconnected (with the whole scrollback
 replaced rather than appended when the server answers a missed `RESUME` with
 the full ring), shown with its agent state, and back after a relaunch. The
 server's sessions are read from `GET /api/sessions` and kept current by
 `/ws/events`, polled on `session_poll_seconds` as the fallback. **Not yet:**
-starting anything on a remote server (⌘O, ⌘T and ⌘D still start on this Mac,
-and beside a remote lane they start in your home directory — Phase 3), and
 ⌘-clicking a path in a remote lane, which says so in one line — the path is a
-path on the other machine, and the server's file API is Phase 4.
+path on the other machine, and the server's file API is Phase 4 — and
+`maxpane` inside a remote shell.
 
 **Against the relay-tty web app in a web lane** — the bar the plan sets. What
 you get here that the page cannot give: every server's sessions in the one
 sidebar and the one ⌘O, ranked with the local ones and BLOCKED pulsing the same
 green; one paste per server, in one place, with the token in the Keychain
 instead of a cookie per page; a session as a lane that splits, docks, gathers by
-project, maximizes and survives eviction and relaunch; and one connection per
-server rather than a whole web app per pane. What the page still does better:
-starting a session (its form; here Phase 3), and files and uploads through its
-own viewer (Phase 4).
+project, maximizes and survives eviction and relaunch; one connection per
+server rather than a whole web app per pane; and starting a session from the
+same ⌘O, ⌘T and ⌘D as a local one — on the focused lane's server, in its
+directory, with the same recents — where the page's form starts it on that
+page's server only and, because relay-tty `exec`s what the form names, starts
+an agent that can never read BLOCKED, which a session started from here does.
+What the page still does better: its form lists the server's projects and
+installed agents to pick from, where ⌘O expects you to know the command; and
+files and uploads go through its own viewer (Phase 4).
 
 **Until relay-tty authenticates the tunnelled WebSocket.** Through relaytty.com
 the session WebSocket is accepted with no credential at all — the tunnel client

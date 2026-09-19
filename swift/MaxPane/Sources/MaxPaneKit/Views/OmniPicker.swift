@@ -4,8 +4,9 @@ import LanedCore
 /// What a row does when you press Return. Three verbs, because there are three
 /// ways a thing can start existing on the strip and no more.
 enum OmniAction: Equatable {
-    /// Run this command line in a new terminal.
-    case run(String, cwd: String?)
+    /// Run this command line in a new terminal, at that place: this Mac or
+    /// a named server, in a directory there or its home (`SpawnPlace`).
+    case run(String, at: SpawnPlace)
     /// Open this in a web pane. The scheme is optional here and added later —
     /// `StripWindowController.normalizeURL` is the one place that decides.
     case open(String)
@@ -62,15 +63,53 @@ enum OmniScope: CaseIterable, Sendable {
     /// meant; and `.sessions` offers the command, because "the session I want is
     /// not running" is answered by starting it, which is what the old attach
     /// picker's launch rows were for.
-    func typedActions(_ text: String) -> [OmniAction] {
+    func typedActions(_ text: String, at place: SpawnPlace = .local) -> [OmniAction] {
         switch self {
         case .pages: return [.open(text)]
-        case .commands, .sessions: return [.run(text, cwd: nil)]
+        case .commands, .sessions: return [.run(text, at: place)]
         case .everything:
             return OmniText.looksLikeURL(text)
-                ? [.open(text), .run(text, cwd: nil)]
-                : [.run(text, cwd: nil), .open(text)]
+                ? [.open(text), .run(text, at: place)]
+                : [.run(text, at: place), .open(text)]
         }
+    }
+}
+
+/// The one piece of grammar in ⌘O's field beyond the line itself: a leading
+/// `@name ` says which server the line runs on, `@local ` says this Mac.
+///
+/// A prefix and not a column or a chord, because the field already reads
+/// one line and a word at its front is the only addition that costs nothing
+/// to type, nothing to discover (`@` and a server's name is what a person
+/// guesses) and nothing when absent — the line with no `@` is exactly the
+/// line it was. `@` is not shell syntax, so a line that begins with it and
+/// names no server is left alone and offered as typed: it is more likely a
+/// typo than a program, and the row says `@x is not a server` under it
+/// rather than starting `@x` in silence.
+struct OmniServerPrefix: Equatable {
+    /// What was chosen, or nil for no prefix.
+    var choice: SpawnPlace.Choice?
+    /// The line after the prefix, trimmed; the whole text when there is no
+    /// prefix.
+    var line: String
+    /// A `@word` that names nothing, kept so the row can say so.
+    var unknown: String?
+
+    /// The word this Mac answers to.
+    static let localWord = "local"
+
+    static func parse(_ text: String, servers: [String]) -> OmniServerPrefix {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("@") else { return OmniServerPrefix(choice: nil, line: trimmed, unknown: nil) }
+        let word = String(trimmed.dropFirst().prefix { !$0.isWhitespace })
+        let rest = trimmed.dropFirst(1 + word.count).trimmingCharacters(in: .whitespaces)
+        if word == localWord {
+            return OmniServerPrefix(choice: .local, line: rest, unknown: nil)
+        }
+        if servers.contains(word) {
+            return OmniServerPrefix(choice: .server(word), line: rest, unknown: nil)
+        }
+        return OmniServerPrefix(choice: nil, line: trimmed, unknown: word.isEmpty ? nil : word)
     }
 }
 
@@ -204,23 +243,34 @@ enum OmniRanking {
         bookmarks: [BookmarkHit],
         sessions: [SessionTelemetry],
         destination: String,
-        shellName: String = (RelaySessionSpawner.userShell() as NSString).lastPathComponent
+        shellName: String = (LocalSpawner.userShell() as NSString).lastPathComponent,
+        place focused: SpawnPlace = .local,
+        servers: [String] = [],
+        connected: Set<String> = [],
+        exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
     ) -> [OmniRow] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefix = OmniServerPrefix.parse(query, servers: servers)
+        let trimmed = prefix.line
         var rows: [OmniRow] = []
+        // Where a line with no memory of its own runs.
+        let typedPlace = SpawnPlace.resolve(
+            choice: prefix.choice, remembered: nil, focused: focused,
+            exists: exists, connected: { connected.contains($0) })
 
         if !trimmed.isEmpty {
             rows.append(.section(title: "LAUNCH", note: destination))
-            rows.append(contentsOf: scope.typedActions(trimmed).map { action in
+            rows.append(contentsOf: scope.typedActions(trimmed, at: typedPlace).map { action in
                 .item(OmniCandidate(
                     action: action, kind: .typed,
-                    headline: trimmed, detail: typedDetail(action, shellName: shellName),
+                    headline: trimmed,
+                    detail: typedDetail(action, shellName: shellName, unknown: prefix.unknown),
                     quality: .typed, chosenAt: 0, count: 0, telemetry: nil, bookmarkId: nil))
             })
         }
 
         var corpus = candidates(
-            query: trimmed, scope: scope, recents: recents, pages: pages, bookmarks: bookmarks)
+            query: trimmed, scope: scope, recents: recents, pages: pages, bookmarks: bookmarks,
+            choice: prefix.choice, focused: focused, servers: servers, connected: connected, exists: exists)
         // Attached sessions are not offered. ⌘O starts things; a session already
         // on the strip has started, and finding it again is ⌘P's question. The
         // footer still counts them, because hiding them *and* miscounting them
@@ -314,9 +364,18 @@ enum OmniRanking {
     /// shell whole rather than started as a program with arguments — a real
     /// difference in what Return will do, and the row is the only place to say
     /// so *before* it happens rather than after. See `TypedCommand`.
-    private static func typedDetail(_ action: OmniAction, shellName: String) -> String {
-        guard case .run(let line, _) = action else { return "" }
-        if case .shellLine? = RelaySessionSpawner.TypedCommand.parse(line) {
+    ///
+    /// A remote place is the row's whole second line — `yorkshire:~` or
+    /// `yorkshire:/home/s/proj` — because *where* is the thing Return is
+    /// about to decide, and the one mark of a remote lane is the server's
+    /// name where the directory sits. The shell over there is not named:
+    /// every remote line goes through the login shell on that machine (see
+    /// `RemoteSpawner`), and which shell that is, the server decides.
+    private static func typedDetail(_ action: OmniAction, shellName: String, unknown: String?) -> String {
+        guard case .run(let line, let place) = action else { return "" }
+        if let unknown { return "@\(unknown) is not a server" }
+        if let label = place.label, place.isRemote { return label }
+        if case .shellLine? = TypedCommand.parse(line) {
             return "through \(shellName)"
         }
         return ""
@@ -326,7 +385,9 @@ enum OmniRanking {
     /// are the one source with no timestamp of a user's choice.
     private static func candidates(
         query: String, scope: OmniScope, recents: [Recent], pages: [HistoryEntry],
-        bookmarks: [BookmarkHit]
+        bookmarks: [BookmarkHit],
+        choice: SpawnPlace.Choice? = nil, focused: SpawnPlace = .local, servers: [String] = [],
+        connected: Set<String> = [], exists: (String) -> Bool = { _ in true }
     ) -> [OmniCandidate] {
         var out: [OmniCandidate] = []
         // Before the history rows, which is what decides the merge: `dedupe`
@@ -345,11 +406,21 @@ enum OmniRanking {
             switch recent.kind {
             case .command where scope.wantsCommands:
                 guard let quality = MatchQuality.of(query, inAny: [recent.value]) else { continue }
+                // A command remembers where it last ran — on this Mac, or on
+                // a server (`SpawnPlace.remembered`). A memory of a server
+                // that is not connected is not offered at all: the row
+                // would start nothing, and a row that starts nothing is the
+                // one thing a launcher must not have.
+                let remembered = SpawnPlace.parse(remembered: recent.cwd, servers: servers)
+                if let server = remembered?.server, !connected.contains(server) { continue }
+                let place = SpawnPlace.resolve(
+                    choice: choice, remembered: remembered, focused: focused,
+                    exists: exists, connected: { connected.contains($0) })
                 out.append(OmniCandidate(
-                    action: .run(recent.value, cwd: recent.cwd),
+                    action: .run(recent.value, at: place),
                     kind: .command,
                     headline: recent.value,
-                    detail: recent.cwd.map(OmniText.tilde) ?? "",
+                    detail: place.isRemote ? (place.label ?? "") : place.cwd.map(OmniText.tilde) ?? "",
                     quality: quality,
                     chosenAt: recent.lastUsedAt,
                     count: recent.useCount,
@@ -590,18 +661,30 @@ final class OmniPicker: PaletteController {
     private var pageCount: UInt32
     private var searchable: UInt32
     private var token: UUID?
+    /// Where a line runs with nothing else said (the focused lane's place),
+    /// and the servers `@name` may name. Read once, like the recents: the
+    /// focused lane cannot change while the picker is up.
+    private let place: SpawnPlace
+    private let servers: [String]
+    /// One line above the footer — a remote spawn's refusal, shown when the
+    /// picker comes back with the line still in the field.
+    private var notice: String?
 
     init(
         store: StripStore,
         registry: SessionRegistry,
         scope: OmniScope = .everything,
         destination: String,
+        place: SpawnPlace = .local,
+        servers: [String] = [],
         completion: @escaping (OmniAction?) -> Void
     ) {
         self.store = store
         self.registry = registry
         self.scope = scope
         self.destination = destination
+        self.place = place
+        self.servers = servers
         self.completion = completion
         self.recents = store.recents(limit: 60)
         self.pageCount = store.historyCount
@@ -658,8 +741,29 @@ final class OmniPicker: PaletteController {
             pages: pages,
             bookmarks: bookmarks,
             sessions: Array(registry.sessions.values),
-            destination: destination)
+            destination: destination,
+            place: place,
+            servers: servers,
+            connected: Set(registry.serverStates.filter { $0.value == .connected }.map(\.key)))
         shortcuts = OmniRanking.shortcuts(for: rows)
+    }
+
+    /// The field, filled: how the picker comes back after a remote spawn
+    /// failed, with the line as it was chosen.
+    func prefill(_ text: String) {
+        setQuery(text)
+        reload()
+    }
+
+    /// One line under the list, in the accent, until the next keystroke.
+    func showNotice(_ text: String) {
+        notice = text
+        updateFooter()
+    }
+
+    override func controlTextDidChange(_ obj: Notification) {
+        notice = nil
+        super.controlTextDidChange(obj)
     }
 
     override func numberOfRows() -> Int { rows.count }
@@ -847,7 +951,13 @@ final class OmniPicker: PaletteController {
         let blocked = registry.sessions.values.filter {
             !$0.isAttached && $0.isRunning && $0.needsAttention
         }.count
-        if blocked > 0 {
+        if let notice {
+            // The refusal takes the footer's place rather than a row of its
+            // own: a row can be selected, and this is not a thing to choose.
+            footerLeft.attributedStringValue = NSAttributedString(
+                string: "$ \(notice)",
+                attributes: [.foregroundColor: Theme.accent, .font: Theme.mono(10, weight: .bold)])
+        } else if blocked > 0 {
             let mutable = NSMutableAttributedString(attributedString: line)
             mutable.append(NSAttributedString(
                 string: "  ·  \(blocked) BLOCKED",

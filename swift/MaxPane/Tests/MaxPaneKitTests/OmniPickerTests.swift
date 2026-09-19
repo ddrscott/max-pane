@@ -144,7 +144,7 @@ struct OmniPickerTests {
             query: "yes | head", scope: .commands, recents: [], pages: [],
             bookmarks: [], sessions: [], destination: "→ new lane", shellName: "zsh")
         let typed = rows.compactMap(\.candidate).first { $0.kind == .typed }
-        #expect(typed?.action == .run("yes | head", cwd: nil))
+        #expect(typed?.action == .run("yes | head", at: .local))
         #expect(typed?.detail == "through zsh")
     }
 
@@ -167,7 +167,7 @@ struct OmniPickerTests {
                 pages: [page("https://" + query.replacingOccurrences(of: " ", with: "-"), query)])
             let typed = rows.compactMap(\.candidate).prefix(2)
             #expect(typed.allSatisfy { $0.kind == .typed }, "\(query) did not lead with what was typed")
-            #expect(typed.contains { $0.action == .run(query, cwd: nil) },
+            #expect(typed.contains { $0.action == .run(query, at: .local) },
                     "\(query) lost its command reading")
             #expect(typed.contains { $0.action == .open(query) },
                     "\(query) lost its address reading")
@@ -176,7 +176,7 @@ struct OmniPickerTests {
 
     @Test("a command leads for something you would type at a shell")
     func commandsLeadForCommands() {
-        #expect(actions(build("npm test")).first == .run("npm test", cwd: nil))
+        #expect(actions(build("npm test")).first == .run("npm test", at: .local))
     }
 
     @Test("a URL leads for something that looks like an address")
@@ -186,7 +186,7 @@ struct OmniPickerTests {
 
     @Test("what gets launched is not what you typed with the spaces on")
     func queryIsTrimmed() {
-        #expect(actions(build("  htop  ")).first == .run("htop", cwd: nil))
+        #expect(actions(build("  htop  ")).first == .run("htop", at: .local))
     }
 
     // MARK: - the ranking rule
@@ -219,7 +219,7 @@ struct OmniPickerTests {
         // `mxp` finding `max-pane` is the whole reason the last band exists.
         let rows = build("mxp", recents: [recent(.command, "cd max-pane", at: 9)])
         let corpus = rows.compactMap(\.candidate).filter { $0.kind != .typed }
-        #expect(corpus.map(\.action) == [.run("cd max-pane", cwd: nil)])
+        #expect(corpus.map(\.action) == [.run("cd max-pane", at: .local)])
     }
 
     @Test("inside a band, the thing you chose most recently leads")
@@ -231,7 +231,7 @@ struct OmniPickerTests {
                 recent(.command, "test-new", at: 900),
             ])
         let corpus = rows.compactMap(\.candidate).filter { $0.kind != .typed }
-        #expect(corpus.first?.action == .run("test-new", cwd: nil))
+        #expect(corpus.first?.action == .run("test-new", at: .local))
     }
 
     @Test("a page and a command compete on the same ladder, not by source")
@@ -296,7 +296,7 @@ struct OmniPickerTests {
         #expect(rows.first == .section(title: "RECENT", note: "→ new lane"))
         let corpus = rows.compactMap(\.candidate)
         #expect(corpus[0].action == .open("https://a.example"))
-        #expect(corpus[1].action == .run("htop", cwd: nil))
+        #expect(corpus[1].action == .run("htop", at: .local))
     }
 
     @Test("nothing typed means no LAUNCH rows to launch")
@@ -319,7 +319,7 @@ struct OmniPickerTests {
             ])
         #expect(rows.first == .section(title: "RECENT", note: "→ new lane"))
         // What ↩ does is still "the last thing I launched".
-        #expect(rows.compactMap(\.candidate).first?.action == .run("htop", cwd: nil))
+        #expect(rows.compactMap(\.candidate).first?.action == .run("htop", at: .local))
         let headers = rows.compactMap { row -> String? in
             if case .section(let title, _) = row { return title } else { return nil }
         }
@@ -355,7 +355,7 @@ struct OmniPickerTests {
         let onlySessions = build("h", scope: .sessions, recents: recents, pages: pages, sessions: sessions)
         // Plus the typed row, which in this scope means "start it, since it is
         // not running" — the old attach picker's launch rows, kept.
-        #expect(actions(onlySessions) == [.run("h", cwd: nil), .attach("dddd4444")])
+        #expect(actions(onlySessions) == [.run("h", at: .local), .attach("dddd4444")])
     }
 
     @Test("⇥ walks every scope and comes back")
@@ -433,7 +433,7 @@ struct OmniPickerTests {
             .compactMap { index, row in shortcuts[index].map { ($0, row) } }
             .sorted { $0.0 < $1.0 }
         #expect(numbered.count == 3)      // run, open, and the one match
-        #expect(numbered.last?.1.candidate?.action == .run("beta", cwd: nil))
+        #expect(numbered.last?.1.candidate?.action == .run("beta", at: .local))
     }
 
     // MARK: - what counts as a URL

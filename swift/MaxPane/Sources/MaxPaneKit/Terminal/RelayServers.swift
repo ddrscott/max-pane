@@ -104,6 +104,15 @@ public final class RelayServers {
         endpoints[name].map { RemoteSessionSource(name: name, endpoint: $0, pollInterval: pollInterval) }
     }
 
+    /// What starts a session on `server`: this Mac's spawner for `nil`, a
+    /// `RemoteSpawner` over the named server's endpoint, or nil for a name
+    /// the file does not configure — the caller says so in one line rather
+    /// than quietly starting the thing here.
+    func spawner(for server: String?, config: Config) -> SessionSpawning? {
+        guard let server else { return LocalSpawner(config: config) }
+        return endpoints[server].map { RemoteSpawner(name: server, endpoint: $0) }
+    }
+
     /// The adapter a pane attaches through: the WebSocket transport for a
     /// session on a named server, the Unix socket for a local one. A pane
     /// naming a server this app does not know gets the adapter anyway, so

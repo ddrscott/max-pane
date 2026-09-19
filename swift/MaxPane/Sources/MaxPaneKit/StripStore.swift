@@ -109,12 +109,34 @@ public final class StripStore {
     /// A new terminal lane (⌘T). PRD §7.1: immediately right of the focused
     /// lane, tag inherited from it and then refreshed from cwd.
     func newTerminalLane(relaySessionId: String, near laneId: String?) throws {
-        publish(try core.createLane(
-            placement: laneId.map { .rightOf(laneId: $0) } ?? .end,
-            kind: .pty,
-            relaySessionId: relaySessionId,
-            url: nil,
-            inheritTagFromLane: laneId))
+        try newTerminalLane(session: SessionKey(id: relaySessionId), near: laneId)
+    }
+
+    /// The same, for a session just started on whichever server: a remote
+    /// one goes through the core's remote door so the lane is born knowing
+    /// its server (ADR-0020), and a local one through `create_lane` as
+    /// before.
+    func newTerminalLane(session key: SessionKey, near laneId: String?) throws {
+        let placement: Placement = laneId.map { .rightOf(laneId: $0) } ?? .end
+        if let server = key.server {
+            publish(try core.attachRemoteSession(
+                placement: placement, relayServer: server, relaySessionId: key.id,
+                inheritTagFromLane: laneId))
+        } else {
+            publish(try core.createLane(
+                placement: placement, kind: .pty, relaySessionId: key.id, url: nil,
+                inheritTagFromLane: laneId))
+        }
+    }
+
+    /// ⌘D: a terminal pane under the focused one, on whichever server the
+    /// session was started.
+    func addTerminalPane(to laneId: String, session key: SessionKey) throws {
+        if let server = key.server {
+            publish(try core.addRemotePane(laneId: laneId, relayServer: server, relaySessionId: key.id))
+        } else {
+            publish(try core.addPane(laneId: laneId, kind: .pty, relaySessionId: key.id, url: nil))
+        }
     }
 
     /// A new web lane (⌘L, or a URL opened from a terminal).

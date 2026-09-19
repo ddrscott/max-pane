@@ -184,6 +184,38 @@ fn a_remote_lane_is_tagged_host_path_without_walking_the_local_tree() {
     assert!(roots[1].as_deref().map(|r| !r.contains(':')).unwrap_or(false), "{roots:?}");
 }
 
+/// Phase 3's project-root rule, end to end: a remote lane's root is
+/// `host:path` with the cwd itself as the path — no git walk, because the
+/// server offers no git-root answer and `git rev-parse` inside the user's
+/// session is off the table (ADR-0022) — so two remote lanes in the same
+/// directory gather together, a remote lane in a subdirectory of that
+/// project does not (the cost of the rule, stated), and a local lane at the
+/// same path is never in the group.
+#[test]
+fn a_remote_project_gathers_with_itself_and_never_with_the_local_path() {
+    let core = Core::open_in_memory().unwrap();
+    let here = env!("CARGO_MANIFEST_DIR").to_string();
+    let a = remote(&core, "yorkshire", "0368d543").unwrap();
+    let b = remote(&core, "yorkshire", "4f2a0000").unwrap();
+    let sub = remote(&core, "yorkshire", "5a5a0000").unwrap();
+    let other = remote(&core, "alien", "0368d543").unwrap();
+    let local = pty(&core, Some("aaaaaaaa")).unwrap();
+    core.observe_cwd(a.clone(), here.clone()).unwrap();
+    core.observe_cwd(b.clone(), here.clone()).unwrap();
+    core.observe_cwd(sub.clone(), format!("{here}/src")).unwrap();
+    core.observe_cwd(other.clone(), here.clone()).unwrap();
+    core.observe_cwd(local.clone(), here.clone()).unwrap();
+
+    let roots: Vec<Option<String>> = core.all_lanes().unwrap().iter().map(|l| l.project_root.clone()).collect();
+    assert_eq!(roots[0].as_deref(), Some(format!("yorkshire:{here}").as_str()));
+    assert_eq!(roots[2].as_deref(), Some(format!("yorkshire:{here}/src").as_str()), "the cwd itself, not a git root");
+    assert_eq!(roots[3].as_deref(), Some(format!("alien:{here}").as_str()));
+    assert!(roots[4].as_deref().map(|r| !r.contains(':')).unwrap_or(false), "{roots:?}");
+
+    let shown: Vec<String> = core.gather(format!("yorkshire:{here}")).unwrap().lanes.into_iter().map(|l| l.id).collect();
+    assert_eq!(shown, vec![a, b]);
+}
+
 /// A server renamed in `config.toml` keeps its lanes: every pane on it and
 /// every `old:path` cwd tag follow the name, a manual tag does not, and
 /// nothing on another server or on this Mac moves.
