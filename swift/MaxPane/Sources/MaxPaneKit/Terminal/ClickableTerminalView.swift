@@ -27,6 +27,34 @@ final class ClickableTerminalView: TerminalView {
         handler(convert(event.locationInWindow, from: nil))
     }
 
+    /// A middle click, with whether ⌥ or ⇧ was down. True when the pane dealt
+    /// with it (a paste, or deliberately nothing); false hands it to the
+    /// emulator for a program that asked for the mouse. The decision is
+    /// `TerminalPaste.middleClick`.
+    var onMiddleClick: ((_ forced: Bool) -> Bool)?
+
+    /// The press was dealt with here, so its release is not the program's
+    /// either: a release with no press is a button event nobody asked for.
+    private var middleClickTaken = false
+
+    override func otherMouseDown(with event: NSEvent) {
+        guard event.buttonNumber == 2, let handler = onMiddleClick,
+              handler(!event.modifierFlags.isDisjoint(with: [.option, .shift]))
+        else {
+            super.otherMouseDown(with: event)
+            return
+        }
+        middleClickTaken = true
+    }
+
+    override func otherMouseUp(with event: NSEvent) {
+        if event.buttonNumber == 2, middleClickTaken {
+            middleClickTaken = false
+            return
+        }
+        super.otherMouseUp(with: event)
+    }
+
     /// Tell Ghostty's surface whether it is focused, without moving the keyboard.
     ///
     /// The library reaches `ghostty_surface_set_focus` from its responder

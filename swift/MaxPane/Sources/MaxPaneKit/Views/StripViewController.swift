@@ -1545,7 +1545,7 @@ public final class StripViewController: NSViewController {
             // window's size, and a hold taken now would freeze it there.
             for pane in lane.panes where !(maximizer.isActive && maximizer.paneId == pane.id) {
                 (paneControllers[pane.id] as? TerminalPaneController)?
-                    .setThumbnail(scale: scale, backingScale: backing)
+                    .setThumbnail(scale: scale, backingScale: backing, expanded: lane.id == expandedLaneId)
             }
             gallery.place(laneView, laneId: lane.id, frame: frame, laneSize: size)
             laneView.thumbnailScale = scale

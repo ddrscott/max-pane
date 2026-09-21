@@ -1753,6 +1753,30 @@ that 1 MB takes about seven seconds (measured: 7.1 s local, 7.2 s through a
 relaytty.com tunnel, sha256 equal both times), and a paste that will take a
 second or more says so in the pane's notice line.
 
+**A middle click pastes**, as it does in iTerm and under X11. What it pastes:
+**this pane's selection if it has one**, read straight from the terminal and
+never by way of the clipboard, which is left exactly as it was; **otherwise the
+clipboard**. That first half is what makes `copy_on_select = false` liveable:
+highlight a hash, middle-click, and it is on the prompt, with whatever you had
+copied still copied. A selection that is empty or only whitespace counts as
+none. It is the same paste as ⌘V in every other way: tidied, asked about in the
+sheet when it is risky, sent in pieces, and the same in a remote lane. The
+keyboard goes to the pane that was clicked, so the Return that follows lands
+where the text did.
+
+**Not when the program wants the mouse.** With mouse reporting on (tmux with
+`mouse on`, vim with `mouse=a`, htop) the click is the program's, as a left
+click already is. **⌥-middle-click pastes anyway**, the way ⌥ forces a
+selection, and so does **⇧-middle-click**, which is xterm's gesture for the
+same thing. A middle click on a URL or a path **still pastes**; opening is
+⌘-click's in a terminal (in a web pane a middle click opens a link in a lane
+of its own). In the gallery a middle click pastes into an expanded tile and does
+nothing in an unexpanded one: a thumbnail is too small to read what landed.
+`middle_click_paste = false` turns it off, and then a middle click does
+nothing at all unless a program asked for the mouse. It does not fall back to
+the emulator's own middle-click paste, which would frame the clipboard by a
+guess at bracketed paste (ADR-0026).
+
 ### A program and the clipboard (OSC 52)
 
 **A program in a terminal can set the clipboard, and you see it happen.** tmux,
@@ -2304,6 +2328,7 @@ paste_confirm_tabs = true
 paste_confirm_bytes = 16384
 paste_tab_width = 4
 paste_tidy = true
+middle_click_paste = true
 paste_images_as_files = true
 paste_image_keep_days = 7
 paste_image_max_mb = 25
@@ -2357,6 +2382,11 @@ each paste. See [Pasting into a terminal](#pasting-into-a-terminal).
 `paste_tidy` is whether copied text has its smart punctuation straightened, a
 copied `$ ` prompt removed and stray whitespace trimmed on its way into a
 terminal; ⌥⌘V pastes as copied either way. Read at each paste.
+
+`middle_click_paste` is whether a middle click in a terminal pastes (the
+pane's selection first, else the clipboard). `false` makes a middle click do
+nothing; a program with mouse reporting on gets the click either way. Read at
+each click.
 
 `paste_images_as_files` is whether ⌘V of a clipboard holding only a picture
 saves it as a PNG and pastes the path (uploading it first in a remote lane);

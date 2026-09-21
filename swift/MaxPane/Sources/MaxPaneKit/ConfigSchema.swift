@@ -241,6 +241,8 @@ public struct ConfigField {
                      "How many spaces the paste sheet's Tabs to Spaces makes of a tab."),
             bool("pasteTidy", \.pasteTidy, .terminals, appliesLive: true,
                  "Tidy pasted text: straighten smart quotes and long dashes, remove a copied \"$ \" prompt, trim stray whitespace. The pane says what it did; ⌥⌘V pastes as copied."),
+            bool("middleClickPaste", \.middleClickPaste, .terminals, appliesLive: true,
+                 "A middle click pastes: the pane's selection if it has one, else the clipboard. A program with mouse reporting on keeps the click; ⌥ or ⇧ with the click pastes anyway. Off, a middle click does nothing."),
             bool("pasteImagesAsFiles", \.pasteImagesAsFiles, .terminals, appliesLive: true,
                  "⌘V of a screenshot saves it as a PNG and pastes the path; in a remote lane it is uploaded and the server's path is pasted."),
             unsigned("pasteImageKeepDays", \.pasteImageKeepDays, .terminals, 0...3650,

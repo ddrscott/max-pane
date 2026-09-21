@@ -213,6 +213,7 @@ final class TerminalPaneController: NSObject, PaneController {
             self?.applyZoom()
         }
         terminal.onCommandClick = { [weak self] point in self?.openToken(at: point) }
+        terminal.onMiddleClick = { [weak self] forced in self?.middleClick(forced: forced) ?? true }
         container.onPaste = { [weak self] in self?.pasteFromClipboard() }
         container.onPasteWithoutAsking = { [weak self] in self?.pasteFromClipboard(asking: false) }
         container.onDropFiles = { [weak self] pasteboard in self?.dropFiles(from: pasteboard) ?? false }
@@ -538,6 +539,51 @@ final class TerminalPaneController: NSObject, PaneController {
         let images = TerminalPaste.ImageSettings(liveConfig?() ?? config)
         paste(TerminalPaste.clipboard(pasteboard, images: images.asFiles), asking: asking)
     }
+
+    /// A middle click pastes: this pane's selection if it has one, else the
+    /// clipboard, through the same door as ⌘V. False only when the click is
+    /// the program's, and then it goes down to the emulator
+    /// (`TerminalPaste.middleClick` has the rules). A click on a URL or a
+    /// path pastes like any other; opening is ⌘-click's.
+    ///
+    /// The selection is read from the surface (`ghostty_surface_read_selection`),
+    /// never by copying it to a pasteboard and reading it back: a middle click
+    /// leaves the clipboard exactly as it was.
+    @discardableResult
+    func middleClick(forced: Bool) -> Bool {
+        let live = liveConfig?() ?? config
+        let route = TerminalPaste.middleClick(
+            enabled: live.middleClickPaste,
+            inTile: isUnexpandedTile,
+            mouseCaptured: mouseCapturedSource?() ?? terminal.isMouseCaptured,
+            forced: forced,
+            selection: selectionSource?() ?? surface?.readSelection())
+        let clipboard: TerminalPaste.Clipboard
+        switch route {
+        case .program: return false
+        case .ignored: return true
+        case .selection(let text): clipboard = TerminalPaste.Clipboard(text: text, isCopiedText: true)
+        case .clipboard:
+            clipboard = TerminalPaste.clipboard(pasteboard, images: TerminalPaste.ImageSettings(live).asFiles)
+        }
+        // The keyboard follows the paste, as it does a drop: the next thing
+        // typed is Return, and it belongs where the text went.
+        try? store.focusPane(paneId)
+        takeFocus()
+        paste(clipboard)
+        return true
+    }
+
+    /// The surface, for the one thing the view does not pass on: reading the
+    /// selection. Weak, and dropped when the library says it is gone.
+    private weak var surface: TerminalSurface?
+
+    /// Test seams: what the surface would have said.
+    var selectionSource: (() -> String?)?
+    var mouseCapturedSource: (() -> Bool)?
+
+    /// A gallery tile that has not been expanded. Set by `setThumbnail`.
+    private(set) var isUnexpandedTile = false
 
     /// Where ⌘V reads from. The general pasteboard, except in a test, which
     /// hands in one of its own and leaves the owner's clipboard alone.
@@ -1129,7 +1175,8 @@ final class TerminalPaneController: NSObject, PaneController {
     /// by a point — and a point can be a column. So the terminal leaves its
     /// constraints and keeps the size it had on the strip, adopting a new one
     /// only when the space it is given moves by more than rounding explains.
-    func setThumbnail(scale: CGFloat?, backingScale: CGFloat) {
+    func setThumbnail(scale: CGFloat?, backingScale: CGFloat, expanded: Bool = false) {
+        isUnexpandedTile = scale != nil && !expanded
         // Two holds on one surface would each think it owned the constraints.
         // A preset cannot start in the gallery, so one in flight simply lands.
         if scale != nil, sizeHold != nil { endSizeTransition() }
@@ -1352,11 +1399,12 @@ extension TerminalPaneController: TerminalSurfaceFocusDelegate, TerminalSurfaceL
     /// A new surface, and so a new belief that it is focused. A rebuild (a
     /// font size, a recycled lane view) is a birth as much as the first one.
     func terminalDidAttachSurface(_ surface: TerminalSurface) {
+        self.surface = surface
         surfaceFocused = true
         syncSurfaceFocus()
     }
 
-    func terminalDidDetachSurface() {}
+    func terminalDidDetachSurface() { surface = nil }
 }
 
 extension TerminalPaneController: TerminalSurfaceClipboardConfirmationDelegate {

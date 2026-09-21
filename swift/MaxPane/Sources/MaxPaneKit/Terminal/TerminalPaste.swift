@@ -704,6 +704,50 @@ enum TerminalPaste {
         return String(format: "%.1f MB", Double(bytes) / 1_048_576)
     }
 
+    // MARK: - middle click
+
+    /// What a middle click in a terminal pane does.
+    enum MiddleClick: Equatable {
+        /// The program asked for the mouse, so the click is its own: it goes
+        /// down to the emulator, which reports it.
+        case program
+        /// Nothing, and the emulator is not told. Not handed down, because
+        /// Ghostty answers a middle click nobody captured by pasting the
+        /// clipboard *itself*, framed by its own guess at bracketed paste:
+        /// the path this file's first comment rules out.
+        case ignored
+        /// Paste this pane's own selection. X11's primary selection, within
+        /// one pane, and the clipboard is neither read nor written.
+        case selection(String)
+        /// Paste the clipboard, as ⌘V would.
+        case clipboard
+    }
+
+    /// Where a middle click goes.
+    ///
+    /// - `mouseCaptured`: the program asked for mouse reports (tmux, vim with
+    ///   `mouse=a`), so the click is its own, as a left click already is.
+    ///   `forced` takes it back: ⌥, the way ⌥ forces a selection here, or ⇧,
+    ///   which is xterm's way and the one tmux users' hands know. (⇧ could
+    ///   not be handed down anyway: Ghostty reads it as "not the program's"
+    ///   and would paste by its own path.)
+    /// - `enabled` is `middle_click_paste`. Off, a click the program did not
+    ///   capture does nothing.
+    /// - `inTile`: an unexpanded gallery tile is a picture of a pane, too
+    ///   small to read, and a paste aimed at one is a paste into the unseen.
+    ///   ⌘V still works there, since that takes a deliberate click first.
+    /// - `selection` is this pane's highlighted text, or nil. One that is
+    ///   empty or only whitespace is no selection: the clipboard is what was
+    ///   meant.
+    static func middleClick(
+        enabled: Bool, inTile: Bool = false, mouseCaptured: Bool, forced: Bool, selection: String?
+    ) -> MiddleClick {
+        if mouseCaptured, !forced { return .program }
+        guard enabled, !inTile else { return .ignored }
+        if let selection, selection.contains(where: { !$0.isWhitespace }) { return .selection(selection) }
+        return .clipboard
+    }
+
     // MARK: - sending
 
     /// The bytes of a paste, cut for the wire: at most `InputChunks.limit`

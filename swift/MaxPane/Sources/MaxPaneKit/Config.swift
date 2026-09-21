@@ -131,6 +131,11 @@ public struct Config: Codable, Equatable {
     /// removed, stray whitespace trimmed, and the pane says what it did
     /// (ADR-0029). ⌥⌘V pastes as copied whatever this says. Read at each paste.
     public var pasteTidy: Bool = true
+    /// A middle click in a terminal pastes: the pane's own selection if it
+    /// has one (never through the clipboard), else the clipboard. A program
+    /// with mouse reporting on keeps the click; ⌥ or ⇧ takes it back. Off, a
+    /// middle click does nothing. Read at each click.
+    public var middleClickPaste: Bool = true
     /// ⌘V with a picture on the clipboard and nothing else (a screenshot)
     /// writes it to a PNG and pastes that file's path; in a remote lane it is
     /// uploaded to the server and the path there is pasted. Off, such a
@@ -331,6 +336,7 @@ public struct Config: Codable, Equatable {
         pasteConfirmBytes = read(.pasteConfirmBytes, d.pasteConfirmBytes)
         pasteTabWidth = read(.pasteTabWidth, d.pasteTabWidth)
         pasteTidy = read(.pasteTidy, d.pasteTidy)
+        middleClickPaste = read(.middleClickPaste, d.middleClickPaste)
         pasteImagesAsFiles = read(.pasteImagesAsFiles, d.pasteImagesAsFiles)
         pasteImageKeepDays = read(.pasteImageKeepDays, d.pasteImageKeepDays)
         pasteImageMaxMb = read(.pasteImageMaxMb, d.pasteImageMaxMb)
