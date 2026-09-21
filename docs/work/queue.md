@@ -55,3 +55,12 @@
 - [x] Collapsing a sidebar group (directory or server) hides its lanes from the strip and gallery; expanding brings them back — [detail](sidebar-collapse-hides-lanes.md) — a sibling of the gather filter in the core (lane ids, because a sidebar group is a cwd and not a tag), persisted in the ledger; hidden is not closed; focus landing in a folded group opens it; ADR-0024
 - [x] A server has a colour, picked from a submenu on its sidebar header; a colour square marks its sessions, and the name stays only where there is no other context — [detail](server-colour.md)
 - [ ] ⌘V of a file copied in Finder pastes its full path (today: only the name), double-quoted when it has spaces or shell characters; several files space-separated — [detail](paste-file-paths.md)
+- [ ] A risky paste asks first (several lines, tabs, or a lot of bytes) in a sheet with Paste / One Line / Cancel; every paste is sent in ≤1 KB chunks — [detail](paste-confirm-sheet.md)
+- [ ] ⌘V with only an image on the clipboard saves it and pastes the path; in a remote lane it uploads through the relay API and pastes the remote path — [detail](paste-clipboard-image.md)
+- [ ] OSC 52: programs can set the clipboard (allowed, shown), and must ask to read it; find out what happens today — [detail](terminal-osc52.md)
+- [ ] Pasted commands are tidied: smart quotes and dashes straightened, a copied `$ ` prompt removed, stray whitespace trimmed, and the pane says so — [detail](paste-text-hygiene.md)
+- [ ] Middle-click pastes in a terminal: the pane's selection first, else the clipboard; the program keeps the click when it has mouse reporting on — [detail](terminal-middle-click-paste.md)
+- [ ] Edit › Paste Special: Paste Escaped, as Base64 / decoded, a File as Base64 heredoc, and Paste Slowly — [detail](paste-special.md)
+- [ ] Paste history picker: what was pasted into and copied out of terminals, never the system clipboard, never concealed or private content — [detail](paste-history.md)
+- [ ] Advanced Paste: one sheet combining the landed transforms plus a regex, with a preview of the exact bytes (last; rejects itself if too few transforms exist) — [detail](paste-advanced-dialog.md)
+- [ ] Copying out of a terminal: trimmed and unwrapped by default, Copy with Styles, and a keyboard copy mode — [detail](terminal-copy-side.md)
