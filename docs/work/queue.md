@@ -64,3 +64,5 @@
 - [x] Paste history picker: what was pasted into and copied out of terminals, never the system clipboard, never concealed or private content — [detail](paste-history.md)
 - [x] Advanced Paste: one sheet combining the landed transforms plus a regex, with a preview of the exact bytes (last; rejects itself if too few transforms exist) — [detail](paste-advanced-dialog.md)
 - [x] Copying out of a terminal: trimmed and unwrapped by default, Copy with Styles, and a keyboard copy mode — [detail](terminal-copy-side.md)
+- [ ] YouTube in a web pane: the first Play gives no sound until the video is clicked again — find the cause (focus click, autoplay policy, blocker, injected script), fix it, keep gesture-less autoplay quiet — [detail](web-first-play-silent.md)
+- [ ] Audio indicators: a speaker on the lane header, sidebar row, gallery tile and status bar for any pane making sound, clickable to mute; Mute Pane / Others / All, and `maxpane mute` — [detail](web-audio-indicators.md)
