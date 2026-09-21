@@ -46,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Everything a terminal sends leaves in pieces of at most 1 000 bytes, so a long paste arrives whole on sessions whose pty-host predates relay-tty 1.23, and typing cannot land in the middle of one
 
 ### Fixed
+- A video whose player muted itself (m.youtube.com in a Mobile Layout pane) plays with sound on the click that starts it, instead of needing a second click on the video
+- Web pages no longer start playing with sound by themselves: sound needs a click, as in Safari, so a strip restored at launch stays quiet. Muted video still autoplays. `web_autoplay = "allow"` brings the old behaviour back
 - ⌘V of a file copied in Finder pasted only its name; it now pastes the full path, quoted when it needs to be, and several files space-separated
 - A middle click in a terminal pasted through the emulator's own path, which could wrap the text in bracketed-paste markers the far end never asked for
 

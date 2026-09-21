@@ -275,6 +275,16 @@ public struct Config: Codable, Equatable {
     /// who has one puts its URL here.
     public var blockingListUrl: String = "https://easylist-downloads.adblockplus.org/easylist_content_blocker.json"
 
+    /// `web_autoplay`: what a page may play without being asked.
+    ///
+    /// `"gesture"` is Safari's default and this one's: sound needs a click, a
+    /// muted video may start by itself. WebKit's default for an embedder is to
+    /// let anything play with sound, which on a strip that restores a dozen
+    /// pages at launch is a dozen pages talking; `"allow"` is that. Read when a
+    /// pane's web view is built, so a change reaches panes opened after it.
+    /// ADR-0034.
+    public var webAutoplay: WebAutoplay = .gesture
+
     /// Remote relay-tty servers, one `[[servers]]` table each:
     ///
     /// ```toml
@@ -376,6 +386,7 @@ public struct Config: Codable, Equatable {
         theme = read(.theme, d.theme)
         blocking = read(.blocking, d.blocking)
         blockingListUrl = read(.blockingListUrl, d.blockingListUrl)
+        webAutoplay = read(.webAutoplay, d.webAutoplay)
         servers = read(.servers, d.servers)
     }
 
@@ -462,6 +473,14 @@ public enum ClipboardPermission: String, Codable, CaseIterable, Sendable {
 /// `cursor_blink` in the config file. See `Config.cursorBlink`.
 public enum CursorBlink: String, Codable, CaseIterable, Sendable {
     case focused, always, never
+}
+
+/// `web_autoplay` in the config file. See `Config.webAutoplay`.
+public enum WebAutoplay: String, Codable, CaseIterable, Sendable {
+    /// Sound needs a click; muted playback does not. Safari's default.
+    case gesture
+    /// WebKit's embedder default: anything plays, with sound, unasked.
+    case allow
 }
 
 /// `theme` in the config file. See `Appearance`.

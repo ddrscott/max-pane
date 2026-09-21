@@ -315,12 +315,12 @@ pane that spawned it, and when the script merely defaulted the profile, a run
 from there saw the empty default salt, every real-WebKit suite printed
 `SKIPPED`, and the run went green having proved less than it said.
 
-The real-WebKit suites — the nine that guard on the profile's salt and serve
+The real-WebKit suites — the twelve that guard on the profile's salt and serve
 real pages to a real `WebPaneController` — are accounted for at the end of every
 default run:
 
 ```
-real-WebKit suites: 9 in the tree, 8 ran, 1 opted out, 0 skipped by the profile guard
+real-WebKit suites: 12 in the tree, 11 ran, 1 opted out, 0 skipped by the profile guard
       opted out (--skip): WebPrintTests
 ```
 
@@ -560,6 +560,51 @@ ID and a DMG. The PiP window is the page's — destroying the web view closes it
 — so a pane whose video is in PiP is not evicted (ADR-0003) until the video is
 back inline; the page says which through `WebPictureInPicture`. Closing the lane
 still closes the window, as the page goes with the lane.
+
+**Sound needs a click, and a click on Play gets sound.** The report was YouTube
+needing two: *"hit play, then click in the video component."* What was measured
+(`WebMediaPlaybackTests`, [ADR-0034](docs/decisions/0034-sound-needs-a-gesture-and-a-click-on-play-plays-with-sound.md)):
+
+- **The cause was Mobile Layout.** The pane was on it, so it was served
+  m.youtube.com, whose player mutes its own `<video>` before it starts and
+  waits for TAP TO UNMUTE, because on a phone muted is the only autoplay there
+  is. It does that in a bare `WKWebView` with none of this app's scripts, with
+  the blocker on or off, under an iPhone or an Android user agent. Anything
+  that starts playback without touching that mute (the player's Play, a media
+  key) runs the video silent until the video itself is clicked.
+- **What did not reproduce:** the strip's focus click (a click on a web view
+  that is not first responder, in a window that is not key, carries user
+  activation and plays with sound at once); the content blocker (desktop
+  YouTube behaves the same with EasyList's rules on and off); the fullscreen,
+  notification, geolocation and picture-in-picture scripts; and WebKit's
+  autoplay policy, which was muting nothing. It was doing the opposite:
+  `mediaTypesRequiringUserActionForPlayback` defaults to none on macOS, and a
+  page that called `play()` on load played **with sound**, on a strip that
+  restores its pages at launch.
+
+So two things changed. A pane's configuration asks for a gesture before
+**sound** (`.audio`, Safari's default): `play()` without one is refused while
+the element has sound, a muted video still starts by itself, and a lane
+restored at launch stays quiet. `web_autoplay = "allow"` is WebKit's default
+back. And a user script (`WebMediaPlayback`, every frame) lifts a mute **the
+page** made when **you** start that element: `play()` within a second of a real
+click that landed inside the video's box. A mute made during a gesture is yours
+(the site's mute button) and is left alone, so is a video already playing
+muted, and so is one you did not click on. It cannot see the native controls'
+Play or a media key, which never call the page's `play()`.
+
+Whether a pane is making sound is read by `WebPaneAudio`: WebKit's private
+`_isPlayingAudio` and `_mediaMutedState`, and `_setPageMuted:` to silence a
+page without pausing it. Each is looked for before it is called, as
+picture-in-picture's key is, so a WebKit that drops one answers "unknown".
+
+**YouTube, by hand**, since a test cannot log in: (1) a Mobile Layout lane on a
+watch page: if it is already running muted, one click on the video gives sound;
+pause it, reload, and press the player's Play: picture and sound, one click.
+(2) The same with Mobile Layout off: the page waits on its large Play button
+and one click plays with sound. (3) Quit and relaunch with a YouTube lane open:
+nothing makes sound until you click. (4) Mute with YouTube's own speaker
+button, pause, play: it stays muted.
 
 **Passkeys are not available in a pane.** A site's "sign in with a passkey"
 gets `NotAllowedError` at once, no sheet, no QR code, and
@@ -2534,6 +2579,11 @@ either comes across as a comment.
 `blocking` turns the ad and tracker blocker off everywhere when `false`, and
 `blocking_list_url` is where its rules come from. See
 [A web lane](#a-web-lane).
+
+`web_autoplay` is what a page may play without being asked: `"gesture"`, the
+default, means sound needs a click while a muted video may start by itself;
+`"allow"` lets anything play with sound, which is WebKit's own default for an
+embedder. It reaches panes opened after the change.
 
 `copy_on_select` is whether selecting text in a terminal puts it on the
 clipboard. It is `false` by default, so a selection is only a selection and ⌘C

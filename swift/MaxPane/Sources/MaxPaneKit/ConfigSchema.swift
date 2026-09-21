@@ -226,6 +226,8 @@ public struct ConfigField {
                  "Block ads and trackers in web pages with the list below. Off for one site from its lane's ⋯ menu."),
             string("blockingListUrl", \.blockingListUrl, .web,
                    "Where the blocking rules come from: WebKit content-blocker JSON, fetched daily. Several URLs, separated by spaces, are joined."),
+            choice("webAutoplay", \.webAutoplay, .web, appliesLive: false,
+                   "What a page may play unasked. gesture: sound needs a click, muted video may start. allow: anything plays, with sound."),
             string("fontName", \.fontName, .terminals, "The terminal font."),
             double("fontSize", \.fontSize, .terminals, 6...72, step: 1,
                    "The terminal font size, in points. ⌘= and ⌘- zoom a pane from here."),

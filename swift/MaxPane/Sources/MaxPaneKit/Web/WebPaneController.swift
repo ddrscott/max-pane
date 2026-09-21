@@ -1353,6 +1353,11 @@ final class WebPaneController: NSObject, PaneController {
         // A popup's configuration is copied from this one and inherits it.
         // `WebPictureInPictureTests` proves both in real WebKit.
         Self.enablePictureInPicture(on: configuration.preferences)
+        // Sound needs a gesture. WebKit's default here is that it does not —
+        // measured: a page calling `play()` on load played with sound, and a
+        // strip restores its pages at launch. A popup's configuration is copied
+        // from this one and inherits it. See `WebMediaPlayback`, ADR-0034.
+        WebMediaPlayback.apply(config.webAutoplay, to: configuration)
         // A bare `example.com` reaches the network as `https://`, as Safari
         // sends it, rather than staying on `http://` and wearing the amber ⚠
         // for a site that was never meant to be reached that way. It is
@@ -1475,6 +1480,7 @@ final class WebPaneController: NSObject, PaneController {
         }
         pictureInPictureRelay = pip
         WebPictureInPicture.install(on: webView, handler: pip)
+        WebMediaPlayback.install(on: webView)
         observeChrome(webView)
         // `webView.title` is usually still empty when `didFinish` fires — the
         // document's <title> often lands a beat later — so observe it rather
@@ -1493,7 +1499,7 @@ final class WebPaneController: NSObject, PaneController {
     /// Only the Notification API's script changes — a remembered answer is
     /// written into its source, because `Notification.permission` cannot be
     /// fetched — but `WKUserContentController` removes user scripts all or
-    /// none, so the other four go and come back with it. Each install is
+    /// none, so the others go and come back with it. Each install is
     /// idempotent, so on an already-current controller this does nothing.
     func refreshUserScripts() {
         guard let webView, let hoverRelay, let fullScreenRelay, let notificationRelay, let geolocationRelay,
@@ -1507,6 +1513,7 @@ final class WebPaneController: NSObject, PaneController {
         WebNotifications.install(on: webView, handler: notificationRelay, grants: grants)
         WebGeolocation.install(on: webView, handler: geolocationRelay)
         WebPictureInPicture.install(on: webView, handler: pictureInPictureRelay)
+        WebMediaPlayback.install(on: webView)
     }
 
     /// Constraints rather than an autoresizing mask, and that is not a taste
