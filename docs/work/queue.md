@@ -62,5 +62,5 @@
 - [x] Middle-click pastes in a terminal: the pane's selection first, else the clipboard; the program keeps the click when it has mouse reporting on — [detail](terminal-middle-click-paste.md)
 - [x] Edit › Paste Special: Paste Escaped, as Base64 / decoded, a File as Base64 heredoc, and Paste Slowly — [detail](paste-special.md)
 - [x] Paste history picker: what was pasted into and copied out of terminals, never the system clipboard, never concealed or private content — [detail](paste-history.md)
-- [ ] Advanced Paste: one sheet combining the landed transforms plus a regex, with a preview of the exact bytes (last; rejects itself if too few transforms exist) — [detail](paste-advanced-dialog.md)
+- [-] Advanced Paste: one sheet combining the landed transforms plus a regex, with a preview of the exact bytes (last; rejects itself if too few transforms exist) — [detail](paste-advanced-dialog.md)
 - [ ] Copying out of a terminal: trimmed and unwrapped by default, Copy with Styles, and a keyboard copy mode — [detail](terminal-copy-side.md)
