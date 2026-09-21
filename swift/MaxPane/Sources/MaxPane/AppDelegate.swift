@@ -77,6 +77,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // leave the menu advertising one key and the monitor answering another.
         Keymap.install(Keymap(overrides: config.keys))
 
+        // Pictures ⌘V wrote for a terminal (`PastedImages`), a week old by
+        // default: gone, off the main thread.
+        PastedImages.pruneAtLaunch(days: Int(config.pasteImageKeepDays))
+
         do {
             // Clamped here rather than trusted: `laneDefaultPt` is a number in a
             // file a person edits, and the core would clamp it anyway — doing it

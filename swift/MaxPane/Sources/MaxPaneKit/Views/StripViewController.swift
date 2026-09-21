@@ -2429,6 +2429,11 @@ public final class StripViewController: NSViewController {
         case .pty:
             let controller = TerminalPaneController(pane: pane, store: store, config: config)
             controller.liveConfig = { [weak self, config] in self?.liveConfig?() ?? config }
+            // Looked up at each paste, not captured: a token pasted into
+            // Settings a minute ago is the one an upload should carry.
+            if let server = pane.sessionKey?.server {
+                controller.uploadEndpoint = { [weak self] in self?.servers?.endpoints[server] }
+            }
             // A pty pane without a session id is a lane whose session could not
             // be started. It keeps its ordinal and its tag and shows why
             // (PRD §11, §15.8); it just has nothing to attach to.

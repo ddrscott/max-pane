@@ -415,7 +415,11 @@ itself was measured against a real server through relaytty.com in spike M7
 TCP fake of relay-tty's HTTP and `/ws/events` on one loopback port for the
 session source, and its last suite runs the whole path against a real server
 when `MAXPANE_REMOTE_VERIFY` names one (with `MAXPANE_REMOTE_TOKEN`, read at
-run time), printing `SKIPPED` otherwise.
+run time), printing `SKIPPED` otherwise. The fake also answers relay-tty's
+`POST /api/upload`, which is what `PasteImageTests` uploads a pasted picture
+to; `LiveRelayUploadTests` does the same against the real server under the
+same two variables and prints the path and sha256 to compare over ssh (then
+delete the file there yourself: relay-tty has no endpoint that removes one).
 
 `crates/laned-core/tests/durability.rs` holds the half of PRD §15's acceptance
 tests that the core owns — mostly "the strip is identical after a `kill -9`",
@@ -1646,6 +1650,36 @@ name holds a newline or another control character is left out — typed into a
 prompt that is a keystroke, not text — and the pane says which in one line
 while the rest paste.
 
+**A screenshot on the clipboard pastes as a path.** A picture copied with
+⇧⌃⌘4, or a browser's Copy Image, has no text, and a program at a prompt takes a
+path (Claude Code reads the image a path names). So when the clipboard holds a
+picture and **neither files nor text**, ⌘V writes it as a PNG and pastes that
+file's path, quoted by the same rule as any other path. The order is files,
+then text, then a picture: a browser copy often carries a picture *and* its
+address, and the text is what was meant.
+
+- **In a local lane** the file is
+  `~/Library/Caches/app.ljs.maxpane/paste/paste-YYYYMMDD-HHMMSS.png` (another
+  profile's is under `…/app.ljs.maxpane/profiles/<name>/paste/`). A second one
+  in the same second is `…-2.png`; nothing is ever overwritten. The pane says
+  `saved paste-….png, 1.2 MB`. Files older than `paste_image_keep_days` (7) are
+  removed at launch.
+- **In a remote lane** the path has to be one on *that* machine, so the picture
+  is uploaded through the relay server's own API, `POST /api/upload`, the way
+  the relay-tty web app uploads a file, with the server's Keychain token. It
+  lands in the server's upload directory (`~/.relay-tty/uploads` unless the
+  server's settings say otherwise) and the path the server answers with is what
+  is pasted. The pane says `uploading 1.2 MB to yorkshire…` while it goes, off
+  the main thread, and the path arrives at the cursor when the server has
+  answered. If it fails, the pane says why in one line naming the server and
+  **the prompt gets nothing**. Nothing is written on this Mac, and nothing on
+  the server is pruned: those files are the server's.
+
+A picture over `paste_image_max_mb` (25), measured as the PNG, is refused in
+one line. `paste_images_as_files = false` turns all of this off, and an
+image-only clipboard pastes nothing, as it did before. Dropping onto a pane is
+still files only. [ADR-0027](docs/decisions/0027-a-pasted-picture-becomes-a-path.md).
+
 **A paste that would do something you may not have meant asks first**, in a
 sheet over the pane it is about to land in (other lanes keep working). With no
 bracketed paste, every newline inside a paste is the Return key: five lines
@@ -2185,6 +2219,9 @@ paste_confirm_multiline = true
 paste_confirm_tabs = true
 paste_confirm_bytes = 16384
 paste_tab_width = 4
+paste_images_as_files = true
+paste_image_keep_days = 7
+paste_image_max_mb = 25
 cursor_blink = "focused"
 ```
 
@@ -2194,7 +2231,8 @@ your keys and keys it does not know all survive
 finder** shows the file, and **open in editor** opens it in a terminal lane with
 your `editor` setting, the same way ⌘-clicking a path does.
 
-`theme`, `sidebar_collapse_hides_lanes` and the four `paste_` keys apply at
+`theme`, `sidebar_collapse_hides_lanes` and the `paste_` keys (all but
+`paste_image_keep_days`, which is read at launch, when the pruning is) apply at
 once, and so does everything under Servers — each `[[servers]]` table's `name`, `url`, `enabled`
 and `color` (see [Remote servers](#remote-servers)). Every other
 key, the keyboard included, applies on
@@ -2228,6 +2266,14 @@ the three reasons a paste into a terminal asks first: a line ending inside it,
 a tab, more bytes than that (`0` never asks about size). `paste_tab_width` is
 how many spaces the sheet's Tabs to Spaces makes of a tab. All four are read at
 each paste. See [Pasting into a terminal](#pasting-into-a-terminal).
+
+`paste_images_as_files` is whether ⌘V of a clipboard holding only a picture
+saves it as a PNG and pastes the path (uploading it first in a remote lane);
+`false` pastes nothing. `paste_image_max_mb` refuses a bigger picture in one
+line (`0` refuses nothing; a relay server stops at 100 MB itself). Both are
+read at each paste. `paste_image_keep_days` is how long a saved picture stays
+in `~/Library/Caches/app.ljs.maxpane/paste/` before a launch removes it; `0`
+keeps them all.
 
 `cursor_blink` is which terminal cursors blink: `"focused"`, `"always"` or
 `"never"`. `"focused"`, the default, blinks the one terminal that has the

@@ -92,6 +92,10 @@ enum TerminalPaste {
         /// Copied files left out of `text`, by display name, control
         /// characters already replaced. See `shellWord(for:)` for why.
         var skippedFiles: [String] = []
+        /// A picture, as PNG bytes, when the pasteboard held one and neither
+        /// files nor text. Never set alongside `text`: the pane turns it into
+        /// a file first and pastes that file's path (`PastedImages`).
+        var image: Data?
 
         /// One line for the pane's notice, or nil when nothing was skipped.
         var notice: String? {
@@ -115,16 +119,71 @@ enum TerminalPaste {
     /// trailing space, and the string flavour is ignored. A web URL is not a
     /// file URL and pastes as the text it is.
     ///
+    /// **Text wins over an image, and an image is last.** A browser's Copy
+    /// Image often carries the picture *and* a string (its address, its alt
+    /// text), and a copy out of a document carries its words and a rendering
+    /// of them; in both the text is what was meant for a prompt. Only a
+    /// pasteboard with a picture and nothing else to say — a screenshot taken
+    /// to the clipboard, a bare Copy Image — is an image paste, and then only
+    /// when `images` says the setting (`paste_images_as_files`) is on. Off, it
+    /// is nothing, as it was before there was such a thing.
+    ///
     /// Pure apart from the pasteboard it is handed: nothing is stat'ed and no
     /// symlink is resolved. What was copied is what is pasted, and the path is
     /// this Mac's even when the session is on another machine.
-    static func clipboard(_ pasteboard: NSPasteboard = .general) -> Clipboard {
+    static func clipboard(_ pasteboard: NSPasteboard = .general, images: Bool = true) -> Clipboard {
         let files = pasteboard.readObjects(
             forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]
         ) as? [NSURL] ?? []
         guard files.isEmpty else { return clipboard(ofFiles: files) }
-        guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return Clipboard() }
-        return Clipboard(text: text)
+        if let text = pasteboard.string(forType: .string), !text.isEmpty { return Clipboard(text: text) }
+        guard images, let png = png(on: pasteboard) else { return Clipboard() }
+        return Clipboard(image: png)
+    }
+
+    /// The picture on `pasteboard` as PNG bytes, or nil when there is none.
+    ///
+    /// `public.png` is taken as it is: that is what ⇧⌃⌘4 writes, and
+    /// re-encoding it would only change its bytes. TIFF and JPEG are decoded
+    /// and written out as PNG, and anything else `NSImage` can read off a
+    /// pasteboard (a PDF from Preview, a PICT from the past) is rendered and
+    /// written the same way. One format on disk, so whatever reads the path
+    /// is never surprised by its extension.
+    static func png(on pasteboard: NSPasteboard) -> Data? {
+        if let data = pasteboard.data(forType: .png), !data.isEmpty { return data }
+        for type in [NSPasteboard.PasteboardType.tiff, NSPasteboard.PasteboardType("public.jpeg")] {
+            if let data = pasteboard.data(forType: type), let rep = NSBitmapImageRep(data: data),
+               let png = rep.representation(using: .png, properties: [:]) {
+                return png
+            }
+        }
+        guard NSImage.canInit(with: pasteboard), let image = NSImage(pasteboard: pasteboard),
+              let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff)
+        else { return nil }
+        return rep.representation(using: .png, properties: [:])
+    }
+
+    /// What an image paste reads from the config, each time.
+    struct ImageSettings: Equatable {
+        var asFiles = true
+        /// 0 refuses nothing.
+        var maxMB = 25
+
+        init(asFiles: Bool = true, maxMB: Int = 25) {
+            self.asFiles = asFiles
+            self.maxMB = maxMB
+        }
+
+        init(_ config: Config) {
+            self.init(asFiles: config.pasteImagesAsFiles, maxMB: Int(config.pasteImageMaxMb))
+        }
+    }
+
+    /// The one line that refuses an image of `bytes`, or nil when it may go.
+    /// Measured on the PNG that would be written, in the MB `size(_:)` prints.
+    static func imageRefusal(bytes: Int, _ settings: ImageSettings) -> String? {
+        guard settings.maxMB > 0, bytes > settings.maxMB * 1_048_576 else { return nil }
+        return "image not pasted: \(size(bytes)) is more than paste_image_max_mb = \(settings.maxMB)"
     }
 
     /// The pasteboard's text, or nil when it holds nothing a terminal can take.

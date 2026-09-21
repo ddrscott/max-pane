@@ -31,6 +31,17 @@ final class FakeRelayServer: @unchecked Sendable {
     var home = "/home/fake"
     /// Answer every spawn with this status and `{"error": …}` instead of 201.
     var spawnRefusal: (status: Int, error: String)?
+    /// Every `POST /api/upload`, in order: the name the client sent, the name
+    /// it was stored under, and the bytes.
+    private var uploaded: [(sent: String, stored: String, body: Data)] = []
+    var uploads: [(sent: String, stored: String, body: Data)] { lock.lock(); defer { lock.unlock() }; return uploaded }
+    /// Where the fake server "writes" an upload: relay-tty's default,
+    /// `~/.relay-tty/uploads`, under `home`.
+    var uploadDir: String { "\(home)/.relay-tty/uploads" }
+    /// Answer every upload with this status and `{"error": …}` instead of 200.
+    var uploadRefusal: (status: Int, error: String)?
+    /// How long to sit on an upload before answering it.
+    var uploadDelay: TimeInterval = 0
     /// The id the next spawn gets.
     var nextSpawnId = "5eed0001"
     /// Whether the server checks the cookie at all (LAN-direct does; a
@@ -170,6 +181,36 @@ final class FakeRelayServer: @unchecked Sendable {
             lock.lock(); sessions.append(session); lock.unlock()
             let out = try! JSONSerialization.data(withJSONObject: ["session": session, "url": "\(baseURL)/sessions/\(nextSpawnId)"])
             respond(conn, "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: \(out.count)\r\nConnection: close\r\n\r\n", out)
+            return
+        }
+        if method == "POST", path == "/api/upload" {
+            // relay-tty's `router.post("/upload")`: the name from X-Filename,
+            // basename only; a name already there gets a suffix; the answer
+            // is the absolute path it was written to.
+            func answer(_ status: String, _ object: [String: Any]) {
+                let out = try! JSONSerialization.data(withJSONObject: object)
+                queue.asyncAfter(deadline: .now() + uploadDelay) { [weak self] in
+                    self?.respond(conn, "HTTP/1.1 \(status)\r\nContent-Type: application/json\r\nContent-Length: \(out.count)\r\nConnection: close\r\n\r\n", out)
+                }
+            }
+            if let refusal = uploadRefusal {
+                answer("\(refusal.status) Nope", ["error": refusal.error])
+                return
+            }
+            guard let sent = headers["x-filename"], !sent.isEmpty else {
+                answer("400 Bad Request", ["error": "X-Filename header required"])
+                return
+            }
+            let safe = (sent as NSString).lastPathComponent
+            lock.lock()
+            var stored = safe
+            if uploaded.contains(where: { $0.stored == stored }) {
+                let ext = (safe as NSString).pathExtension
+                stored = "\((safe as NSString).deletingPathExtension)-\(String(format: "%06x", uploaded.count))" + (ext.isEmpty ? "" : ".\(ext)")
+            }
+            uploaded.append((sent: sent, stored: stored, body: body))
+            lock.unlock()
+            answer("200 OK", ["ok": true, "path": "\(uploadDir)/\(stored)", "name": stored, "size": body.count])
             return
         }
         if method == "GET", path.hasPrefix("/api/sessions/") {

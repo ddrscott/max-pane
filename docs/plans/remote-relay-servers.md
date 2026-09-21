@@ -249,6 +249,15 @@ this Mac's filesystem and not through a second protocol.
   and are fanned to every client of the session; `upload` and `upload-dir`
   (`server/api.ts:685-…`) are the way a file gets *to* the host. A drop onto a
   remote lane uploads there.
+  **Landed first (2026-09-20): ⌘V of a picture in a remote lane.**
+  `RelayUpload` (`Terminal/PastedImages.swift`) is `POST /api/upload` with the
+  raw bytes, `X-Filename` and the session cookie, as the web client's
+  `uploadOne` does it (`app/routes/sessions.$id.tsx:735`,
+  `server/api.ts:713`); the `path` in the answer is pasted. It sends no
+  `X-Upload-Dir`, so the file lands in the server's configured upload
+  directory. A drop of local files onto a remote lane is the same call per
+  file and is the next piece; it still pastes this Mac's paths today.
+  ADR-0027.
 - **`maxpane open` from a remote shell.** Still needs a reverse channel the
   server does not have; the cleanest is the shim posting to the relay server
   and Max Pane hearing it on `/ws/events`. Ask upstream (§5); until then

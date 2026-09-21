@@ -290,12 +290,17 @@ final class TerminalPaneController: NSObject, PaneController {
     }
 
     /// One line in the banner, briefly: what could not be done, and why.
-    func showNotice(_ text: String) {
+    ///
+    /// `lasting: nil` stays until the next notice replaces it: an upload in
+    /// progress is said for as long as it is true.
+    func showNotice(_ text: String, lasting seconds: TimeInterval? = 3) {
         status.isHidden = false
         status.setState(.notice(text))
         Motion.fade(status.layer)
         noticeTimer?.invalidate()
-        noticeTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
+        noticeTimer = nil
+        guard let seconds else { return }
+        noticeTimer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 guard let self, case .notice = self.status.state else { return }
                 Motion.fade(self.status.layer)
@@ -304,6 +309,11 @@ final class TerminalPaneController: NSObject, PaneController {
         }
     }
     private var noticeTimer: Timer?
+    /// The notice on show, if one is: what a test reads.
+    var noticeText: String? {
+        if case .notice(let text) = status.state { return text }
+        return nil
+    }
 
     /// How this pane's server is doing, as its session list has it; nil for
     /// a local pane and for a server that is answering. Laid over the
@@ -513,7 +523,10 @@ final class TerminalPaneController: NSObject, PaneController {
     /// The bytes go through the session, not straight at the attachment, so a
     /// paste and the keystrokes on either side of it are one stream in one
     /// order rather than two racing ones.
-    func pasteFromClipboard(asking: Bool = true) { paste(TerminalPaste.clipboard(pasteboard), asking: asking) }
+    func pasteFromClipboard(asking: Bool = true) {
+        let images = TerminalPaste.ImageSettings(liveConfig?() ?? config)
+        paste(TerminalPaste.clipboard(pasteboard, images: images.asFiles), asking: asking)
+    }
 
     /// Where ⌘V reads from. The general pasteboard, except in a test, which
     /// hands in one of its own and leaves the owner's clipboard alone.
@@ -540,7 +553,10 @@ final class TerminalPaneController: NSObject, PaneController {
         // A copied file whose name holds a control character is left out, and
         // the rest still go: say which, in the line the pane already has.
         if let notice = clipboard.notice { showNotice(notice) }
-        guard let text = clipboard.text else { return }
+        guard let text = clipboard.text else {
+            if let image = clipboard.image { paste(image: image) }
+            return
+        }
         let settings = TerminalPaste.ConfirmSettings(liveConfig?() ?? config)
         if asking, TerminalPaste.asksFirst(text, settings) {
             ask(about: text, settings)
@@ -563,6 +579,77 @@ final class TerminalPaneController: NSObject, PaneController {
             showNotice("pasting \(TerminalPaste.size(bytes.count)), about \(Int(seconds.rounded())) s")
         }
         session.sendInput(Data(bytes))
+    }
+
+    // MARK: images
+
+    /// Where a local pane's pasted pictures are written. The profile's cache
+    /// directory, except in a test, which hands in one of its own.
+    var pastedImages = PastedImages()
+
+    /// The relay server this pane's session is on, as the file has it now, or
+    /// nil for a server the file no longer configures. Set by the strip for a
+    /// remote pane; a test sets it to point at its fake server.
+    var uploadEndpoint: (() -> RelayServer?)?
+
+    /// One upload at a time. A second ⌘V of a picture while the first is
+    /// still going up is dropped: it is almost always the same picture.
+    private(set) var isUploadingImage = false
+
+    /// A picture becomes a file, and the file's path is what is pasted: on
+    /// this Mac for a local session, on the server for a remote one, because
+    /// a path is only any use on the machine the program reading it runs on.
+    /// Never asks: a path is one line with no tab in it.
+    private func paste(image png: Data) {
+        let settings = TerminalPaste.ImageSettings(liveConfig?() ?? config)
+        if let refusal = TerminalPaste.imageRefusal(bytes: png.count, settings) {
+            showNotice(refusal)
+            return
+        }
+        if let server = pane.sessionKey?.server {
+            upload(png, to: server)
+            return
+        }
+        do {
+            let url = try pastedImages.save(png)
+            guard let word = TerminalPaste.shellWord(for: url.path) else {
+                showNotice("image saved, but its path cannot be typed at a prompt: \(pastedImages.directory.path)")
+                return
+            }
+            showNotice("saved \(url.lastPathComponent), \(TerminalPaste.size(png.count))")
+            send(pasted: word)
+        } catch {
+            showNotice("image not pasted: \(error.localizedDescription)")
+        }
+    }
+
+    /// `POST /api/upload` (`RelayUpload`), off the main thread; the prompt
+    /// gets the server's path when there is one and nothing when there is
+    /// not. What is typed meanwhile goes first, as it would have anyway.
+    private func upload(_ png: Data, to server: String) {
+        guard !isUploadingImage else { return }
+        guard let endpoint = uploadEndpoint?() else {
+            showNotice("\(server): could not upload the image — the server is not in config.toml")
+            return
+        }
+        isUploadingImage = true
+        showNotice("uploading \(TerminalPaste.size(png.count)) to \(server)…", lasting: nil)
+        let filename = PastedImages.name(stem: PastedImages.stem(at: Date()), attempt: 1)
+        RelayUpload(name: server, endpoint: endpoint).upload(png, filename: filename) { [weak self] result in
+            guard let self else { return }
+            self.isUploadingImage = false
+            switch result {
+            case .failure(let error):
+                self.showNotice(error.localizedDescription, lasting: 6)
+            case .success(let path):
+                guard let word = TerminalPaste.shellWord(for: path) else {
+                    self.showNotice("\(server): uploaded, but the server's path cannot be typed at a prompt")
+                    return
+                }
+                self.showNotice("uploaded \((path as NSString).lastPathComponent), \(TerminalPaste.size(png.count)), to \(server)")
+                self.send(pasted: word)
+            }
+        }
     }
 
     /// What one paced piece costs end to end: the 5 ms gap plus the timer's

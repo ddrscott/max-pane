@@ -126,6 +126,17 @@ public struct Config: Codable, Equatable {
     public var pasteConfirmBytes: UInt32 = 16_384
     /// How many spaces the sheet's Tabs to Spaces makes of one tab.
     public var pasteTabWidth: UInt32 = 4
+    /// ⌘V with a picture on the clipboard and nothing else (a screenshot)
+    /// writes it to a PNG and pastes that file's path; in a remote lane it is
+    /// uploaded to the server and the path there is pasted. Off, such a
+    /// clipboard pastes nothing. Read at each paste.
+    public var pasteImagesAsFiles: Bool = true
+    /// Pasted images older than this many days are removed at launch. 0 keeps
+    /// them. Only this Mac's: what was uploaded to a server is the server's.
+    public var pasteImageKeepDays: UInt32 = 7
+    /// A pasted image bigger than this, as PNG, is refused in one line. 0
+    /// refuses nothing (a relay server stops at 100 MB itself).
+    public var pasteImageMaxMb: UInt32 = 25
 
     /// Which terminal cursors blink.
     ///
@@ -301,6 +312,9 @@ public struct Config: Codable, Equatable {
         pasteConfirmTabs = read(.pasteConfirmTabs, d.pasteConfirmTabs)
         pasteConfirmBytes = read(.pasteConfirmBytes, d.pasteConfirmBytes)
         pasteTabWidth = read(.pasteTabWidth, d.pasteTabWidth)
+        pasteImagesAsFiles = read(.pasteImagesAsFiles, d.pasteImagesAsFiles)
+        pasteImageKeepDays = read(.pasteImageKeepDays, d.pasteImageKeepDays)
+        pasteImageMaxMb = read(.pasteImageMaxMb, d.pasteImageMaxMb)
         cursorBlink = read(.cursorBlink, d.cursorBlink)
         editor = read(.editor, d.editor)
         searchUrl = read(.searchUrl, d.searchUrl)
