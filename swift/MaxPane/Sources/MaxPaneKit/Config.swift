@@ -138,6 +138,19 @@ public struct Config: Codable, Equatable {
     /// refuses nothing (a relay server stops at 100 MB itself).
     public var pasteImageMaxMb: UInt32 = 25
 
+    /// A program in a terminal setting the clipboard with OSC 52: what tmux,
+    /// vim and neovim do to copy, and the only way a yank on a remote machine
+    /// reaches this Mac. `allow`, the default, sets it and says so with a
+    /// `COPIED` chip in the lane's header; `ask` holds it in a sheet first;
+    /// `deny` drops it. Capped at 1 MiB whichever it is. Not `copy_on_select`,
+    /// which is about a selection made here. Read at each request (ADR-0028).
+    public var osc52Write: ClipboardPermission = .allow
+    /// A program asking to *read* the clipboard with OSC 52. Whatever is on it
+    /// goes to the program, and from a remote lane to another machine, so the
+    /// default is `ask`, every time, with Deny the default button. `deny`
+    /// answers every request with nothing; `allow` hands it over unasked.
+    public var osc52Read: ClipboardPermission = .ask
+
     /// Which terminal cursors blink.
     ///
     /// `focused`, the default: the one terminal that holds the keyboard, and
@@ -315,6 +328,8 @@ public struct Config: Codable, Equatable {
         pasteImagesAsFiles = read(.pasteImagesAsFiles, d.pasteImagesAsFiles)
         pasteImageKeepDays = read(.pasteImageKeepDays, d.pasteImageKeepDays)
         pasteImageMaxMb = read(.pasteImageMaxMb, d.pasteImageMaxMb)
+        osc52Write = read(.osc52Write, d.osc52Write)
+        osc52Read = read(.osc52Read, d.osc52Read)
         cursorBlink = read(.cursorBlink, d.cursorBlink)
         editor = read(.editor, d.editor)
         searchUrl = read(.searchUrl, d.searchUrl)
@@ -400,6 +415,11 @@ public struct RelayServerEntry: Codable, Equatable, Sendable {
         if baseURL == nil { return "url must be http:// or https:// with a host" }
         return nil
     }
+}
+
+/// `osc52_write` and `osc52_read` in the config file. See `Config.osc52Write`.
+public enum ClipboardPermission: String, Codable, CaseIterable, Sendable {
+    case allow, ask, deny
 }
 
 /// `cursor_blink` in the config file. See `Config.cursorBlink`.

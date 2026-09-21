@@ -1714,6 +1714,51 @@ that 1 MB takes about seven seconds (measured: 7.1 s local, 7.2 s through a
 relaytty.com tunnel, sha256 equal both times), and a paste that will take a
 second or more says so in the pane's notice line.
 
+### A program and the clipboard (OSC 52)
+
+**A program in a terminal can set the clipboard, and you see it happen.** tmux,
+vim, neovim and plenty of CLIs copy with the OSC 52 escape sequence, and over
+ssh or in a remote lane it is the only way a yank on the far machine reaches
+this Mac. It is allowed by default. The lane's header says **`COPIED`** for two
+seconds where the state chip goes (the pane's notice line says it instead when
+`BLOCKED` or a dead server holds the chip). At most 1 MiB; a bigger one is
+refused in one line, and an empty one, which asks to clear the clipboard, is
+ignored. `osc52_write = "ask"` holds each one in a sheet first; `"deny"` drops
+them. This has nothing to do with `copy_on_select`, which is about a selection
+made here.
+
+```sh
+printf '\033]52;c;%s\a' "$(printf hello | base64)"    # ⌘V now pastes hello
+```
+
+In a remote lane the relay web app uses the same channel: text selected in a
+browser or on a phone attached to the same session lands on this clipboard too,
+with the same chip, under the same setting.
+
+**A program asking to *read* the clipboard is asked about, every time.** A read
+hands whatever you last copied to whatever is running, and from a remote lane
+to another machine, so `osc52_read` is `"ask"` by default. The sheet goes over
+the pane that asked, names the program when it is known, the lane, and the
+server the text would leave for, and shows what would be handed over: the first
+eight lines, control characters visible.
+
+| Key | |
+|---|---|
+| **↩** or **Esc** | Deny. The program gets an empty answer. |
+| **⌥A**, or a click on ALLOW | Allow, this once. |
+
+No bare letter allows, on purpose: a program raises this sheet, not you, and
+you may be mid-word in that pane when it does. It takes the keyboard only from
+its own terminal. Nothing is remembered; a second request under an open sheet
+is denied. `osc52_read = "deny"` answers every request with nothing, and
+`"allow"` hands it over unasked.
+
+Through a current relay-tty a read cannot happen at all: pty-host takes the
+query out of the stream and answers nothing, so the program times out. The
+sheet is for sessions whose bytes reach the terminal itself.
+[ADR-0028](docs/decisions/0028-a-program-may-set-the-clipboard-and-must-ask-to-read-it.md)
+has what was found and why.
+
 ### The cursor
 
 **Only the terminal that has the keyboard blinks its cursor.** Every other
@@ -2222,6 +2267,8 @@ paste_tab_width = 4
 paste_images_as_files = true
 paste_image_keep_days = 7
 paste_image_max_mb = 25
+osc52_write = "allow"
+osc52_read = "ask"
 cursor_blink = "focused"
 ```
 
@@ -2231,9 +2278,9 @@ your keys and keys it does not know all survive
 finder** shows the file, and **open in editor** opens it in a terminal lane with
 your `editor` setting, the same way ⌘-clicking a path does.
 
-`theme`, `sidebar_collapse_hides_lanes` and the `paste_` keys (all but
-`paste_image_keep_days`, which is read at launch, when the pruning is) apply at
-once, and so does everything under Servers — each `[[servers]]` table's `name`, `url`, `enabled`
+`theme`, `sidebar_collapse_hides_lanes`, `osc52_write`, `osc52_read` and the
+`paste_` keys (all but `paste_image_keep_days`, which is read at launch, when
+the pruning is) apply at once, and so does everything under Servers — each `[[servers]]` table's `name`, `url`, `enabled`
 and `color` (see [Remote servers](#remote-servers)). Every other
 key, the keyboard included, applies on
 the next launch, and the window marks a changed one `$ relaunch to apply` until
@@ -2274,6 +2321,12 @@ line (`0` refuses nothing; a relay server stops at 100 MB itself). Both are
 read at each paste. `paste_image_keep_days` is how long a saved picture stays
 in `~/Library/Caches/app.ljs.maxpane/paste/` before a launch removes it; `0`
 keeps them all.
+
+`osc52_write` and `osc52_read` are what a program in a terminal may do to the
+clipboard with OSC 52, each `"allow"`, `"ask"` or `"deny"`. Setting it is
+`"allow"` by default and shows `COPIED` in the lane's header; reading it is
+`"ask"` by default, and the sheet's default is Deny. Both are read at each
+request. See [A program and the clipboard](#a-program-and-the-clipboard-osc-52).
 
 `cursor_blink` is which terminal cursors blink: `"focused"`, `"always"` or
 `"never"`. `"focused"`, the default, blinks the one terminal that has the

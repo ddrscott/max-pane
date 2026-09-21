@@ -141,6 +141,11 @@ struct CopyOnSelectSurfaceTests {
     /// Runs `body` with a known string on the general pasteboard, then puts
     /// back what was there.
     private func withSentinel(_ body: () async throws -> Void) async throws {
+        // The test process's general pasteboard, not the owner's: see
+        // `GeneralPasteboardStandIn`. The library writes to it by name.
+        await GeneralPasteboardStandIn.take()
+        defer { GeneralPasteboardStandIn.giveBack() }
+        #expect(NSPasteboard.general === GeneralPasteboardStandIn.pasteboard)
         let pasteboard = NSPasteboard.general
         let before = pasteboard.string(forType: .string)
         pasteboard.clearContents()

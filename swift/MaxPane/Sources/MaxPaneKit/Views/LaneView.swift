@@ -314,6 +314,9 @@ final class LaneView: NSView {
     /// for a session the registry knows; a lane whose server was already
     /// gone at launch has no telemetry at all, and would read EXITED — the
     /// one thing it is not known to be.
+    /// See `LaneHeaderView.flashCopied`.
+    func flashCopied() -> Bool { header.flashCopied() }
+
     func applyTelemetry(_ telemetry: [SessionKey: SessionTelemetry], servers: [String: ServerState] = [:]) {
         let key = currentSessionKey
         header.serverState = key?.server.flatMap { servers[$0] }
@@ -1260,12 +1263,13 @@ final class LaneHeaderView: NSView {
 
     private func rebuild() {
         guard let lane else { return }
-        let next = LaneHeaderModel(lane: lane, telemetry: telemetry, serverState: serverState)
+        var next = LaneHeaderModel(lane: lane, telemetry: telemetry, serverState: serverState)
+        next.copied = copiedTimer != nil
         guard next != model else { return }
         // The chip and the badge change meaning in place; ease it rather than
         // cut. Not on an age tick, which changes the text and nothing else.
         if next.state != model.state || next.badgeIsThroughput != model.badgeIsThroughput
-            || next.serverOff != model.serverOff {
+            || next.serverOff != model.serverOff || next.showsCopied != model.showsCopied {
             Motion.fade(layer)
         }
         model = next
@@ -1288,6 +1292,32 @@ final class LaneHeaderView: NSView {
 
         needsLayout = true
         needsDisplay = true
+    }
+
+    /// How long `COPIED` stays.
+    static let copiedSeconds: TimeInterval = 2
+    private var copiedTimer: Timer?
+
+    /// A program in this lane set the clipboard: say `COPIED` where the state
+    /// chip goes, in the state chips' outlined green, faded in and faded out.
+    /// False when the chip is not free to say it (`LaneHeaderModel.showsCopied`);
+    /// the pane then says it in its own notice line.
+    func flashCopied() -> Bool {
+        guard lane != nil else { return false }
+        copiedTimer?.invalidate()
+        copiedTimer = Timer.scheduledTimer(withTimeInterval: Self.copiedSeconds, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.copiedTimer = nil
+                self?.rebuild()
+            }
+        }
+        rebuild()
+        if !model.showsCopied {
+            copiedTimer?.invalidate()
+            copiedTimer = nil
+            rebuild()
+        }
+        return model.showsCopied
     }
 
     private func applyMarkers() {
@@ -1324,6 +1354,18 @@ final class LaneHeaderView: NSView {
             chip.layerBorderColor = Theme.accent.withAlphaComponent(0.6)
             chip.layer?.borderWidth = chipFits ? 1 : 0
             chip.textColor = Theme.accent
+            return
+        }
+        if model.showsCopied {
+            // Outlined in the working green, like any state that is not
+            // BLOCKED, and never filled or moving.
+            chip.isPulsing = false
+            chip.layerBackgroundColor = NSColor.clear
+            chip.stringValue = chipFits ? "COPIED" : "C"
+            chip.font = chipFits ? Theme.mono(9, weight: .bold) : Theme.mono(11, weight: .bold)
+            chip.layerBorderColor = Theme.working.withAlphaComponent(0.6)
+            chip.layer?.borderWidth = chipFits ? 1 : 0
+            chip.textColor = Theme.working
             return
         }
         guard let state = model.state, state.hasChip else {
@@ -1447,7 +1489,8 @@ final class LaneHeaderView: NSView {
         // has one column your eye runs along rather than ten places to look.
         let chipX = x
         var chipWidth: CGFloat = 0
-        let chipWord = model.serverOff?.label ?? model.state.flatMap { $0.hasChip ? $0.chipText : nil }
+        let chipWord = model.serverOff?.label ?? (model.showsCopied ? "COPIED" : nil)
+            ?? model.state.flatMap { $0.hasChip ? $0.chipText : nil }
         if let chipWord {
             let wordWidth = width(of: chipWord, font: Theme.mono(9, weight: .bold)) + 10
             let glyphWidth = cell + 4

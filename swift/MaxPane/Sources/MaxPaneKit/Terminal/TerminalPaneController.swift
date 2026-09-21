@@ -28,6 +28,9 @@ protocol RelayAttachment: AnyObject {
     /// Input held while the wire was down was dropped, not sent: how many
     /// bytes. Only the real adapter holds input, so only it calls this.
     var onInputDropped: ((Int) -> Void)? { get set }
+    /// Text the session wants on the clipboard: relay's CLIPBOARD frame, which
+    /// is how an OSC 52 write arrives from pty-host (ADR-0028).
+    var onClipboard: ((String) -> Void)? { get set }
 
     /// The session's server stopped answering, or started again. A local
     /// attachment has no server and never hears this.
@@ -45,6 +48,7 @@ protocol RelayAttachment: AnyObject {
 
 extension RelayAttachment {
     var onInputDropped: ((Int) -> Void)? { get { nil } set {} }
+    var onClipboard: ((String) -> Void)? { get { nil } set {} }
     func serverStateChanged(_ state: ServerState) {}
 }
 
@@ -382,6 +386,7 @@ final class TerminalPaneController: NSObject, PaneController {
             // typed. Old input is dropped on purpose (`PendingInput`).
             self?.showNotice("\(count) byte\(count == 1 ? "" : "s") typed while disconnected \(count == 1 ? "was" : "were") not sent")
         }
+        attachment.onClipboard = { [weak self] text in self?.programSetClipboard(text) }
         attachment.onRefused = { [weak self] why in
             self?.status.isHidden = false
             self?.status.setState(.refused(why))
@@ -446,8 +451,9 @@ final class TerminalPaneController: NSObject, PaneController {
         guard wantsFocus || (unclaimed && store.state.focusedPaneId == paneId) else { return }
         // A paste that is still a question holds the keyboard for this pane:
         // handing it to the terminal would let typing through under the sheet.
-        if let pasteSheet {
-            if window.firstResponder !== pasteSheet, window.makeFirstResponder(pasteSheet) { wantsFocus = false }
+        // A question from a program holds it the same way.
+        if let sheet: NSView = pasteSheet ?? clipboardSheet {
+            if window.firstResponder !== sheet, window.makeFirstResponder(sheet) { wantsFocus = false }
             return
         }
         guard window.firstResponder !== terminal else {
@@ -487,6 +493,11 @@ final class TerminalPaneController: NSObject, PaneController {
         // A paste still waiting on its question goes with the pane, unsent.
         pasteSheet?.dismissWithoutAnswering()
         pasteSheet = nil
+        // And a program still waiting on the clipboard is told no.
+        clipboardSheet?.dismissWithoutAnswering()
+        clipboardSheet = nil
+        clipboardAnswer?(false)
+        clipboardAnswer = nil
         attachment?.disconnect()
         attachment = nil
     }
@@ -549,7 +560,7 @@ final class TerminalPaneController: NSObject, PaneController {
     func paste(_ clipboard: TerminalPaste.Clipboard, asking: Bool = true) {
         // A second paste while the first is still a question is not queued
         // behind it and does not answer it: the sheet is what has the floor.
-        guard pasteSheet == nil else { return }
+        guard pasteSheet == nil, clipboardSheet == nil else { return }
         // A copied file whose name holds a control character is left out, and
         // the rest still go: say which, in the line the pane already has.
         if let notice = clipboard.notice { showNotice(notice) }
@@ -690,6 +701,105 @@ final class TerminalPaneController: NSObject, PaneController {
         // The terminal gets the keyboard back either way; without this the
         // pane is focused according to the ledger and deaf in fact.
         takeFocus()
+    }
+
+    // MARK: - A program and the clipboard (OSC 52, ADR-0028)
+
+    /// The lane's header showed `COPIED`. False when it could not (`BLOCKED`
+    /// or a dead server holds the chip, or the pane is on no lane), and the
+    /// pane says it in its own notice line instead: a program changing the
+    /// clipboard is never invisible.
+    var onProgramCopied: (() -> Bool)?
+    /// The lane's title and the session's command, as the header has them.
+    var describeAsker: (() -> (lane: String, program: String?))?
+
+    /// The question a program's clipboard request is waiting on. One at a time.
+    private(set) var clipboardSheet: ClipboardAskSheet?
+    /// The answer that question owes, so a pane torn down under it says no.
+    private var clipboardAnswer: ((Bool) -> Void)?
+
+    /// A program set the clipboard. The one door for it, whichever road the
+    /// text took: relay's `CLIPBOARD` frame, or Ghostty parsing the OSC 52
+    /// itself. `osc52_write` is read now, not when the pane was built.
+    func programSetClipboard(_ text: String) {
+        switch ProgramClipboard.write(text, (liveConfig?() ?? config).osc52Write) {
+        case .ignore:
+            return
+        case .refuse(let why):
+            showNotice(why)
+        case .set:
+            commitProgramCopy(text)
+        case .ask:
+            askAboutClipboard(.write, text: text) { [weak self] allowed in
+                if allowed { self?.commitProgramCopy(text) }
+            }
+        }
+    }
+
+    private func commitProgramCopy(_ text: String) {
+        ProgramClipboard.set(text, on: pasteboard)
+        if onProgramCopied?() != true { showNotice(ProgramClipboard.copiedNotice(text)) }
+    }
+
+    /// A program asked to read the clipboard, and `text` is what it would be
+    /// given. `respond` is owed exactly one answer. `osc52_read` decides, as
+    /// it stands now: `ask` by default, because this is a way for anything
+    /// running in a terminal, on any machine, to take what was last copied.
+    func programAskedToReadClipboard(_ text: String, respond: @escaping (Bool) -> Void) {
+        switch (liveConfig?() ?? config).osc52Read {
+        case .deny: respond(false)
+        case .allow: respond(true)
+        case .ask: askAboutClipboard(.read, text: text, respond)
+        }
+    }
+
+    private func askAboutClipboard(
+        _ question: ProgramClipboard.Question, text: String, _ respond: @escaping (Bool) -> Void
+    ) {
+        // A second question while one is open is answered no, not queued: a
+        // program that asks in a loop must not be able to stack sheets.
+        guard pasteSheet == nil, clipboardSheet == nil else {
+            respond(false)
+            return
+        }
+        let described = describeAsker?()
+        let asker = ProgramClipboard.Asker(
+            lane: described?.lane ?? store.lane(containing: paneId)?.title ?? "untitled",
+            program: described?.program, server: pane.relayServer)
+        let sheet = ClipboardAskSheet(
+            question: question, asker: asker, text: text,
+            terminalFont: NSFont(name: config.fontName, size: 11)
+        ) { [weak self] allowed in
+            guard let self else { return respond(false) }
+            let hadKeyboard = self.clipboardSheet.map { self.container.window?.firstResponder === $0 } ?? false
+            self.clipboardSheet = nil
+            self.clipboardAnswer = nil
+            respond(allowed)
+            // Back to the terminal only if the sheet had the keyboard: a
+            // question answered with a click from another lane's typing must
+            // not move it.
+            if hadKeyboard { self.takeFocus() }
+        }
+        sheet.onClick = { [weak self] in
+            guard let self else { return }
+            try? self.store.focusPane(self.paneId)
+            self.clipboardSheet?.takeFocus()
+        }
+        sheet.translatesAutoresizingMaskIntoConstraints = false
+        Motion.fade(container.layer)
+        container.addSubview(sheet)
+        NSLayoutConstraint.activate([
+            sheet.topAnchor.constraint(equalTo: container.topAnchor),
+            sheet.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            sheet.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            sheet.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        clipboardSheet = sheet
+        clipboardAnswer = respond
+        // The program asked, not the person: the sheet takes the keyboard
+        // only from its own terminal, so typing there stops going under it,
+        // and never from another lane.
+        if container.window?.firstResponder === terminal { sheet.takeFocus() }
     }
 
     /// Files dropped on the pane: their paths typed at the cursor, quoted as
@@ -1227,6 +1337,33 @@ extension TerminalPaneController: TerminalSurfaceFocusDelegate, TerminalSurfaceL
     func terminalDidDetachSurface() {}
 }
 
+extension TerminalPaneController: TerminalSurfaceClipboardConfirmationDelegate {
+    /// OSC 52 that reached Ghostty itself. The terminals' configuration says
+    /// `ask` for both directions, so every one arrives here, and without this
+    /// conformance the library denies them all.
+    ///
+    /// A write is never allowed *through the library*, which would put it on
+    /// `NSPasteboard.general` with nothing said: the pane's own door sets it,
+    /// so the cap, the chip and the setting apply to it as they do to relay's
+    /// `CLIPBOARD` frame, and the library is told no. For a read the library
+    /// has already read the general pasteboard (it cannot be handed another)
+    /// and `request.contents` is what it would give the program.
+    func terminalDidRequestClipboardConfirmation(_ request: TerminalClipboardConfirmationRequest) {
+        switch request.kind {
+        case .osc52Write:
+            programSetClipboard(request.contents)
+            request.respond(allow: false)
+        case .osc52Read:
+            programAskedToReadClipboard(request.contents) { request.respond(allow: $0) }
+        case .paste:
+            // Ghostty's own paste protection. The pane never pastes through
+            // Ghostty (`TerminalPaste`), so this is not expected; answered as
+            // the library answers it for a host with no opinion.
+            request.respond(allow: true)
+        }
+    }
+}
+
 extension TerminalPaneController: TerminalSurfaceTitleDelegate {
     func terminalDidChangeTitle(_ title: String) { adoptTitle(title) }
 }
@@ -1455,6 +1592,15 @@ enum TerminalControllerPool {
                     // that does. ⌘C and the right-click Copy item are
                     // `copy_to_clipboard`, which does not read this.
                     builder.withCustom("copy-on-select", config.copyOnSelect ? "true" : "false")
+                    // OSC 52. `ask` both ways, always, whatever `osc52_write`
+                    // and `osc52_read` say: `ask` is what makes Ghostty bring
+                    // each request to the pane, and the pane answers from the
+                    // settings as they are at that moment. Left to Ghostty's
+                    // defaults a write landed on the clipboard with nothing
+                    // said and a read was denied with nobody asked (ADR-0028).
+                    // ⌘C is `copy_to_clipboard`, which reads neither.
+                    builder.withCustom("clipboard-write", "ask")
+                    builder.withCustom("clipboard-read", "ask")
                     // `cursor_blink`. Ghostty blinks a focused surface's cursor
                     // and holds an unfocused one still and hollow, so
                     // `focused` and `always` are both "blink", and differ in

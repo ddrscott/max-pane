@@ -41,6 +41,7 @@ final class RelayAttachmentAdapter: RelayAttachment {
     /// many bytes. The pane says so in one line; see `PendingInput` for why
     /// old keystrokes are not replayed into a session that has moved on.
     var onInputDropped: ((Int) -> Void)?
+    var onClipboard: ((String) -> Void)?
 
     private var session: RelaySession?
     private var reconnectDelay: TimeInterval = 0.5
@@ -228,6 +229,9 @@ final class RelayAttachmentAdapter: RelayAttachment {
         }
         session.onTitle = { [weak self] title in
             Task { @MainActor in self?.onTitle?(title) }
+        }
+        session.onClipboard = { [weak self] text in
+            Task { @MainActor in self?.onClipboard?(text) }
         }
         session.onExit = { [weak self] code in
             Task { @MainActor in

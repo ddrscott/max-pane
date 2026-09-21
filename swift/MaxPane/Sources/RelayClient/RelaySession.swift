@@ -51,6 +51,17 @@ public final class RelaySession {
     /// web app shows as "1.7KB/s".
     public var onMetrics: ((_ bps1: Double, _ bps5: Double, _ bps15: Double, _ total: Double) -> Void)?
     public var onClearScrollback: (() -> Void)?
+    /// CLIPBOARD (0x16): text somebody wants on this client's clipboard.
+    ///
+    /// From pty-host it is an OSC 52 write, which pty-host lifts *out* of the
+    /// output stream: the escape sequence itself never arrives as DATA. Over a
+    /// WebSocket it is also what another client of the session sends when it
+    /// copies (the server fans it out), and the two cannot be told apart. The
+    /// session only delivers it; whether it may touch a clipboard is the
+    /// app's decision (ADR-0028). Empty and over-long payloads are dropped
+    /// here, at the size both relay-tty ends already enforce.
+    public var onClipboard: ((String) -> Void)?
+    public static let maxClipboardBytes = 1 << 20
     public var onExit: ((Int32) -> Void)?
     public var onClosed: (() -> Void)?
     public var onGzipError: ((Error) -> Void)?
@@ -170,6 +181,10 @@ public final class RelaySession {
             offset = 0                            // §3.4 / gotcha 15; the next SYNC restores it
             onClearScrollback?()
 
+        case WSMsg.clipboard:
+            guard !body.isEmpty, body.count <= Self.maxClipboardBytes else { break }
+            onClipboard?(String(decoding: body, as: UTF8.self))
+
         case WSMsg.exit:
             var v: Int32 = 0
             if body.count >= 4 { var i = body.startIndex
@@ -177,7 +192,7 @@ public final class RelaySession {
             onExit?(v)
 
         default:
-            break                                  // NOTIFICATION/CLIPBOARD/IMAGE/SPARKLINE/...
+            break                                  // NOTIFICATION/IMAGE/SPARKLINE/...
         }
     }
 }

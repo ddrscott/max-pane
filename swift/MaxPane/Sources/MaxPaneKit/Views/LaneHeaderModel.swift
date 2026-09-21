@@ -52,6 +52,14 @@ struct LaneHeaderModel: Equatable {
     /// on focus and state and this is neither — it is what the lane *is*.
     var isPrivate: Bool = false
     var isTerminal: Bool = false
+    /// A program in this lane has just set the clipboard (OSC 52, ADR-0028).
+    /// True for `LaneHeaderView.copiedSeconds` and then false again: the
+    /// header's doing, not the ledger's or the session's.
+    var copied: Bool = false
+    /// `COPIED` borrows the state chip's column while it lasts, from anything
+    /// but the two that must not be covered for even two seconds: `BLOCKED`,
+    /// and a server that is not answering.
+    var showsCopied: Bool { copied && serverOff == nil && state != .blocked }
     /// The long form, for the hover tip — the header is the only place the full
     /// path exists, so truncating it must not destroy it.
     var tooltip: String = ""

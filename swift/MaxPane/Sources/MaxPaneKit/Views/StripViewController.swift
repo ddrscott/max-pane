@@ -2445,6 +2445,18 @@ public final class StripViewController: NSViewController {
             controller.onSessionExit = { [weak self] _ in
                 self?.paneDidExit(pane.id)
             }
+            // A program set the clipboard (OSC 52): the header of whichever
+            // lane holds the pane now says so. Looked up, not captured: a
+            // pane can have moved lanes since it was made.
+            controller.onProgramCopied = { [weak self] in
+                guard let self, let laneId = self.store.lane(containing: pane.id)?.id else { return false }
+                return self.laneViews[laneId]?.flashCopied() ?? false
+            }
+            controller.describeAsker = { [weak self] in
+                guard let self, let lane = self.store.lane(containing: pane.id) else { return ("untitled", nil) }
+                let telemetry = pane.sessionKey.flatMap { self.laneTelemetry[$0] }
+                return (LaneHeaderModel(lane: lane, telemetry: telemetry).title, telemetry?.command)
+            }
             // The adapter is chosen by the pane's server: a WebSocket to a
             // named remote, the Unix socket for this Mac (ADR-0020).
             if let key = pane.sessionKey {

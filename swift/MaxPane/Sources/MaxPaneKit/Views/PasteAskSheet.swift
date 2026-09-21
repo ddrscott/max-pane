@@ -257,9 +257,10 @@ final class PasteAskSheet: NSView {
 }
 
 /// Square, filled, outlined on all four sides. `WebAskSheet` keeps its own
-/// private; the two are the same four rectangles.
+/// private; the two are the same four rectangles. `ClipboardAskSheet` shares
+/// this one.
 @MainActor
-private final class PastePanelView: NSView {
+final class PastePanelView: NSView {
     private let fill: NSColor
 
     init(fill: NSColor = Theme.stripBackground) {
