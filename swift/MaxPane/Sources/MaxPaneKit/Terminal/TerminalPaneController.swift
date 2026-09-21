@@ -230,6 +230,8 @@ final class TerminalPaneController: NSObject, PaneController {
         container.onPasteWithoutAsking = { [weak self] in self?.pasteFromClipboard(asking: false) }
         container.onPasteSpecial = { [weak self] special in self?.pasteSpecial(special) }
         terminal.onKeyDown = { [weak self] event in self?.keyDuringSlowPaste(event) ?? false }
+        terminal.onCopy = { [weak self] in self?.selectionCopied() }
+        terminal.onSelectionEnded = { [weak self] in self?.selectionEnded() }
         container.onDropFiles = { [weak self] pasteboard in self?.dropFiles(from: pasteboard) ?? false }
 
         let outbound = TerminalOutbound { [weak self] bytes in
@@ -636,8 +638,9 @@ final class TerminalPaneController: NSObject, PaneController {
         // A copied file whose name holds a control character is left out, and
         // the rest still go: say which, in the line the pane already has.
         if let notice = clipboard.notice { showNotice(notice) }
+        let record = !clipboard.doNotRecord
         guard let copied = clipboard.text else {
-            if let image = clipboard.image { paste(image: image) }
+            if let image = clipboard.image { paste(image: image, record: record) }
             return
         }
         let live = liveConfig?() ?? config
@@ -650,9 +653,9 @@ final class TerminalPaneController: NSObject, PaneController {
             tidied = tidy.summary
         }
         if asking, TerminalPaste.asksFirst(text, settings) {
-            ask(about: text, settings, tidied: tidied, slowly: slowly)
+            ask(about: text, settings, tidied: tidied, slowly: slowly, record: record)
         } else {
-            send(pasted: text, tidied: tidied, slowly: slowly)
+            send(pasted: text, tidied: tidied, slowly: slowly, record: record)
         }
     }
 
@@ -663,9 +666,19 @@ final class TerminalPaneController: NSObject, PaneController {
     ///
     /// `tidied` is what tidying did, when it did anything: the pane says so in
     /// its notice line as the bytes go, never before and never for nothing.
-    private func send(pasted text: String, tidied: String? = nil, slowly: Bool = false) {
+    ///
+    /// **And the one place paste history is taken** (ADR-0031): every paste
+    /// ends here, and a paste that was cancelled in the sheet never gets here,
+    /// so what is recorded is what was sent, as text, and nothing else.
+    /// `record` has no default on purpose. Each caller says whether its text
+    /// may be kept: false for a pasteboard marked secret
+    /// (`Clipboard.doNotRecord`) and for a file's contents. Whether the *lane*
+    /// allows it is not a caller's to say; the ledger refuses a private lane.
+    private func send(pasted text: String, tidied: String? = nil, slowly: Bool = false, record: Bool) {
         let bytes = TerminalPaste.bytes(for: text)
         guard !bytes.isEmpty else { return }
+        // As sent: a trailing line ending is never part of a paste.
+        if record { remember(.paste, TerminalPaste.asSent(text)) }
         if slowly {
             send(slowly: bytes)
             return
@@ -699,22 +712,29 @@ final class TerminalPaneController: NSObject, PaneController {
         case .escaped, .base64, .base64Decoded:
             // The clipboard as ⌘V would read it, a copied file being its path.
             // A picture has no text to transform.
-            guard let text = TerminalPaste.clipboard(pasteboard, images: false).text else {
+            let read = TerminalPaste.clipboard(pasteboard, images: false)
+            guard let text = read.text else {
                 showNotice("not pasted: no text on the clipboard")
                 return
             }
+            // What is kept of a transform is what it sent. Base64 hides the
+            // shape of a secret from the ledger's net, so base64 of a source
+            // that has one is not kept in any form. (Escaped, the shape is
+            // still there and the net redacts it as it would the original.)
+            let secret = read.doNotRecord || clipSecretShape(text: text) != nil
             switch special {
             case .escaped:
                 // One quoted word, so nothing in it presses Return at a
                 // prompt that will act on it: never tidied, never asked.
-                if let word = TerminalPaste.escaped(text) { send(pasted: word) }
+                if let word = TerminalPaste.escaped(text) { send(pasted: word, record: !read.doNotRecord) }
             case .base64:
-                paste(TerminalPaste.Clipboard(text: TerminalPaste.base64Encoded(text)))
+                paste(TerminalPaste.Clipboard(text: TerminalPaste.base64Encoded(text), doNotRecord: secret))
             default:
                 switch TerminalPaste.base64Decoded(text) {
                 // What comes out is anybody's text: by the door, so several
                 // lines of it ask first. Not tidied; it is not a copy.
-                case .success(let decoded): paste(TerminalPaste.Clipboard(text: decoded))
+                case .success(let decoded):
+                    paste(TerminalPaste.Clipboard(text: decoded, doNotRecord: read.doNotRecord))
                 case .failure(let refusal): showNotice(refusal.notice)
                 }
             }
@@ -786,7 +806,9 @@ final class TerminalPaneController: NSObject, PaneController {
         showNotice("\(what) as base64, \(TerminalPaste.size(total)) · Return writes it", lasting: 5)
         // Not by the door: every line of it ends in Return by design, and the
         // sheet would ask about exactly that.
-        send(pasted: heredocs.joined(separator: "\n"))
+        // And never kept: it is a file's contents, the file is still where
+        // it was, and a key file in base64 has no shape a net would catch.
+        send(pasted: heredocs.joined(separator: "\n"), record: false)
     }
 
     /// A slow paste is going out.
@@ -852,14 +874,14 @@ final class TerminalPaneController: NSObject, PaneController {
     /// this Mac for a local session, on the server for a remote one, because
     /// a path is only any use on the machine the program reading it runs on.
     /// Never asks: a path is one line with no tab in it.
-    private func paste(image png: Data) {
+    private func paste(image png: Data, record: Bool) {
         let settings = TerminalPaste.ImageSettings(liveConfig?() ?? config)
         if let refusal = TerminalPaste.imageRefusal(bytes: png.count, settings) {
             showNotice(refusal)
             return
         }
         if let server = pane.sessionKey?.server {
-            upload(png, to: server)
+            upload(png, to: server, record: record)
             return
         }
         do {
@@ -869,7 +891,7 @@ final class TerminalPaneController: NSObject, PaneController {
                 return
             }
             showNotice("saved \(url.lastPathComponent), \(TerminalPaste.size(png.count))")
-            send(pasted: word)
+            send(pasted: word, record: record)
         } catch {
             showNotice("image not pasted: \(error.localizedDescription)")
         }
@@ -878,7 +900,7 @@ final class TerminalPaneController: NSObject, PaneController {
     /// `POST /api/upload` (`RelayUpload`), off the main thread; the prompt
     /// gets the server's path when there is one and nothing when there is
     /// not. What is typed meanwhile goes first, as it would have anyway.
-    private func upload(_ png: Data, to server: String) {
+    private func upload(_ png: Data, to server: String, record: Bool) {
         guard !isUploadingImage else { return }
         guard let endpoint = uploadEndpoint?() else {
             showNotice("\(server): could not upload the image — the server is not in config.toml")
@@ -899,7 +921,7 @@ final class TerminalPaneController: NSObject, PaneController {
                     return
                 }
                 self.showNotice("uploaded \((path as NSString).lastPathComponent), \(TerminalPaste.size(png.count)), to \(server)")
-                self.send(pasted: word)
+                self.send(pasted: word, record: record)
             }
         }
     }
@@ -909,11 +931,12 @@ final class TerminalPaneController: NSObject, PaneController {
     private static let secondsPerPiece = 0.0068
 
     private func ask(
-        about text: String, _ settings: TerminalPaste.ConfirmSettings, tidied: String? = nil, slowly: Bool = false
+        about text: String, _ settings: TerminalPaste.ConfirmSettings, tidied: String? = nil, slowly: Bool = false,
+        record: Bool
     ) {
         let font = NSFont(name: config.fontName, size: 11)
         let sheet = PasteAskSheet(text: text, settings: settings, terminalFont: font, tidied: tidied) { [weak self] answer in
-            self?.pasteAnswered(answer, text: text, settings, tidied: tidied, slowly: slowly)
+            self?.pasteAnswered(answer, text: text, settings, tidied: tidied, slowly: slowly, record: record)
         }
         sheet.onClick = { [weak self] in
             guard let self else { return }
@@ -935,18 +958,51 @@ final class TerminalPaneController: NSObject, PaneController {
 
     private func pasteAnswered(
         _ answer: PasteAnswer, text: String, _ settings: TerminalPaste.ConfirmSettings, tidied: String? = nil,
-        slowly: Bool = false
+        slowly: Bool = false, record: Bool
     ) {
         pasteSheet = nil
         if case .paste(let oneLine, let tabsToSpaces) = answer {
             var out = text
             if tabsToSpaces { out = TerminalPaste.tabsToSpaces(out, width: settings.tabWidth) }
             if oneLine { out = TerminalPaste.oneLine(out) }
-            send(pasted: out, tidied: tidied, slowly: slowly)
+            send(pasted: out, tidied: tidied, slowly: slowly, record: record)
         }
         // The terminal gets the keyboard back either way; without this the
         // pane is focused according to the ledger and deaf in fact.
         takeFocus()
+    }
+
+    // MARK: - paste history (ADR-0031)
+
+    /// Keep `text` as pasted into, or copied out of, this pane. The only call
+    /// into the ledger's paste history from a terminal, and it says only
+    /// which pane: the ledger looks the lane up and refuses a private one, so
+    /// no caller here can record in a private lane by forgetting to check.
+    private func remember(_ kind: ClipKind, _ text: String) {
+        store.recordClip(paneId: paneId, kind: kind, text: text, config: liveConfig?() ?? config)
+    }
+
+    /// Paste an entry of paste history: exactly as it was kept, so never
+    /// tidied (it was, or was never meant to be), and asked about like any
+    /// other paste. It goes back to the top of the history as it is sent.
+    func paste(fromHistory text: String) {
+        paste(TerminalPaste.Clipboard(text: text))
+    }
+
+    /// ⌘C, Edit › Copy or the right-click item, just before the emulator
+    /// copies: the same selection, read from the surface and never from the
+    /// clipboard.
+    func selectionCopied() {
+        guard let text = selectionSource?() ?? surface?.readSelection() else { return }
+        remember(.copy, text)
+    }
+
+    /// A drag ended. With `copy_on_select` on (the setting this pane's
+    /// surface was built with; it applies at launch) the emulator has just
+    /// copied the selection, and that is a copy out of a terminal too.
+    func selectionEnded() {
+        guard config.copyOnSelect else { return }
+        selectionCopied()
     }
 
     // MARK: - A program and the clipboard (OSC 52, ADR-0028)
@@ -984,6 +1040,7 @@ final class TerminalPaneController: NSObject, PaneController {
 
     private func commitProgramCopy(_ text: String) {
         ProgramClipboard.set(text, on: pasteboard)
+        remember(.copy, text)
         if onProgramCopied?() != true { showNotice(ProgramClipboard.copiedNotice(text)) }
     }
 

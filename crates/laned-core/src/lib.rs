@@ -10,6 +10,7 @@
 
 uniffi::setup_scaffolding!();
 
+pub mod clips;
 pub mod error;
 pub mod eviction;
 pub mod history;
@@ -151,6 +152,14 @@ struct Inner {
 }
 
 /// The handle the shell holds for the whole run of the app.
+/// Which secret shape `text` has, by name, or `None` ([`clips::secret_shape`]).
+/// For the shell to ask *before* a transform that would hide the shape:
+/// base64 of a token looks like nothing, so the pane asks about the source.
+#[uniffi::export]
+pub fn clip_secret_shape(text: String) -> Option<String> {
+    clips::secret_shape(&text).map(str::to_string)
+}
+
 #[derive(uniffi::Object)]
 pub struct Core {
     inner: Mutex<Inner>,
@@ -1031,6 +1040,48 @@ impl Core {
     pub fn forget_site_permissions(&self, data_store_id: String, origin: String) -> Result<()> {
         let inner = self.inner.lock();
         inner.ledger.forget_site_permissions(&data_store_id, &origin)
+    }
+
+    // ---- paste history (ADR-0031) ------------------------------------------
+
+    /// Remember `text` as pasted into, or copied out of, the terminal pane
+    /// `pane_id`. True when it was kept. `keep` and `days` are the settings
+    /// `paste_history_keep` and `paste_history_days` as they are now; `keep`
+    /// of 0 is off. What is refused and what is redacted is decided in the
+    /// ledger and in [`clips`], not by the caller: a private lane's pane, an
+    /// unknown pane, blank text and anything over 64 KB are never written,
+    /// and text shaped like a secret is written as four characters and `•••`.
+    pub fn record_clip(
+        &self,
+        pane_id: String,
+        kind: ClipKind,
+        text: String,
+        keep: u32,
+        days: u32,
+    ) -> Result<bool> {
+        let inner = self.inner.lock();
+        inner
+            .ledger
+            .record_clip(&pane_id, kind, &text, keep, days, now_ms())
+    }
+
+    /// Paste history, newest first, after ageing it by the settings.
+    pub fn clip_history(&self, keep: u32, days: u32) -> Result<Vec<ClipEntry>> {
+        let inner = self.inner.lock();
+        inner.ledger.prune_clips(keep, days, now_ms())?;
+        inner.ledger.clips()
+    }
+
+    pub fn delete_clip(&self, id: i64) -> Result<()> {
+        let inner = self.inner.lock();
+        inner.ledger.delete_clip(id)
+    }
+
+    /// Clear Paste History, and what `paste_history = false` does: the rows
+    /// go. Returns how many there were.
+    pub fn clear_clip_history(&self) -> Result<u64> {
+        let inner = self.inner.lock();
+        inner.ledger.clear_clips()
     }
 
     // ---- content blocking ------------------------------------------------

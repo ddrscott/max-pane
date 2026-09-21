@@ -546,6 +546,45 @@ public final class StripStore {
 
     func forgetVisit(_ url: String) { try? core.forgetVisit(url: url) }
 
+    // MARK: - paste history (ADR-0031)
+
+    /// Keep `text` as pasted into or copied out of the terminal pane `paneId`.
+    /// True when it was kept. The settings are read from `config` as it is
+    /// now; off, nothing is kept and what was kept goes. What else is refused
+    /// (a private lane, an unknown pane, blank or over 64 KB) and what is
+    /// redacted is the core's decision, not this method's and not a caller's.
+    @discardableResult
+    func recordClip(paneId: String, kind: ClipKind, text: String, config: Config) -> Bool {
+        guard config.pasteHistory, config.pasteHistoryKeep > 0 else {
+            clearClipHistory()
+            return false
+        }
+        return (try? core.recordClip(
+            paneId: paneId, kind: kind, text: text,
+            keep: config.pasteHistoryKeep, days: config.pasteHistoryDays)) ?? false
+    }
+
+    /// Paste history, newest first, aged and capped by the settings as they
+    /// are now. Empty, and emptied, when the setting is off.
+    func clipHistory(_ config: Config) -> [ClipEntry] {
+        guard config.pasteHistory, config.pasteHistoryKeep > 0 else {
+            clearClipHistory()
+            return []
+        }
+        return (try? core.clipHistory(keep: config.pasteHistoryKeep, days: config.pasteHistoryDays)) ?? []
+    }
+
+    func deleteClip(_ id: Int64) { try? core.deleteClip(id: id) }
+
+    /// Clear Paste History. The rows go; returns how many there were.
+    @discardableResult
+    func clearClipHistory() -> UInt64 { (try? core.clearClipHistory()) ?? 0 }
+
+    /// At launch and whenever the config file changes: `paste_history = false`
+    /// empties the table then and there, and a smaller cap or a shorter age
+    /// applies without waiting for the next paste.
+    func applyPasteHistorySettings(_ config: Config) { _ = clipHistory(config) }
+
     func clearHistory() { try? core.clearHistory() }
 
     /// Forget every page last opened at or after `cutoff`, and report how many

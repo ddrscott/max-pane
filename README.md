@@ -1792,6 +1792,46 @@ nothing at all unless a program asked for the mouse. It does not fall back to
 the emulator's own middle-click paste, which would frame the clipboard by a
 guess at bracketed paste (ADR-0026).
 
+**⇧⌘H, Edit › Paste History…, lists what you pasted into and copied out of
+terminals lately**, newest first. Copy a path, copy something else, and the
+path is still here. Type to filter (any words, case ignored).
+
+| Key | |
+|---|---|
+| **↩** | Paste the row into the terminal that had the keyboard. Exactly as it was kept, so never tidied again, and asked about in the sheet when it has several lines or a tab. |
+| **⌘C** | Put it back on the clipboard. |
+| **⌘⌫**, or **⌫** with nothing typed | Delete it, after asking (↩ is Cancel). |
+| **Esc** | Close. |
+
+Each row is one line, with `↓` for pasted in or `↑` for copied out, its line
+count, size and age. With a web pane focused the list still opens, for ⌘C.
+
+**It is not a clipboard manager. Max Pane never reads the system clipboard
+unless you paste**, so what you copy in another app, or copy here and never
+paste into a terminal, is not in the list. What is kept is **what was sent to
+the prompt**: tidied text, quoted file paths, the path a screenshot became,
+the output of Paste Escaped or Paste as Base64, the one line the sheet made.
+A paste you cancelled in the sheet sent nothing and keeps nothing. Copies out
+are ⌘C (and the right-click Copy), a program's OSC 52 copy, and
+`copy_on_select` when it is on. The same text again moves to the top.
+
+**Never kept:** a copy a password manager marked as concealed, transient or
+auto-generated (1Password, Bitwarden and KeePassXC do); any
+paste or copy in a **private lane**; anything over 64 KB; a file's contents
+from Paste File as Base64…. Text that **looks like a token** is kept as its
+first four characters and `•••`, so the list shows that something was there
+and the token is never written to disk: `sk-…`, GitHub's `ghp_…` and
+`github_pat_…`, AWS `AKIA…`/`ASIA…`, any `-----BEGIN …-----` PEM header, a
+JWT, Slack's `xoxb-…`, GitLab's `glpat-…`. That is a net, not a guarantee: a
+password copied from a note looks like a word.
+
+It lives in the ledger, at most `paste_history_keep` (200) entries and
+`paste_history_days` (30) days, and is not part of a strip export.
+**Edit › Clear Paste History…**, and the button under those settings, deletes
+all of it. `paste_history = false` records nothing and deletes what was kept,
+as the file is saved.
+[ADR-0031](docs/decisions/0031-paste-history-is-what-terminals-pasted-and-copied-never-the-clipboard.md).
+
 ### A program and the clipboard (OSC 52)
 
 **A program in a terminal can set the clipboard, and you see it happen.** tmux,
@@ -2349,6 +2389,9 @@ middle_click_paste = true
 paste_images_as_files = true
 paste_image_keep_days = 7
 paste_image_max_mb = 25
+paste_history = true
+paste_history_keep = 200
+paste_history_days = 30
 osc52_write = "allow"
 osc52_read = "ask"
 cursor_blink = "focused"
@@ -2416,6 +2459,12 @@ line (`0` refuses nothing; a relay server stops at 100 MB itself). Both are
 read at each paste. `paste_image_keep_days` is how long a saved picture stays
 in `~/Library/Caches/app.ljs.maxpane/paste/` before a launch removes it; `0`
 keeps them all.
+
+`paste_history` keeps what was pasted into and copied out of terminals for
+⇧⌘H ([Pasting into a terminal](#pasting-into-a-terminal)); `false` records
+nothing and deletes what was kept. `paste_history_keep` is how many entries
+stay (`0` is also off) and `paste_history_days` how long (`0` keeps any age).
+All three apply as the file is saved.
 
 `osc52_write` and `osc52_read` are what a program in a terminal may do to the
 clipboard with OSC 52, each `"allow"`, `"ask"` or `"deny"`. Setting it is

@@ -13,7 +13,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private let strip: StripViewController
     /// The row above the strip, level with the sidebar's header. See `StripToolbar`.
     private let stripToolbar = StripToolbar()
-    private var palette: SearchPaletteController?
+    private var palette: PaletteController?
     /// Held while it is on screen, like `palette` — for the same reason: the
     /// table's data source is weak.
     private var omni: OmniPicker?
@@ -43,8 +43,15 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             configObserver = NotificationCenter.default.addObserver(
                 forName: ConfigStore.didChange, object: configStore, queue: .main
             ) { [weak self] _ in
-                MainActor.assumeIsolated { self?.store.refreshHidden() }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.store.refreshHidden()
+                    // `paste_history = false` empties the table as the file is
+                    // saved; a smaller cap or age applies then too (ADR-0031).
+                    if let live = self.configStore?.config { self.store.applyPasteHistorySettings(live) }
+                }
             }
+            store.applyPasteHistorySettings(configStore.config)
         }
     }
     /// Every add, remove, enable, rename and pasted token for a remote
@@ -917,6 +924,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                     #selector(TerminalPasteTarget.pasteSpecialIntoTerminalPane(_:)), to: nil,
                     from: command.rawValue as NSString)
 
+            case .pasteHistory:
+                showPasteHistory()
+
+            case .clearPasteHistory:
+                confirmClearPasteHistory(over: window)
+
             case .claimSession:
                 confirmClaimSession()
 
@@ -1159,6 +1172,41 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             }
         } catch {
             showError(error)
+        }
+    }
+
+    /// ⇧⌘H. ↩ pastes into the terminal that had the keyboard when the list
+    /// opened, through that pane's own door; with a web pane focused the list
+    /// still opens, for ⌘C.
+    private func showPasteHistory() {
+        let target = store.state.focusedPaneId.flatMap { store.pane($0) }.flatMap { $0.kind == .pty ? $0.id : nil }
+        let builtWith = config
+        let controller = PasteHistoryController(
+            store: store, config: { [weak self] in self?.configStore?.config ?? builtWith },
+            canPaste: target != nil
+        ) { [weak self] entry in
+            guard let self, let entry, let target else { return }
+            self.strip.paste(fromHistory: entry.content, intoPane: target)
+        }
+        palette = controller
+        controller.present(over: window)
+    }
+
+    /// Edit › Clear Paste History…, and the button in Settings. ↩ is Cancel.
+    func confirmClearPasteHistory(over parent: NSWindow?) {
+        let live = configStore?.config ?? config
+        let count = store.clipHistory(live).count
+        guard count > 0 else {
+            ConfirmPopup.inform(over: parent, title: "Paste history is empty", detail: nil)
+            return
+        }
+        ConfirmPopup.confirm(
+            over: parent, title: "Clear paste history?",
+            detail: "\(count) \(count == 1 ? "entry" : "entries") pasted into or copied out of terminals will be deleted. "
+                + "The clipboard is not touched.",
+            action: "Clear", returnConfirms: false
+        ) { [weak self] yes in
+            if yes { self?.store.clearClipHistory() }
         }
     }
 
@@ -1459,6 +1507,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             self?.openInEditor(file)
         }
         panel.onRenameServer = { [weak self] old, new in self?.renameServerInLedger(from: old, to: new) }
+        panel.onClearPasteHistory = { [weak self, weak panel] in self?.confirmClearPasteHistory(over: panel?.window) }
         settingsWindow = panel
         panel.present(over: window)
         return panel

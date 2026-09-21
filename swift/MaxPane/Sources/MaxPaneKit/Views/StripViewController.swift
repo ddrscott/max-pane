@@ -3189,6 +3189,14 @@ public final class StripViewController: NSViewController {
 
     // MARK: - lookups used by the window controller
 
+    /// ⇧⌘H's ↩: an entry of paste history into the terminal pane that had the
+    /// keyboard, which gets it back. Through the pane's one door.
+    public func paste(fromHistory text: String, intoPane paneId: String) {
+        guard let terminal = paneControllers[paneId] as? TerminalPaneController else { return }
+        terminal.takeFocus()
+        terminal.paste(fromHistory: text)
+    }
+
     /// ADR-0007 §5's escape hatch, routed to the pane that owns the session.
     public func claimSession(paneId: String) {
         (paneControllers[paneId] as? TerminalPaneController)?.claimSessionAtLaneWidth()

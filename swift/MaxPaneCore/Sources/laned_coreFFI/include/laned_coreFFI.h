@@ -319,6 +319,11 @@ RustBuffer uniffi_laned_core_fn_method_core_bookmarks_for_url(uint64_t ptr, Rust
 RustBuffer uniffi_laned_core_fn_method_core_browser_logins(uint64_t ptr, RustBuffer source, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_CLEAR_CLIP_HISTORY
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_CLEAR_CLIP_HISTORY
+uint64_t uniffi_laned_core_fn_method_core_clear_clip_history(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_CLEAR_HISTORY
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_CLEAR_HISTORY
 void uniffi_laned_core_fn_method_core_clear_history(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -327,6 +332,11 @@ void uniffi_laned_core_fn_method_core_clear_history(uint64_t ptr, RustCallStatus
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_CLEAR_HISTORY_SINCE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_CLEAR_HISTORY_SINCE
 uint32_t uniffi_laned_core_fn_method_core_clear_history_since(uint64_t ptr, int64_t cutoff_ms, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_CLIP_HISTORY
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_CLIP_HISTORY
+RustBuffer uniffi_laned_core_fn_method_core_clip_history(uint64_t ptr, uint32_t keep, uint32_t days, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_CLOSE_LANE
@@ -347,6 +357,11 @@ RustBuffer uniffi_laned_core_fn_method_core_create_lane(uint64_t ptr, RustBuffer
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_CREATE_PRIVATE_WEB_LANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_CREATE_PRIVATE_WEB_LANE
 RustBuffer uniffi_laned_core_fn_method_core_create_private_web_lane(uint64_t ptr, RustBuffer placement, RustBuffer url, RustBuffer inherit_tag_from_lane, RustBuffer data_store_id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_DELETE_CLIP
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_DELETE_CLIP
+void uniffi_laned_core_fn_method_core_delete_clip(uint64_t ptr, int64_t id, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_DOCK_LANE
@@ -549,6 +564,11 @@ void uniffi_laned_core_fn_method_core_push_scrollback(uint64_t ptr, RustBuffer p
 RustBuffer uniffi_laned_core_fn_method_core_recents(uint64_t ptr, uint32_t limit, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECORD_CLIP
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECORD_CLIP
+int8_t uniffi_laned_core_fn_method_core_record_clip(uint64_t ptr, RustBuffer pane_id, RustBuffer kind, RustBuffer text, uint32_t keep, uint32_t days, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECORD_VISIT
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECORD_VISIT
 void uniffi_laned_core_fn_method_core_record_visit(uint64_t ptr, RustBuffer pane_id, RustBuffer url, RustBuffer title, RustBuffer redirect_chain, RustCallStatus *_Nonnull out_status
@@ -722,6 +742,11 @@ RustBuffer uniffi_laned_core_fn_method_core_ungather(uint64_t ptr, RustCallStatu
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_UNPAIR
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_UNPAIR
 void uniffi_laned_core_fn_method_core_unpair(uint64_t ptr, RustBuffer pty_pane_id, RustBuffer web_pane_id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_FUNC_CLIP_SECRET_SHAPE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_FUNC_CLIP_SECRET_SHAPE
+RustBuffer uniffi_laned_core_fn_func_clip_secret_shape(RustBuffer text, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_FFI_LANED_CORE_RUSTBUFFER_ALLOC
@@ -984,6 +1009,12 @@ void ffi_laned_core_rust_future_free_void(uint64_t handle
 void ffi_laned_core_rust_future_complete_void(uint64_t handle, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_FUNC_CLIP_SECRET_SHAPE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_FUNC_CLIP_SECRET_SHAPE
+uint16_t uniffi_laned_core_checksum_func_clip_secret_shape(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_ADD_BOOKMARK
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_ADD_BOOKMARK
 uint16_t uniffi_laned_core_checksum_method_core_add_bookmark(void
@@ -1050,6 +1081,12 @@ uint16_t uniffi_laned_core_checksum_method_core_browser_logins(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_CLEAR_CLIP_HISTORY
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_CLEAR_CLIP_HISTORY
+uint16_t uniffi_laned_core_checksum_method_core_clear_clip_history(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_CLEAR_HISTORY
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_CLEAR_HISTORY
 uint16_t uniffi_laned_core_checksum_method_core_clear_history(void
@@ -1059,6 +1096,12 @@ uint16_t uniffi_laned_core_checksum_method_core_clear_history(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_CLEAR_HISTORY_SINCE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_CLEAR_HISTORY_SINCE
 uint16_t uniffi_laned_core_checksum_method_core_clear_history_since(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_CLIP_HISTORY
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_CLIP_HISTORY
+uint16_t uniffi_laned_core_checksum_method_core_clip_history(void
     
 );
 #endif
@@ -1083,6 +1126,12 @@ uint16_t uniffi_laned_core_checksum_method_core_create_lane(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_CREATE_PRIVATE_WEB_LANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_CREATE_PRIVATE_WEB_LANE
 uint16_t uniffi_laned_core_checksum_method_core_create_private_web_lane(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_DELETE_CLIP
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_DELETE_CLIP
+uint16_t uniffi_laned_core_checksum_method_core_delete_clip(void
     
 );
 #endif
@@ -1323,6 +1372,12 @@ uint16_t uniffi_laned_core_checksum_method_core_push_scrollback(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RECENTS
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RECENTS
 uint16_t uniffi_laned_core_checksum_method_core_recents(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RECORD_CLIP
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RECORD_CLIP
+uint16_t uniffi_laned_core_checksum_method_core_record_clip(void
     
 );
 #endif

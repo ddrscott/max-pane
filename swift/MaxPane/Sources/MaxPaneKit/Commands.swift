@@ -48,6 +48,8 @@ public enum Command: String, CaseIterable, Sendable {
     case pasteBase64Decoded
     case pasteFileAsBase64
     case pasteSlowly
+    case pasteHistory
+    case clearPasteHistory
     case showMemory
     case pairWithNext
     case exportStrip
@@ -114,6 +116,8 @@ public enum Command: String, CaseIterable, Sendable {
         case .pasteBase64Decoded: return "Paste Base64-Decoded"
         case .pasteFileAsBase64: return "Paste File as Base64…"
         case .pasteSlowly: return "Paste Slowly"
+        case .pasteHistory: return "Paste History…"
+        case .clearPasteHistory: return "Clear Paste History…"
         case .showMemory: return "Memory"
         case .pairWithNext: return "Pair With Lane to the Right"
         case .exportStrip: return "Export Strip…"
@@ -269,6 +273,12 @@ public enum Command: String, CaseIterable, Sendable {
         // No keys. Each is reached for a few times a month, from the menu,
         // by name; `keys` binds any of them.
         case .pasteAsBase64, .pasteBase64Decoded, .pasteFileAsBase64, .pasteSlowly: return nil
+        // ⇧⌘H, iTerm's key for the same list. macOS has ⌘H (Hide) and ⌥⌘H
+        // (Hide Others) and leaves this one alone; ⇧⌘Y is the other history,
+        // the one of pages.
+        case .pasteHistory: return ("h", [.command, .shift])
+        // No key: it destroys something, once in a while, from a menu.
+        case .clearPasteHistory: return nil
         case .showMemory:      return ("i", [.command, .option])
         case .pairWithNext:    return ("p", [.command, .option])
         case .exportStrip:     return ("s", [.command, .shift])
@@ -482,6 +492,8 @@ public enum Command: String, CaseIterable, Sendable {
         // Under Edit, below Paste, which it is the other one of.
         case .pasteWithoutAsking: return .edit
         case .pasteEscaped, .pasteAsBase64, .pasteBase64Decoded, .pasteFileAsBase64, .pasteSlowly: return .edit
+        // Below Paste Special: the pastes, then what was pasted.
+        case .pasteHistory, .clearPasteHistory: return .edit
         case .showMemory, .showHelp: return .view
         case .reload, .hardReload, .editAddress: return .navigate
         // Under Navigate with ⌘Y's picker, not under View with the dashboards:

@@ -52,6 +52,31 @@ pub struct SiteGrant {
     pub allowed: bool,
 }
 
+/// Which way a paste-history entry went (ADR-0031).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ClipKind {
+    /// Sent to a terminal's prompt by a paste.
+    Paste,
+    /// Copied out of a terminal: ⌘C, copy-on-select, or a program's OSC 52.
+    Copy,
+}
+
+/// One row of paste history, as the picker lists it.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ClipEntry {
+    pub id: i64,
+    pub kind: ClipKind,
+    /// The text, or four characters and `•••` when `redacted`.
+    pub content: String,
+    /// The text looked like a secret and was never stored. Such a row can be
+    /// seen and deleted; there is nothing in it to paste.
+    pub redacted: bool,
+    /// Of the original, redacted or not.
+    pub line_count: u32,
+    pub byte_count: u64,
+    pub at: i64,
+}
+
 /// What a remembered entry launches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum RecentKind {

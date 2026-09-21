@@ -48,8 +48,9 @@ enum ProgramClipboard {
         return permission == .ask ? .ask : .set
     }
 
-    /// The one place a program's text lands on a pasteboard, and so the one
-    /// place a record of what terminals copied out would be taken.
+    /// The one place a program's text lands on a pasteboard. Its one caller,
+    /// `TerminalPaneController.commitProgramCopy`, is where paste history
+    /// records it as a copy out of that pane (ADR-0031).
     static func set(_ text: String, on pasteboard: NSPasteboard) {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)

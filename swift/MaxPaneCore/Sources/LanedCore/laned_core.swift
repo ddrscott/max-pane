@@ -633,9 +633,6 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 
 
 
-/**
- * The handle the shell holds for the whole run of the app.
- */
 public protocol CoreProtocol: AnyObject, Sendable {
     
     /**
@@ -737,6 +734,12 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func browserLogins(source: LoginSource) throws  -> [SourceLogin]
     
     /**
+     * Clear Paste History, and what `paste_history = false` does: the rows
+     * go. Returns how many there were.
+     */
+    func clearClipHistory() throws  -> UInt64
+    
+    /**
      * Forget everything. There is no undo, which is the point of it.
      */
     func clearHistory() throws 
@@ -753,6 +756,11 @@ public protocol CoreProtocol: AnyObject, Sendable {
      * a year ago can be inside "the last hour".
      */
     func clearHistorySince(cutoffMs: Int64) throws  -> UInt32
+    
+    /**
+     * Paste history, newest first, after ageing it by the settings.
+     */
+    func clipHistory(keep: UInt32, days: UInt32) throws  -> [ClipEntry]
     
     func closeLane(laneId: String) throws  -> StripState
     
@@ -786,6 +794,8 @@ public protocol CoreProtocol: AnyObject, Sendable {
      * `record_visit` and `set_pane_interaction_state` refuse its panes.
      */
     func createPrivateWebLane(placement: Placement, url: String, inheritTagFromLane: String?, dataStoreId: String?) throws  -> StripState
+    
+    func deleteClip(id: Int64) throws 
     
     /**
      * Hold a lane at one edge of the window instead of letting it scroll with
@@ -1221,6 +1231,17 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func recents(limit: UInt32) throws  -> [Recent]
     
     /**
+     * Remember `text` as pasted into, or copied out of, the terminal pane
+     * `pane_id`. True when it was kept. `keep` and `days` are the settings
+     * `paste_history_keep` and `paste_history_days` as they are now; `keep`
+     * of 0 is off. What is refused and what is redacted is decided in the
+     * ledger and in [`clips`], not by the caller: a private lane's pane, an
+     * unknown pane, blank text and anything over 64 KB are never written,
+     * and text shaped like a secret is written as four characters and `•••`.
+     */
+    func recordClip(paneId: String, kind: ClipKind, text: String, keep: UInt32, days: UInt32) throws  -> Bool
+    
+    /**
      * A web pane settled on a page. One call, from wherever the shell learns a
      * navigation finished.
      *
@@ -1536,9 +1557,6 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func unpair(ptyPaneId: String, webPaneId: String) throws 
     
 }
-/**
- * The handle the shell holds for the whole run of the app.
- */
 open class Core: CoreProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
 
@@ -1807,6 +1825,19 @@ open func browserLogins(source: LoginSource)throws  -> [SourceLogin]  {
 }
     
     /**
+     * Clear Paste History, and what `paste_history = false` does: the rows
+     * go. Returns how many there were.
+     */
+open func clearClipHistory()throws  -> UInt64  {
+    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_clear_clip_history(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * Forget everything. There is no undo, which is the point of it.
      */
 open func clearHistory()throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
@@ -1834,6 +1865,20 @@ open func clearHistorySince(cutoffMs: Int64)throws  -> UInt32  {
     uniffi_laned_core_fn_method_core_clear_history_since(
             self.uniffiCloneHandle(),
         FfiConverterInt64.lower(cutoffMs),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Paste history, newest first, after ageing it by the settings.
+     */
+open func clipHistory(keep: UInt32, days: UInt32)throws  -> [ClipEntry]  {
+    return try  FfiConverterSequenceTypeClipEntry.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_clip_history(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(keep),
+        FfiConverterUInt32.lower(days),uniffiCallStatus
     )
 })
 }
@@ -1908,6 +1953,15 @@ open func createPrivateWebLane(placement: Placement, url: String, inheritTagFrom
         FfiConverterOptionString.lower(dataStoreId),uniffiCallStatus
     )
 })
+}
+    
+open func deleteClip(id: Int64)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_delete_clip(
+            self.uniffiCloneHandle(),
+        FfiConverterInt64.lower(id),uniffiCallStatus
+    )
+}
 }
     
     /**
@@ -2673,6 +2727,29 @@ open func recents(limit: UInt32)throws  -> [Recent]  {
     uniffi_laned_core_fn_method_core_recents(
             self.uniffiCloneHandle(),
         FfiConverterUInt32.lower(limit),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Remember `text` as pasted into, or copied out of, the terminal pane
+     * `pane_id`. True when it was kept. `keep` and `days` are the settings
+     * `paste_history_keep` and `paste_history_days` as they are now; `keep`
+     * of 0 is off. What is refused and what is redacted is decided in the
+     * ledger and in [`clips`], not by the caller: a private lane's pane, an
+     * unknown pane, blank text and anything over 64 KB are never written,
+     * and text shaped like a secret is written as four characters and `•••`.
+     */
+open func recordClip(paneId: String, kind: ClipKind, text: String, keep: UInt32, days: UInt32)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_record_clip(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(paneId),
+        FfiConverterTypeClipKind_lower(kind),
+        FfiConverterString.lower(text),
+        FfiConverterUInt32.lower(keep),
+        FfiConverterUInt32.lower(days),uniffiCallStatus
     )
 })
 }
@@ -3542,6 +3619,103 @@ public func FfiConverterTypeBookmarkHit_lift(_ buf: RustBuffer) throws -> Bookma
 #endif
 public func FfiConverterTypeBookmarkHit_lower(_ value: BookmarkHit) -> RustBuffer {
     return FfiConverterTypeBookmarkHit.lower(value)
+}
+
+
+/**
+ * One row of paste history, as the picker lists it.
+ */
+public struct ClipEntry: Equatable, Hashable {
+    public var id: Int64
+    public var kind: ClipKind
+    /**
+     * The text, or four characters and `•••` when `redacted`.
+     */
+    public var content: String
+    /**
+     * The text looked like a secret and was never stored. Such a row can be
+     * seen and deleted; there is nothing in it to paste.
+     */
+    public var redacted: Bool
+    /**
+     * Of the original, redacted or not.
+     */
+    public var lineCount: UInt32
+    public var byteCount: UInt64
+    public var at: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: Int64, kind: ClipKind, 
+        /**
+         * The text, or four characters and `•••` when `redacted`.
+         */content: String, 
+        /**
+         * The text looked like a secret and was never stored. Such a row can be
+         * seen and deleted; there is nothing in it to paste.
+         */redacted: Bool, 
+        /**
+         * Of the original, redacted or not.
+         */lineCount: UInt32, byteCount: UInt64, at: Int64) {
+        self.id = id
+        self.kind = kind
+        self.content = content
+        self.redacted = redacted
+        self.lineCount = lineCount
+        self.byteCount = byteCount
+        self.at = at
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ClipEntry: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClipEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClipEntry {
+        return
+            try ClipEntry(
+                id: FfiConverterInt64.read(from: &buf), 
+                kind: FfiConverterTypeClipKind.read(from: &buf), 
+                content: FfiConverterString.read(from: &buf), 
+                redacted: FfiConverterBool.read(from: &buf), 
+                lineCount: FfiConverterUInt32.read(from: &buf), 
+                byteCount: FfiConverterUInt64.read(from: &buf), 
+                at: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ClipEntry, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.id, into: &buf)
+        FfiConverterTypeClipKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.content, into: &buf)
+        FfiConverterBool.write(value.redacted, into: &buf)
+        FfiConverterUInt32.write(value.lineCount, into: &buf)
+        FfiConverterUInt64.write(value.byteCount, into: &buf)
+        FfiConverterInt64.write(value.at, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClipEntry_lift(_ buf: RustBuffer) throws -> ClipEntry {
+    return try FfiConverterTypeClipEntry.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClipEntry_lower(_ value: ClipEntry) -> RustBuffer {
+    return FfiConverterTypeClipEntry.lower(value)
 }
 
 
@@ -5847,6 +6021,81 @@ public func FfiConverterTypeViewport_lower(_ value: Viewport) -> RustBuffer {
 
 
 /**
+ * Which way a paste-history entry went (ADR-0031).
+ */
+
+public enum ClipKind: Equatable, Hashable {
+    
+    /**
+     * Sent to a terminal's prompt by a paste.
+     */
+    case paste
+    /**
+     * Copied out of a terminal: ⌘C, copy-on-select, or a program's OSC 52.
+     */
+    case copy
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClipKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClipKind: FfiConverterRustBuffer {
+    typealias SwiftType = ClipKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClipKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .paste
+        
+        case 2: return .copy
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ClipKind, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .paste:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .copy:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClipKind_lift(_ buf: RustBuffer) throws -> ClipKind {
+    return try FfiConverterTypeClipKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClipKind_lower(_ value: ClipKind) -> RustBuffer {
+    return FfiConverterTypeClipKind.lower(value)
+}
+
+
+
+/**
  * Everything the shell can be told went wrong. Deliberately small: the shell's
  * only sensible responses are "show the message" and "carry on with the last
  * good snapshot".
@@ -7299,6 +7548,31 @@ fileprivate struct FfiConverterSequenceTypeBookmarkHit: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeClipEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [ClipEntry]
+
+    public static func write(_ value: [ClipEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeClipEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ClipEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ClipEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeClipEntry.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeHistoryEntry: FfiConverterRustBuffer {
     typealias SwiftType = [HistoryEntry]
 
@@ -7645,6 +7919,20 @@ fileprivate struct FfiConverterSequenceTypeSourceLogin: FfiConverterRustBuffer {
         return seq
     }
 }
+/**
+ * The handle the shell holds for the whole run of the app.
+ * Which secret shape `text` has, by name, or `None` ([`clips::secret_shape`]).
+ * For the shell to ask *before* a transform that would hide the shape:
+ * base64 of a token looks like nothing, so the pane asks about the source.
+ */
+public func clipSecretShape(text: String) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_func_clip_secret_shape(
+        FfiConverterString.lower(text),uniffiCallStatus
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -7660,6 +7948,9 @@ private let initializationResult: InitializationResult = {
     let scaffolding_contract_version = ffi_laned_core_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
+    }
+    if (uniffi_laned_core_checksum_func_clip_secret_shape() != 5188) {
+        return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_add_bookmark() != 52576) {
         return InitializationResult.apiChecksumMismatch
@@ -7694,10 +7985,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_browser_logins() != 50038) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_clear_clip_history() != 24906) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_clear_history() != 27909) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_clear_history_since() != 34011) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_clip_history() != 23489) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_close_lane() != 42855) {
@@ -7710,6 +8007,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_create_private_web_lane() != 22773) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_delete_clip() != 29185) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_dock_lane() != 57766) {
@@ -7830,6 +8130,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_recents() != 56922) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_record_clip() != 55716) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_record_visit() != 22985) {

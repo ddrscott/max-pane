@@ -35,6 +35,10 @@ final class SettingsWindow: Popup {
         didSet { serversSection?.onRename = onRenameServer }
     }
 
+    /// Clear Paste History, under the settings it belongs with. The window
+    /// controller asks first and does it; this window has no ledger.
+    var onClearPasteHistory: (() -> Void)?
+
     private let scroll = NSScrollView()
     private let documentView = SettingsDocumentView()
     private let pathLabel = NSTextField(labelWithString: "")
@@ -193,6 +197,12 @@ final class SettingsWindow: Popup {
                     let row = SettingRow(field: field, store: store)
                     rows.append(row)
                     sections.addArrangedSubview(row)
+                    if field.name == "pasteHistoryDays" {
+                        let clear = AskButton(label: "clear paste history…", isDefault: false)
+                        clear.onClick = { [weak self] in self?.onClearPasteHistory?() }
+                        sections.setCustomSpacing(8, after: row)
+                        sections.addArrangedSubview(clear)
+                    }
                 }
             }
             if let last = sections.arrangedSubviews.last { sections.setCustomSpacing(28, after: last) }

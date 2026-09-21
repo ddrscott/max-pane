@@ -39,6 +39,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0015_pane_relay_server",
         include_str!("../migrations/0015_pane_relay_server.sql"),
     ),
+    ("0016_clip_history", include_str!("../migrations/0016_clip_history.sql")),
 ];
 
 /// A needle as an FTS5 query: one quoted phrase, nothing else.
@@ -317,6 +318,122 @@ impl Ledger {
             )
             .optional()?
             .is_some_and(|v| v != 0))
+    }
+
+    // ---- paste history (ADR-0031) -------------------------------------------
+
+    /// The one writer of the `clip` table. True when a row was written.
+    ///
+    /// Everything that must never be kept is refused here rather than at a
+    /// caller, so there is no caller that can forget:
+    ///
+    /// - `keep == 0`: history is off.
+    /// - a pane in a **private lane**, and a pane the ledger does not know.
+    ///   The second is the opposite of `pane_is_private`'s answer on purpose:
+    ///   a visit from a pane that has just closed is harmless, and text from a
+    ///   pane whose lane cannot be checked is not known to be.
+    /// - nothing but whitespace, or more than 64 KB (`clips::admit`).
+    ///
+    /// Text shaped like a secret is written as four characters and `•••`
+    /// (`clips`). The same text again moves to the top instead of repeating.
+    pub fn record_clip(
+        &self,
+        pane_id: &str,
+        kind: ClipKind,
+        text: &str,
+        keep: u32,
+        days: u32,
+        now_ms: i64,
+    ) -> Result<bool> {
+        if keep == 0 {
+            return Ok(false);
+        }
+        let private: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT lane.is_private FROM pane JOIN lane ON lane.id = pane.lane_id WHERE pane.id = ?1",
+                [pane_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if private != Some(0) {
+            return Ok(false);
+        }
+        let Some(kept) = crate::clips::admit(text) else { return Ok(false) };
+        self.conn.execute(
+            "DELETE FROM clip WHERE content = ?1 AND redacted = ?2 AND byte_count = ?3",
+            params![kept.content, kept.redacted as i64, kept.byte_count as i64],
+        )?;
+        self.conn.execute(
+            "INSERT INTO clip (kind, content, redacted, line_count, byte_count, at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                crate::clips::kind_str(kind),
+                kept.content,
+                kept.redacted as i64,
+                kept.line_count,
+                kept.byte_count as i64,
+                now_ms
+            ],
+        )?;
+        self.prune_clips(keep, days, now_ms)?;
+        Ok(true)
+    }
+
+    /// Drop what is older than `days` (0 keeps any age) and all but the newest
+    /// `keep` (0 keeps none). Returns how many rows went.
+    pub fn prune_clips(&self, keep: u32, days: u32, now_ms: i64) -> Result<u64> {
+        let mut gone = 0;
+        if days > 0 {
+            gone += self.conn.execute(
+                "DELETE FROM clip WHERE at < ?1",
+                [now_ms - i64::from(days) * 86_400_000],
+            )?;
+        }
+        gone += self.conn.execute(
+            "DELETE FROM clip WHERE id NOT IN (SELECT id FROM clip ORDER BY at DESC, id DESC LIMIT ?1)",
+            [keep],
+        )?;
+        Ok(gone as u64)
+    }
+
+    /// Paste history, newest first.
+    pub fn clips(&self) -> Result<Vec<ClipEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, kind, content, redacted, line_count, byte_count, at
+             FROM clip ORDER BY at DESC, id DESC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(ClipEntry {
+                id: r.get(0)?,
+                kind: crate::clips::kind_from(&r.get::<_, String>(1)?),
+                content: r.get(2)?,
+                redacted: r.get::<_, i64>(3)? != 0,
+                line_count: r.get(4)?,
+                byte_count: r.get::<_, i64>(5)? as u64,
+                at: r.get(6)?,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// With `secure_delete` on for the two deletions a person asks for by
+    /// name, so the freed pages are zeroed rather than left for the next
+    /// write to cover. No `VACUUM`: the file does not shrink, and need not.
+    pub fn delete_clip(&self, id: i64) -> Result<()> {
+        self.conn.pragma_update(None, "secure_delete", true)?;
+        let done = self.conn.execute("DELETE FROM clip WHERE id = ?1", [id]);
+        self.conn.pragma_update(None, "secure_delete", false)?;
+        done?;
+        Ok(())
+    }
+
+    /// Every row goes. Returns how many there were.
+    pub fn clear_clips(&self) -> Result<u64> {
+        self.conn.pragma_update(None, "secure_delete", true)?;
+        let done = self.conn.execute("DELETE FROM clip", []);
+        self.conn.pragma_update(None, "secure_delete", false)?;
+        Ok(done? as u64)
     }
 
     /// Delete every private lane, its panes with it, and the site permissions

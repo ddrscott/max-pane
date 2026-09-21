@@ -27,6 +27,27 @@ final class ClickableTerminalView: TerminalView {
         handler(convert(event.locationInWindow, from: nil))
     }
 
+    /// ⌘C, Edit › Copy or the right-click Copy item is about to copy the
+    /// selection. Called before the emulator clears or changes anything, so
+    /// the pane can read the same selection the clipboard is about to get
+    /// (paste history, ADR-0031). The copy itself stays the library's.
+    var onCopy: (() -> Void)?
+
+    override func copy(_ sender: Any?) {
+        onCopy?()
+        super.copy(sender)
+    }
+
+    /// The left button came up: a drag that made a selection has ended. With
+    /// `copy_on_select` on that is the moment the emulator copies it, and it
+    /// tells nobody, so the pane looks for itself.
+    var onSelectionEnded: (() -> Void)?
+
+    override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        onSelectionEnded?()
+    }
+
     /// A key, before the emulator has it. True swallows it. For a slow paste,
     /// which Esc stops without the program hearing an Esc, and which any
     /// other key stops and then follows (`TerminalPaneController`).

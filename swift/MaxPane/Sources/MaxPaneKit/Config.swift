@@ -153,6 +153,15 @@ public struct Config: Codable, Equatable {
     /// A pasted image bigger than this, as PNG, is refused in one line. 0
     /// refuses nothing (a relay server stops at 100 MB itself).
     public var pasteImageMaxMb: UInt32 = 25
+    /// Paste history (ADR-0031): what was pasted into and copied out of
+    /// terminals, for ⇧⌘H to bring back. Never the system clipboard at large.
+    /// Off, nothing is recorded and what was kept is deleted. Read at each
+    /// paste and copy.
+    public var pasteHistory: Bool = true
+    /// How many entries are kept. 0 is off, the same as `pasteHistory = false`.
+    public var pasteHistoryKeep: UInt32 = 200
+    /// Entries older than this many days go. 0 keeps any age.
+    public var pasteHistoryDays: UInt32 = 30
 
     /// A program in a terminal setting the clipboard with OSC 52: what tmux,
     /// vim and neovim do to copy, and the only way a yank on a remote machine
@@ -348,6 +357,9 @@ public struct Config: Codable, Equatable {
         pasteImagesAsFiles = read(.pasteImagesAsFiles, d.pasteImagesAsFiles)
         pasteImageKeepDays = read(.pasteImageKeepDays, d.pasteImageKeepDays)
         pasteImageMaxMb = read(.pasteImageMaxMb, d.pasteImageMaxMb)
+        pasteHistory = read(.pasteHistory, d.pasteHistory)
+        pasteHistoryKeep = read(.pasteHistoryKeep, d.pasteHistoryKeep)
+        pasteHistoryDays = read(.pasteHistoryDays, d.pasteHistoryDays)
         osc52Write = read(.osc52Write, d.osc52Write)
         osc52Read = read(.osc52Read, d.osc52Read)
         cursorBlink = read(.cursorBlink, d.cursorBlink)
