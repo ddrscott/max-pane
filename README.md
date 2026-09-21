@@ -1765,8 +1765,50 @@ terminal pane has the keyboard.
 | **Paste Base64-Decoded** | `pasteBase64Decoded` | | The other way. Wrapped or unpadded base64 is fine; anything that is not base64, or that decodes to bytes that are not UTF-8 text, pastes nothing and the pane says so in one line. What comes out goes by ⌘V's door, so several lines of it ask first. |
 | **Paste File as Base64…** | `pasteFileAsBase64` | | The files copied in Finder if there are any, otherwise an open panel. Pastes `base64 -d > "NAME" <<'EOF'`, the file as base64 wrapped at 76 columns, and `EOF`, **without the final Return**: the prompt holds `EOF` and you press Return to write the file. `NAME` is the file's name, quoted like any path, written into whatever directory that shell is in. Several files are several heredocs. Refused above 5 MB in all. It skips the sheet (every line of it ends in Return by design) and goes out in the same paced pieces as any paste, about 50 s for 5 MB. **This is the no-scp way to get a small file onto a remote lane's machine until upload lands.** The delimiter is checked against the body and becomes `EOF_1`, `EOF_2`… if a line equals it. |
 | **Paste Slowly** | `pasteSlowly` | | The same bytes as ⌘V (tidied, asked about when risky), **16 bytes at a time with 10 ms between**, for a serial console or a program that drops characters fed at full speed. The pane says `pasting slowly · 1.2 KB of 18.2 KB · Esc cancels`. **Esc cancels it** and the program never hears that Esc; **typing cancels it** too, and what you typed follows what had already gone. Nothing of the paste is sent after. `paste_slow_chunk` and `paste_slow_delay_ms` set the pace, read at each slow paste. It is a stretch of the same queue every keystroke uses, not a second one, so order is kept; a connection that drops cancels it rather than flushing the rest at full speed on reconnect. |
+| **Advanced Paste…** | `advancedPaste` | ⌥⇧⌘V | A sheet over the pane that combines the others and shows the exact bytes before they go. Below. |
 
 [ADR-0030](docs/decisions/0030-paste-special-is-five-pure-transforms-and-one-queue.md).
+
+**Advanced Paste… (⌥⇧⌘V)** is for the paste that needs two or three of these
+at once, and for seeing what will be sent before it is. A sheet over the pane:
+
+- **The clipboard's text, editable**, in the terminal's font. It is plain text
+  and stays what you type: no smart quotes, no dashes, no autocorrect, no
+  links. A copied file is its path; a picture has no text and opens nothing.
+- **A column of eight toggles, and the column is the order.** Top to bottom is
+  the order they are applied in, whichever you switched on first: **1** Decode
+  Base64, **2** Straighten Punctuation, **3** Strip Prompt, **4** Trim
+  Whitespace, *the regular expression*, **5** Tabs to Spaces, **6** One Line,
+  **7** Escape as One Shell Word, **8** Encode Base64. Unwrap first and wrap
+  last; tidy in ⌘V's order; the pattern runs on tidied text that still has its
+  lines and tabs, so `^`, `$` and `\t` mean what they say; escaping quotes what
+  is final. Each toggle is exactly the function the command of the same name
+  uses. Straighten here has no prose guard: you asked for it by name.
+- **`s/pattern/replacement/`**, in `NSRegularExpression` syntax. `$1` is a
+  group, `$0` the match, `\$` a dollar sign; `^` and `$` match at every line.
+  An empty pattern is off. A pattern that does not compile says so under the
+  row and **pastes nothing**; one that matches nothing says `0 replacements:
+  no match` and the text goes as it is.
+- **A preview of the exact bytes**: what `PASTE` sends, with control
+  characters made visible (`␉`, `␛`), and the line and byte counts of that.
+  Text that will not decode, or a bad pattern, shows nothing to paste and
+  `PASTE` does nothing.
+
+**↩ and Esc cancel**, as in the other paste sheet. `P` pastes, `S` pastes
+slowly, `1`–`8` toggle, `E` puts the keyboard in the content and `R` in the
+pattern. Inside a box letters are text, so there **Esc comes back to the
+keys** (a second Esc cancels) and **⌘↩ pastes** from anywhere. ⌘V in the
+content pastes into the content. What is sent is not asked about again and
+not tidied behind your back: the sheet was the question. Paste history keeps
+what was sent, and nothing when the clipboard was marked secret, whatever you
+edited. It remembers the toggles and the pattern **until the app quits**, and
+never the content. Narrow lanes stack it; a wide or short pane puts the steps
+beside the preview.
+
+**In a web pane ⌥⇧⌘V is the page's.** It is Paste and Match Style by
+convention and a page may bind it, so it is the one chord the app does not
+take from a page; the menu item is grey there.
+[ADR-0032](docs/decisions/0032-advanced-paste-applies-its-steps-in-one-fixed-order.md).
 
 **A middle click pastes**, as it does in iTerm and under X11. What it pastes:
 **this pane's selection if it has one**, read straight from the terminal and

@@ -98,7 +98,8 @@ struct WebPaneKeyRoutingTests {
 
     @Test("every ⌘-chord the app declares is one the app claims")
     func theTableAndTheClaimAgree() {
-        for command in Command.allCases {
+        // But for the one command whose chord is a page's to keep (ADR-0032).
+        for command in Command.allCases where !command.yieldsToPage {
             for (key, modifiers) in command.chords.map(\.pair)
             where modifiers.contains(.command) {
                 // As the event will spell it: shift is the one modifier
@@ -109,6 +110,13 @@ struct WebPaneKeyRoutingTests {
                     "\(command.rawValue) declares a key the web pane would hand to the page")
             }
         }
+    }
+
+    @Test("⌥⇧⌘V is Advanced Paste in a terminal and the page's in a web pane")
+    func advancedPasteYieldsToThePage() {
+        #expect(Command.advancedPaste.chords.map(\.pair).contains { $0.0 == "v" && $0.1 == [.command, .option, .shift] })
+        #expect(!Command.claims(chord("v", [.command, .option, .shift])))
+        #expect(Command.claims(chord("v", [.command, .option])))
     }
 
     @Test("esc, and keys the app never declared, stay with the page")

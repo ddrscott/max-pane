@@ -48,6 +48,7 @@ public enum Command: String, CaseIterable, Sendable {
     case pasteBase64Decoded
     case pasteFileAsBase64
     case pasteSlowly
+    case advancedPaste
     case pasteHistory
     case clearPasteHistory
     case showMemory
@@ -116,6 +117,7 @@ public enum Command: String, CaseIterable, Sendable {
         case .pasteBase64Decoded: return "Paste Base64-Decoded"
         case .pasteFileAsBase64: return "Paste File as Base64…"
         case .pasteSlowly: return "Paste Slowly"
+        case .advancedPaste: return "Advanced Paste…"
         case .pasteHistory: return "Paste History…"
         case .clearPasteHistory: return "Clear Paste History…"
         case .showMemory: return "Memory"
@@ -273,6 +275,12 @@ public enum Command: String, CaseIterable, Sendable {
         // No keys. Each is reached for a few times a month, from the menu,
         // by name; `keys` binds any of them.
         case .pasteAsBase64, .pasteBase64Decoded, .pasteFileAsBase64, .pasteSlowly: return nil
+        // ⌥⇧⌘V, iTerm's key for the same sheet. macOS does nothing with it.
+        // Apps do: it is Paste and Match Style by convention, and a page in a
+        // web pane may bind it. So this is the one chord the app does not
+        // take from a page (`yieldsToPage`): in a web pane the page gets the
+        // key, and the command, which has nothing to do there, is grey.
+        case .advancedPaste: return ("v", [.command, .option, .shift])
         // ⇧⌘H, iTerm's key for the same list. macOS has ⌘H (Hide) and ⌥⌘H
         // (Hide Others) and leaves this one alone; ⇧⌘Y is the other history,
         // the one of pages.
@@ -446,6 +454,14 @@ public enum Command: String, CaseIterable, Sendable {
             KeyChord(key: typed, modifiers: event.modifierFlags))
     }
 
+    /// A command only a terminal pane can answer, on a chord pages have a use
+    /// of their own for. Its chords are left out of what `claims(_:)` takes
+    /// from a page, unless another command is on the same chord: in a web pane
+    /// the command could do nothing, so taking the key would only break the
+    /// page's. One command, deliberately. The other terminal pastes sit on
+    /// chords no page binds, and stay claimed so that they never reach one.
+    public var yieldsToPage: Bool { self == .advancedPaste }
+
     /// Commands only a page can answer: an address, a form, a document to
     /// print. `canPerform` greys these out on a terminal pane rather than
     /// beeping, because the menu can say which panes an item is for and a
@@ -467,7 +483,7 @@ public enum Command: String, CaseIterable, Sendable {
     public var submenu: String? {
         switch self {
         case .pasteWithoutAsking, .pasteEscaped, .pasteAsBase64, .pasteBase64Decoded,
-             .pasteFileAsBase64, .pasteSlowly:
+             .pasteFileAsBase64, .pasteSlowly, .advancedPaste:
             return "Paste Special"
         default:
             return nil
@@ -491,7 +507,8 @@ public enum Command: String, CaseIterable, Sendable {
         case .claimSession: return .file
         // Under Edit, below Paste, which it is the other one of.
         case .pasteWithoutAsking: return .edit
-        case .pasteEscaped, .pasteAsBase64, .pasteBase64Decoded, .pasteFileAsBase64, .pasteSlowly: return .edit
+        case .pasteEscaped, .pasteAsBase64, .pasteBase64Decoded, .pasteFileAsBase64, .pasteSlowly,
+             .advancedPaste: return .edit
         // Below Paste Special: the pastes, then what was pasted.
         case .pasteHistory, .clearPasteHistory: return .edit
         case .showMemory, .showHelp: return .view

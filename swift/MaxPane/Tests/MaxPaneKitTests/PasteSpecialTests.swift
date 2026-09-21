@@ -145,15 +145,16 @@ struct PasteSpecialTransformTests {
         }
     }
 
-    @Test("the commands: a Paste Special submenu of Edit, ⌃⌘V and ⌥⌘V and nothing else bound")
+    @Test("the commands: a Paste Special submenu of Edit; ⌃⌘V, ⌥⌘V and the sheet's ⌥⇧⌘V, and nothing else bound")
     func commands() {
         let special = Command.allCases.filter { $0.submenu == "Paste Special" }
         #expect(special == [.pasteWithoutAsking, .pasteEscaped, .pasteAsBase64, .pasteBase64Decoded,
-                            .pasteFileAsBase64, .pasteSlowly])
+                            .pasteFileAsBase64, .pasteSlowly, .advancedPaste])
         #expect(special.allSatisfy { $0.menu == .edit })
         #expect(Command.allCases.filter { $0.submenu != nil } == special)
         #expect(special.map(\.title) == ["Paste Without Asking", "Paste Escaped", "Paste as Base64",
-                                        "Paste Base64-Decoded", "Paste File as Base64…", "Paste Slowly"])
+                                        "Paste Base64-Decoded", "Paste File as Base64…", "Paste Slowly",
+                                        "Advanced Paste…"])
         #expect(Keymap.defaults.chords(for: .pasteEscaped) == [KeyChord(key: "v", modifiers: [.command, .control])])
         for command in [Command.pasteAsBase64, .pasteBase64Decoded, .pasteFileAsBase64, .pasteSlowly] {
             #expect(Keymap.defaults.chords(for: command).isEmpty)

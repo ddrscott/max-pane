@@ -760,6 +760,8 @@ enum TerminalPaste {
         case base64Decoded = "pasteBase64Decoded"
         case fileAsBase64 = "pasteFileAsBase64"
         case slowly = "pasteSlowly"
+        /// Not a transform: the sheet that composes them (`Advanced`).
+        case advanced = "advancedPaste"
     }
 
     /// `text` as one shell word, whatever is in it; nil when there is nothing.
@@ -925,6 +927,161 @@ enum TerminalPaste {
         case .finished(let total): return "pasted slowly · \(size(total))"
         case .cancelled(let sent, let total): return "slow paste cancelled · \(size(sent)) of \(size(total)) sent"
         }
+    }
+
+    // MARK: - advanced paste
+
+    /// Edit › Paste Special › Advanced Paste…: several of the transforms above
+    /// on one paste, and a regular expression (ADR-0032).
+    ///
+    /// Nothing here transforms anything itself except `substitute`. `compose`
+    /// is the functions above, called in `Step`'s order, and that order is the
+    /// whole of what this adds.
+    struct Advanced: Equatable {
+        /// The toggles, **in the order they are applied**, whichever were
+        /// switched on first. The regular expression runs between `trimStray`
+        /// and `tabsToSpaces`; it has no toggle, an empty pattern being off.
+        ///
+        /// 1. `base64Decode` unwraps: what comes out is the text the rest is
+        ///    for, and nothing textual can be done to base64.
+        /// 2. `straighten`, `stripPrompt`, `trimStray`: ⌘V's tidying in ⌘V's
+        ///    order (ADR-0029). `straighten` is `straightenPunctuation` with
+        ///    no prose guard: here it was asked for by name.
+        /// 3. The regular expression, on tidied text that still has its lines
+        ///    and its tabs: `^`, `$` and `\t` mean what they say, and a pattern
+        ///    with `"` in it meets a straight one.
+        /// 4. `tabsToSpaces`, then `oneLine`: layout, after anything that
+        ///    reads the text by line. One Line needs the lines trimmed first.
+        /// 5. `escape` quotes what is final. Before One Line it would quote
+        ///    the newlines; after base64 it would have nothing to do.
+        /// 6. `base64Encode` wraps: last, for the reason decode is first.
+        enum Step: Int, CaseIterable, Comparable {
+            case base64Decode, straighten, stripPrompt, trimStray, tabsToSpaces, oneLine, escape, base64Encode
+
+            static func < (a: Step, b: Step) -> Bool { a.rawValue < b.rawValue }
+
+            /// The steps the regular expression runs after.
+            static let beforeRegex: [Step] = [.base64Decode, .straighten, .stripPrompt, .trimStray]
+            static let afterRegex: [Step] = [.tabsToSpaces, .oneLine, .escape, .base64Encode]
+
+            func label(tabWidth: Int) -> String {
+                switch self {
+                case .base64Decode: return "DECODE BASE64"
+                case .straighten: return "STRAIGHTEN PUNCTUATION"
+                case .stripPrompt: return "STRIP PROMPT"
+                case .trimStray: return "TRIM WHITESPACE"
+                case .tabsToSpaces: return "TABS TO \(tabWidth) SPACES"
+                case .oneLine: return "ONE LINE"
+                case .escape: return "ESCAPE AS ONE SHELL WORD"
+                case .base64Encode: return "ENCODE BASE64"
+                }
+            }
+        }
+
+        var steps: Set<Step> = []
+        /// `NSRegularExpression` syntax. Empty is off.
+        var pattern = ""
+        /// A template: `$1` is the first group, `\$` a dollar sign.
+        var replacement = ""
+        var tabWidth = 4
+    }
+
+    /// What an Advanced Paste comes to.
+    struct Composed: Equatable {
+        /// What would be pasted. Empty when there is a `problem`: a paste that
+        /// could not be made as asked is not made some other way.
+        var text: String
+        /// The pattern does not compile, as one line. The sheet says it
+        /// beside the pattern.
+        var regexProblem: String?
+        /// A step refused (the text is not base64), as the pane would say it.
+        var refusal: String?
+        /// How many times the pattern matched, or nil when there is none.
+        var replacements: Int?
+
+        var problem: String? { regexProblem ?? refusal }
+    }
+
+    /// `text` with `advanced`'s steps applied in `Step`'s order, the regular
+    /// expression in its place. Pure, total, and the only thing the sheet
+    /// shows or sends.
+    static func compose(_ text: String, _ advanced: Advanced) -> Composed {
+        var out = Composed(text: text)
+        func apply(_ step: Advanced.Step) -> Bool {
+            guard advanced.steps.contains(step) else { return true }
+            switch step {
+            case .base64Decode:
+                switch base64Decoded(out.text) {
+                case .success(let decoded): out.text = decoded
+                case .failure(let refusal):
+                    out.refusal = refusal.notice.replacingOccurrences(of: "the clipboard", with: "this")
+                    return false
+                }
+            case .straighten: out.text = straightenPunctuation(out.text)
+            case .stripPrompt: out.text = stripPrompt(out.text)
+            case .trimStray: out.text = trimStray(out.text)
+            case .tabsToSpaces: out.text = tabsToSpaces(out.text, width: advanced.tabWidth)
+            case .oneLine: out.text = oneLine(out.text)
+            case .escape: out.text = escaped(out.text) ?? ""
+            case .base64Encode: out.text = base64Encoded(out.text)
+            }
+            return true
+        }
+        for step in Advanced.Step.beforeRegex where !apply(step) {
+            out.text = ""
+            return out
+        }
+        if !advanced.pattern.isEmpty {
+            switch substitute(out.text, pattern: advanced.pattern, replacement: advanced.replacement) {
+            case .replaced(let text, let count):
+                out.text = text
+                out.replacements = count
+            case .invalid(let why):
+                out.text = ""
+                out.regexProblem = why
+                return out
+            }
+        }
+        for step in Advanced.Step.afterRegex { _ = apply(step) }
+        return out
+    }
+
+    enum Substitution: Equatable {
+        case replaced(String, count: Int)
+        /// The pattern does not compile. One line, fit to show.
+        case invalid(String)
+    }
+
+    /// Every match of `pattern` in `text` replaced by `replacement`.
+    ///
+    /// `NSRegularExpression`'s syntax (ICU) and its template: `$0` the match,
+    /// `$1`…`$9` its groups, `\$` and `\\` themselves. A group the pattern does
+    /// not have is nothing. `^` and `$` match at every line, since what is
+    /// pasted into a terminal is lines; `(?s)` and the rest are the pattern's
+    /// to set. **Never throws**: a pattern that does not compile is
+    /// `.invalid`, and one that matches nothing is the text, zero times.
+    static func substitute(_ text: String, pattern: String, replacement: String) -> Substitution {
+        let regex: NSRegularExpression
+        do {
+            regex = try NSRegularExpression(pattern: pattern, options: [.anchorsMatchLines])
+        } catch {
+            return .invalid("not a regular expression: \(printable(pattern))")
+        }
+        let out = NSMutableString(string: text)
+        let count = regex.replaceMatches(
+            in: out, options: [], range: NSRange(location: 0, length: out.length), withTemplate: replacement)
+        return .replaced(out as String, count: count)
+    }
+
+    /// The whole of what would go out, fit to show, and its size: `preview`
+    /// and `shape` of the same text, so the numbers are the picture's.
+    static func advancedPreview(_ composed: Composed, limit: Int) -> (lines: [String], more: Int, summary: String) {
+        let (lines, more) = preview(composed.text, limit: limit)
+        let shape = shape(of: composed.text)
+        let empty = shape.bytes == 0
+        let summary = empty ? "nothing to paste"
+            : "\(shape.lines) line\(shape.lines == 1 ? "" : "s") · \(size(shape.bytes))"
+        return (empty ? [] : lines, empty ? 0 : more, summary)
     }
 
     // MARK: - middle click

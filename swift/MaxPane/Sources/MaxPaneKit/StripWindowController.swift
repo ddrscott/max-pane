@@ -678,7 +678,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             // Asked of the responder chain, as ⌘V is: live exactly when a
             // terminal pane has the keyboard, whatever the ledger says.
             return NSApp.target(forAction: #selector(TerminalPasteTarget.pasteIntoTerminalPaneWithoutAsking(_:))) != nil
-        case .pasteEscaped, .pasteAsBase64, .pasteBase64Decoded, .pasteFileAsBase64, .pasteSlowly:
+        case .pasteEscaped, .pasteAsBase64, .pasteBase64Decoded, .pasteFileAsBase64, .pasteSlowly, .advancedPaste:
             // The same question, of the same chain.
             return NSApp.target(forAction: #selector(TerminalPasteTarget.pasteSpecialIntoTerminalPane(_:))) != nil
         case .claimSession:
@@ -917,7 +917,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 NSApp.sendAction(
                     #selector(TerminalPasteTarget.pasteIntoTerminalPaneWithoutAsking(_:)), to: nil, from: nil)
 
-            case .pasteEscaped, .pasteAsBase64, .pasteBase64Decoded, .pasteFileAsBase64, .pasteSlowly:
+            case .pasteEscaped, .pasteAsBase64, .pasteBase64Decoded, .pasteFileAsBase64, .pasteSlowly, .advancedPaste:
                 // Edit › Paste Special, to the terminal pane with the
                 // keyboard. The command's name is the sender, and is which.
                 NSApp.sendAction(

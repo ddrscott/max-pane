@@ -474,7 +474,13 @@ final class TerminalPaneController: NSObject, PaneController {
         // A paste that is still a question holds the keyboard for this pane:
         // handing it to the terminal would let typing through under the sheet.
         // A question from a program holds it the same way.
-        if let sheet: NSView = pasteSheet ?? clipboardSheet {
+        if let sheet: NSView = pasteSheet ?? advancedSheet ?? clipboardSheet {
+            // An Advanced Paste has text boxes of its own: the keyboard in
+            // one of them is the sheet's keyboard, and is left where it is.
+            if advancedSheet?.holdsKeyboard == true {
+                wantsFocus = false
+                return
+            }
             if window.firstResponder !== sheet, window.makeFirstResponder(sheet) { wantsFocus = false }
             return
         }
@@ -515,6 +521,8 @@ final class TerminalPaneController: NSObject, PaneController {
         // A paste still waiting on its question goes with the pane, unsent.
         pasteSheet?.dismissWithoutAnswering()
         pasteSheet = nil
+        advancedSheet?.dismissWithoutAnswering()
+        advancedSheet = nil
         // And a program still waiting on the clipboard is told no.
         clipboardSheet?.dismissWithoutAnswering()
         clipboardSheet = nil
@@ -634,7 +642,7 @@ final class TerminalPaneController: NSObject, PaneController {
     func paste(_ clipboard: TerminalPaste.Clipboard, asking: Bool = true, slowly: Bool = false) {
         // A second paste while the first is still a question is not queued
         // behind it and does not answer it: the sheet is what has the floor.
-        guard pasteSheet == nil, clipboardSheet == nil else { return }
+        guard pasteSheet == nil, advancedSheet == nil, clipboardSheet == nil else { return }
         // A copied file whose name holds a control character is left out, and
         // the rest still go: say which, in the line the pane already has.
         if let notice = clipboard.notice { showNotice(notice) }
@@ -699,9 +707,11 @@ final class TerminalPaneController: NSObject, PaneController {
     /// Edit › Paste Special. Each transform is a pure function in
     /// `TerminalPaste`; this is only which one, and which door.
     func pasteSpecial(_ special: TerminalPaste.Special) {
-        guard pasteSheet == nil, clipboardSheet == nil else { return }
+        guard pasteSheet == nil, advancedSheet == nil, clipboardSheet == nil else { return }
         let live = liveConfig?() ?? config
         switch special {
+        case .advanced:
+            advancedPaste()
         case .slowly:
             // The same bytes as ⌘V, by the same door: tidied, asked about,
             // a screenshot as its path. Only the pace differs.
@@ -739,6 +749,74 @@ final class TerminalPaneController: NSObject, PaneController {
                 }
             }
         }
+    }
+
+    // MARK: advanced paste
+
+    /// The Advanced Paste that is up, while it is. One question at a time,
+    /// of whichever kind.
+    private(set) var advancedSheet: AdvancedPasteSheet?
+
+    /// What the sheet opens with: the last toggles, for this launch only.
+    var advancedMemory = AdvancedPasteMemory.shared
+
+    /// Edit › Paste Special › Advanced Paste… (ADR-0032). The clipboard as ⌘V
+    /// would read it (a copied file is its path; a picture has no text), put
+    /// in front of the person with every transform to hand.
+    ///
+    /// **What it sends goes by the door, unasked and untidied**: the sheet
+    /// *was* the question, asked of the exact bytes, and tidying is three of
+    /// its toggles. **What is kept is what was sent**, as any paste's is, and
+    /// not at all when the pasteboard said not to (`doNotRecord`, which no
+    /// edit in the sheet takes back). With ENCODE BASE64 on, a secret's shape
+    /// is gone from what is sent, so the text before that step is what the
+    /// net is asked about, as Paste as Base64 asks about its source.
+    func advancedPaste() {
+        guard pasteSheet == nil, advancedSheet == nil, clipboardSheet == nil else { return }
+        let live = liveConfig?() ?? config
+        let read = TerminalPaste.clipboard(pasteboard, images: false)
+        if let notice = read.notice { showNotice(notice) }
+        guard let text = read.text else {
+            showNotice("not pasted: no text on the clipboard")
+            return
+        }
+        let font = NSFont(name: config.fontName, size: 11)
+        let width = TerminalPaste.ConfirmSettings(live).tabWidth
+        let sheet = AdvancedPasteSheet(
+            text: text, tabWidth: width, terminalFont: font, memory: advancedMemory
+        ) { [weak self] answer in
+            guard let self, let sheet = self.advancedSheet else { return }
+            self.advancedSheet = nil
+            if case .paste(let out, let slowly) = answer {
+                var keep = !read.doNotRecord
+                if keep, sheet.advanced.steps.contains(.base64Encode) {
+                    var before = sheet.advanced
+                    before.steps.remove(.base64Encode)
+                    keep = clipSecretShape(text: TerminalPaste.compose(sheet.content, before).text) == nil
+                }
+                if slowly, self.isPastingSlowly {
+                    self.showNotice("not pasted: a slow paste is still going")
+                } else {
+                    self.paste(TerminalPaste.Clipboard(text: out, doNotRecord: !keep), asking: false, slowly: slowly)
+                }
+            }
+            self.takeFocus()
+        }
+        sheet.onClick = { [weak self] in
+            guard let self else { return }
+            try? self.store.focusPane(self.paneId)
+        }
+        sheet.translatesAutoresizingMaskIntoConstraints = false
+        Motion.fade(container.layer)
+        container.addSubview(sheet)
+        NSLayoutConstraint.activate([
+            sheet.topAnchor.constraint(equalTo: container.topAnchor),
+            sheet.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            sheet.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            sheet.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        advancedSheet = sheet
+        sheet.takeFocus()
     }
 
     /// How Paste File as Base64… asks which files, when the clipboard has
@@ -1061,7 +1139,7 @@ final class TerminalPaneController: NSObject, PaneController {
     ) {
         // A second question while one is open is answered no, not queued: a
         // program that asks in a loop must not be able to stack sheets.
-        guard pasteSheet == nil, clipboardSheet == nil else {
+        guard pasteSheet == nil, advancedSheet == nil, clipboardSheet == nil else {
             respond(false)
             return
         }

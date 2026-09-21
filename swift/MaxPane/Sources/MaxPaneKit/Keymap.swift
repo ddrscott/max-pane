@@ -394,7 +394,10 @@ public struct Keymap: Sendable {
 
     private static func claimedChords(in bindings: [Command: [KeyChord]]) -> Set<KeyChord> {
         var out: Set<KeyChord> = []
-        for chord in bindings.values.flatMap({ $0 })
+        // A chord is a page's to keep only when every command on it yields it
+        // (`Command.yieldsToPage`).
+        let kept = bindings.filter { !$0.key.yieldsToPage }
+        for chord in kept.values.flatMap({ $0 })
         where chord.modifiers.contains(.command) {
             out.insert(chord)
             if chord.modifiers.contains(.shift), let alt = shifted[chord.key] {
