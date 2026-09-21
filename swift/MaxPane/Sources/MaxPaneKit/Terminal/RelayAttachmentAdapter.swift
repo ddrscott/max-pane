@@ -154,7 +154,7 @@ final class RelayAttachmentAdapter: RelayAttachment {
     /// few kilobytes, and `PendingInput` carries the rules that keep held
     /// input from turning into a surprise later.
     func send(_ bytes: ArraySlice<UInt8>) {
-        guard let session, isAttached else {
+        guard session != nil, isAttached else {
             let held = pending.bytes.count + bytes.count
             if !pending.hold(bytes) {
                 Log.warn("\(sessionId): dropped input buffered while disconnected — over \(PendingInput.limit)B")
