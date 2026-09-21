@@ -54,7 +54,7 @@
 - [x] Remote presence: a server chip marks remote sessions everywhere, and a dead server shows at once on its header, its rows, its lanes and its tiles — [detail](remote-presence.md)
 - [x] Collapsing a sidebar group (directory or server) hides its lanes from the strip and gallery; expanding brings them back — [detail](sidebar-collapse-hides-lanes.md) — a sibling of the gather filter in the core (lane ids, because a sidebar group is a cwd and not a tag), persisted in the ledger; hidden is not closed; focus landing in a folded group opens it; ADR-0024
 - [x] A server has a colour, picked from a submenu on its sidebar header; a colour square marks its sessions, and the name stays only where there is no other context — [detail](server-colour.md)
-- [-] ⌘V of a file copied in Finder pastes its full path (today: only the name), double-quoted when it has spaces or shell characters; several files space-separated — [detail](paste-file-paths.md)
+- [x] ⌘V of a file copied in Finder pastes its full path (today: only the name), double-quoted when it has spaces or shell characters; several files space-separated — [detail](paste-file-paths.md)
 - [ ] A risky paste asks first (several lines, tabs, or a lot of bytes) in a sheet with Paste / One Line / Cancel; every paste is sent in ≤1 KB chunks — [detail](paste-confirm-sheet.md)
 - [ ] ⌘V with only an image on the clipboard saves it and pastes the path; in a remote lane it uploads through the relay API and pastes the remote path — [detail](paste-clipboard-image.md)
 - [ ] OSC 52: programs can set the clipboard (allowed, shown), and must ask to read it; find out what happens today — [detail](terminal-osc52.md)

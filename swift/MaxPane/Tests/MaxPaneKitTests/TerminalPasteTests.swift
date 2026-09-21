@@ -1,4 +1,5 @@
 import Testing
+import AppKit
 import Foundation
 @testable import MaxPaneKit
 
@@ -54,6 +55,170 @@ struct TerminalPasteTests {
         // the user put on the clipboard; inventing new ones is the bug.
         let coloured = "\u{1b}[32mok\u{1b}[0m"
         #expect(TerminalPaste.bytes(for: coloured) == Array(coloured.utf8))
+    }
+}
+
+/// ⌘V of a file copied in Finder: its full path, quoted when it has to be.
+///
+/// Every pasteboard here is a private, uniquely named one. Nothing in this
+/// suite may touch `NSPasteboard.general`, which is the owner's clipboard.
+@Suite("terminal paste of copied files")
+struct TerminalPasteFileTests {
+    /// A pasteboard nobody else has, holding what Finder writes for ⌘C: one
+    /// item per file, each with the file URL and the display name as a string.
+    private func withPasteboard<T>(_ body: (NSPasteboard) throws -> T) rethrows -> T {
+        let pasteboard = NSPasteboard(name: .init("maxpane.tests.paste.\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        return try body(pasteboard)
+    }
+
+    private func finderItem(_ url: URL) -> NSPasteboardItem {
+        let item = NSPasteboardItem()
+        item.setString(url.absoluteString, forType: .fileURL)
+        item.setString(url.lastPathComponent, forType: .string)
+        return item
+    }
+
+    private func pasted(_ paths: [String]) -> TerminalPaste.Clipboard {
+        withPasteboard { pasteboard in
+            pasteboard.writeObjects(paths.map { finderItem(URL(fileURLWithPath: $0)) })
+            return TerminalPaste.clipboard(pasteboard)
+        }
+    }
+
+    @Test("one file pastes its full path, bare, and the name flavour is ignored")
+    func oneFile() {
+        let got = pasted(["/Users/spierce/Downloads/report.pdf"])
+        #expect(got == .init(text: "/Users/spierce/Downloads/report.pdf"))
+    }
+
+    @Test("every character of the bare set stays bare")
+    func bareSet() {
+        let path = "/tmp/aZ09._-+,:@%/x"
+        #expect(TerminalPaste.shellWord(for: path) == path)
+    }
+
+    @Test("a space means double quotes")
+    func space() {
+        #expect(pasted(["/Users/spierce/My File.pdf"]).text == "\"/Users/spierce/My File.pdf\"")
+    }
+
+    @Test("the four characters live inside double quotes are escaped")
+    func liveCharacters() {
+        #expect(TerminalPaste.shellWord(for: "/t/a\\b") == "\"/t/a\\\\b\"")
+        #expect(TerminalPaste.shellWord(for: "/t/a\"b") == "\"/t/a\\\"b\"")
+        #expect(TerminalPaste.shellWord(for: "/t/a$b") == "\"/t/a\\$b\"")
+        #expect(TerminalPaste.shellWord(for: "/t/a`b") == "\"/t/a\\`b\"")
+        #expect(pasted(["/t/cost $5 \"final\".txt"]).text == "\"/t/cost \\$5 \\\"final\\\".txt\"")
+    }
+
+    @Test("other shell characters need the quotes and nothing more")
+    func otherShellCharacters() {
+        for ch in ["'", "*", "?", "(", ")", "[", "&", ";", "|", "<", ">", "#", "~", "=", "{"] {
+            #expect(TerminalPaste.shellWord(for: "/t/a\(ch)b") == "\"/t/a\(ch)b\"")
+        }
+    }
+
+    @Test("a ! gets single quotes, the one case that does")
+    func bang() {
+        #expect(pasted(["/t/wow!.txt"]).text == "'/t/wow!.txt'")
+        #expect(TerminalPaste.shellWord(for: "/t/it's $5!") == "'/t/it'\\''s $5!'")
+    }
+
+    @Test("a name with a newline is refused, the rest paste, and the notice names it")
+    func controlCharacter() {
+        let got = pasted(["/t/one.txt", "/t/bad\nname.txt", "/t/two.txt"])
+        #expect(got.text == "/t/one.txt /t/two.txt")
+        #expect(got.skippedFiles == ["bad?name.txt"])
+        #expect(got.notice == "skipped \"bad?name.txt\": a control character in its name")
+        for bad in ["a\tb", "a\u{1b}[31m", "a\u{7f}", "a\u{85}", "a\rb"] {
+            #expect(TerminalPaste.shellWord(for: bad) == nil)
+        }
+    }
+
+    @Test("only refused files: nothing is pasted, and the name flavour is not a fallback")
+    func onlyRefused() {
+        let got = pasted(["/t/a\nb", "/t/c\nd"])
+        #expect(got.text == nil)
+        #expect(got.notice == "skipped 2 files with control characters in their names")
+    }
+
+    @Test("three files, in order, space-separated, no trailing space or newline")
+    func threeFiles() {
+        let got = pasted(["/t/c.txt", "/t/a b.txt", "/t/b.txt"])
+        #expect(got.text == "/t/c.txt \"/t/a b.txt\" /t/b.txt")
+        #expect(got.notice == nil)
+        #expect(TerminalPaste.bytes(for: got.text ?? "") == Array("/t/c.txt \"/t/a b.txt\" /t/b.txt".utf8))
+    }
+
+    @Test("a web URL is not a file: the string wins")
+    func webURL() {
+        let got = withPasteboard { pasteboard in
+            let item = NSPasteboardItem()
+            item.setString("https://example.com/a b", forType: .URL)
+            item.setString("https://example.com/a%20b", forType: .string)
+            pasteboard.writeObjects([item])
+            return TerminalPaste.clipboard(pasteboard)
+        }
+        #expect(got == .init(text: "https://example.com/a%20b"))
+    }
+
+    @Test("plain text is exactly what it was, and an empty pasteboard is nothing")
+    func plainText() {
+        let text = "echo \"$HOME\" !\n"
+        let got = withPasteboard { pasteboard in
+            pasteboard.setString(text, forType: .string)
+            return TerminalPaste.clipboardText(pasteboard)
+        }
+        #expect(got == text)
+        #expect(withPasteboard { TerminalPaste.clipboard($0) } == .init())
+    }
+
+    @Test("non-ASCII letters paste bare, composed or decomposed, and not percent-encoded")
+    func nonASCII() {
+        #expect(pasted(["/t/café/日本語.txt"]).text == "/t/café/日本語.txt")
+        let decomposed = "/t/cafe\u{301}.txt"
+        #expect(TerminalPaste.shellWord(for: decomposed) == decomposed)
+        // Not letters: an emoji and a no-break space are quoted, harmlessly.
+        #expect(TerminalPaste.shellWord(for: "/t/🇺🇸") == "\"/t/🇺🇸\"")
+        #expect(TerminalPaste.shellWord(for: "/t/a\u{a0}b") == "\"/t/a\u{a0}b\"")
+    }
+
+    @Test("a directory has no trailing slash, and the empty word is still a word")
+    func edges() {
+        #expect(pasted(["/t/dir/"]).text == "/t/dir")
+        #expect(TerminalPaste.shellWord(for: "") == "\"\"")
+    }
+
+    @Test("a /.file/id= reference URL pastes the path it refers to")
+    func fileReferenceURL() throws {
+        // A reference only exists for a real file, so this one test makes one.
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("maxpane paste \(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("shot.png")
+        try Data().write(to: file)
+
+        // Swift's `URL` cannot hold a reference (the bridge resolves it), so
+        // the reference is fetched and kept as the `NSURL` it is, and written
+        // the way Finder writes one: as the item's file-URL string.
+        let made = (file as NSURL).perform(#selector(NSURL.fileReferenceURL))?.takeUnretainedValue()
+        let reference = try #require((made as? NSURL)?.absoluteString)
+        #expect(reference.hasPrefix("file:///.file/id="))
+        let got = withPasteboard { pasteboard in
+            let item = NSPasteboardItem()
+            item.setString(reference, forType: .fileURL)
+            item.setString("shot.png", forType: .string)
+            pasteboard.writeObjects([item])
+            return TerminalPaste.clipboard(pasteboard)
+        }
+        let text = try #require(got.text)
+        #expect(!text.contains("/.file/"))
+        #expect(text.hasPrefix("\"/"))
+        #expect(text.hasSuffix("/shot.png\""))
+        #expect(text.contains((dir.lastPathComponent)))
     }
 }
 

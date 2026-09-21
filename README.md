@@ -1622,6 +1622,30 @@ leaves the clipboard exactly as it was. **⌘C**, Edit › Copy and the right-cl
 **Copy** item copy the selection. `copy_on_select = true` brings back copying on
 every selection; see [Settings](#settings).
 
+### Pasting into a terminal
+
+**⌘V** and Edit › Paste put the clipboard on the prompt as if it had been typed:
+every line ending becomes the byte Return sends, and a trailing newline is
+dropped, so **a paste never presses Return for you**. No bracketed-paste markers
+are ever added (`TerminalPaste.swift` says why). The right-click menu has Copy
+and no Paste, so there is one way in.
+
+**A file copied in Finder pastes its full path**, not its name: absolute, not
+`~`-abbreviated, not percent-encoded. Several files paste space-separated in the
+order they were copied, with no trailing space. **Dropping files on a terminal
+pane** types the same thing at the cursor and gives that pane the keyboard. A
+web URL is not a file and pastes as the text it is.
+
+A path is quoted only when it has to be. One made of letters (any script),
+digits and `/ . _ - + , : @ %` pastes bare. Anything else goes in **double
+quotes**, with `\` `"` `$` and the backtick backslash-escaped:
+`"/Users/you/cost \$5 \"final\".txt"`. The one exception is a path with a `!`,
+which is history expansion in interactive bash and zsh even inside double
+quotes; that path gets single quotes, with `'` written `'\''`. A file whose
+name holds a newline or another control character is left out — typed into a
+prompt that is a keystroke, not text — and the pane says which in one line
+while the rest paste.
+
 ### The cursor
 
 **Only the terminal that has the keyboard blinks its cursor.** Every other
@@ -1997,7 +2021,9 @@ server's sessions are read from `GET /api/sessions` and kept current by
 that stops answering says so everywhere within seconds (above). **Not yet:**
 ⌘-clicking a path in a remote lane, which says so in one line — the path is a
 path on the other machine, and the server's file API is Phase 4 — and
-`maxpane` inside a remote shell.
+`maxpane` inside a remote shell. A file pasted or dropped from Finder into a
+remote lane pastes its path on *this* Mac, unchanged; sending the file itself
+is Phase 4 too.
 
 **Against the relay-tty web app in a web lane** — the bar the plan sets. What
 you get here that the page cannot give: every server's sessions in the one

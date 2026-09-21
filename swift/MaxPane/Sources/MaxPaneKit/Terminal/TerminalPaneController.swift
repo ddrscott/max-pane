@@ -209,6 +209,7 @@ final class TerminalPaneController: NSObject, PaneController {
         }
         terminal.onCommandClick = { [weak self] point in self?.openToken(at: point) }
         container.onPaste = { [weak self] in self?.pasteFromClipboard() }
+        container.onDropFiles = { [weak self] pasteboard in self?.dropFiles(from: pasteboard) ?? false }
 
         let outbound = TerminalOutbound { [weak self] bytes in
             self?.attachment?.send(bytes[...])
@@ -501,11 +502,31 @@ final class TerminalPaneController: NSObject, PaneController {
     /// The bytes go through the session, not straight at the attachment, so a
     /// paste and the keystrokes on either side of it are one stream in one
     /// order rather than two racing ones.
-    func pasteFromClipboard() {
-        guard let text = TerminalPaste.clipboardText() else { return }
+    func pasteFromClipboard() { paste(TerminalPaste.clipboard()) }
+
+    /// The one door a paste goes through, whatever it came from.
+    func paste(_ clipboard: TerminalPaste.Clipboard) {
+        // A copied file whose name holds a control character is left out, and
+        // the rest still go: say which, in the line the pane already has.
+        if let notice = clipboard.notice { showNotice(notice) }
+        guard let text = clipboard.text else { return }
         let bytes = TerminalPaste.bytes(for: text)
         guard !bytes.isEmpty else { return }
         session.sendInput(Data(bytes))
+    }
+
+    /// Files dropped on the pane: their paths typed at the cursor, quoted as
+    /// ⌘V would quote them, and the keyboard here so the next thing typed
+    /// follows them. The drop comes from another app, so this one comes
+    /// forward as well.
+    private func dropFiles(from pasteboard: NSPasteboard) -> Bool {
+        let clipboard = TerminalPaste.clipboard(pasteboard)
+        guard clipboard.text != nil || clipboard.notice != nil else { return false }
+        NSApp.activate(ignoringOtherApps: true)
+        try? store.focusPane(paneId)
+        takeFocus()
+        paste(clipboard)
+        return true
     }
 
     // pty panes are exempt from all four of these (PRD §10.3). The policy in
@@ -1152,6 +1173,26 @@ final class TerminalPaneContainer: NSView {
     var onLayout: (() -> Void)?
     var onAttach: (() -> Void)?
     var onPaste: (() -> Void)?
+    /// Files from Finder dropped on the pane. Answers whether it took them.
+    var onDropFiles: ((NSPasteboard) -> Bool)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        // Files only. Ghostty's view registers for nothing, so a drag over it
+        // falls through to here; and the strip's own pane drag is mouse
+        // tracking, not an AppKit dragging session, so the two never meet.
+        registerForDraggedTypes([.fileURL])
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        onDropFiles == nil ? [] : .copy
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        onDropFiles?(sender.draggingPasteboard) ?? false
+    }
 
     override func layout() {
         super.layout()

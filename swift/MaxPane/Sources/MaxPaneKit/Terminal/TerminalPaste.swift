@@ -81,9 +81,143 @@ enum TerminalPaste {
         return out
     }
 
+    /// What a pasteboard amounts to, for a terminal.
+    struct Clipboard: Equatable {
+        /// The text to paste, or nil when the pasteboard holds nothing a
+        /// terminal can take.
+        var text: String?
+        /// Copied files left out of `text`, by display name, control
+        /// characters already replaced. See `shellWord(for:)` for why.
+        var skippedFiles: [String] = []
+
+        /// One line for the pane's notice, or nil when nothing was skipped.
+        var notice: String? {
+            switch skippedFiles.count {
+            case 0: return nil
+            case 1: return "skipped \"\(skippedFiles[0])\": a control character in its name"
+            default: return "skipped \(skippedFiles.count) files with control characters in their names"
+            }
+        }
+    }
+
+    /// What is on `pasteboard`, as a terminal takes it. Every paste — ⌘V, the
+    /// Edit menu, a drop of files on a pane — reads the pasteboard through
+    /// here and nowhere else.
+    ///
+    /// **Files win over text.** Finder's ⌘C writes each file as a
+    /// `public.file-url` item *and* a string flavour holding only the display
+    /// name, and the name is useless anywhere but the file's own directory. So
+    /// when there are file URLs the paste is their paths, each a shell word
+    /// (`shellWord(for:)`), space-separated in the pasteboard's order with no
+    /// trailing space, and the string flavour is ignored. A web URL is not a
+    /// file URL and pastes as the text it is.
+    ///
+    /// Pure apart from the pasteboard it is handed: nothing is stat'ed and no
+    /// symlink is resolved. What was copied is what is pasted, and the path is
+    /// this Mac's even when the session is on another machine.
+    static func clipboard(_ pasteboard: NSPasteboard = .general) -> Clipboard {
+        let files = pasteboard.readObjects(
+            forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]
+        ) as? [NSURL] ?? []
+        guard files.isEmpty else { return clipboard(ofFiles: files) }
+        guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return Clipboard() }
+        return Clipboard(text: text)
+    }
+
     /// The pasteboard's text, or nil when it holds nothing a terminal can take.
     static func clipboardText(_ pasteboard: NSPasteboard = .general) -> String? {
-        guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return nil }
-        return text
+        clipboard(pasteboard).text
+    }
+
+    static func clipboard(ofFiles files: [NSURL]) -> Clipboard {
+        var words: [String] = []
+        var skipped: [String] = []
+        for url in files {
+            let path = filePath(of: url)
+            guard !path.isEmpty else { continue }
+            if let word = shellWord(for: path) {
+                words.append(word)
+            } else {
+                skipped.append(printable((path as NSString).lastPathComponent))
+            }
+        }
+        return Clipboard(text: words.isEmpty ? nil : words.joined(separator: " "), skippedFiles: skipped)
+    }
+
+    /// The absolute path a file URL names: not percent-encoded, not
+    /// `~`-abbreviated, and not the `/.file/id=…` file-reference form Finder
+    /// sometimes hands over, which means something only to this boot of this
+    /// Mac. Turning a reference into a path is the one place the system looks
+    /// at the volume, because nothing else knows the id; an ordinary file URL
+    /// is taken at its word. `NSURL` rather than `URL` so that this is said
+    /// here and not left to what the bridge happens to do.
+    static func filePath(of url: NSURL) -> String {
+        if url.isFileReferenceURL(), let resolved = url.filePathURL { return resolved.path }
+        return url.path ?? ""
+    }
+
+    /// `text` as one word of a POSIX shell command line, or nil when it holds
+    /// a control character.
+    ///
+    /// The quoting is what makes a path safe to land on a prompt, there being
+    /// no bracketed paste to do it (see above).
+    ///
+    /// - **Bare** when every character is one no shell treats specially:
+    ///   ASCII letters and digits, `/ . _ - + , : @ %`, and non-ASCII letters,
+    ///   digits and the combining marks a decomposed `é` is made of.
+    /// - **Double quotes** otherwise, as the owner asked, with the four
+    ///   characters that stay live inside them backslash-escaped:
+    ///   `\` `"` `$` and the backtick.
+    /// - **Single quotes when there is a `!`**, and only then. `!` is history
+    ///   expansion in interactive bash and zsh *even inside double quotes*,
+    ///   and a backslash there does not remove it cleanly (bash keeps the
+    ///   backslash). Inside single quotes nothing is live, so the one
+    ///   character to deal with is `'` itself, written `'\''`. It is rare, and
+    ///   the alternative is a paste that silently turns into something else.
+    /// - **nil for a control character** (a newline, a tab, an escape, DEL,
+    ///   C1). Typed into a prompt those are keystrokes, not text — a newline
+    ///   in a file name would press Return in the middle of the path, quotes
+    ///   or no quotes, since a line editor acts on it before any shell parses
+    ///   it. The caller leaves that file out and says so.
+    static func shellWord(for text: String) -> String? {
+        let scalars = text.unicodeScalars
+        if scalars.contains(where: { $0.properties.generalCategory == .control }) { return nil }
+        if !text.isEmpty, scalars.allSatisfy(isBare) { return text }
+
+        if scalars.contains("!") {
+            return "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        }
+        var out = "\""
+        for scalar in scalars {
+            if scalar == "\\" || scalar == "\"" || scalar == "$" || scalar == "`" { out.append("\\") }
+            out.unicodeScalars.append(scalar)
+        }
+        return out + "\""
+    }
+
+    private static func isBare(_ scalar: Unicode.Scalar) -> Bool {
+        if scalar.isASCII {
+            switch scalar {
+            case "a"..."z", "A"..."Z", "0"..."9", "/", ".", "_", "-", "+", ",", ":", "@", "%": return true
+            default: return false
+            }
+        }
+        switch scalar.properties.generalCategory {
+        case .uppercaseLetter, .lowercaseLetter, .titlecaseLetter, .modifierLetter, .otherLetter,
+             .nonspacingMark, .spacingMark, .enclosingMark, .decimalNumber:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// A name fit to show in a notice: each control character as `?`, the way
+    /// `ls` prints one.
+    private static func printable(_ name: String) -> String {
+        var out = String.UnicodeScalarView()
+        for scalar in name.unicodeScalars {
+            out.append(scalar.properties.generalCategory == .control ? "?" : scalar)
+        }
+        return String(out)
     }
 }
