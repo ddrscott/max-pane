@@ -229,8 +229,19 @@ final class TerminalPaneController: NSObject, PaneController {
         container.onPaste = { [weak self] in self?.pasteFromClipboard() }
         container.onPasteWithoutAsking = { [weak self] in self?.pasteFromClipboard(asking: false) }
         container.onPasteSpecial = { [weak self] special in self?.pasteSpecial(special) }
-        terminal.onKeyDown = { [weak self] event in self?.keyDuringSlowPaste(event) ?? false }
-        terminal.onCopy = { [weak self] in self?.selectionCopied() }
+        terminal.onKeyDown = { [weak self] event in
+            guard let self else { return false }
+            // Copy mode has every key, and none of them is the program's.
+            if self.copyDriver.isOn {
+                self.copyDriver.key(event)
+                return true
+            }
+            return self.keyDuringSlowPaste(event)
+        }
+        terminal.swallowsKeys = { [weak self] in self?.copyDriver.isOn ?? false }
+        terminal.onCopy = { [weak self] in self?.copySelection() ?? false }
+        container.onCopyWithStyles = { [weak self] in self?.copySelection(styled: true) }
+        container.onToggleCopyMode = { [weak self] in self?.toggleCopyMode() }
         terminal.onSelectionEnded = { [weak self] in self?.selectionEnded() }
         container.onDropFiles = { [weak self] pasteboard in self?.dropFiles(from: pasteboard) ?? false }
 
@@ -381,7 +392,9 @@ final class TerminalPaneController: NSObject, PaneController {
 
         attachment.onData = { [weak self] bytes in
             guard let self else { return }
-            self.session.receive(Data(bytes))
+            // Copy mode holds the screen still: what arrives waits for it
+            // to end (`holdOutput`).
+            if self.copyDriver.isOn { self.holdOutput(bytes) } else { self.session.receive(Data(bytes)) }
             self.rememberLiveLines(bytes)
             self.scheduleScrollbackPush()
         }
@@ -415,7 +428,9 @@ final class TerminalPaneController: NSObject, PaneController {
         }
         attachment.onReplaceScreen = { [weak self] in
             // Home, clear the screen, clear the scrollback, then a full reset:
-            // the ring that follows is the whole screen again.
+            // the ring that follows is the whole screen again. The rows copy
+            // mode was counting are gone with it.
+            self?.leaveCopyMode()
             self?.session.receive(Data("\u{1b}[H\u{1b}[2J\u{1b}[3J\u{1b}c".utf8))
         }
         attachment.onExit = { [weak self] code in
@@ -518,6 +533,7 @@ final class TerminalPaneController: NSObject, PaneController {
 
     func tearDown() {
         scrollbackDebounce?.cancel()
+        leaveCopyMode()
         // A paste still waiting on its question goes with the pane, unsent.
         pasteSheet?.dismissWithoutAnswering()
         pasteSheet = nil
@@ -1067,12 +1083,143 @@ final class TerminalPaneController: NSObject, PaneController {
         paste(TerminalPaste.Clipboard(text: text))
     }
 
-    /// ⌘C, Edit › Copy or the right-click item, just before the emulator
-    /// copies: the same selection, read from the surface and never from the
-    /// clipboard.
+    /// `copy_on_select` has just copied, inside the emulator. What it put on
+    /// the clipboard is the selection with `copy_trim_trailing` applied (the
+    /// terminals' configuration hands Ghostty the same setting), so that is
+    /// what is kept.
     func selectionCopied() {
         guard let text = selectionSource?() ?? surface?.readSelection() else { return }
+        remember(.copy, TerminalCopy.clean(text, trimTrailing: config.copyTrimTrailing))
+    }
+
+    // MARK: - copying out (ADR-0033)
+
+    /// Test seam: the HTML the emulator would have written for the selection.
+    var styledSelectionSource: (() -> String?)?
+
+    /// ⌘C, Edit › Copy, the right-click item, and copy mode's `y`: the
+    /// selection, read from the surface, cleaned, and put on the pane's
+    /// pasteboard by the pane. `styled` is ⌥⌘C, Copy with Styles: RTF and
+    /// HTML beside the plain text. False with nothing selected, and then the
+    /// clipboard is left alone.
+    @discardableResult
+    func copySelection(styled: Bool = false) -> Bool {
+        guard let raw = selectionSource?() ?? surface?.readSelection(), !raw.isEmpty else {
+            if styled { showNotice("not copied: nothing is selected") }
+            return false
+        }
+        let live = liveConfig?() ?? config
+        let text = TerminalCopy.clean(raw, trimTrailing: live.copyTrimTrailing)
+        var rich: TerminalCopy.Styled?
+        if styled {
+            rich = styledSelection().map { TerminalCopy.clean($0, trimTrailing: live.copyTrimTrailing) }
+            if rich == nil { showNotice("copied without styles: the emulator gave none") }
+        }
+        TerminalCopy.write(text, styled: rich, fontName: live.fontName, fontSize: live.fontSize * zoom, to: pasteboard)
         remember(.copy, text)
+        if rich != nil { showNotice("copied with styles · \(TerminalPaste.size(text.utf8.count))") }
+        return true
+    }
+
+    /// The selection with its colours. The one road to it: the emulator's
+    /// `copy_to_clipboard:html`, which the library answers by writing to
+    /// `NSPasteboard.general` under the type `text/html`. It is read back
+    /// from there in the same turn, and `copySelection` then writes the
+    /// clipboard it meant to.
+    private func styledSelection() -> TerminalCopy.Styled? {
+        if let styledSelectionSource { return styledSelectionSource().flatMap(TerminalCopy.parse(html:)) }
+        guard let surface, surface.performBindingAction("copy_to_clipboard:html") else { return nil }
+        let general = NSPasteboard.general
+        guard let data = general.data(forType: TerminalCopy.libraryHTMLType) else { return nil }
+        return TerminalCopy.parse(html: String(decoding: data, as: UTF8.self))
+    }
+
+    // MARK: - copy mode (ADR-0033)
+
+    private(set) lazy var copyDriver: CopyModeDriver = {
+        let driver = CopyModeDriver(
+            terminal: terminal, surface: { [weak self] in self?.surface },
+            viewportText: { [weak self] in self?.session.readViewportText() },
+            padding: Self.terminalPadding)
+        driver.onCopy = { [weak self] in
+            guard let self else { return }
+            let lines = (self.selectionSource?() ?? self.surface?.readSelection())
+                .map { $0.split(separator: "\n", omittingEmptySubsequences: false).count } ?? 0
+            self.copyModeFarewell = self.copySelection()
+                ? "copied · \(lines) line\(lines == 1 ? "" : "s")" : "not copied: nothing is selected"
+        }
+        driver.onNotice = { [weak self] in self?.showNotice($0) }
+        driver.onChange = { [weak self] in self?.copyModeChanged() }
+        return driver
+    }()
+
+    /// The rows on screen, as copy mode reads them: what a test looks at.
+    var viewportText: String { session.readViewportText() ?? "" }
+
+    var isInCopyMode: Bool { copyDriver.isOn }
+    /// Copy mode came on or went off: the lane's header says `COPY MODE`.
+    var onCopyModeChanged: (() -> Void)?
+    private var wasInCopyMode = false
+    private var copyModeFarewell: String?
+
+    /// ⇧⌘C.
+    func toggleCopyMode() {
+        if copyDriver.isOn {
+            leaveCopyMode()
+            return
+        }
+        guard pasteSheet == nil, advancedSheet == nil, clipboardSheet == nil else { return }
+        guard let grid, copyDriver.enter(columns: grid.columns, rows: grid.rows) else {
+            showNotice("copy mode: the terminal is not ready")
+            return
+        }
+        takeFocus()
+    }
+
+    func leaveCopyMode() {
+        guard copyDriver.isOn else { return }
+        copyDriver.leave()
+    }
+
+    private func copyModeChanged() {
+        let on = copyDriver.isOn
+        if on {
+            // The search line stays while it is typed; the rest is a reminder.
+            let typing = copyDriver.mode?.needle != nil
+            showNotice(copyDriver.mode?.status ?? "", lasting: typing ? nil : 4, fading: !typing && !wasInCopyMode)
+        } else {
+            releaseHeldOutput()
+            if let copyModeFarewell {
+                showNotice(copyModeFarewell)
+            } else if noticeText?.hasPrefix("copy mode") == true || noticeText?.hasPrefix("/") == true {
+                Motion.fade(status.layer)
+                status.setState(restingBanner)
+            }
+            copyModeFarewell = nil
+        }
+        guard on != wasInCopyMode else { return }
+        wasInCopyMode = on
+        onCopyModeChanged?()
+    }
+
+    /// Output that arrived while copy mode held the screen still, as tmux
+    /// holds it: rows that moved under the cursor would make every cell it
+    /// names a different cell. It is all fed on the way out, in order.
+    private var heldOutput = Data()
+    /// Past this much waiting, copy mode ends by itself rather than hold more.
+    static let heldOutputLimit = 4 << 20
+
+    private func holdOutput(_ bytes: ArraySlice<UInt8>) {
+        heldOutput.append(contentsOf: bytes)
+        guard heldOutput.count > Self.heldOutputLimit else { return }
+        copyModeFarewell = "copy mode left: \(TerminalPaste.size(heldOutput.count)) of output was waiting"
+        leaveCopyMode()
+    }
+
+    private func releaseHeldOutput() {
+        guard !heldOutput.isEmpty else { return }
+        session.receive(heldOutput)
+        heldOutput = Data()
     }
 
     /// A drag ended. With `copy_on_select` on (the setting this pane's
@@ -1227,6 +1374,9 @@ final class TerminalPaneController: NSObject, PaneController {
     /// that did not match the one the renderer actually used.
     private func gridChanged(cols: Int, rows: Int) {
         guard cols > 0, rows > 0, cols != hostCols || rows != hostRows else { return }
+        // A new grid re-wraps every line: the cell copy mode's cursor was on
+        // is not where it was.
+        leaveCopyMode()
         hostCols = cols
         hostRows = rows
         // A preset that has just landed is still arriving: the font and the
@@ -1717,7 +1867,20 @@ extension TerminalPaneController: TerminalSurfaceFocusDelegate, TerminalSurfaceL
         syncSurfaceFocus()
     }
 
-    func terminalDidDetachSurface() { surface = nil }
+    func terminalDidDetachSurface() {
+        leaveCopyMode()
+        surface = nil
+    }
+}
+
+extension TerminalPaneController: TerminalSurfaceScrollbarDelegate, TerminalSurfaceGridResizeDelegate {
+    /// Where the viewport is in the scrollback, which copy mode counts its
+    /// rows from and waits on after every scroll it asks for.
+    func terminalDidUpdateScrollbar(_ scrollbar: TerminalScrollbar) { copyDriver.scrolled(scrollbar) }
+
+    /// The cell size as the emulator measured it. The session's own resize
+    /// callback reports zero for it (ADR-0009); this one does not.
+    func terminalDidResize(_ size: TerminalGridMetrics) { copyDriver.metrics = size }
 }
 
 extension TerminalPaneController: TerminalSurfaceClipboardConfirmationDelegate {
@@ -1872,6 +2035,8 @@ final class TerminalPaneContainer: NSView {
     var onPaste: (() -> Void)?
     var onPasteWithoutAsking: (() -> Void)?
     var onPasteSpecial: ((TerminalPaste.Special) -> Void)?
+    var onCopyWithStyles: (() -> Void)?
+    var onToggleCopyMode: (() -> Void)?
     /// Files from Finder dropped on the pane. Answers whether it took them.
     var onDropFiles: ((NSPasteboard) -> Bool)?
 
@@ -1920,6 +2085,11 @@ extension TerminalPaneContainer: TerminalPasteTarget {
         guard let name = sender as? String, let special = TerminalPaste.Special(rawValue: name) else { return }
         onPasteSpecial?(special)
     }
+}
+
+extension TerminalPaneContainer: TerminalCopyTarget {
+    func copyWithStylesFromTerminalPane(_ sender: Any?) { onCopyWithStyles?() }
+    func toggleCopyModeInTerminalPane(_ sender: Any?) { onToggleCopyMode?() }
 }
 
 
@@ -1980,6 +2150,11 @@ enum TerminalControllerPool {
                     // that does. ⌘C and the right-click Copy item are
                     // `copy_to_clipboard`, which does not read this.
                     builder.withCustom("copy-on-select", config.copyOnSelect ? "true" : "false")
+                    // `copy_trim_trailing`, for the one copy the emulator
+                    // still makes itself: `copy_on_select`. ⌘C is the pane's
+                    // (`TerminalCopy`) and reads the setting each time.
+                    builder.withCustom(
+                        "clipboard-trim-trailing-spaces", config.copyTrimTrailing ? "true" : "false")
                     // OSC 52. `ask` both ways, always, whatever `osc52_write`
                     // and `osc52_read` say: `ask` is what makes Ghostty bring
                     // each request to the pane, and the pane answers from the

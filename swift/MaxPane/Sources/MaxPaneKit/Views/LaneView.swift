@@ -317,6 +317,9 @@ final class LaneView: NSView {
     /// See `LaneHeaderView.flashCopied`.
     func flashCopied() -> Bool { header.flashCopied() }
 
+    /// A terminal in this lane went into copy mode, or the last one left it.
+    func setCopyMode(_ on: Bool) { header.copyMode = on }
+
     func applyTelemetry(_ telemetry: [SessionKey: SessionTelemetry], servers: [String: ServerState] = [:]) {
         let key = currentSessionKey
         header.serverState = key?.server.flatMap { servers[$0] }
@@ -1265,11 +1268,12 @@ final class LaneHeaderView: NSView {
         guard let lane else { return }
         var next = LaneHeaderModel(lane: lane, telemetry: telemetry, serverState: serverState)
         next.copied = copiedTimer != nil
+        next.copyMode = copyMode
         guard next != model else { return }
         // The chip and the badge change meaning in place; ease it rather than
         // cut. Not on an age tick, which changes the text and nothing else.
         if next.state != model.state || next.badgeIsThroughput != model.badgeIsThroughput
-            || next.serverOff != model.serverOff || next.showsCopied != model.showsCopied {
+            || next.serverOff != model.serverOff || next.borrowedChip?.word != model.borrowedChip?.word {
             Motion.fade(layer)
         }
         model = next
@@ -1293,6 +1297,9 @@ final class LaneHeaderView: NSView {
         needsLayout = true
         needsDisplay = true
     }
+
+    /// `COPY MODE`, for as long as a terminal in the lane is in it.
+    var copyMode = false { didSet { if copyMode != oldValue { rebuild() } } }
 
     /// How long `COPIED` stays.
     static let copiedSeconds: TimeInterval = 2
@@ -1356,12 +1363,12 @@ final class LaneHeaderView: NSView {
             chip.textColor = Theme.accent
             return
         }
-        if model.showsCopied {
-            // Outlined in the working green, like any state that is not
-            // BLOCKED, and never filled or moving.
+        if let borrowed = model.borrowedChip {
+            // `COPIED` and `COPY MODE`: outlined in the working green, like
+            // any state that is not BLOCKED, and never filled or moving.
             chip.isPulsing = false
             chip.layerBackgroundColor = NSColor.clear
-            chip.stringValue = chipFits ? "COPIED" : "C"
+            chip.stringValue = chipFits ? borrowed.word : borrowed.glyph
             chip.font = chipFits ? Theme.mono(9, weight: .bold) : Theme.mono(11, weight: .bold)
             chip.layerBorderColor = Theme.working.withAlphaComponent(0.6)
             chip.layer?.borderWidth = chipFits ? 1 : 0
@@ -1489,7 +1496,7 @@ final class LaneHeaderView: NSView {
         // has one column your eye runs along rather than ten places to look.
         let chipX = x
         var chipWidth: CGFloat = 0
-        let chipWord = model.serverOff?.label ?? (model.showsCopied ? "COPIED" : nil)
+        let chipWord = model.serverOff?.label ?? model.borrowedChip?.word
             ?? model.state.flatMap { $0.hasChip ? $0.chipText : nil }
         if let chipWord {
             let wordWidth = width(of: chipWord, font: Theme.mono(9, weight: .bold)) + 10

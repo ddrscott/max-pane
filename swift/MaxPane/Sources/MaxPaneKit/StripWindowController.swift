@@ -674,6 +674,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return true
         case .showSettings:
             return configStore != nil
+        case .copyWithStyles, .copyMode:
+            // A terminal pane's, asked of the responder chain as the pastes are.
+            return NSApp.target(forAction: #selector(TerminalCopyTarget.toggleCopyModeInTerminalPane(_:))) != nil
         case .pasteWithoutAsking:
             // Asked of the responder chain, as ⌘V is: live exactly when a
             // terminal pane has the keyboard, whatever the ledger says.
@@ -741,6 +744,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
     public func title(for command: Command) -> String {
         if command == .toggleMaximizePane, strip.isPaneMaximized, let active = command.activeTitle {
+            return active
+        }
+        if command == .copyMode, strip.focusedTerminalIsInCopyMode, let active = command.activeTitle {
             return active
         }
         return command.title
@@ -910,6 +916,14 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 // PRD §16's accepted v1 boundary: drop out of fullscreen so the
                 // rest of macOS is reachable, and let the user come back.
                 window?.toggleFullScreen(nil)
+
+            case .copyWithStyles:
+                NSApp.sendAction(
+                    #selector(TerminalCopyTarget.copyWithStylesFromTerminalPane(_:)), to: nil, from: nil)
+
+            case .copyMode:
+                NSApp.sendAction(
+                    #selector(TerminalCopyTarget.toggleCopyModeInTerminalPane(_:)), to: nil, from: nil)
 
             case .pasteWithoutAsking:
                 // To whichever terminal pane has the keyboard, by the road ⌘V

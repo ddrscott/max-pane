@@ -185,7 +185,7 @@ struct AdvancedPasteSheetTests {
         return try #require(rig.pane.advancedSheet)
     }
 
-    @Test("the command: ⌥⇧⌘V, in Paste Special, rebindable, and the one chord a page keeps")
+    @Test("the command: ⌥⇧⌘V, in Paste Special, rebindable, and a chord a page keeps")
     func command() {
         let command = Command.advancedPaste
         #expect(command.title == "Advanced Paste…")
@@ -198,7 +198,8 @@ struct AdvancedPasteSheetTests {
         // A web pane asks `claimed` before it lets a page see a ⌘-chord.
         #expect(!Keymap.defaults.claimed.contains(chord), "the page gets ⌥⇧⌘V")
         #expect(Keymap.defaults.claimed.contains(KeyChord(key: "v", modifiers: [.command, .option])))
-        #expect(Command.allCases.filter(\.yieldsToPage) == [command])
+        // With ⌥⌘C and ⇧⌘C (ADR-0033): terminal-only, on chords a browser uses.
+        #expect(Command.allCases.filter(\.yieldsToPage) == [.copyWithStyles, .copyMode, command])
     }
 
     @Test("it opens over the pane with the clipboard in it, nothing sent, every toggle off")

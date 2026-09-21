@@ -59,7 +59,18 @@ struct LaneHeaderModel: Equatable {
     /// `COPIED` borrows the state chip's column while it lasts, from anything
     /// but the two that must not be covered for even two seconds: `BLOCKED`,
     /// and a server that is not answering.
-    var showsCopied: Bool { copied && serverOff == nil && state != .blocked }
+    var showsCopied: Bool { copied && serverOff == nil && state != .blocked && !showsCopyMode }
+    /// A terminal in this lane is in copy mode (⇧⌘C, ADR-0033): its keys are
+    /// the cursor's and its output is waiting. The header's doing, like
+    /// `copied`, and it borrows the same column under the same rule.
+    var copyMode: Bool = false
+    var showsCopyMode: Bool { copyMode && serverOff == nil && state != .blocked }
+    /// The word borrowing the state chip's column, if one is.
+    var borrowedChip: (word: String, glyph: String)? {
+        if showsCopyMode { return ("COPY MODE", "M") }
+        if showsCopied { return ("COPIED", "C") }
+        return nil
+    }
     /// The long form, for the hover tip — the header is the only place the full
     /// path exists, so truncating it must not destroy it.
     var tooltip: String = ""

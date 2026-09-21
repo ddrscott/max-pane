@@ -1626,6 +1626,71 @@ leaves the clipboard exactly as it was. **⌘C**, Edit › Copy and the right-cl
 **Copy** item copy the selection. `copy_on_select = true` brings back copying on
 every selection; see [Settings](#settings).
 
+**What ⌘C copies** was looked at on a real surface before anything was changed
+(`TerminalCopyTests`, the `FINDING` test), and libghostty already did most of
+it:
+
+| Selected | On the clipboard |
+|---|---|
+| A line the terminal wrapped over two rows | **One line.** The wrap is the terminal's and is not in the text. |
+| Lines a program padded with spaces | **The spaces gone**, from every line (`clipboard-trim-trailing-spaces`). Reading the same selection from the surface (`ghostty_surface_read_selection`) keeps them, so paste history was recording text the clipboard never held. |
+| A rectangle (**⌥-drag**) | One line per row, only the columns inside it. |
+| Anything | No newline added at the end. And a second flavour, HTML, under the type `text/html`, which is not the `public.html` apps read, so nothing ever pasted it. |
+
+**⌘C is now the pane's copy, not the emulator's.** It reads the selection from
+the surface, drops the spaces and tabs at the end of every line, adds no final
+newline, and writes plain text and nothing else; a wrapped line arrives as one
+line because the emulator hands it over that way. Leading and inner spaces,
+blank lines, and a final newline you selected are content and stay. Paste
+history keeps exactly what landed. `copy_trim_trailing = false` keeps the
+trailing spaces, read at each copy. **A program's own copy (OSC 52) is never
+cleaned**: it is the program's.
+
+**⌥⌘C, Edit › Copy with Styles**, copies the selection with the terminal's
+colours and font: **RTF and HTML beside the plain text**, under the types apps
+read, for pasting a session into a document or a bug report. The terminal's
+background and foreground come with it, bold, italic, underline and
+strikethrough survive, and trailing blanks are trimmed unless they have a
+background of their own (a bar somebody drew). The colours come from the
+emulator's own HTML (`copy_to_clipboard:html`), read and written again; if a
+future libghostty changes that format the pane says `copied without styles`
+and copies the plain text.
+
+**⇧⌘C, Edit › Copy Mode**, puts a keyboard cursor on the terminal. The lane's
+header says `COPY MODE`, the pane says what the keys are, and **no key reaches
+the program** until you leave:
+
+| Key | |
+|---|---|
+| `h` `j` `k` `l`, arrows | One cell. Past the top or bottom edge the view scrolls, as far back as the scrollback goes. |
+| `w` `b` | A word forward, back. A word is what whitespace separates, so a path or a hash is one. |
+| `0` `^` `$` | The margin, the first character, the last character of the line. |
+| `g` `G` | The oldest line, the newest. |
+| `⌃U` `⌃D`, `⌃B` `⌃F`, Page Up, Page Down | Half a page, a page. |
+| `v` | Select from here, by character. Again to stop. |
+| `V` | Select whole lines. |
+| `y`, `↩` | Copy (cleaned, as ⌘C) and leave. ⌘C and ⌥⌘C copy and stay. |
+| `/` | Find: type, `↩`. Case is ignored. `n` goes to the match before, `N` the one after. `Esc` drops a search being typed. |
+| `Esc`, `q`, ⇧⌘C | Leave. The view returns to the bottom and nothing stays selected. |
+
+A selection can start on this screen and end a thousand lines up. **Output
+waits while copy mode is on**, as it does in tmux, so the rows do not move
+under the cursor, and arrives the moment you leave; past 4 MB waiting, copy
+mode ends by itself and says so. Resizing the lane ends it too. It works the
+same in a remote lane, and in a full-screen program (vim, htop) it has that
+screen and no scrollback, because the program has none.
+
+Two things it cannot do, both for want of a libghostty call
+([ADR-0033](docs/decisions/0033-copy-mode-drives-the-emulator-from-outside.md)):
+it starts on the last line with text rather than on the terminal's own cursor,
+and after a find it lands on the match in view nearest to where it was, which
+is not always the one the emulator highlighted as current. Wide (CJK)
+characters are counted as one column by `w`, `b` and `$`.
+
+**In a web pane ⌥⌘C and ⇧⌘C are the page's**, like ⌥⇧⌘V: a browser has uses
+for both (page source, the inspector) and a terminal command has nothing to do
+there. Both are rebindable in `[keys]`, as `copyWithStyles` and `copyMode`.
+
 ### Pasting into a terminal
 
 **⌘V** and Edit › Paste put the clipboard on the prompt as if it had been typed:
@@ -2420,6 +2485,7 @@ sidebar_collapse_hides_lanes = true
 font_name = "JetBrains Mono"
 font_size = 13
 copy_on_select = false
+copy_trim_trailing = true
 paste_confirm_multiline = true
 paste_confirm_tabs = true
 paste_confirm_bytes = 16384
@@ -2474,6 +2540,12 @@ clipboard. It is `false` by default, so a selection is only a selection and ⌘C
 is what copies; `true` copies every selection as it is made. Like the font, it
 is read when the terminals' shared configuration is built, so a change takes the
 next launch.
+
+`copy_trim_trailing` is whether a copy out of a terminal drops the spaces and
+tabs at the end of every line ([Selecting and copying in a
+terminal](#selecting-and-copying-in-a-terminal)). `true` by default; `false`
+copies the selection as the emulator holds it. Read at each ⌘C; the copy that
+`copy_on_select` makes inside the emulator takes it at the next launch.
 
 `paste_confirm_multiline`, `paste_confirm_tabs` and `paste_confirm_bytes` are
 the three reasons a paste into a terminal asks first: a line ending inside it,

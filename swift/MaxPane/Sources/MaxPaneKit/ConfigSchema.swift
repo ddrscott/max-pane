@@ -231,6 +231,8 @@ public struct ConfigField {
                    "The terminal font size, in points. ⌘= and ⌘- zoom a pane from here."),
             bool("copyOnSelect", \.copyOnSelect, .terminals,
                  "Selecting text in a terminal copies it. Off, ⌘C copies."),
+            bool("copyTrimTrailing", \.copyTrimTrailing, .terminals, appliesLive: true,
+                 "Copying from a terminal drops the spaces at the end of each line."),
             bool("pasteConfirmMultiline", \.pasteConfirmMultiline, .terminals, appliesLive: true,
                  "Ask before a paste of several lines: with no bracketed paste, every line but the last runs as it lands."),
             bool("pasteConfirmTabs", \.pasteConfirmTabs, .terminals, appliesLive: true,

@@ -110,6 +110,10 @@ public struct Config: Codable, Equatable {
     /// configuration is built, so a change takes the next launch, as the font
     /// does.
     public var copyOnSelect: Bool = false
+    /// ⌘C out of a terminal drops the spaces and tabs at the end of every
+    /// line. On: they are the screen's padding far more often than anyone's
+    /// text. Read at each copy (ADR-0033).
+    public var copyTrimTrailing: Bool = true
 
     /// A paste with a line ending inside it asks before it goes.
     ///
@@ -346,6 +350,7 @@ public struct Config: Codable, Equatable {
         fontName = read(.fontName, d.fontName)
         fontSize = read(.fontSize, d.fontSize)
         copyOnSelect = read(.copyOnSelect, d.copyOnSelect)
+        copyTrimTrailing = read(.copyTrimTrailing, d.copyTrimTrailing)
         pasteConfirmMultiline = read(.pasteConfirmMultiline, d.pasteConfirmMultiline)
         pasteConfirmTabs = read(.pasteConfirmTabs, d.pasteConfirmTabs)
         pasteConfirmBytes = read(.pasteConfirmBytes, d.pasteConfirmBytes)

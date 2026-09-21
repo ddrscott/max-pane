@@ -571,6 +571,11 @@ public final class StripViewController: NSViewController {
            MaximizeRule.restores(maximized: paneId, before: lastLanes, after: state) {
             restoreMaximizedPane(animated: true)
         }
+        // A pane in copy mode may be changing lanes: the chip follows it,
+        // once this pass has made whatever lane views it is going to.
+        if paneControllers.values.contains(where: { ($0 as? TerminalPaneController)?.isInCopyMode == true }) {
+            DispatchQueue.main.async { [weak self] in self?.syncCopyModeChips() }
+        }
         let previous = lastLanes
         lastLanes = state.lanes
         let previousStrip = previous.filter { $0.dock == nil }
@@ -1048,7 +1053,28 @@ public final class StripViewController: NSViewController {
             try? self?.store.closeLane(lane.id)
         }
         laneView.applyTelemetry(laneTelemetry, servers: serverStates)
+        laneView.setCopyMode(isInCopyMode(lane))
         return laneView
+    }
+
+    /// `COPY MODE` on the header of every lane holding a terminal that is in
+    /// it. Looked up each time rather than remembered: a pane can change
+    /// lanes while it is on.
+    func syncCopyModeChips() {
+        for (laneId, laneView) in laneViews {
+            laneView.setCopyMode(store.lane(laneId).map(isInCopyMode) ?? false)
+        }
+    }
+
+    /// The pane with the keyboard is a terminal in copy mode: Edit › Copy
+    /// Mode reads "Leave Copy Mode".
+    public var focusedTerminalIsInCopyMode: Bool {
+        store.state.focusedPaneId
+            .flatMap { paneControllers[$0] as? TerminalPaneController }?.isInCopyMode ?? false
+    }
+
+    private func isInCopyMode(_ lane: Lane) -> Bool {
+        lane.panes.contains { (paneControllers[$0.id] as? TerminalPaneController)?.isInCopyMode == true }
     }
 
     /// What the width handle is allowed to drag this lane to.
@@ -2452,6 +2478,7 @@ public final class StripViewController: NSViewController {
                 guard let self, let laneId = self.store.lane(containing: pane.id)?.id else { return false }
                 return self.laneViews[laneId]?.flashCopied() ?? false
             }
+            controller.onCopyModeChanged = { [weak self] in self?.syncCopyModeChips() }
             controller.describeAsker = { [weak self] in
                 guard let self, let lane = self.store.lane(containing: pane.id) else { return ("untitled", nil) }
                 let telemetry = pane.sessionKey.flatMap { self.laneTelemetry[$0] }

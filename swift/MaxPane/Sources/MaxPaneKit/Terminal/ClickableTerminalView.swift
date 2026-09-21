@@ -27,14 +27,15 @@ final class ClickableTerminalView: TerminalView {
         handler(convert(event.locationInWindow, from: nil))
     }
 
-    /// ⌘C, Edit › Copy or the right-click Copy item is about to copy the
-    /// selection. Called before the emulator clears or changes anything, so
-    /// the pane can read the same selection the clipboard is about to get
-    /// (paste history, ADR-0031). The copy itself stays the library's.
-    var onCopy: (() -> Void)?
+    /// ⌘C, Edit › Copy or the right-click Copy item. The pane's copy, not
+    /// the library's: it reads the selection from the surface, cleans it and
+    /// writes its own pasteboard (`TerminalCopy`, ADR-0033), and says true.
+    /// False is "nothing was selected", and the library is asked, which
+    /// then does nothing either.
+    var onCopy: (() -> Bool)?
 
     override func copy(_ sender: Any?) {
-        onCopy?()
+        if onCopy?() == true { return }
         super.copy(sender)
     }
 
@@ -56,6 +57,22 @@ final class ClickableTerminalView: TerminalView {
     override func keyDown(with event: NSEvent) {
         if onKeyDown?(event) == true { return }
         super.keyDown(with: event)
+    }
+
+    /// True while no key event at all may reach the emulator (copy mode). A
+    /// key coming up and a modifier changing are events too, and a program
+    /// that asked for them (the kitty keyboard protocol) is sent bytes for
+    /// each; `keyDown` is `onKeyDown`'s.
+    var swallowsKeys: (() -> Bool)?
+
+    override func keyUp(with event: NSEvent) {
+        if swallowsKeys?() == true { return }
+        super.keyUp(with: event)
+    }
+
+    override func flagsChanged(with event: NSEvent) {
+        if swallowsKeys?() == true { return }
+        super.flagsChanged(with: event)
     }
 
     /// A middle click, with whether ⌥ or ⇧ was down. True when the pane dealt

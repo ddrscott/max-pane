@@ -89,7 +89,12 @@ struct Osc52SettingTests {
                 .split(separator: "\n").map(String.init)
                 .filter { $0.hasPrefix("clipboard-") || $0.hasPrefix("copy-on-select") }.sorted()
         }
-        let asks = ["clipboard-read = ask", "clipboard-write = ask", "copy-on-select = false"]
+        // `clipboard-trim-trailing-spaces` is `copy_trim_trailing` (ADR-0033),
+        // for the copy `copy_on_select` makes inside the emulator.
+        let asks = [
+            "clipboard-read = ask", "clipboard-trim-trailing-spaces = true", "clipboard-write = ask",
+            "copy-on-select = false",
+        ]
         #expect(lines(Config()) == asks)
         var other = Config()
         other.osc52Write = .deny

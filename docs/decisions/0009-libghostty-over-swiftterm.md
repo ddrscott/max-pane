@@ -86,3 +86,10 @@ one controller mints as many as the strip has.
   shipping a slice the app needs.
 - Needing real scrollback in-process — for search, or for a pane that outlives
   its session — beyond what the live stream gives.
+- Copy mode (ADR-0033) outgrowing what can be driven from outside. It sets a
+  selection by synthesizing a ⇧-drag and reads scrollback only by scrolling
+  the viewport to it, because the wrapper has no selection setter, no cursor
+  position, no search results, and keeps the `ghostty_surface_t` that
+  `ghostty_surface_read_text` needs internal. Any of those arriving upstream
+  is a reason to rebuild that driver on them; needing them and not getting
+  them is a reason to look at the emulator again.

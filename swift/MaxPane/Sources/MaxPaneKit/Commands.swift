@@ -42,6 +42,8 @@ public enum Command: String, CaseIterable, Sendable {
     case widenLane
     case narrowLane
     case claimSession
+    case copyWithStyles
+    case copyMode
     case pasteWithoutAsking
     case pasteEscaped
     case pasteAsBase64
@@ -111,6 +113,8 @@ public enum Command: String, CaseIterable, Sendable {
         case .widenLane: return "Widen Lane"
         case .narrowLane: return "Narrow Lane"
         case .claimSession: return "Resize Session to This Lane…"
+        case .copyWithStyles: return "Copy with Styles"
+        case .copyMode: return "Copy Mode"
         case .pasteWithoutAsking: return "Paste Without Asking"
         case .pasteEscaped: return "Paste Escaped"
         case .pasteAsBase64: return "Paste as Base64"
@@ -262,6 +266,14 @@ public enum Command: String, CaseIterable, Sendable {
         // Deliberately awkward. It reshapes the PTY for every other client,
         // including a phone, so it should not sit next to anything routine.
         case .claimSession:    return ("r", [.command, .control, .shift])
+        // ⌥⌘C, beside ⌘C, and iTerm's key for it: the same copy with its
+        // colours. ⌥ is "the other one of these" throughout this file. Safari
+        // has it for Show Page Source and a page may bind it, so in a web
+        // pane it is the page's (`yieldsToPage`).
+        case .copyWithStyles: return ("c", [.command, .option])
+        // ⇧⌘C, iTerm's key for copy mode. It is Inspect Element in every
+        // browser, so a web pane keeps it too.
+        case .copyMode: return ("c", [.command, .shift])
         // ⌥⌘V, beside ⌘V: the same paste with the question skipped, for the
         // five lines you did mean to run. ⌥ is "the other one of these"
         // throughout this file, and no browser or page has a claim on it
@@ -391,6 +403,7 @@ public enum Command: String, CaseIterable, Sendable {
     public var activeTitle: String? {
         switch self {
         case .toggleMaximizePane: return "Restore Pane"
+        case .copyMode: return "Leave Copy Mode"
         default: return nil
         }
     }
@@ -458,9 +471,13 @@ public enum Command: String, CaseIterable, Sendable {
     /// of their own for. Its chords are left out of what `claims(_:)` takes
     /// from a page, unless another command is on the same chord: in a web pane
     /// the command could do nothing, so taking the key would only break the
-    /// page's. One command, deliberately. The other terminal pastes sit on
-    /// chords no page binds, and stay claimed so that they never reach one.
-    public var yieldsToPage: Bool { self == .advancedPaste }
+    /// page's. Few, deliberately. The other terminal pastes sit on chords no
+    /// page binds, and stay claimed so that they never reach one. ⌥⌘C and
+    /// ⇧⌘C are a browser's own (page source, the inspector) and a page's to
+    /// bind.
+    public var yieldsToPage: Bool {
+        self == .advancedPaste || self == .copyWithStyles || self == .copyMode
+    }
 
     /// Commands only a page can answer: an address, a form, a document to
     /// print. `canPerform` greys these out on a terminal pane rather than
@@ -475,6 +492,10 @@ public enum Command: String, CaseIterable, Sendable {
             return false
         }
     }
+
+    /// An Edit-menu command that belongs under Copy rather than under Paste,
+    /// where the rest of that menu's commands go.
+    public var followsCopy: Bool { self == .copyWithStyles || self == .copyMode }
 
     /// The submenu of its menu this sits in, or nil for the menu itself.
     ///
@@ -505,6 +526,8 @@ public enum Command: String, CaseIterable, Sendable {
         // ⌘[ / ⌘] do and the reason they exist at all.
         case .focusDockLeft, .focusDockRight: return .navigate
         case .claimSession: return .file
+        // Under Edit, below Copy, which they are the other two of.
+        case .copyWithStyles, .copyMode: return .edit
         // Under Edit, below Paste, which it is the other one of.
         case .pasteWithoutAsking: return .edit
         case .pasteEscaped, .pasteAsBase64, .pasteBase64Decoded, .pasteFileAsBase64, .pasteSlowly,
