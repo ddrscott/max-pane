@@ -92,6 +92,10 @@ enum TerminalPaste {
         /// Copied files left out of `text`, by display name, control
         /// characters already replaced. See `shellWord(for:)` for why.
         var skippedFiles: [String] = []
+        /// `text` is text somebody copied, as opposed to paths this app made
+        /// out of copied files. Only that is tidied (`tidy(_:)`): a path is
+        /// already quoted, and a `’` in a file's name is the file's name.
+        var isCopiedText = false
         /// A picture, as PNG bytes, when the pasteboard held one and neither
         /// files nor text. Never set alongside `text`: the pane turns it into
         /// a file first and pastes that file's path (`PastedImages`).
@@ -136,7 +140,9 @@ enum TerminalPaste {
             forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]
         ) as? [NSURL] ?? []
         guard files.isEmpty else { return clipboard(ofFiles: files) }
-        if let text = pasteboard.string(forType: .string), !text.isEmpty { return Clipboard(text: text) }
+        if let text = pasteboard.string(forType: .string), !text.isEmpty {
+            return Clipboard(text: text, isCopiedText: true)
+        }
         guard images, let png = png(on: pasteboard) else { return Clipboard() }
         return Clipboard(image: png)
     }
@@ -271,6 +277,291 @@ enum TerminalPaste {
         default:
             return false
         }
+    }
+
+    // MARK: - tidying
+
+    /// What tidying did to a paste, and the text it left (ADR-0029).
+    ///
+    /// Three transforms, each its own pure function so that anything else may
+    /// compose them (`straightenPunctuation`, `stripPrompt`, `trimStray`), and
+    /// `tidy(_:)`, which is the three in the order ⌘V applies them, with the
+    /// counts the pane's notice is made of.
+    ///
+    /// **Only copied text is tidied.** Paths built from copied files, a dropped
+    /// file, a saved or uploaded picture's path are this app's own words,
+    /// already quoted, and a `’` in a file name is the file's name.
+    struct Tidied: Equatable {
+        var text: String
+        var quotes = 0
+        var dashes = 0
+        var ellipses = 0
+        /// Non-breaking and other Unicode spaces made into a space.
+        var spaces = 0
+        /// Zero-width characters removed.
+        var invisibles = 0
+        /// The prompt taken off every line, `"$ "`, or nil.
+        var prompt: String?
+        /// Lines that lost trailing whitespace, plus leading blank lines dropped.
+        var trimmed = 0
+
+        var changed: Bool {
+            quotes + dashes + ellipses + spaces + invisibles + trimmed > 0 || prompt != nil
+        }
+
+        /// What was done, without the leading `pasted`: `straightened 4 quotes
+        /// · removed "$ "`. Nil when nothing was. The sheet says it as well.
+        var summary: String? {
+            guard changed else { return nil }
+            func count(_ n: Int, _ one: String, _ many: String) -> String? { n == 0 ? nil : "\(n) \(n == 1 ? one : many)" }
+            var parts: [String] = []
+            let straightened = [
+                count(quotes, "quote", "quotes"), count(dashes, "dash", "dashes"),
+                count(ellipses, "ellipsis", "ellipses"), count(spaces, "odd space", "odd spaces"),
+            ].compactMap { $0 }
+            if !straightened.isEmpty { parts.append("straightened " + straightened.joined(separator: ", ")) }
+            if let text = count(invisibles, "invisible character", "invisible characters") { parts.append("removed \(text)") }
+            if let prompt { parts.append("removed \"\(prompt)\"") }
+            if trimmed > 0 { parts.append("trimmed whitespace") }
+            return parts.joined(separator: " · ")
+        }
+
+        /// The pane's one line: `pasted · straightened 4 quotes · removed "$ "`.
+        var notice: String? { summary.map { "pasted · \($0)" } }
+    }
+
+    /// ⌘V's tidying, in its order: punctuation (unless the text is clearly
+    /// prose), then the copied prompt, then stray whitespace. Idempotent:
+    /// tidying what this returns changes nothing and reports nothing.
+    static func tidy(_ text: String) -> Tidied {
+        var out = Tidied(text: text)
+        if !isClearlyProse(text) { out = straightening(text) }
+        let (stripped, prompt) = strippingPrompt(out.text)
+        out.text = stripped
+        out.prompt = prompt
+        let (trimmed, count) = trimmingStray(out.text)
+        out.text = trimmed
+        out.trimmed = count
+        return out
+    }
+
+    /// Does this one line look like a command, rather than a sentence?
+    ///
+    /// The predicate, in full. Indentation and one leading prompt (`$`, `%` or
+    /// `#`, then a space) are set aside first. Then:
+    ///
+    /// 1. A line starting with `#` does: a comment or a root prompt, and
+    ///    either way it came out of a script.
+    /// 2. Otherwise its **first word** decides. It must be `NAME=…` (an
+    ///    assignment), or start with a lowercase ASCII letter or one of
+    ///    `. / ~ $ _ ( ) { } [ | & !`; it must not be a bare `$` or hold a
+    ///    letter that is not ASCII (`café`); it must not end in `,` `:` `?`,
+    ///    or in a letter followed by `.` or `!`; and it must not be one of
+    ///    `proseWords` (`the`, `this`, `please`, …), none of which is a
+    ///    command or a shell keyword.
+    /// 3. And the line must not **end like a sentence**: a letter followed by
+    ///    `.` `?` `!` or `,`. (`git add .` and `cd ..` end in a dot that
+    ///    follows no letter.)
+    ///
+    /// It errs toward "not a command": a capitalised program (`Rscript`,
+    /// `VBoxManage`) fails it, and the cost is only that a multi-line paste
+    /// holding one is left as it was copied.
+    static func looksLikeCommand(_ line: String) -> Bool {
+        var rest = Substring(line).drop(while: { $0.isWhitespace })
+        if let first = rest.first, "$%#".contains(first), rest.dropFirst().first?.isWhitespace == true {
+            if first == "#" { return true }
+            rest = rest.dropFirst(2).drop(while: { $0.isWhitespace })
+        }
+        if rest.first == "#" { return true }
+        return isCommandShaped(rest)
+    }
+
+    /// Rules 2 and 3 of `looksLikeCommand`, on a line whose prompt is already
+    /// off. What a prompt is stripped on the strength of, so a `#` comment and
+    /// a second prompt (`$ $ ls`) do not pass.
+    private static func isCommandShaped(_ line: Substring) -> Bool {
+        let body = line.drop(while: { $0.isWhitespace })
+        guard let word = body.split(whereSeparator: { $0.isWhitespace }).first, let first = word.first else { return false }
+        if !isAssignment(word) {
+            guard first.isASCII, first.isLowercase || "./~$_(){}[|&!".contains(first) else { return false }
+        }
+        if word == "$" || word.contains(where: { !$0.isASCII && $0.isLetter }) { return false }
+        if let last = word.last, ",:?".contains(last) { return false }
+        if endsLikeASentence(word, marks: ".!") { return false }
+        let plain = word.lowercased().replacingOccurrences(of: "\u{2019}", with: "'")
+        if proseWords.contains(plain) { return false }
+        var end = body
+        while end.last?.isWhitespace == true { end.removeLast() }
+        return !endsLikeASentence(end, marks: ".?!,")
+    }
+
+    private static func endsLikeASentence(_ text: Substring, marks: String) -> Bool {
+        guard let last = text.last, marks.contains(last), let before = text.dropLast().last else { return false }
+        return before.isLetter
+    }
+
+    /// `NAME=`, `_x1=`: a shell assignment at the front of a command.
+    private static func isAssignment(_ word: Substring) -> Bool {
+        guard let equals = word.firstIndex(of: "="), equals != word.startIndex else { return false }
+        let name = word[..<equals]
+        guard let first = name.first, first.isASCII, first.isLetter || first == "_" else { return false }
+        return name.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }
+    }
+
+    /// First words that start a sentence and never a command. No shell
+    /// keyword (`if`, `for`, `then`, `in`) and nothing on a PATH (`as`, `at`,
+    /// `who`, `which`, `yes`, `time`, `last`, `more`, `next`) is here.
+    static let proseWords: Set<String> = [
+        "the", "a", "an", "this", "that", "these", "those", "it", "its", "it's", "i", "i'm", "i've",
+        "we", "you", "he", "she", "they", "there", "here", "and", "but", "or", "so", "because",
+        "however", "also", "just", "not", "is", "are", "was", "were", "be", "to", "of", "on", "my",
+        "our", "your", "their", "his", "her", "please", "note", "when", "what", "why", "how", "where",
+        "can", "could", "should", "would", "will", "some", "all", "any", "each", "once", "after",
+        "before", "finally", "with",
+    ]
+
+    /// The prose guard: several lines, and at least one that does not look
+    /// like a command. One line is never "clearly prose" — it is what a
+    /// copied command is — and neither is text whose every line passes.
+    ///
+    /// Empty lines are not judged, and neither is a line that continues the
+    /// one before it (that one ended in an odd number of `\`): `--rm \` is
+    /// part of a command, not a line of its own.
+    static func isClearlyProse(_ text: String) -> Bool {
+        let judged = lines(of: text).enumerated().filter { !$0.element.isBlank && !$0.element.continues }
+        guard judged.count > 1 else { return false }
+        return !judged.allSatisfy { looksLikeCommand($0.element.text) }
+    }
+
+    /// Straighten smart punctuation, whatever the text is. `tidy` asks
+    /// `isClearlyProse` first; this does not.
+    ///
+    /// - `“ ” „ ‟` become `"`, and `‘ ’ ‚ ‛` become `'`.
+    /// - **The dash rule.** A long dash (`–` en, `—` em, `―` bar) becomes `--`
+    ///   when it *starts a word* (the start of the text, or whitespace before
+    ///   it) *and an ASCII letter or digit follows it*: `—force` is `--force`
+    ///   and `git commit –amend` is `git commit --amend`, because a long dash
+    ///   there is what macOS, Word and WordPress make of a typed `--`.
+    ///   Anywhere else it is one `-`: `a — b`, `2020–2024`, `foo—bar`, and
+    ///   `–-flag`, where one hyphen survived and the pair is already `--`. The
+    ///   hyphen look-alikes (`‐ ‑ ‒ −`) are always one `-`.
+    /// - `…` becomes `...`.
+    /// - A non-breaking or other Unicode space becomes a space.
+    /// - Zero-width characters go: `U+200B`, `U+2060`, `U+FEFF` and the soft
+    ///   hyphen always; a joiner or a direction mark (`U+200C–U+200F`) only
+    ///   with ASCII or nothing on both sides, so an emoji family and Persian
+    ///   text keep what holds them together.
+    static func straightenPunctuation(_ text: String) -> String { straightening(text).text }
+
+    private static func straightening(_ text: String) -> Tidied {
+        var out = Tidied(text: "")
+        let scalars = Array(text.unicodeScalars)
+        var view = String.UnicodeScalarView()
+        for (index, scalar) in scalars.enumerated() {
+            switch scalar.value {
+            case 0x201C, 0x201D, 0x201E, 0x201F:
+                view.append("\""); out.quotes += 1
+            case 0x2018, 0x2019, 0x201A, 0x201B:
+                view.append("'"); out.quotes += 1
+            case 0x2013, 0x2014, 0x2015:
+                let startsWord = index == 0 || scalars[index - 1].properties.isWhitespace
+                let next = index + 1 < scalars.count ? scalars[index + 1] : nil
+                let option = startsWord && next.map { $0.isASCII && ($0.properties.isAlphabetic || ("0"..."9").contains($0)) } == true
+                view.append(contentsOf: (option ? "--" : "-").unicodeScalars); out.dashes += 1
+            case 0x2010, 0x2011, 0x2012, 0x2212:
+                view.append("-"); out.dashes += 1
+            case 0x2026:
+                view.append(contentsOf: "...".unicodeScalars); out.ellipses += 1
+            case 0x00A0, 0x1680, 0x2000...0x200A, 0x202F, 0x205F, 0x3000:
+                view.append(" "); out.spaces += 1
+            case 0x200B, 0x2060, 0xFEFF, 0x00AD:
+                out.invisibles += 1
+            case 0x200C...0x200F:
+                let before = index == 0 || scalars[index - 1].isASCII
+                let after = index + 1 >= scalars.count || scalars[index + 1].isASCII
+                if before && after { out.invisibles += 1 } else { view.append(scalar) }
+            default:
+                view.append(scalar)
+            }
+        }
+        out.text = String(view)
+        return out
+    }
+
+    /// Take a copied prompt off the front of every line: `$ `, `% ` or `# `,
+    /// with its space. **Never `> `**, which is a quote, a redirect and a
+    /// continuation prompt before it is anything worth removing.
+    ///
+    /// Only when *every* non-empty line starts with the same one, at column 0,
+    /// and what is left of each is shaped like a command (`looksLikeCommand`'s
+    /// rules 2 and 3): so `# A heading` and `# a comment, in words.` keep their
+    /// `#`, `$ 5 each` keeps its `$`, and a transcript with output in it (one
+    /// line without the prompt) is left alone. A line that continues the one
+    /// before it has no prompt to have, and is kept as it is.
+    static func stripPrompt(_ text: String) -> String { strippingPrompt(text).text }
+
+    private static func strippingPrompt(_ text: String) -> (text: String, prompt: String?) {
+        let all = lines(of: text)
+        let judged = all.filter { !$0.isBlank && !$0.continues }
+        guard let first = judged.first, let prompt = ["$ ", "% ", "# "].first(where: { first.text.hasPrefix($0) }),
+              judged.allSatisfy({ $0.text.hasPrefix(prompt) && isCommandShaped($0.text.dropFirst(2)) })
+        else { return (text, nil) }
+        let out = all.map { $0.isBlank || $0.continues ? $0.text : String($0.text.dropFirst(2)) }
+        return (out.joined(separator: "\n"), prompt)
+    }
+
+    /// Drop leading blank lines and the whitespace at the end of each line.
+    /// **Indentation is kept**: it is a heredoc's body, or Python. A line that
+    /// ends in an escaped space (`\ `) keeps it, being a word and not a stray.
+    static func trimStray(_ text: String) -> String { trimmingStray(text).text }
+
+    private static func trimmingStray(_ text: String) -> (text: String, count: Int) {
+        var count = 0
+        var out: [String] = []
+        for line in lines(of: text) {
+            if out.isEmpty, line.isBlank {
+                // The last line of all-blank text is nothing, not a blank line.
+                count += line.text.isEmpty && line.isLast ? 0 : 1
+                continue
+            }
+            var kept = Substring(line.text)
+            while kept.last?.isWhitespace == true { kept.removeLast() }
+            if kept.count < line.text.count, trailingBackslashes(kept) % 2 == 1 {
+                out.append(line.text)
+                continue
+            }
+            if kept.count < line.text.count { count += 1 }
+            out.append(String(kept))
+        }
+        guard count > 0 else { return (text, 0) }
+        return (out.joined(separator: "\n"), count)
+    }
+
+    private struct Line {
+        var text: String
+        /// The line before this one ended in an odd number of backslashes.
+        var continues: Bool
+        var isLast: Bool
+        var isBlank: Bool { text.allSatisfy { $0.isWhitespace } }
+    }
+
+    /// `text` by lines, whichever line ending it has. What is put back
+    /// together is joined with `\n`; `bytes(for:)` makes every kind the same
+    /// Return in any case.
+    private static func lines(of text: String) -> [Line] {
+        let parts = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+        var continues = false
+        return parts.enumerated().map { index, part in
+            defer { continues = trailingBackslashes(part) % 2 == 1 }
+            return Line(text: String(part), continues: continues, isLast: index == parts.count - 1)
+        }
+    }
+
+    private static func trailingBackslashes(_ text: Substring) -> Int {
+        text.reversed().prefix(while: { $0 == "\\" }).count
     }
 
     // MARK: - asking first

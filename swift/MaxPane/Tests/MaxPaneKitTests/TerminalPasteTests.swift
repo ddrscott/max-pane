@@ -161,7 +161,7 @@ struct TerminalPasteFileTests {
             pasteboard.writeObjects([item])
             return TerminalPaste.clipboard(pasteboard)
         }
-        #expect(got == .init(text: "https://example.com/a%20b"))
+        #expect(got == .init(text: "https://example.com/a%20b", isCopiedText: true))
     }
 
     @Test("plain text is exactly what it was, and an empty pasteboard is nothing")

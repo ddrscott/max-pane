@@ -42,6 +42,10 @@ final class PasteAskSheet: NSView {
     private let panel = PastePanelView()
     private let summary = NSTextField(labelWithString: "")
     private let reasons = NSTextField(wrappingLabelWithString: "")
+    /// What tidying did to the clipboard before the sheet was asked about it,
+    /// or nil. The preview is of the tidied text, so the sheet has to say so.
+    let tidied: String?
+    private let tidiedLine = NSTextField(wrappingLabelWithString: "")
     private let preview = NSTextField(wrappingLabelWithString: "")
     private var tabsButton: AskButton?
     private(set) var tabsToSpaces = false
@@ -50,12 +54,14 @@ final class PasteAskSheet: NSView {
     /// reads as the thing it is a preview of.
     init(
         text: String, settings: TerminalPaste.ConfirmSettings, terminalFont: NSFont?,
+        tidied: String? = nil,
         onAnswer: @escaping (PasteAnswer) -> Void
     ) {
         self.text = text
         self.settings = settings
         self.previewFont = terminalFont ?? Theme.mono(11)
         self.original = TerminalPaste.shape(of: text)
+        self.tidied = tidied
         self.onAnswer = onAnswer
         super.init(frame: .zero)
         wantsLayer = true
@@ -115,6 +121,14 @@ final class PasteAskSheet: NSView {
         reasons.textColor = Theme.dimText
         column.addArrangedSubview(reasons)
         reasons.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+
+        if let tidied {
+            tidiedLine.stringValue = "tidied: \(tidied). ⌥⌘V pastes it as copied"
+            tidiedLine.font = Theme.mono(11)
+            tidiedLine.textColor = Theme.dimText
+            column.addArrangedSubview(tidiedLine)
+            tidiedLine.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+        }
 
         // The preview in a box of its own, so it reads as quoted rather than
         // as more of the sheet's own words.

@@ -239,6 +239,8 @@ public struct ConfigField {
                      "Ask before a paste of more bytes than this. 0 never asks about size."),
             unsigned("pasteTabWidth", \.pasteTabWidth, .terminals, 1...16, appliesLive: true,
                      "How many spaces the paste sheet's Tabs to Spaces makes of a tab."),
+            bool("pasteTidy", \.pasteTidy, .terminals, appliesLive: true,
+                 "Tidy pasted text: straighten smart quotes and long dashes, remove a copied \"$ \" prompt, trim stray whitespace. The pane says what it did; ⌥⌘V pastes as copied."),
             bool("pasteImagesAsFiles", \.pasteImagesAsFiles, .terminals, appliesLive: true,
                  "⌘V of a screenshot saves it as a PNG and pastes the path; in a remote lane it is uploaded and the server's path is pasted."),
             unsigned("pasteImageKeepDays", \.pasteImageKeepDays, .terminals, 0...3650,

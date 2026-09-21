@@ -126,6 +126,11 @@ public struct Config: Codable, Equatable {
     public var pasteConfirmBytes: UInt32 = 16_384
     /// How many spaces the sheet's Tabs to Spaces makes of one tab.
     public var pasteTabWidth: UInt32 = 4
+    /// Copied text is tidied on its way into a terminal: smart quotes and long
+    /// dashes straightened (unless it is clearly prose), a copied `$ ` prompt
+    /// removed, stray whitespace trimmed, and the pane says what it did
+    /// (ADR-0029). ⌥⌘V pastes as copied whatever this says. Read at each paste.
+    public var pasteTidy: Bool = true
     /// ⌘V with a picture on the clipboard and nothing else (a screenshot)
     /// writes it to a PNG and pastes that file's path; in a remote lane it is
     /// uploaded to the server and the path there is pasted. Off, such a
@@ -325,6 +330,7 @@ public struct Config: Codable, Equatable {
         pasteConfirmTabs = read(.pasteConfirmTabs, d.pasteConfirmTabs)
         pasteConfirmBytes = read(.pasteConfirmBytes, d.pasteConfirmBytes)
         pasteTabWidth = read(.pasteTabWidth, d.pasteTabWidth)
+        pasteTidy = read(.pasteTidy, d.pasteTidy)
         pasteImagesAsFiles = read(.pasteImagesAsFiles, d.pasteImagesAsFiles)
         pasteImageKeepDays = read(.pasteImageKeepDays, d.pasteImageKeepDays)
         pasteImageMaxMb = read(.pasteImageMaxMb, d.pasteImageMaxMb)

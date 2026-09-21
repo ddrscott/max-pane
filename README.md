@@ -1680,6 +1680,45 @@ one line. `paste_images_as_files = false` turns all of this off, and an
 image-only clipboard pastes nothing, as it did before. Dropping onto a pane is
 still files only. [ADR-0027](docs/decisions/0027-a-pasted-picture-becomes-a-path.md).
 
+**Copied text is tidied on the way in, and the pane says so.** A command copied
+out of Slack, Notion, Docs or a web page arrives with curly quotes and long
+dashes that make a shell fail in ways that look like typos. So ⌘V of *text*
+(never of a file's or a picture's path):
+
+- **straightens smart punctuation**: `“ ” „ ‟` to `"`, `‘ ’ ‚ ‛` to `'`, `…` to
+  `...`, a non-breaking or other Unicode space to a space, and zero-width
+  characters removed (a joiner inside an emoji or Persian text stays). **A long
+  dash** (`–` `—`) that starts a word and has a letter or digit after it is
+  `--`, because that is what it was before autocorrect: `—force` is `--force`,
+  `git commit –amend` is `git commit --amend`. Any other is one `-`: `a — b`,
+  `2020–2024`, and `–-flag`, which is already `--flag`.
+- **only outside clear prose**: when the paste is one line, or every line looks
+  like a command. A line looks like a command when it starts with `#`, or its
+  first word is `NAME=…` or starts with a lowercase ASCII letter or one of
+  `. / ~ $ _ ( ) { } [ | & !`, is not a word that starts a sentence (`the`,
+  `this`, `please`, …), and the line does not end in a letter followed by `.`
+  `?` `!` or `,`. So `cd “My Files”` over `ls —all` is straightened, and
+  `He said “no”.` over `Then he left.` is left exactly as copied. Lines that
+  continue a `\` are part of the command above them.
+- **removes a copied prompt**, `$ ` or `% ` or `# `, when *every* non-empty line
+  starts with the same one and what is left of each still reads as a command.
+  A transcript with output in it, `# A heading` and `$ 5 each` are left alone.
+  Never `> `.
+- **trims** leading blank lines and the whitespace at the end of each line.
+  Indentation is kept: it is a heredoc, or Python.
+
+Then the pane says what it did, in one line for five seconds:
+`pasted · straightened 4 quotes · removed "$ "`. Nothing changed, nothing said.
+Tidying happens *before* the decision to ask below, so the sheet is asked
+about, previews and sends the tidied text, and says `tidied: …` when it was.
+**⌥⌘V pastes the clipboard exactly as copied**, untidied and unasked, and
+`paste_tidy = false` turns tidying off. There is no undo on the notice: erasing
+a paste safely needs the far end to have echoed exactly the bytes that went in,
+and a prompt with syntax highlighting, autosuggestions or a TUI's input box
+never does. ⌃U and ⌥⌘V is the way back.
+[ADR-0029](docs/decisions/0029-pasted-text-is-tidied-unless-it-is-clearly-prose.md)
+has the predicate in full and what it costs.
+
 **A paste that would do something you may not have meant asks first**, in a
 sheet over the pane it is about to land in (other lanes keep working). With no
 bracketed paste, every newline inside a paste is the Return key: five lines
@@ -1697,7 +1736,7 @@ be sent, with control characters made visible (`␉`, `␛`).
 | **T** | Tabs to Spaces, on and off (4 spaces, or `paste_tab_width`). The preview follows. |
 
 Nothing is remembered between pastes. **⌥⌘V, Edit › Paste Without Asking**,
-is the same paste with the sheet skipped once. `paste_confirm_multiline`,
+is the clipboard as it was copied, with the tidying and the sheet skipped once. `paste_confirm_multiline`,
 `paste_confirm_tabs` and `paste_confirm_bytes` (0 = never) turn each reason
 off, and apply to the next paste; see [Settings](#settings). A Finder-files
 paste never asks on account of its own separators. ADR-0026 says why this is a
@@ -2264,6 +2303,7 @@ paste_confirm_multiline = true
 paste_confirm_tabs = true
 paste_confirm_bytes = 16384
 paste_tab_width = 4
+paste_tidy = true
 paste_images_as_files = true
 paste_image_keep_days = 7
 paste_image_max_mb = 25
@@ -2313,6 +2353,10 @@ the three reasons a paste into a terminal asks first: a line ending inside it,
 a tab, more bytes than that (`0` never asks about size). `paste_tab_width` is
 how many spaces the sheet's Tabs to Spaces makes of a tab. All four are read at
 each paste. See [Pasting into a terminal](#pasting-into-a-terminal).
+
+`paste_tidy` is whether copied text has its smart punctuation straightened, a
+copied `$ ` prompt removed and stray whitespace trimmed on its way into a
+terminal; ⌥⌘V pastes as copied either way. Read at each paste.
 
 `paste_images_as_files` is whether ⌘V of a clipboard holding only a picture
 saves it as a PNG and pastes the path (uploading it first in a remote lane);

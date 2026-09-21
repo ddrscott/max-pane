@@ -555,8 +555,15 @@ final class TerminalPaneController: NSObject, PaneController {
     ///
     /// A paste that would press Return in the middle, ask a shell for
     /// completion, or is simply enormous asks first, in a sheet over this pane
-    /// (ADR-0026). `asking: false` is ⌥⌘V, Paste Without Asking: the same
-    /// bytes, the question skipped this once.
+    /// (ADR-0026). `asking: false` is ⌥⌘V, Paste Without Asking: the
+    /// clipboard as it was copied, the question skipped this once.
+    ///
+    /// **Tidy first, then decide whether to ask** (ADR-0029): copied text has
+    /// its smart punctuation straightened, a copied prompt removed and stray
+    /// whitespace trimmed (`TerminalPaste.tidy`), the question is asked of
+    /// what is left, and the sheet shows what is left. Paths made from files
+    /// and pictures are not text and are never tidied. ⌥⌘V skips this too: it
+    /// is the way to get exactly what was copied.
     func paste(_ clipboard: TerminalPaste.Clipboard, asking: Bool = true) {
         // A second paste while the first is still a question is not queued
         // behind it and does not answer it: the sheet is what has the floor.
@@ -564,15 +571,23 @@ final class TerminalPaneController: NSObject, PaneController {
         // A copied file whose name holds a control character is left out, and
         // the rest still go: say which, in the line the pane already has.
         if let notice = clipboard.notice { showNotice(notice) }
-        guard let text = clipboard.text else {
+        guard let copied = clipboard.text else {
             if let image = clipboard.image { paste(image: image) }
             return
         }
-        let settings = TerminalPaste.ConfirmSettings(liveConfig?() ?? config)
+        let live = liveConfig?() ?? config
+        let settings = TerminalPaste.ConfirmSettings(live)
+        var text = copied
+        var tidied: String?
+        if asking, clipboard.isCopiedText, live.pasteTidy {
+            let tidy = TerminalPaste.tidy(text)
+            text = tidy.text
+            tidied = tidy.summary
+        }
         if asking, TerminalPaste.asksFirst(text, settings) {
-            ask(about: text, settings)
+            ask(about: text, settings, tidied: tidied)
         } else {
-            send(pasted: text)
+            send(pasted: text, tidied: tidied)
         }
     }
 
@@ -580,14 +595,19 @@ final class TerminalPaneController: NSObject, PaneController {
     /// one, no markers (`TerminalPaste`). Through the session, so it and the
     /// keystrokes either side of it are one stream; the adapter cuts that
     /// stream into paced pieces (`PacedInput`).
-    private func send(pasted text: String) {
+    ///
+    /// `tidied` is what tidying did, when it did anything: the pane says so in
+    /// its notice line as the bytes go, never before and never for nothing.
+    private func send(pasted text: String, tidied: String? = nil) {
         let bytes = TerminalPaste.bytes(for: text)
         guard !bytes.isEmpty else { return }
+        if let tidied { showNotice("pasted · \(tidied)", lasting: 5) }
         // A paste long enough to be watched going in says so, so the wait is
         // not mistaken for a hang. What is typed meanwhile follows it.
         let seconds = Double(bytes.count) / Double(InputChunks.limit) * Self.secondsPerPiece
         if seconds >= 1 {
-            showNotice("pasting \(TerminalPaste.size(bytes.count)), about \(Int(seconds.rounded())) s")
+            let tidy = tidied.map { " · \($0)" } ?? ""
+            showNotice("pasting \(TerminalPaste.size(bytes.count)), about \(Int(seconds.rounded())) s\(tidy)", lasting: 5)
         }
         session.sendInput(Data(bytes))
     }
@@ -667,10 +687,10 @@ final class TerminalPaneController: NSObject, PaneController {
     /// slack, as measured (1 MB, 1 049 pieces, in 7.1 s).
     private static let secondsPerPiece = 0.0068
 
-    private func ask(about text: String, _ settings: TerminalPaste.ConfirmSettings) {
+    private func ask(about text: String, _ settings: TerminalPaste.ConfirmSettings, tidied: String? = nil) {
         let font = NSFont(name: config.fontName, size: 11)
-        let sheet = PasteAskSheet(text: text, settings: settings, terminalFont: font) { [weak self] answer in
-            self?.pasteAnswered(answer, text: text, settings)
+        let sheet = PasteAskSheet(text: text, settings: settings, terminalFont: font, tidied: tidied) { [weak self] answer in
+            self?.pasteAnswered(answer, text: text, settings, tidied: tidied)
         }
         sheet.onClick = { [weak self] in
             guard let self else { return }
@@ -690,13 +710,15 @@ final class TerminalPaneController: NSObject, PaneController {
         sheet.takeFocus()
     }
 
-    private func pasteAnswered(_ answer: PasteAnswer, text: String, _ settings: TerminalPaste.ConfirmSettings) {
+    private func pasteAnswered(
+        _ answer: PasteAnswer, text: String, _ settings: TerminalPaste.ConfirmSettings, tidied: String? = nil
+    ) {
         pasteSheet = nil
         if case .paste(let oneLine, let tabsToSpaces) = answer {
             var out = text
             if tabsToSpaces { out = TerminalPaste.tabsToSpaces(out, width: settings.tabWidth) }
             if oneLine { out = TerminalPaste.oneLine(out) }
-            send(pasted: out)
+            send(pasted: out, tidied: tidied)
         }
         // The terminal gets the keyboard back either way; without this the
         // pane is focused according to the ledger and deaf in fact.

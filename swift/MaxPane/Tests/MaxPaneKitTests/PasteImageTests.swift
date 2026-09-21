@@ -63,7 +63,7 @@ struct PasteImageClipboardTests {
         both.setString("https://example.com/cat.png", forType: .string)
         both.setData(Picture.png, forType: .png)
         pasteboard.writeObjects([both])
-        #expect(TerminalPaste.clipboard(pasteboard) == .init(text: "https://example.com/cat.png"))
+        #expect(TerminalPaste.clipboard(pasteboard) == .init(text: "https://example.com/cat.png", isCopiedText: true))
 
         // A screenshot: a picture and nothing else.
         pasteboard.clearContents()
