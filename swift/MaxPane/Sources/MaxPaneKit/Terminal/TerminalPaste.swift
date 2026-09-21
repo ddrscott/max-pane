@@ -1,4 +1,5 @@
 import AppKit
+import RelayClient
 
 /// ⌘V, as a selector of the terminal's own rather than `paste:`.
 ///
@@ -11,6 +12,8 @@ import AppKit
 @MainActor
 @objc public protocol TerminalPasteTarget {
     func pasteIntoTerminalPane(_ sender: Any?)
+    /// ⌥⌘V, Paste Without Asking: the same paste, with the sheet skipped once.
+    func pasteIntoTerminalPaneWithoutAsking(_ sender: Any?)
 }
 
 /// What ⌘V actually puts on the wire, given what is on the pasteboard.
@@ -209,6 +212,157 @@ enum TerminalPaste {
         default:
             return false
         }
+    }
+
+    // MARK: - asking first
+
+    /// When a paste asks before it goes. The config's four `paste_` keys, as
+    /// the pure functions below take them.
+    struct ConfirmSettings: Equatable {
+        var multiline = true
+        var tabs = true
+        /// 0 never asks about size.
+        var bytes = 16_384
+        var tabWidth = 4
+
+        init(multiline: Bool = true, tabs: Bool = true, bytes: Int = 16_384, tabWidth: Int = 4) {
+            self.multiline = multiline
+            self.tabs = tabs
+            self.bytes = bytes
+            self.tabWidth = tabWidth
+        }
+
+        init(_ config: Config) {
+            self.init(
+                multiline: config.pasteConfirmMultiline, tabs: config.pasteConfirmTabs,
+                bytes: Int(config.pasteConfirmBytes), tabWidth: max(Int(config.pasteTabWidth), 1))
+        }
+    }
+
+    /// What is unusual about a paste, measured on the bytes that would go out
+    /// (`bytes(for:)`), not on the clipboard: a trailing newline is dropped
+    /// before anyone counts it, so a single copied line is one line and asks
+    /// nothing.
+    struct Shape: Equatable {
+        /// Lines as the far end will see them: interior line endings, plus one.
+        var lines: Int
+        var bytes: Int
+        var tabs: Int
+
+        var isMultiline: Bool { lines > 1 }
+
+        /// What the sheet says is unusual, one line each. Everything that is
+        /// true of the paste, whichever of them the settings ask about.
+        func reasons(_ settings: ConfirmSettings) -> [String] {
+            var out: [String] = []
+            if isMultiline {
+                out.append("\(lines - 1) of its \(lines) lines end in Return, and each runs as it lands")
+            }
+            if tabs > 0 {
+                out.append("\(tabs) tab\(tabs == 1 ? "" : "s"): at a shell prompt a tab asks for completion")
+            }
+            if settings.bytes > 0, bytes > settings.bytes {
+                out.append("\(TerminalPaste.size(bytes)): more than the \(TerminalPaste.size(settings.bytes)) a paste may be without asking")
+            }
+            return out
+        }
+    }
+
+    static func shape(of text: String) -> Shape {
+        let out = bytes(for: text)
+        var lines = 1
+        var tabs = 0
+        for byte in out {
+            if byte == carriageReturn { lines += 1 }
+            if byte == 0x09 { tabs += 1 }
+        }
+        return Shape(lines: lines, bytes: out.count, tabs: tabs)
+    }
+
+    /// The predicate: does this paste ask first? An interior line ending, a
+    /// tab, or more bytes than `paste_confirm_bytes`, each under its own
+    /// setting. An empty paste asks nothing, there being nothing to send.
+    static func asksFirst(_ text: String, _ settings: ConfirmSettings) -> Bool {
+        let shape = shape(of: text)
+        guard shape.bytes > 0 else { return false }
+        if settings.multiline, shape.isMultiline { return true }
+        if settings.tabs, shape.tabs > 0 { return true }
+        if settings.bytes > 0, shape.bytes > settings.bytes { return true }
+        return false
+    }
+
+    /// Paste as One Line: the lines joined with one space, so nothing in the
+    /// paste presses Return.
+    ///
+    /// A line ending in a backslash is a shell continuation, and is joined the
+    /// way the shell would join it: the backslash and the line ending both go,
+    /// and no space is put in their place. `\\` at the end of a line is an
+    /// escaped backslash, not a continuation, so it is the odd count that
+    /// decides. Empty lines are dropped rather than turned into runs of
+    /// spaces, and the last line keeps a trailing backslash it may have: there
+    /// is nothing after it to continue onto.
+    static func oneLine(_ text: String) -> String {
+        let lines = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: true)
+        var out = ""
+        var continues = false
+        for (index, line) in lines.enumerated() {
+            if index > 0, !continues { out.append(" ") }
+            let trailing = line.reversed().prefix(while: { $0 == "\\" }).count
+            continues = trailing % 2 == 1 && index < lines.count - 1
+            out.append(contentsOf: continues ? line.dropLast() : line)
+        }
+        return out
+    }
+
+    /// Tabs to Spaces: each tab becomes `width` spaces. Not tab stops: what
+    /// column a paste lands at is the prompt's business, and a fixed width is
+    /// what the person agreeing to it can predict.
+    static func tabsToSpaces(_ text: String, width: Int) -> String {
+        text.replacingOccurrences(of: "\t", with: String(repeating: " ", count: max(width, 0)))
+    }
+
+    /// The first `limit` lines of what would go out, fit to show: control
+    /// characters as their Unicode control pictures (a tab is `␉`, an escape
+    /// `␛`, DEL `␡`), C1 controls as `<U+0085>`, and a long line cut short.
+    /// `more` is how many lines were left off.
+    static func preview(_ text: String, limit: Int = 8, width: Int = 240) -> (lines: [String], more: Int) {
+        let out = String(decoding: bytes(for: text), as: UTF8.self)
+        let all = out.split(separator: "\r", omittingEmptySubsequences: false)
+        let shown = all.prefix(limit).map { line -> String in
+            var visible = String.UnicodeScalarView()
+            for scalar in line.unicodeScalars.prefix(width) {
+                switch scalar.value {
+                case 0x00...0x1f: visible.append(Unicode.Scalar(0x2400 + scalar.value)!)
+                case 0x7f: visible.append("\u{2421}")
+                case 0x80...0x9f: visible.append(contentsOf: "<U+00\(String(scalar.value, radix: 16, uppercase: true))>".unicodeScalars)
+                default: visible.append(scalar)
+                }
+            }
+            if line.unicodeScalars.count > width { visible.append("…") }
+            return String(visible)
+        }
+        return (shown, all.count - shown.count)
+    }
+
+    /// `312 bytes`, `18.2 KB`, `1.0 MB`.
+    static func size(_ bytes: Int) -> String {
+        if bytes < 1024 { return "\(bytes) byte\(bytes == 1 ? "" : "s")" }
+        if bytes < 1024 * 1024 { return String(format: "%.1f KB", Double(bytes) / 1024) }
+        return String(format: "%.1f MB", Double(bytes) / 1_048_576)
+    }
+
+    // MARK: - sending
+
+    /// The bytes of a paste, cut for the wire: at most `InputChunks.limit`
+    /// each, never in the middle of a character. Every paste leaves this way,
+    /// and so does everything else (`PacedInput`), with no setting: a pty-host
+    /// older than relay-tty 1.23 drops what does not fit its PTY in one write,
+    /// and nothing says which kind a session is on.
+    static func chunks(of bytes: [UInt8]) -> [ArraySlice<UInt8>] {
+        InputChunks.split(bytes)
     }
 
     /// A name fit to show in a notice: each control character as `?`, the way

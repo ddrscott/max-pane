@@ -1,4 +1,5 @@
 import AppKit
+import RelayClient
 import GhosttyTerminal
 import LanedCore
 
@@ -209,6 +210,7 @@ final class TerminalPaneController: NSObject, PaneController {
         }
         terminal.onCommandClick = { [weak self] point in self?.openToken(at: point) }
         container.onPaste = { [weak self] in self?.pasteFromClipboard() }
+        container.onPasteWithoutAsking = { [weak self] in self?.pasteFromClipboard(asking: false) }
         container.onDropFiles = { [weak self] pasteboard in self?.dropFiles(from: pasteboard) ?? false }
 
         let outbound = TerminalOutbound { [weak self] bytes in
@@ -432,6 +434,12 @@ final class TerminalPaneController: NSObject, PaneController {
         guard let window = container.window else { return }
         let unclaimed = window.firstResponder === window
         guard wantsFocus || (unclaimed && store.state.focusedPaneId == paneId) else { return }
+        // A paste that is still a question holds the keyboard for this pane:
+        // handing it to the terminal would let typing through under the sheet.
+        if let pasteSheet {
+            if window.firstResponder !== pasteSheet, window.makeFirstResponder(pasteSheet) { wantsFocus = false }
+            return
+        }
         guard window.firstResponder !== terminal else {
             wantsFocus = false
             return
@@ -466,6 +474,9 @@ final class TerminalPaneController: NSObject, PaneController {
 
     func tearDown() {
         scrollbackDebounce?.cancel()
+        // A paste still waiting on its question goes with the pane, unsent.
+        pasteSheet?.dismissWithoutAnswering()
+        pasteSheet = nil
         attachment?.disconnect()
         attachment = nil
     }
@@ -502,17 +513,96 @@ final class TerminalPaneController: NSObject, PaneController {
     /// The bytes go through the session, not straight at the attachment, so a
     /// paste and the keystrokes on either side of it are one stream in one
     /// order rather than two racing ones.
-    func pasteFromClipboard() { paste(TerminalPaste.clipboard()) }
+    func pasteFromClipboard(asking: Bool = true) { paste(TerminalPaste.clipboard(pasteboard), asking: asking) }
+
+    /// Where ⌘V reads from. The general pasteboard, except in a test, which
+    /// hands in one of its own and leaves the owner's clipboard alone.
+    var pasteboard: NSPasteboard = .general
+
+    /// The config as it is now, for the settings a paste reads each time
+    /// (`paste_confirm_*`); the pane's own `config` is the one it was built
+    /// with. Set by the strip; nil in a test, which gets the built-with one.
+    var liveConfig: (() -> Config)?
+
+    /// The question a paste is waiting on, while it is. One at a time.
+    private(set) var pasteSheet: PasteAskSheet?
 
     /// The one door a paste goes through, whatever it came from.
-    func paste(_ clipboard: TerminalPaste.Clipboard) {
+    ///
+    /// A paste that would press Return in the middle, ask a shell for
+    /// completion, or is simply enormous asks first, in a sheet over this pane
+    /// (ADR-0026). `asking: false` is ⌥⌘V, Paste Without Asking: the same
+    /// bytes, the question skipped this once.
+    func paste(_ clipboard: TerminalPaste.Clipboard, asking: Bool = true) {
+        // A second paste while the first is still a question is not queued
+        // behind it and does not answer it: the sheet is what has the floor.
+        guard pasteSheet == nil else { return }
         // A copied file whose name holds a control character is left out, and
         // the rest still go: say which, in the line the pane already has.
         if let notice = clipboard.notice { showNotice(notice) }
         guard let text = clipboard.text else { return }
+        let settings = TerminalPaste.ConfirmSettings(liveConfig?() ?? config)
+        if asking, TerminalPaste.asksFirst(text, settings) {
+            ask(about: text, settings)
+        } else {
+            send(pasted: text)
+        }
+    }
+
+    /// Put `text` on the wire as a paste: line endings as Return, no trailing
+    /// one, no markers (`TerminalPaste`). Through the session, so it and the
+    /// keystrokes either side of it are one stream; the adapter cuts that
+    /// stream into paced pieces (`PacedInput`).
+    private func send(pasted text: String) {
         let bytes = TerminalPaste.bytes(for: text)
         guard !bytes.isEmpty else { return }
+        // A paste long enough to be watched going in says so, so the wait is
+        // not mistaken for a hang. What is typed meanwhile follows it.
+        let seconds = Double(bytes.count) / Double(InputChunks.limit) * Self.secondsPerPiece
+        if seconds >= 1 {
+            showNotice("pasting \(TerminalPaste.size(bytes.count)), about \(Int(seconds.rounded())) s")
+        }
         session.sendInput(Data(bytes))
+    }
+
+    /// What one paced piece costs end to end: the 5 ms gap plus the timer's
+    /// slack, as measured (1 MB, 1 049 pieces, in 7.1 s).
+    private static let secondsPerPiece = 0.0068
+
+    private func ask(about text: String, _ settings: TerminalPaste.ConfirmSettings) {
+        let font = NSFont(name: config.fontName, size: 11)
+        let sheet = PasteAskSheet(text: text, settings: settings, terminalFont: font) { [weak self] answer in
+            self?.pasteAnswered(answer, text: text, settings)
+        }
+        sheet.onClick = { [weak self] in
+            guard let self else { return }
+            try? self.store.focusPane(self.paneId)
+            self.pasteSheet?.takeFocus()
+        }
+        sheet.translatesAutoresizingMaskIntoConstraints = false
+        Motion.fade(container.layer)
+        container.addSubview(sheet)
+        NSLayoutConstraint.activate([
+            sheet.topAnchor.constraint(equalTo: container.topAnchor),
+            sheet.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            sheet.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            sheet.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        pasteSheet = sheet
+        sheet.takeFocus()
+    }
+
+    private func pasteAnswered(_ answer: PasteAnswer, text: String, _ settings: TerminalPaste.ConfirmSettings) {
+        pasteSheet = nil
+        if case .paste(let oneLine, let tabsToSpaces) = answer {
+            var out = text
+            if tabsToSpaces { out = TerminalPaste.tabsToSpaces(out, width: settings.tabWidth) }
+            if oneLine { out = TerminalPaste.oneLine(out) }
+            send(pasted: out)
+        }
+        // The terminal gets the keyboard back either way; without this the
+        // pane is focused according to the ledger and deaf in fact.
+        takeFocus()
     }
 
     /// Files dropped on the pane: their paths typed at the cursor, quoted as
@@ -1173,6 +1263,7 @@ final class TerminalPaneContainer: NSView {
     var onLayout: (() -> Void)?
     var onAttach: (() -> Void)?
     var onPaste: (() -> Void)?
+    var onPasteWithoutAsking: (() -> Void)?
     /// Files from Finder dropped on the pane. Answers whether it took them.
     var onDropFiles: ((NSPasteboard) -> Bool)?
 
@@ -1216,6 +1307,7 @@ final class TerminalPaneContainer: NSView {
 /// still reaches WebKit untouched.
 extension TerminalPaneContainer: TerminalPasteTarget {
     func pasteIntoTerminalPane(_ sender: Any?) { onPaste?() }
+    func pasteIntoTerminalPaneWithoutAsking(_ sender: Any?) { onPasteWithoutAsking?() }
 }
 
 

@@ -1,4 +1,5 @@
 import Foundation
+import RelayClient
 
 /// The one road out of a terminal pane: bytes the emulator produced, delivered
 /// in the order it produced them.
@@ -18,9 +19,10 @@ import Foundation
 /// Ordering is a property of the structure rather than of scheduling luck.
 final class TerminalOutbound: @unchecked Sendable {
     /// Bytes waiting for their turn on the main queue. Coalesced on purpose —
-    /// a paste that arrives as four writes should leave as one frame, and for
-    /// a byte stream "all of it, in order" and "each piece, in order" are the
-    /// same thing.
+    /// a paste that arrives as four writes should leave as one delivery, and
+    /// for a byte stream "all of it, in order" and "each piece, in order" are
+    /// the same thing. How it is cut for the wire is decided further down the
+    /// road, by `PacedInput`.
     private var pending: [UInt8] = []
     private var isDrainScheduled = false
     private let lock = NSLock()
@@ -67,6 +69,95 @@ final class TerminalOutbound: @unchecked Sendable {
         lock.unlock()
         guard !bytes.isEmpty else { return }
         deliver(bytes)
+    }
+}
+
+/// Input on its way to a session, a piece at a time: at most
+/// `InputChunks.limit` bytes per message, and at most one message per `gap`.
+///
+/// **Why pieces.** A pty-host older than relay-tty 1.23 wrote each input
+/// message to its non-blocking PTY once and dropped whatever did not fit,
+/// which on macOS is everything past 1 022 bytes. A session keeps the pty-host
+/// it was started with, and nothing on the wire says which kind it is.
+///
+/// **Why a gap.** The pieces only help if the program has read the last one
+/// before the next arrives. Measured against that old pty-host on this Mac
+/// (`spikes/m7-remote-relay`, `m7 paste --chunk 1000 --gap-ms N`): with no gap
+/// 20 KB of 64 KB arrived; with 1 ms a reader taking big reads got all of it
+/// and one reading a byte at a time, as a line editor does, did not; with 5 ms
+/// both did, at 256 KB. So 5 ms: 200 KB/s at best, which is three times
+/// iTerm's default paste speed, and a 1 MB paste takes about seven seconds on
+/// a new pty-host that would have taken it at once. That is the price of not
+/// knowing, and it is only paid by pastes that are large.
+///
+/// A keystroke pays nothing: the first piece of anything leaves at once, and
+/// the gap is only ever waited out by bytes that arrived during it.
+///
+/// One FIFO, so what is typed during a long paste goes out after it, whole,
+/// and never in the middle of it.
+@MainActor
+final class PacedInput {
+    static let gap: TimeInterval = 0.005
+
+    private var pending: [UInt8] = []
+    /// Where the unsent part of `pending` starts. An index rather than a
+    /// `removeFirst` per piece, which for a 1 MB paste is a thousand memmoves
+    /// of half a megabyte.
+    private var head = 0
+    /// A gap is being waited out; its end sends the next piece.
+    private var isWaiting = false
+    private let gap: TimeInterval
+    private let after: (TimeInterval, @escaping @MainActor () -> Void) -> Void
+    private let deliver: ([UInt8]) -> Void
+
+    /// `after` is the test seam: how the end of a gap gets back here.
+    init(
+        gap: TimeInterval = PacedInput.gap,
+        after: @escaping (TimeInterval, @escaping @MainActor () -> Void) -> Void = { delay, block in
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { MainActor.assumeIsolated(block) }
+        },
+        deliver: @escaping ([UInt8]) -> Void
+    ) {
+        self.gap = gap
+        self.after = after
+        self.deliver = deliver
+    }
+
+    /// Bytes not yet handed to `deliver`.
+    var backlog: Int { pending.count - head }
+
+    func enqueue(_ bytes: ArraySlice<UInt8>) {
+        guard !bytes.isEmpty else { return }
+        pending.append(contentsOf: bytes)
+        if !isWaiting { sendNext() }
+    }
+
+    /// Everything not yet sent, handed back. For a wire that has gone: the
+    /// adapter holds it as it holds anything typed while disconnected.
+    func takeBacklog() -> [UInt8] {
+        let rest = Array(pending[head...])
+        pending.removeAll(keepingCapacity: false)
+        head = 0
+        return rest
+    }
+
+    private func sendNext() {
+        guard head < pending.count else {
+            pending.removeAll(keepingCapacity: false)
+            head = 0
+            return
+        }
+        let end = InputChunks.end(ofPieceAt: head, in: pending)
+        let piece = Array(pending[head..<end])
+        head = end
+        isWaiting = true
+        // The pacer is held by its adapter, and a gap that outlives both has
+        // nothing left to send.
+        after(gap) { [weak self] in
+            self?.isWaiting = false
+            self?.sendNext()
+        }
+        deliver(piece)
     }
 }
 

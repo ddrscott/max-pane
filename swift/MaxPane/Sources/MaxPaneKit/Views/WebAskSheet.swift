@@ -468,7 +468,14 @@ private final class AskPanelView: NSView {
 final class AskButton: NSView {
     var onClick: (() -> Void)?
 
-    private let label: String
+    /// Settable for a button that is a toggle: the paste sheet's Tabs to
+    /// Spaces says which way it stands.
+    var label: String {
+        didSet {
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
+        }
+    }
     private let isDefault: Bool
     private var isHovered = false { didSet { needsDisplay = true } }
 

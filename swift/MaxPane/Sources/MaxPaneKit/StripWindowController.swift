@@ -32,6 +32,10 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 servers: servers, registry: sessions, store: configStore,
                 pollInterval: config.sessionPollSeconds)
             book.onServerChanged = { [weak self] name in self?.strip.reattachPanes(onServer: name) }
+            // Held by the strip, which this window holds: weak here is a
+            // store that is gone with the window, not a callback into nothing.
+            let builtWith = config
+            strip.liveConfig = { [weak configStore] in configStore?.config ?? builtWith }
             serverBook = book
             sidebar.serverBook = book
             // `sidebar_collapse_hides_lanes` applies as the file is saved:
@@ -663,6 +667,10 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return true
         case .showSettings:
             return configStore != nil
+        case .pasteWithoutAsking:
+            // Asked of the responder chain, as ⌘V is: live exactly when a
+            // terminal pane has the keyboard, whatever the ledger says.
+            return NSApp.target(forAction: #selector(TerminalPasteTarget.pasteIntoTerminalPaneWithoutAsking(_:))) != nil
         case .claimSession:
             // Only meaningful for a terminal pane.
             return store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .pty
@@ -892,6 +900,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 // PRD §16's accepted v1 boundary: drop out of fullscreen so the
                 // rest of macOS is reachable, and let the user come back.
                 window?.toggleFullScreen(nil)
+
+            case .pasteWithoutAsking:
+                // To whichever terminal pane has the keyboard, by the road ⌘V
+                // takes. No pane, no paste: a web page has no sheet to skip.
+                NSApp.sendAction(
+                    #selector(TerminalPasteTarget.pasteIntoTerminalPaneWithoutAsking(_:)), to: nil, from: nil)
 
             case .claimSession:
                 confirmClaimSession()

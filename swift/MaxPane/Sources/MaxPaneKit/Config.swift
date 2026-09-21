@@ -111,6 +111,22 @@ public struct Config: Codable, Equatable {
     /// does.
     public var copyOnSelect: Bool = false
 
+    /// A paste with a line ending inside it asks before it goes.
+    ///
+    /// With no bracketed paste (`TerminalPaste` says why there never will be)
+    /// every interior newline is the Return key: four of five pasted lines have
+    /// run before the first can be read. The pane asks first, in a sheet over
+    /// itself (ADR-0026). Read at each paste, so a change applies at once.
+    public var pasteConfirmMultiline: Bool = true
+    /// A paste with a tab in it asks too: at a shell prompt a tab is a request
+    /// for completion, not whitespace.
+    public var pasteConfirmTabs: Bool = true
+    /// A paste of more bytes than this asks, whatever is in it. 0 never asks
+    /// about size.
+    public var pasteConfirmBytes: UInt32 = 16_384
+    /// How many spaces the sheet's Tabs to Spaces makes of one tab.
+    public var pasteTabWidth: UInt32 = 4
+
     /// Which terminal cursors blink.
     ///
     /// `focused`, the default: the one terminal that holds the keyboard, and
@@ -281,6 +297,10 @@ public struct Config: Codable, Equatable {
         fontName = read(.fontName, d.fontName)
         fontSize = read(.fontSize, d.fontSize)
         copyOnSelect = read(.copyOnSelect, d.copyOnSelect)
+        pasteConfirmMultiline = read(.pasteConfirmMultiline, d.pasteConfirmMultiline)
+        pasteConfirmTabs = read(.pasteConfirmTabs, d.pasteConfirmTabs)
+        pasteConfirmBytes = read(.pasteConfirmBytes, d.pasteConfirmBytes)
+        pasteTabWidth = read(.pasteTabWidth, d.pasteTabWidth)
         cursorBlink = read(.cursorBlink, d.cursorBlink)
         editor = read(.editor, d.editor)
         searchUrl = read(.searchUrl, d.searchUrl)

@@ -1,0 +1,18 @@
+relay-pty-host built from relay-tty ec555aa^ (the commit before 1.23's
+"write large input in full"), on this Mac, driven by
+  m7 paste --unix … --bytes N --chunk 1000 --burst 1 --gap-ms G
+Reader A: stty raw -echo; head -c N > file      (big reads)
+Reader B: bash `read -r -d '' -N N`             (a byte per read, as a line editor)
+
+reader  bytes    chunk  gap-ms  arrived          sha256
+A       65536    none   -       1022 (head never finishes)
+A       65536    1000   0       20480            differs
+A       65536    1000   1       65536            equal
+A       65536    1000   5       65536            equal
+B       262144   1000   1       short (reader never finishes)
+B       262144   1000   2       short (reader never finishes)
+B       262144   1000   5       262144           equal
+B       262144   1000   10      262144           equal
+
+relay-tty 1.23.0, 1 048 576 bytes, --chunk 1000 --gap-ms 5: 1 049 messages,
+mac-unix 7.14 s, tunnel 7.18 s, both whole, sha256 equal (the .json beside this).

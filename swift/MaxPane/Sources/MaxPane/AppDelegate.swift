@@ -183,11 +183,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let item = NSMenuItem(title: title, action: selector, keyEquivalent: key)
             item.target = selector == #selector(AppDelegate.pasteFromEditMenu(_:)) ? self : nil
             editMenu.addItem(item)
+            // The paste commands sit under Paste, before Select All.
+            if selector == #selector(AppDelegate.pasteFromEditMenu(_:)) {
+                for command in Command.allCases where command.menu == .edit {
+                    editMenu.addItem(menuItem(for: command))
+                }
+            }
         }
         editItem.submenu = editMenu
         main.addItem(editItem)
 
-        for section in MenuSection.allCases where section != .app {
+        for section in MenuSection.allCases where section != .app && section != .edit {
             let item = NSMenuItem()
             let menu = NSMenu(title: section.rawValue)
             menu.autoenablesItems = false
@@ -271,5 +277,16 @@ extension AppDelegate: NSMenuDelegate {
             let title = windowController.title(for: command)
             if item.title != title { item.title = title }
         }
+    }
+}
+
+/// The Edit menu enables its own items: Cut, Copy and Select All are
+/// nil-targeted and AppKit asks the responder chain about each. A `Command`
+/// placed among them is targeted here, so AppKit asks here, and the answer is
+/// the one every other menu gets from `menuNeedsUpdate`.
+extension AppDelegate: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        guard let raw = menuItem.representedObject as? String, let command = Command(rawValue: raw) else { return true }
+        return windowController.canPerform(command)
     }
 }

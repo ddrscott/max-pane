@@ -24,6 +24,7 @@ func usage() -> Never {
     usage: m7 <probe|echo|stream|replay|watch|paste|reconnect> (--base URL | --unix PATH) --id ID
               [--auth cookie|query|none] [--n N] [--gap S] [--seconds S] [--bytes N]
               [--trigger TEXT] [--out FILE] [--wait S] [--clamp BYTES]
+              [--chunk N] [--burst K] [--gap-ms M]
     \n
     """.utf8))
     exit(2)
@@ -359,11 +360,29 @@ case "paste":
     try p.session.connect(mode: .resume(offset: 0, maxReplayBytes: 1))
     guard wait(15, { p.isDone }) else { log("no handshake"); emit(["error": "no handshake"]); exit(1) }
     usleep(300_000)
+    // `--chunk N` cuts it the way the app does (`InputChunks`, the app's own
+    // code), `--burst K --gap-ms M` paces it the way the app's `PacedInput` does:
+    // K messages, then M ms before the next K. `--chunk 0` is the one payload
+    // the spike first measured.
+    let chunk = optInt("chunk", 0)
+    let burst = max(optInt("burst", 1), 1)
+    let gapMs = optDouble("gap-ms", 0)
     let sent = now()
-    p.session.sendInput(payload)
+    var messages = 0
+    if chunk > 0 {
+        for piece in InputChunks.split(payload, limit: chunk) {
+            p.session.sendInput(Array(piece))
+            messages += 1
+            if gapMs > 0, messages % burst == 0 { usleep(UInt32(gapMs * 1000)) }
+        }
+    } else {
+        p.session.sendInput(payload); messages = 1
+    }
+    let handedOver = now()
     wait(optDouble("wait", 3)) { false }
-    log("sent \(payload.count)B in one DATA payload sha256=\(sha256(payload)) echoedBytes=\(locked { p.dataBytes })")
-    emit(["sentBytes": payload.count, "sentSha256": sha256(payload), "sentAtMs": ms(sent - t0)].merging(p.summary()) { a, _ in a })
+    log("sent \(payload.count)B in \(messages) DATA payload(s) over \(ms(handedOver - sent))ms sha256=\(sha256(payload)) echoedBytes=\(locked { p.dataBytes })")
+    emit(["sentBytes": payload.count, "sentSha256": sha256(payload), "sentAtMs": ms(sent - t0), "messages": messages,
+          "chunk": chunk, "burst": burst, "gapMs": gapMs, "handOverMs": ms(handedOver - sent)].merging(p.summary()) { a, _ in a })
     p.session.close()
 
 case "reconnect":

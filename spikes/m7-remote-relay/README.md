@@ -19,6 +19,7 @@ export RELAY_TOKEN
 .build/release/m7 stream  --base … --id <generator> --seconds 40 --trigger '\r'               # §1 live
 .build/release/m7 replay  --base … --id <generator> --out replay.bin                          # §1 replay
 .build/release/m7 paste   --base … --id <raw reader> --bytes 65536                            # §6
+.build/release/m7 paste   --base … --id <raw reader> --bytes 1048576 --chunk 1000 --gap-ms 5   # ADR-0026: the app's pieces and pacing
 .build/release/m7 watch   --base … --id <agent> --seconds 8 --type 'Do you want to proceed?\r' --after 2   # §5
 .build/release/m7 reconnect --base … --id 0368d543 --seconds 500                              # §3
 ```
@@ -36,5 +37,5 @@ hand: start `m7 reconnect`, then on the box `kill -STOP <server pid>` for
 10 s, 60 s and 180 s with `kill -CONT` between, and read the log.
 
 `out/` holds the runs the report was written from (`out/auth`, `out/echo`,
-`out/exact`, `out/paste`, `out/agent`, `out/reconnect`). The two `.bin`
+`out/exact`, `out/paste`, `out/paste-chunked`, `out/agent`, `out/reconnect`). The two `.bin`
 replays are not kept; their sha256 is in the JSON beside them.

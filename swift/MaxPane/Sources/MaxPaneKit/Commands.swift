@@ -42,6 +42,7 @@ public enum Command: String, CaseIterable, Sendable {
     case widenLane
     case narrowLane
     case claimSession
+    case pasteWithoutAsking
     case showMemory
     case pairWithNext
     case exportStrip
@@ -102,6 +103,7 @@ public enum Command: String, CaseIterable, Sendable {
         case .widenLane: return "Widen Lane"
         case .narrowLane: return "Narrow Lane"
         case .claimSession: return "Resize Session to This Lane…"
+        case .pasteWithoutAsking: return "Paste Without Asking"
         case .showMemory: return "Memory"
         case .pairWithNext: return "Pair With Lane to the Right"
         case .exportStrip: return "Export Strip…"
@@ -244,6 +246,11 @@ public enum Command: String, CaseIterable, Sendable {
         // Deliberately awkward. It reshapes the PTY for every other client,
         // including a phone, so it should not sit next to anything routine.
         case .claimSession:    return ("r", [.command, .control, .shift])
+        // ⌥⌘V, beside ⌘V: the same paste with the question skipped, for the
+        // five lines you did mean to run. ⌥ is "the other one of these"
+        // throughout this file, and no browser or page has a claim on it
+        // (Paste and Match Style is ⌥⇧⌘V).
+        case .pasteWithoutAsking: return ("v", [.command, .option])
         case .showMemory:      return ("i", [.command, .option])
         case .pairWithNext:    return ("p", [.command, .option])
         case .exportStrip:     return ("s", [.command, .shift])
@@ -440,6 +447,8 @@ public enum Command: String, CaseIterable, Sendable {
         // ⌘[ / ⌘] do and the reason they exist at all.
         case .focusDockLeft, .focusDockRight: return .navigate
         case .claimSession: return .file
+        // Under Edit, below Paste, which it is the other one of.
+        case .pasteWithoutAsking: return .edit
         case .showMemory, .showHelp: return .view
         case .reload, .hardReload, .editAddress: return .navigate
         // Under Navigate with ⌘Y's picker, not under View with the dashboards:
@@ -480,6 +489,9 @@ public enum MenuSection: String, CaseIterable {
     /// The menu named for the app. Built by hand around About, Hide and Quit;
     /// only its `Command`s come from here.
     case app = "Max Pane"
+    /// Cut, Copy, Paste and Select All are built by hand, as responder-chain
+    /// items; the `Command`s that belong beside them follow those.
+    case edit = "Edit"
     case file = "File"
     case navigate = "Navigate"
     case view = "View"

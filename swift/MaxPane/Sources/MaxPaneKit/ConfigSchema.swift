@@ -78,10 +78,10 @@ public struct ConfigField {
 
     private static func unsigned(
         _ name: String, _ path: WritableKeyPath<Config, UInt32>, _ group: ConfigGroup,
-        _ range: ClosedRange<Int64>, step: Int64 = 1, _ summary: String
+        _ range: ClosedRange<Int64>, step: Int64 = 1, appliesLive: Bool = false, _ summary: String
     ) -> ConfigField {
         ConfigField(
-            name: name, group: group, control: .integer(range, step: step), summary: summary, appliesLive: false,
+            name: name, group: group, control: .integer(range, step: step), summary: summary, appliesLive: appliesLive,
             read: { .integer(Int64($0[keyPath: path])) },
             apply: { config, value in
                 guard case .integer(let n) = value else { return "expected a whole number, got \(value.kind)" }
@@ -231,6 +231,14 @@ public struct ConfigField {
                    "The terminal font size, in points. ⌘= and ⌘- zoom a pane from here."),
             bool("copyOnSelect", \.copyOnSelect, .terminals,
                  "Selecting text in a terminal copies it. Off, ⌘C copies."),
+            bool("pasteConfirmMultiline", \.pasteConfirmMultiline, .terminals, appliesLive: true,
+                 "Ask before a paste of several lines: with no bracketed paste, every line but the last runs as it lands."),
+            bool("pasteConfirmTabs", \.pasteConfirmTabs, .terminals, appliesLive: true,
+                 "Ask before a paste with a tab in it: at a shell prompt a tab asks for completion."),
+            unsigned("pasteConfirmBytes", \.pasteConfirmBytes, .terminals, 0...16_777_216, step: 1024, appliesLive: true,
+                     "Ask before a paste of more bytes than this. 0 never asks about size."),
+            unsigned("pasteTabWidth", \.pasteTabWidth, .terminals, 1...16, appliesLive: true,
+                     "How many spaces the paste sheet's Tabs to Spaces makes of a tab."),
             choice("cursorBlink", \.cursorBlink, .terminals, appliesLive: false,
                    "Which terminal cursors blink: the one with the keyboard, all of them, or none."),
             double("sessionPollSeconds", \.sessionPollSeconds, .terminals, 1...120, step: 1,

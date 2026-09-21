@@ -135,6 +135,7 @@ final class RelayAttachmentAdapter: RelayAttachment {
         wantsConnection = false
         isAttached = false
         pending.clear()
+        _ = paced.takeBacklog()
         heldReplay = nil
         session?.close()
         session = nil
@@ -161,7 +162,14 @@ final class RelayAttachmentAdapter: RelayAttachment {
             }
             return
         }
-        session.sendInput(Array(bytes))
+        paced.enqueue(bytes)
+    }
+
+    /// Everything that goes to the session goes through here: what is typed,
+    /// what is pasted, what was held while the wire was down. At most 1 000
+    /// bytes a message and one message per 5 ms; `PacedInput` has the numbers.
+    private lazy var paced = PacedInput { [weak self] piece in
+        self?.session?.sendInput(piece)
     }
 
     /// ADR-0007 §5. Reached only from the user's "claim this session" command,
@@ -299,7 +307,7 @@ final class RelayAttachmentAdapter: RelayAttachment {
 
     /// Send what was held while the socket was down, or decide against it.
     private func flushPendingInput() {
-        guard let session, !pending.isEmpty else { return }
+        guard session != nil, !pending.isEmpty else { return }
         let held = pending.bytes.count
         guard let bytes = pending.take() else {
             Log.warn("\(sessionId): dropped input buffered more than \(Int(PendingInput.maxAge))s ago")
@@ -307,14 +315,22 @@ final class RelayAttachmentAdapter: RelayAttachment {
             return
         }
         Log.debug("\(sessionId): flushed \(bytes.count)B of input held while disconnected")
-        session.sendInput(bytes)
+        paced.enqueue(bytes[...])
     }
 
     private func handleClosed(_ reason: RelayClose?) {
         session = nil
         isAttached = false
         heldReplay = nil
+        // The rest of a paste that was still going out when the wire went. It
+        // is input with nowhere to go, the same as anything typed from here
+        // on, and is held or dropped by the same rules.
+        let unsent = paced.takeBacklog()
         guard wantsConnection else { return }
+        if !unsent.isEmpty, !pending.hold(unsent[...]) {
+            Log.warn("\(sessionId): dropped \(unsent.count)B still going out when the connection went")
+            onInputDropped?(unsent.count)
+        }
         onConnectionChange?(false)
         // A server that refused the credential (WS close 4001/1008, or a 401
         // on the upgrade) will refuse it again; retrying would only be a

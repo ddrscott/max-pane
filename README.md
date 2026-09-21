@@ -1646,6 +1646,40 @@ name holds a newline or another control character is left out — typed into a
 prompt that is a keystroke, not text — and the pane says which in one line
 while the rest paste.
 
+**A paste that would do something you may not have meant asks first**, in a
+sheet over the pane it is about to land in (other lanes keep working). With no
+bracketed paste, every newline inside a paste is the Return key: five lines
+copied from a README, and four have run before you have read the first. So a
+paste is held when it has a line ending inside it, a tab (at a shell prompt, a
+request for completion), or more than 16 KB. The sheet shows the line and byte
+count, what is unusual in a line each, and the first eight lines as they will
+be sent, with control characters made visible (`␉`, `␛`).
+
+| Key | |
+|---|---|
+| **↩** or **Esc** | Cancel. Nothing is sent. Return is the default on purpose: it is the key the sheet exists to keep from being pressed by accident. |
+| **P** | Paste, as it is. |
+| **O** | Paste as One Line: lines joined with a space, so nothing in it presses Return. A line ending in `\` is a continuation and is joined the way the shell would join it. |
+| **T** | Tabs to Spaces, on and off (4 spaces, or `paste_tab_width`). The preview follows. |
+
+Nothing is remembered between pastes. **⌥⌘V, Edit › Paste Without Asking**,
+is the same paste with the sheet skipped once. `paste_confirm_multiline`,
+`paste_confirm_tabs` and `paste_confirm_bytes` (0 = never) turn each reason
+off, and apply to the next paste; see [Settings](#settings). A Finder-files
+paste never asks on account of its own separators. ADR-0026 says why this is a
+sheet and not bracketed paste.
+
+**Every paste goes out in pieces**: at most 1 000 bytes a message, never
+splitting a character, one message per 5 ms, in the same queue as your
+keystrokes, so what you type during a long paste follows it rather than landing
+in the middle. There is no setting. A pty-host older than relay-tty 1.23 drops
+whatever its PTY cannot take in one write, a session keeps the pty-host it
+started with, and nothing says which kind a session has; 5 ms is what it took
+for a byte-at-a-time reader on such a host to get 256 KB whole. The cost is
+that 1 MB takes about seven seconds (measured: 7.1 s local, 7.2 s through a
+relaytty.com tunnel, sha256 equal both times), and a paste that will take a
+second or more says so in the pane's notice line.
+
 ### The cursor
 
 **Only the terminal that has the keyboard blinks its cursor.** Every other
@@ -2147,6 +2181,10 @@ sidebar_collapse_hides_lanes = true
 font_name = "JetBrains Mono"
 font_size = 13
 copy_on_select = false
+paste_confirm_multiline = true
+paste_confirm_tabs = true
+paste_confirm_bytes = 16384
+paste_tab_width = 4
 cursor_blink = "focused"
 ```
 
@@ -2156,8 +2194,8 @@ your keys and keys it does not know all survive
 finder** shows the file, and **open in editor** opens it in a terminal lane with
 your `editor` setting, the same way ⌘-clicking a path does.
 
-`theme` and `sidebar_collapse_hides_lanes` apply at once, and so does
-everything under Servers — each `[[servers]]` table's `name`, `url`, `enabled`
+`theme`, `sidebar_collapse_hides_lanes` and the four `paste_` keys apply at
+once, and so does everything under Servers — each `[[servers]]` table's `name`, `url`, `enabled`
 and `color` (see [Remote servers](#remote-servers)). Every other
 key, the keyboard included, applies on
 the next launch, and the window marks a changed one `$ relaunch to apply` until
@@ -2184,6 +2222,12 @@ clipboard. It is `false` by default, so a selection is only a selection and ⌘C
 is what copies; `true` copies every selection as it is made. Like the font, it
 is read when the terminals' shared configuration is built, so a change takes the
 next launch.
+
+`paste_confirm_multiline`, `paste_confirm_tabs` and `paste_confirm_bytes` are
+the three reasons a paste into a terminal asks first: a line ending inside it,
+a tab, more bytes than that (`0` never asks about size). `paste_tab_width` is
+how many spaces the sheet's Tabs to Spaces makes of a tab. All four are read at
+each paste. See [Pasting into a terminal](#pasting-into-a-terminal).
 
 `cursor_blink` is which terminal cursors blink: `"focused"`, `"always"` or
 `"never"`. `"focused"`, the default, blinks the one terminal that has the

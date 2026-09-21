@@ -17,6 +17,10 @@ import LanedCore
 public final class StripViewController: NSViewController {
     private let store: StripStore
     private let config: Config
+    /// The config as the file has it now, for what a pane reads at the moment
+    /// of use rather than at launch (`paste_confirm_*`). Set by the window
+    /// controller, which has the store.
+    public var liveConfig: (() -> Config)?
 
     private let scrollView = NSScrollView()
     private let content = StripContentView()
@@ -2424,6 +2428,7 @@ public final class StripViewController: NSViewController {
         switch pane.kind {
         case .pty:
             let controller = TerminalPaneController(pane: pane, store: store, config: config)
+            controller.liveConfig = { [weak self, config] in self?.liveConfig?() ?? config }
             // A pty pane without a session id is a lane whose session could not
             // be started. It keeps its ordinal and its tag and shows why
             // (PRD §11, §15.8); it just has nothing to attach to.
