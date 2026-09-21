@@ -13,7 +13,7 @@ struct SearchRecentTests {
     private func pane(_ id: String, _ lane: String, url: String? = nil) -> Pane {
         Pane(id: id, laneId: lane, position: 0, kind: url == nil ? .pty : .web,
              relaySessionId: url == nil ? "s-\(id)" : nil, relayServer: nil, url: url, scrollY: nil,
-             dataStoreId: nil, snapshotPath: nil, state: .live, heightWeight: 1, zoom: 1, mobile: false)
+             dataStoreId: nil, snapshotPath: nil, state: .live, heightWeight: 1, zoom: 1, mobile: false, muted: false, volume: 100)
     }
 
     private func lane(_ id: String, focused at: Int64, title: String?, panes: [Pane]) -> Lane {

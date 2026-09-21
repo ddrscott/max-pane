@@ -289,7 +289,7 @@ on **`MAXPANE_BENCH`** and `./scripts/test.sh bench` runs them in release, where
 the numbers are worth reading.
 
 Render-sheet tests (`LaneHeaderRenderTests`, `OmniPickerRenderTests`,
-`SidebarBookmarkRenderTests`, `WebPopupBarRenderTests`) draw views
+`SidebarBookmarkRenderTests`, `WebPopupBarRenderTests`, `PaneAudioRenderTests`) draw views
 into bitmaps and write PNGs. They are gated on **`MAXPANE_SHOTS`**, which names
 the directory to write into — one variable for every sheet, so a new render test
 joins the same command rather than adding a third switch.
@@ -750,6 +750,85 @@ being read.
 A page with no `<title>` gets its host and path on the lane header rather than
 keeping the last page's title — `localhost:3000/api/users`, which is what tells
 six columns of raw JSON apart.
+
+#### Sound
+
+**You can see which pane is making sound, and mute it from where you see it.**
+Max Pane has no tabs, so the speaker goes where a lane is identified. One
+glyph everywhere: a speaker with waves while a pane is audible, a speaker
+with a cross while it is muted, nothing while it is neither. It is grey, one
+step brighter under the pointer, and never a state colour: sound is not agent
+state, and green and orange are spent (ADR-0015).
+
+| Where | What |
+|---|---|
+| Sidebar, a web lane's row | **the row's leading square becomes the speaker**, in the same slot, so the row's grid does not move. Click it to mute or unmute; the click selects nothing and reveals nothing. Right-click it for the volume slider. Right-click anywhere else on the row is the row's usual menu, which has **Mute** and **Volume…** too |
+| Lane header (and so a gallery tile) | the speaker between the state and the title; the same click and the same right-click. On a tile it is drawn larger in lane points, so it stays something a pointer can hit |
+| A pane's address row | that pane's own speaker, so a lane with two pages can mute one |
+| A folded sidebar header | a speaker when a lane it is hiding is making sound; click mutes all of it |
+| Status bar | the speaker and how many panes are audible; click mutes them all. Nothing at all when none are |
+| ⌘P | the speaker on the rows of lanes that are audible or muted; type `audio` or `sound` and they are listed first |
+
+A muted speaker **stays** for as long as the pane is muted, playing or not: a
+muted lane that shows nothing is a lane you forget you muted. The indicator
+outlives the sound by two seconds, so a half-second notification blip is one
+appearance and not a flicker, and everything arrives and leaves with a fade.
+In a lane that has both an audible page and a muted one, the audible one
+shows: it is the one a click has to reach. A session's row keeps its square
+(it is agent state); a page split under a terminal is reached from the lane
+header and its own address row.
+
+**Muting never pauses.** It silences; the video keeps playing, which is what a
+browser's tab mute does. The page cannot see it. A popup's sound belongs to
+the pane that opened it: it shows there and is muted with it. A pane you are
+listening to is not evicted to reclaim memory while it is audible.
+
+**Volume** is per pane, 0 to 100 %. The slider is a small square popover hung
+from the speaker you right-clicked: drag, scroll, or ← → (⇧ for steps of ten);
+every step applies and is saved as you go; Esc, ↩ or a click away closes it.
+Zero is mute, and unmuting returns to the level the slider was at before, not
+to the 1 % it passed on the way down. The pane's level multiplies the page's
+own, so YouTube's slider still means something and a page that sets its own
+volume does not escape. It covers every `<video>` and `<audio>` in every
+frame, ones added later included. **It does not cover Web Audio**
+(`AudioContext`: games, synths, some notification sounds, and a player that
+routes its element through an analyser). Those are full volume or, with Mute,
+silent. If this macOS's WebKit ever drops the call, the slider and `Volume…`
+are not offered and Mute still works (ADR-0035).
+
+**Mute and volume are remembered**, per pane, in the ledger (`pane.muted`,
+`pane.volume`): a lane muted yesterday is muted at launch, before its page can
+make a sound, and an evicted pane comes back muted. A private lane's go with
+the lane (ADR-0016). A strip exported to a file does not carry them.
+
+| Command | Key | |
+|---|---|---|
+| Mute Pane / Unmute Pane | ⌃⌘M | the page with the keyboard; from a terminal split over a page, the lane's pages. Greyed out on a lane with no page |
+| Mute Other Panes | none | everything audible except the pane you are in |
+| Mute All | none | everything audible. Also what a click on the status bar's speaker does |
+
+All three are in the View menu, the lane's `⋯` menu and ⌘/, and `keys` rebinds
+them (`toggleMute`, `muteOthers`, `muteAll`). ⌃⌘M rather than ⌘M or ⌥⌘M, which
+are macOS's Minimize and Minimize All. Mute All and Mute Other Panes mute what
+can be heard, not every quiet page on the strip, which would leave thirty
+muted marks to undo. **Mute All does not touch a terminal's bell**: that is
+the system alert sound, not a page, and System Settings owns its volume.
+
+From a shell, for when the Mac is making noise in an empty room and you are
+talking to it over Relay TTY:
+
+```sh
+maxpane mute              # whatever is making sound
+maxpane mute 3            # lane 3's pages, as maxpane ls numbers them; left / right for a dock
+maxpane unmute            # whatever is muted; or a lane
+maxpane volume 3 40       # 0 to 100; 0 is mute
+maxpane ls                # web[audible], web[muted], web[40%], web[muted 40%]
+```
+
+**By ear**, since no test can hear: play a video, right-click its speaker and
+drag: it should get quieter and the page's own slider should not move. Mute
+it, quit, relaunch: the lane comes back with the crossed speaker and makes no
+sound when played until unmuted.
 
 ### A private lane
 
@@ -2092,6 +2171,8 @@ maxpane run htop          # a terminal lane running htop
 maxpane run               # a terminal lane running your shell
 maxpane open google.com   # a web lane
 maxpane ls                # what is on the strip
+maxpane mute [LANE|all]   # silence a lane's pages, or whatever is audible; unmute is the reverse
+maxpane volume LANE 0-100 # how loud a lane's pages are; see "Sound"
 maxpane server add NAME URL   # a remote relay-tty server, from its startup Auth URL; see "Remote servers"
 maxpane server ls             # the configured servers, their colour and how they are doing
 maxpane server color WSL violet   # the colour a server is known by: slate cyan blue violet magenta rose lemon ink
@@ -2163,7 +2244,9 @@ directory tag would freeze.
 ```
 
 A docked lane is listed with `◀` or `▶` where the others have a strip position,
-because it does not have one.
+because it does not have one. A web pane that is making sound reads
+`web[audible]`, a muted one `web[muted]`, and a volume other than 100 is in
+the same brackets: `web[muted 40%]`.
 
 Terminals Max Pane starts already have `BROWSER` set to the bundled shim, so
 anything inside them that opens a URL politely gets a web lane beside the

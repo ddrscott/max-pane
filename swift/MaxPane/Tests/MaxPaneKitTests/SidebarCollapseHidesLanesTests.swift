@@ -22,7 +22,7 @@ private func telemetry(
 private func pane(_ id: String, lane: String, session: String? = nil, server: String? = nil, url: String? = nil) -> Pane {
     Pane(id: id, laneId: lane, position: 0, kind: session == nil ? .web : .pty,
          relaySessionId: session, relayServer: server, url: url, scrollY: nil, dataStoreId: nil,
-         snapshotPath: nil, state: .live, heightWeight: 1, zoom: 1, mobile: false)
+         snapshotPath: nil, state: .live, heightWeight: 1, zoom: 1, mobile: false, muted: false, volume: 100)
 }
 
 private func lane(_ id: String, tag: String? = nil, panes: [Pane]) -> Lane {

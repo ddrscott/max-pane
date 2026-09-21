@@ -274,6 +274,6 @@ struct PaletteTests {
              projectSource: .cwd, createdAt: 0, lastFocusAt: 0, keepLive: false, dock: nil, span: 1,
              panes: [Pane(id: "p", laneId: "l", position: 0, kind: .pty,
                           relaySessionId: "a", relayServer: nil, url: nil, scrollY: nil, dataStoreId: nil,
-                          snapshotPath: nil, state: .live, heightWeight: 1, zoom: 1, mobile: false)])
+                          snapshotPath: nil, state: .live, heightWeight: 1, zoom: 1, mobile: false, muted: false, volume: 100)])
     }
 }

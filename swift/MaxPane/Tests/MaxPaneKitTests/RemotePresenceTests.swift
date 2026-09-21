@@ -284,7 +284,7 @@ struct DisconnectedLookTests {
              isPrivate: false,
              panes: [Pane(id: "P", laneId: "L", position: 0, kind: .pty, relaySessionId: "a1", relayServer: "wsl",
                           url: nil, scrollY: nil, dataStoreId: nil, snapshotPath: nil, state: .live,
-                          heightWeight: 1, zoom: 1, mobile: false)])
+                          heightWeight: 1, zoom: 1, mobile: false, muted: false, volume: 100)])
     }
 
     @Test("rows under a disconnected server carry offline and no stale state, and are not counted BLOCKED; the header carries the chip")
@@ -486,7 +486,7 @@ struct ServerChipTests {
             projectSource: .cwd, createdAt: 0, lastFocusAt: 0, keepLive: false, dock: nil, span: 1, isPrivate: false,
             panes: [Pane(id: "P", laneId: "L", position: 0, kind: .pty, relaySessionId: "a1", relayServer: "WSL",
                          url: nil, scrollY: nil, dataStoreId: nil, snapshotPath: nil, state: .live,
-                         heightWeight: 1, zoom: 1, mobile: false)])
+                         heightWeight: 1, zoom: 1, mobile: false, muted: false, volume: 100)])
         let header = LaneHeaderView()
         header.frame = NSRect(x: 0, y: 0, width: 620, height: Theme.laneHeaderHeight)
         header.apply(lane)
@@ -596,7 +596,7 @@ struct RemotePresenceRenderTests {
                  projectSource: .cwd, createdAt: 0, lastFocusAt: 0, keepLive: false, dock: nil, span: 1, isPrivate: false,
                  panes: [Pane(id: "p", laneId: "l", position: 0, kind: .pty, relaySessionId: "a", relayServer: server,
                               url: nil, scrollY: nil, dataStoreId: nil, snapshotPath: nil, state: .live,
-                              heightWeight: 1, zoom: 1, mobile: false)])
+                              heightWeight: 1, zoom: 1, mobile: false, muted: false, volume: 100)])
         }
         let remote = lane("Waiting on permission", server: "WSL", root: "WSL:/home/spierce/m7out")
         let cases: [(Lane, SessionTelemetry?, ServerState?, Bool)] = [

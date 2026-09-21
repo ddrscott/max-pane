@@ -325,7 +325,7 @@ struct ServerColourSurfaceTests {
              projectSource: .cwd, createdAt: 0, lastFocusAt: 0, keepLive: false, dock: nil, span: 1, isPrivate: false,
              panes: [Pane(id: "P", laneId: "L", position: 0, kind: .pty, relaySessionId: "a1", relayServer: server,
                           url: nil, scrollY: nil, dataStoreId: nil, snapshotPath: nil, state: .live,
-                          heightWeight: 1, zoom: 1, mobile: false)])
+                          heightWeight: 1, zoom: 1, mobile: false, muted: false, volume: 100)])
     }
 
     private func t(_ id: String, _ server: String?, _ connection: ServerState? = .connected) -> SessionTelemetry {

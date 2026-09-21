@@ -46,6 +46,11 @@ class Popup: NSWindowController, NSWindowDelegate {
 
     let dismissal: Dismissal
 
+    /// A rect on screen to hang from, for the one popup that is about a mark
+    /// rather than about the window: the volume slider under a speaker. Nil,
+    /// which is every other popup, is the centred frame.
+    var anchorRect: NSRect?
+
     /// The popup keeps itself alive while it is on screen.
     ///
     /// A text field's delegate and a table's data source are weak, and the
@@ -115,7 +120,9 @@ class Popup: NSWindowController, NSWindowDelegate {
 
         let area = parent.map { $0.convertToScreen($0.contentLayoutRect) }
             ?? NSScreen.main?.visibleFrame ?? panel.frame
-        let target = Self.frame(size: restingFrame?.size ?? panel.frame.size, minSize: panel.minSize, in: area)
+        let target = anchorRect.map {
+            Self.frame(size: panel.frame.size, hangingFrom: $0, in: parent?.screen?.visibleFrame ?? area)
+        } ?? Self.frame(size: restingFrame?.size ?? panel.frame.size, minSize: panel.minSize, in: area)
         restingFrame = nil
         if let parent, panel.parent !== parent { parent.addChildWindow(panel, ordered: .above) }
 
@@ -200,6 +207,16 @@ class Popup: NSWindowController, NSWindowDelegate {
     }
 
     // MARK: - geometry
+
+    /// Where a popup of `size` hangs from `anchor`: just below it, its left
+    /// edge on the anchor's, flipped above when there is no room below and
+    /// pulled inside `area` sideways. Whole points, as `frame(size:in:)`.
+    static func frame(size: NSSize, hangingFrom anchor: NSRect, in area: NSRect, gap: CGFloat = 4) -> NSRect {
+        var y = anchor.minY - gap - size.height
+        if y < area.minY { y = min(anchor.maxY + gap, area.maxY - size.height) }
+        let x = min(max(anchor.minX, area.minX + gap), max(area.minX + gap, area.maxX - gap - size.width))
+        return NSRect(x: x.rounded(), y: y.rounded(), width: size.width.rounded(), height: size.height.rounded())
+    }
 
     /// Where a popup of `size` goes inside `area`: centred, no nearer any edge
     /// than `margin`, never below `minSize` while the area can hold it, on whole

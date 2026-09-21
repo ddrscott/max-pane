@@ -44,7 +44,19 @@ public final class StripStore {
         core = try Core.open(path: ledgerPath)
         if let laneDefaultPt { core.setDefaultLaneWidth(widthPt: laneDefaultPt) }
         state = try core.state()
+        audio.lookup = { [weak self] id in
+            guard let self else { return nil }
+            return self.pane(id) ?? self.allLanes.lazy.flatMap(\.panes).first { $0.id == id }
+        }
+        audio.persist = { [weak self] id, muted, volume in
+            try? self?.core.setPaneAudio(paneId: id, muted: muted, volume: UInt32(volume))
+        }
     }
+
+    /// Which panes are making sound, which are muted, and how loud each is.
+    /// The live copy of `pane.muted` and `pane.volume`, which the core writes
+    /// without publishing a snapshot; see `PaneAudioCenter`.
+    let audio = PaneAudioCenter()
 
     // MARK: - observation
 
@@ -76,7 +88,14 @@ public final class StripStore {
         let jarsBefore = Self.privateJars(in: state.lanes)
         state = next
         releasePrivateJars(heldBefore: jarsBefore)
+        forgetClosedPanesAudio()
         for body in observers.values { body(next) }
+    }
+
+    /// A closed pane's sound is nobody's. Asked of every lane, for
+    /// `releasePrivateJars`' reason: a gathered or folded lane is not closed.
+    private func forgetClosedPanesAudio() {
+        audio.prune(keeping: Set(allLanes.lazy.flatMap(\.panes).map(\.id)))
     }
 
     /// The non-persistent cookie jars the private lanes in `lanes` name.

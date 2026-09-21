@@ -200,6 +200,12 @@ pub struct Pane {
     /// portrait lane is a phone's shape. The shell sends a mobile user agent
     /// and WebKit's mobile content mode; a terminal ignores it.
     pub mobile: bool,
+    /// `web` only: the shell's own mute on the page, which silences without
+    /// pausing. Remembered so a lane muted yesterday is not blaring at launch.
+    pub muted: bool,
+    /// `web` only: how loud the page's media is, 1 to 100. The last level that
+    /// was not silence: a slider at zero is `muted`, and unmuting returns here.
+    pub volume: u32,
 }
 
 /// Which edge of the window a docked lane holds.

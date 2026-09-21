@@ -37,6 +37,7 @@ public final class StripViewController: NSViewController {
 
     /// Lane id → its view, for lanes that currently have one.
     private var laneViews: [String: LaneView] = [:]
+    private var audioObserver: UUID?
     /// Views taken out of the hierarchy, kept for reuse rather than rebuilt.
     private var recycled: [LaneView] = []
     /// Who owns the live object inside each pane. Survives a lane view being
@@ -361,6 +362,10 @@ public final class StripViewController: NSViewController {
     public override func viewDidLoad() {
         super.viewDidLoad()
         observer = store.observe { [weak self] state in self?.apply(state) }
+        // Sound is in no snapshot (`PaneAudioCenter`): every header on screen,
+        // strip or gallery tile, is told when a mark may have changed. The
+        // header compares its model, so a volume step touches nothing.
+        audioObserver = store.audio.observe { [weak self] in self?.syncSpeakers() }
         startMemorySampling()
         startScrollCapture()
         startClickCapture()
@@ -1052,9 +1057,38 @@ public final class StripViewController: NSViewController {
         laneView.onCloseLane = { [weak self] in
             try? self?.store.closeLane(lane.id)
         }
+        laneView.onToggleMute = { [weak self] in
+            guard let self, let lane = self.store.lane(lane.id) else { return }
+            self.store.audio.toggleMute(lane: lane)
+        }
+        laneView.onVolume = { [weak self] anchor in
+            guard let self, let lane = self.store.lane(lane.id),
+                  let paneId = self.store.audio.volumePane(of: lane) else { return }
+            VolumePopup.show(
+                pane: paneId, title: SidebarModel.laneTitle(lane), center: self.store.audio, from: anchor)
+        }
+        laneView.onMuteOthers = { [weak self] in
+            guard let self else { return }
+            let kept = self.store.lane(lane.id)?.panes.map(\.id) ?? []
+            for pane in self.store.audio.audiblePanes(in: self.store.allLanes) where !kept.contains(pane) {
+                self.store.audio.setMuted(true, pane: pane)
+            }
+        }
+        laneView.onMuteAll = { [weak self] in
+            guard let self else { return }
+            self.store.audio.muteAudible(in: self.store.allLanes)
+        }
+        laneView.setAudio(store.audio.mark(of: lane))
         laneView.applyTelemetry(laneTelemetry, servers: serverStates)
         laneView.setCopyMode(isInCopyMode(lane))
         return laneView
+    }
+
+    /// The speaker on every header there is a view for.
+    private func syncSpeakers() {
+        for (laneId, laneView) in laneViews {
+            laneView.setAudio(store.lane(laneId).map(store.audio.mark(of:)) ?? .silent)
+        }
     }
 
     /// `COPY MODE` on the header of every lane holding a terminal that is in

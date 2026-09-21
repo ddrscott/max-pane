@@ -23,6 +23,15 @@ public final class StatusBar: NSView {
 
     /// Whether the attention count is breathing right now, for tests.
     var isAttentionPulsing: Bool { attention.isAnimatingPulse }
+    /// How many panes are making sound: the speaker and a count, and nothing
+    /// at all while it is none. A click mutes every one of them.
+    private let soundIcon = NSImageView()
+    private let sound = NSTextField(labelWithString: "")
+    private let soundGroup = NSStackView()
+    /// The count as drawn, for tests; empty while nothing is audible.
+    var soundText: String { soundShown ? sound.stringValue : "" }
+    private var soundShown = false
+    public var onClickSound: (() -> Void)?
     private let memory = NSTextField(labelWithString: "")
     private let hint = NSTextField(labelWithString: "")
 
@@ -69,7 +78,15 @@ public final class StatusBar: NSView {
         // `row.views` silently starts pointing at a readout the moment anything
         // is inserted before it.
         let spacer = NSView()
-        let row = NSStackView(views: [sidebarToggle, profile, lanes, sessions, attention, spacer, memory, hint])
+        soundIcon.image = IconImage.make(.volume2, points: 12, colour: Theme.dimText)
+        soundIcon.imageScaling = .scaleNone
+        soundGroup.setViews([soundIcon, sound], in: .leading)
+        soundGroup.orientation = .horizontal
+        soundGroup.spacing = 3
+        soundGroup.alignment = .centerY
+        soundGroup.isHidden = true
+        soundGroup.alphaValue = 0
+        let row = NSStackView(views: [sidebarToggle, profile, lanes, sessions, attention, soundGroup, spacer, memory, hint])
         row.orientation = .horizontal
         row.spacing = 14
         row.alignment = .centerY
@@ -83,7 +100,7 @@ public final class StatusBar: NSView {
         // The spacer view is what pushes the right-hand group to the edge.
         spacer.setContentHuggingPriority(.init(1), for: .horizontal)
 
-        for field in [profile, lanes, sessions, attention, memory, hint] {
+        for field in [profile, lanes, sessions, attention, sound, memory, hint] {
             field.font = Theme.mono(10)
             field.textColor = Theme.dimText
         }
@@ -154,6 +171,10 @@ public final class StatusBar: NSView {
         // and "roughly the left third" is not good enough for that.
         if isAlarmed, attention.convert(attention.bounds, to: self).insetBy(dx: -6, dy: -4).contains(point) {
             onClickAsking?()
+            return
+        }
+        if soundShown, soundGroup.convert(soundGroup.bounds, to: self).insetBy(dx: -6, dy: -4).contains(point) {
+            onClickSound?()
             return
         }
         // The right-hand third is the memory readout; the rest is sessions.
@@ -252,6 +273,36 @@ public final class StatusBar: NSView {
             hint.stringValue = "⌘/ shortcuts"
             hint.textColor = Theme.dimText
         }
+    }
+
+    /// How many panes are audible. The glyph is the app's speaker, grey like
+    /// the readouts beside it: sound is not state, and gets no state colour.
+    /// Arrives and leaves with a fade; the count changing is just a number.
+    public func setAudible(_ count: Int) {
+        if count > 0 { sound.stringValue = "\(count)" }
+        soundGroup.toolTip = count > 0
+            ? "\(count) pane\(count == 1 ? " is" : "s are") making sound. Click to mute \(count == 1 ? "it" : "them all")."
+            : nil
+        guard (count > 0) != soundShown else { return }
+        soundShown = count > 0
+        let shown = soundShown
+        if shown { soundGroup.isHidden = false }
+        // Nothing to ease in a bar nobody can see yet.
+        guard window != nil else {
+            soundGroup.alphaValue = shown ? 1 : 0
+            soundGroup.isHidden = !shown
+            return
+        }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = Motion.isReduced ? 0 : Motion.pane
+            context.timingFunction = Motion.easeOutTiming
+            soundGroup.animator().alphaValue = shown ? 1 : 0
+        }, completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, !self.soundShown else { return }
+                self.soundGroup.isHidden = true
+            }
+        })
     }
 
     static func mb(_ bytes: UInt64) -> String {

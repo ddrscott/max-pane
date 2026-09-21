@@ -107,6 +107,11 @@ final class LaneView: NSView {
     /// Its tick: true while ads are blocked on that site, false while they are
     /// let through, nil for a lane with no page or a blocker switched off.
     var blocking: (() -> Bool?)?
+    /// The header's speaker: mute what is audible in this lane, or unmute it.
+    var onToggleMute: (() -> Void)?
+    var onVolume: ((NSView) -> Void)?
+    var onMuteOthers: (() -> Void)?
+    var onMuteAll: (() -> Void)?
 
     /// The preset this lane is at, lit in the header; nil when it has been
     /// dragged or zoomed off all three. Derived by the strip, never stored.
@@ -319,6 +324,11 @@ final class LaneView: NSView {
 
     /// A terminal in this lane went into copy mode, or the last one left it.
     func setCopyMode(_ on: Bool) { header.copyMode = on }
+
+    /// What this lane's speaker shows. The strip's doing, from `PaneAudioCenter`.
+    func setAudio(_ mark: AudioMark) { header.audio = mark }
+    /// The header's speaker, for tests.
+    var speaker: SpeakerMark { header.speaker }
 
     func applyTelemetry(_ telemetry: [SessionKey: SessionTelemetry], servers: [String: ServerState] = [:]) {
         let key = currentSessionKey
@@ -1063,6 +1073,12 @@ protocol LaneHeaderActions: AnyObject {
     var mobileLayout: (() -> Bool?)? { get }
     var onToggleBlocking: (() -> Void)? { get }
     var blocking: (() -> Bool?)? { get }
+    /// The header's speaker, and the menu's Mute Pane.
+    var onToggleMute: (() -> Void)? { get }
+    /// Its right-click: the volume slider, hung from the view it is handed.
+    var onVolume: ((NSView) -> Void)? { get }
+    var onMuteOthers: (() -> Void)? { get }
+    var onMuteAll: (() -> Void)? { get }
 }
 
 extension LaneView: LaneHeaderActions {}
@@ -1092,6 +1108,10 @@ final class LaneHeaderView: NSView {
     /// Which server, beside the path it qualifies. See `ServerChip`.
     private let serverChip = ServerChip()
     private let overflow = LaneHeaderMenuButton()
+    /// The lane's sound, beside the title. A button: click mutes, right-click
+    /// is the volume slider rather than the header's menu. See `SpeakerMark`.
+    let speaker = SpeakerMark(points: 12)
+    var audio: AudioMark = .silent { didSet { if audio != oldValue { rebuild() } } }
     /// `s | m | xl`. Internal rather than private so tests can press it.
     let sizeSwitch = LaneSizeSwitch()
 
@@ -1244,9 +1264,11 @@ final class LaneHeaderView: NSView {
         markers.textColor = .labelColor
 
         overflow.onPress = { [weak self] in self?.showOverflowMenu() }
+        speaker.onToggle = { [weak self] in self?.actions?.onToggleMute?() }
+        speaker.onVolume = { [weak self] mark in self?.actions?.onVolume?(mark) }
         sizeSwitch.onPick = { [weak self] preset in self?.actions?.onSizePreset?(preset) }
 
-        for v in [kindGlyph, chip, markers, title, badge, path, serverChip, sizeSwitch] as [NSView] {
+        for v in [kindGlyph, chip, markers, title, badge, path, serverChip, sizeSwitch, speaker] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = true
             addSubview(v)
         }
@@ -1269,6 +1291,7 @@ final class LaneHeaderView: NSView {
         var next = LaneHeaderModel(lane: lane, telemetry: telemetry, serverState: serverState)
         next.copied = copiedTimer != nil
         next.copyMode = copyMode
+        next.audio = audio
         guard next != model else { return }
         // The chip and the badge change meaning in place; ease it rather than
         // cut. Not on an age tick, which changes the text and nothing else.
@@ -1277,6 +1300,8 @@ final class LaneHeaderView: NSView {
             Motion.fade(layer)
         }
         model = next
+        // Fades by itself, and the title sliding over for it is laid out below.
+        speaker.mark = model.audio
         serverChip.server = model.server
         serverChip.offline = model.serverOff != nil
 
@@ -1516,6 +1541,21 @@ final class LaneHeaderView: NSView {
             chip.frame = NSRect(x: chipX, y: mid - 7, width: 0, height: 14)
         }
 
+        // The speaker, between the state and the title: only while the lane
+        // is audible or muted, and the title gets the room back when not. On
+        // a gallery tile it is drawn larger in lane points, as the server's
+        // square is, so it lands on screen at about the size it has on the
+        // strip and stays something a pointer can hit.
+        if model.audio != .silent {
+            let scale = min(1, max(thumbnailScale ?? 1, 0.05))
+            let side = min(bounds.height - 4, (SpeakerMark.minimumHit / scale).rounded())
+            speaker.points = min(side - 2, (12 / scale).rounded())
+            speaker.frame = NSRect(x: x + 1, y: ((bounds.height - side) / 2).rounded(), width: side, height: side)
+            x += side + 3
+        } else {
+            speaker.frame = NSRect(x: x, y: mid - 9, width: 0, height: 18)
+        }
+
         let available = max(0, rightEdge - x)
 
         let titleWanted = width(of: model.title, font: Self.font)
@@ -1662,6 +1702,18 @@ final class LaneHeaderView: NSView {
             enabled: blocking != nil && actions?.onToggleBlocking != nil,
             state: blocking == true ? .on : .off)
 
+        // Sound. Greyed out on a terminal lane, as Mobile Layout is: a
+        // terminal has no page to silence. Mute All is offered everywhere,
+        // because the noise may not be from this lane at all.
+        menu.addItem(.separator())
+        add(to: menu, model.audio == .muted ? "Unmute Pane" : Command.toggleMute.title,
+            command: .toggleMute, action: #selector(menuToggleMute),
+            enabled: mobile != nil && actions?.onToggleMute != nil)
+        add(to: menu, Command.muteOthers.title,
+            command: .muteOthers, action: #selector(menuMuteOthers), enabled: actions?.onMuteOthers != nil)
+        add(to: menu, Command.muteAll.title,
+            command: .muteAll, action: #selector(menuMuteAll), enabled: actions?.onMuteAll != nil)
+
         menu.addItem(.separator())
         // Checkmarks rather than three verbs. Docking is a toggle on the keys,
         // and a menu that said "Dock Left" then "Undock" would make the state
@@ -1729,6 +1781,9 @@ final class LaneHeaderView: NSView {
     }
     @objc private func menuToggleMobileLayout() { actions?.onToggleMobileLayout?() }
     @objc private func menuToggleBlocking() { actions?.onToggleBlocking?() }
+    @objc private func menuToggleMute() { actions?.onToggleMute?() }
+    @objc private func menuMuteOthers() { actions?.onMuteOthers?() }
+    @objc private func menuMuteAll() { actions?.onMuteAll?() }
     @objc private func menuDockLeft() { actions?.onDockLeft?() }
     @objc private func menuDockRight() { actions?.onDockRight?() }
     @objc private func menuToggleDockMode() { actions?.onToggleDockMode?() }

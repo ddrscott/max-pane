@@ -258,6 +258,7 @@ final class MediaFixture {
                 "/blank": "<!doctype html><title>blank</title>",
                 "/autoplay": Self.autoplay, "/fallback": Self.fallback,
                 "/handler": Self.handler, "/controls": Self.controls, "/mobile": Self.mobile,
+                "/opener": Self.opener, "/late": Self.late,
             ],
             files: ["/tiny.mp4": (type: "video/mp4", data: Self.video)])
         dir = FileManager.default.temporaryDirectory.appendingPathComponent("maxpane-media-\(UUID().uuidString)")
@@ -282,6 +283,7 @@ final class MediaFixture {
         window.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 600))
         controller.view.frame = NSRect(x: 0, y: 0, width: 600, height: 600)
         window.contentView?.addSubview(controller.view)
+        controller.popupParent = { [weak window] in window }
     }
 
     /// Load a page without evaluating anything in it. What it reports from
@@ -381,6 +383,25 @@ final class MediaFixture {
         """
     static let controls = head + """
         <script>v.controls = true;</script>
+        """
+    /// A page that opens a popup holding the video: a sign-in window with a
+    /// welcome jingle, reduced. For "a popup's audio belongs to its opener".
+    static let opener = """
+        <!doctype html><title>opener</title>
+        <script>function openPopup() { return window.open('/handler', 'p', 'width=420,height=320') ? 1 : 0; }</script>
+        """
+    /// A page with no media until it is asked: `addLater()` builds a second
+    /// video after the fact, the way a feed does.
+    static let late = """
+        <!doctype html><title>late</title><div id="host"></div>
+        <script>
+        function addLater() {
+          const v = document.createElement('video');
+          v.id = 'v2'; v.src = '/tiny.mp4'; v.loop = true; v.playsInline = true;
+          document.getElementById('host').appendChild(v);
+          return v.play().then(() => 1, () => 0);
+        }
+        </script>
         """
     /// m.youtube.com's player, reduced: it mutes itself before it starts, its
     /// Play (over the video) only plays, a click on the video unmutes, and it

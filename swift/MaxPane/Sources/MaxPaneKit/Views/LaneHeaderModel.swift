@@ -71,6 +71,10 @@ struct LaneHeaderModel: Equatable {
         if showsCopied { return ("COPIED", "C") }
         return nil
     }
+    /// The lane's sound: the speaker beside the title while any of its pages
+    /// is audible, the muted one while any is muted. The strip's doing, like
+    /// `copied`: what is playing is in no snapshot (`PaneAudioCenter`).
+    var audio: AudioMark = .silent
     /// The long form, for the hover tip — the header is the only place the full
     /// path exists, so truncating it must not destroy it.
     var tooltip: String = ""

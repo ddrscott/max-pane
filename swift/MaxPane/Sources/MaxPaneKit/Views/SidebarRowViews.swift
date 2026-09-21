@@ -81,6 +81,22 @@ final class SidebarEntryView: NSTableCellView {
     /// Nil on a local row, which is then laid out exactly as it was before
     /// servers existed.
     private var serverMark: ServerMark?
+    /// The speaker, in the status square's slot while the row's lane is
+    /// audible or muted: the owner's design (ADR-0035). Click mutes without
+    /// selecting the row; right-click is the volume slider, not the row's menu.
+    let speaker = SpeakerMark(points: 12)
+    /// Set by the sidebar, which knows the lane.
+    var onToggleMute: (() -> Void)? {
+        get { speaker.onToggle }
+        set { speaker.onToggle = newValue }
+    }
+    var onVolume: ((SpeakerMark) -> Void)? {
+        get { speaker.onVolume }
+        set { speaker.onVolume = newValue }
+    }
+    /// Whether the leading square is drawn, for tests: it is, exactly while
+    /// the speaker is not.
+    var showsStatusSquare: Bool { !status.isHidden }
 
     /// The row never names its server; the section above it does. For tests.
     var serverChipText: String? { nil }
@@ -118,6 +134,11 @@ final class SidebarEntryView: NSTableCellView {
             status.layer?.borderWidth = 1
             status.layerBorderColor = tint
         }
+
+        // Sound takes the square's place, in the square's slot, so the row's
+        // grid does not move; silent, the square is back.
+        speaker.mark = entry.audio
+        status.isHidden = entry.audio != .silent
 
         // Kind first, then state: a terminal, a page, or a session that is not
         // on the strip yet. The icon takes the state's colour along with the
@@ -181,7 +202,7 @@ final class SidebarEntryView: NSTableCellView {
             v.lineBreakMode = .byTruncatingTail
             v.cell?.truncatesLastVisibleLine = true
         }
-        for v: NSView in [status, markerIcon, glyph, title, badge, age, chip] {
+        for v: NSView in [status, markerIcon, glyph, title, badge, age, chip, speaker] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -202,6 +223,13 @@ final class SidebarEntryView: NSTableCellView {
             status.heightAnchor.constraint(equalToConstant: 7),
             status.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
             status.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+
+            // Centred on the square it replaces, and padded to a target a
+            // pointer can find: the glyph is 12 pt, the box 18.
+            speaker.centerXAnchor.constraint(equalTo: status.centerXAnchor),
+            speaker.centerYAnchor.constraint(equalTo: status.centerYAnchor),
+            speaker.widthAnchor.constraint(equalToConstant: SpeakerMark.minimumHit),
+            speaker.heightAnchor.constraint(equalToConstant: SpeakerMark.minimumHit),
 
             markerIcon.leadingAnchor.constraint(equalTo: status.trailingAnchor, constant: 5),
             markerIcon.widthAnchor.constraint(equalToConstant: 12),
@@ -346,6 +374,9 @@ final class SidebarGroupView: NSTableCellView {
     static let triangleReach: CGFloat = 24
     /// `2 BLOCKED` beside `3 LANES HIDDEN`: what a header that is keeping
     /// lanes off the strip has to say as well. Breathes, as any BLOCKED does.
+    /// A folded header's speaker: something it is hiding is making sound.
+    /// Click mutes all of it. No slider: that is one pane's business.
+    let speaker = SpeakerMark(points: 11)
     private let blockedCount = PulseLabel(labelWithString: "")
     var blockedText: String { blockedCount.isHidden ? "" : blockedCount.stringValue }
     var countText: String { count.stringValue }
@@ -415,10 +446,13 @@ final class SidebarGroupView: NSTableCellView {
         }
         // Set after `usesSingleLineMode`, which would otherwise reset it.
         label.lineBreakMode = .byTruncatingHead
-        for v: NSView in [triangle, label, count, blockedCount, rule] {
+        for v: NSView in [triangle, label, count, blockedCount, rule, speaker] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
+        speaker.mark = group.audibleLanes.isEmpty ? .silent : .audible
+        speaker.toolTip = group.audibleLanes.isEmpty ? nil
+            : "Mute the \(group.audibleLanes.count == 1 ? "lane" : "\(group.audibleLanes.count) lanes") making sound under this header"
 
         NSLayoutConstraint.activate([
             rule.topAnchor.constraint(equalTo: topAnchor),
@@ -435,6 +469,12 @@ final class SidebarGroupView: NSTableCellView {
             label.leadingAnchor.constraint(equalTo: triangle.trailingAnchor, constant: 6),
             label.centerYAnchor.constraint(equalTo: triangle.centerYAnchor),
 
+            speaker.trailingAnchor.constraint(
+                equalTo: (group.blockedText == nil ? count : blockedCount).leadingAnchor, constant: -4),
+            speaker.centerYAnchor.constraint(equalTo: triangle.centerYAnchor),
+            speaker.widthAnchor.constraint(equalToConstant: SpeakerMark.minimumHit),
+            speaker.heightAnchor.constraint(equalToConstant: SpeakerMark.minimumHit),
+
             blockedCount.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 6),
             blockedCount.trailingAnchor.constraint(equalTo: count.leadingAnchor, constant: -8),
             blockedCount.centerYAnchor.constraint(equalTo: triangle.centerYAnchor),
@@ -442,6 +482,10 @@ final class SidebarGroupView: NSTableCellView {
             count.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -9),
             count.centerYAnchor.constraint(equalTo: triangle.centerYAnchor),
         ])
+        // Only while it is there: a silent header's path keeps every point.
+        if !group.audibleLanes.isEmpty {
+            label.trailingAnchor.constraint(lessThanOrEqualTo: speaker.leadingAnchor, constant: -2).isActive = true
+        }
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         count.setContentCompressionResistancePriority(.required, for: .horizontal)
         blockedCount.setContentCompressionResistancePriority(.required, for: .horizontal)

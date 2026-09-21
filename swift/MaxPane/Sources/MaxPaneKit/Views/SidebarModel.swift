@@ -101,6 +101,12 @@ enum SidebarModel {
         /// Sort keys, resolved up front so the comparator stays total.
         var createdAt: Double
         var activityAt: Double
+        /// A web row's sound. Anything but `.silent` takes the leading
+        /// square's place with the speaker (the owner's design, ADR-0035). A
+        /// session's row never carries it: its square is agent state, and
+        /// that is not to be covered; a page split under a terminal is
+        /// reached from the lane header and the pane's own chrome.
+        var audio: AudioMark = .silent
 
         var needsAttention: Bool { state == .blocked }
     }
@@ -128,6 +134,11 @@ enum SidebarModel {
         /// when every lane under it is held on screen by something else: a
         /// dock, or a pane from a group that is still open.
         var hiddenLanes = 0
+        /// The lanes this folded header is hiding that are making sound, by
+        /// id. Anything here puts a speaker on the header, and a click on it
+        /// mutes them: a sound from a lane that is not on the strip has
+        /// nowhere else to be found.
+        var audibleLanes: [String] = []
 
         /// A section header — a server's, or `// LOCAL` — rather than a
         /// project group: it heads a block and has no rows of its own.
@@ -301,6 +312,7 @@ enum SidebarModel {
         servers: [String: ServerState] = [:],
         serverErrors: [String: String] = [:],
         hiddenLanes: Set<String> = [],
+        audio: [String: AudioMark] = [:],
         now: Date = Date()
     ) -> [Row] {
         // The *pane* as well as the lane: a click on a row has to be able to
@@ -391,6 +403,7 @@ enum SidebarModel {
                 createdAt: Double(lane.createdAt) / 1000,
                 activityAt: Double(lane.lastFocusAt) / 1000)
             entry.offline = offline
+            if kind != .session { entry.audio = audio[lane.id] ?? .silent }
             grouped[group(for: lane), default: []].append(entry)
         }
 
@@ -436,6 +449,11 @@ enum SidebarModel {
             guard !hiddenLanes.isEmpty else { return 0 }
             return Set(entries.compactMap(\.laneId)).intersection(hiddenLanes).count
         }
+        func sounding(_ entries: [Entry]) -> [String] {
+            guard !hiddenLanes.isEmpty, !audio.isEmpty else { return [] }
+            return Set(entries.compactMap(\.laneId)).intersection(hiddenLanes)
+                .filter { audio[$0] == .audible }.sorted()
+        }
         func emit(_ path: String) {
             let kept = grouped[path]!.filter { matches($0, controls) }
             guard !kept.isEmpty else { return }
@@ -448,7 +466,8 @@ enum SidebarModel {
                 collapsed: collapsed,
                 countOverride: nil,
                 serverState: LaneHeaderPath.splitServer(path).flatMap { servers[$0.server] },
-                hiddenLanes: collapsed ? hiding(grouped[path]!) : 0)))
+                hiddenLanes: collapsed ? hiding(grouped[path]!) : 0,
+                audibleLanes: collapsed ? sounding(grouped[path]!) : [])))
             guard !collapsed else { return }
             out.append(contentsOf: sorted(kept, controls).map(Row.entry))
         }
@@ -468,7 +487,9 @@ enum SidebarModel {
                 countOverride: nil,
                 serverState: nil,
                 hiddenLanes: localFolded
-                    ? hiding(local.filter { $0 != looseWebGroup }.flatMap { grouped[$0]! }) : 0)))
+                    ? hiding(local.filter { $0 != looseWebGroup }.flatMap { grouped[$0]! }) : 0,
+                audibleLanes: localFolded
+                    ? sounding(local.filter { $0 != looseWebGroup }.flatMap { grouped[$0]! }) : [])))
         }
         // A folded section folds every project under it. The loose web group
         // is under no section — `// LOCAL` never counted it — and stays.
@@ -486,7 +507,8 @@ enum SidebarModel {
                 countOverride: nil,
                 serverState: servers[server],
                 serverError: serverErrors[server],
-                hiddenLanes: folded ? hiding(paths.flatMap { grouped[$0]! }) : 0)))
+                hiddenLanes: folded ? hiding(paths.flatMap { grouped[$0]! }) : 0,
+                audibleLanes: folded ? sounding(paths.flatMap { grouped[$0]! }) : [])))
             guard !folded else { continue }
             for path in paths { emit(path) }
         }
@@ -729,7 +751,13 @@ enum SidebarModel {
         for case .entry(let e) in new {
             guard let was = before[e.id] else { continue }
             if was.state != e.state || was.chip != e.chip || was.offline != e.offline
-                || was.badgeIsThroughput != e.badgeIsThroughput { return true }
+                || was.badgeIsThroughput != e.badgeIsThroughput || was.audio != e.audio { return true }
+        }
+        // A folded header's speaker arriving or leaving.
+        var sounding: [String: Bool] = [:]
+        for case .group(let g) in old { sounding[g.path] = !g.audibleLanes.isEmpty }
+        for case .group(let g) in new {
+            if let was = sounding[g.path], was != !g.audibleLanes.isEmpty { return true }
         }
         // A server going quiet or coming back is a change of state too.
         var chips: [String: String?] = [:]

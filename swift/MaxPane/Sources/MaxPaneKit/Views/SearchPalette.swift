@@ -643,9 +643,14 @@ final class PaletteSearchRow: NSTableCellView {
     var serverChipColour: ServerColour? { serverChip?.colour }
     var serverChipIsOffline: Bool { serverChip?.offline ?? false }
 
+    /// The speaker after the title, on a lane that is audible or muted: "which
+    /// one is it" answered in the list you opened to go there. For tests.
+    private(set) var audio: AudioMark = .silent
+
     init(hit: SearchHit, laneTitle: String, path: String, telemetry: SessionTelemetry?, isFocused: Bool,
-         isPrivate: Bool = false) {
+         isPrivate: Bool = false, audio: AudioMark = .silent) {
         super.init(frame: .zero)
+        self.audio = audio
 
         let glyph = PaletteStyle.label(
             Self.glyph(hit.field), Theme.mono(12, weight: .medium), Theme.accent)
@@ -695,6 +700,22 @@ final class PaletteSearchRow: NSTableCellView {
         where_.lineBreakMode = .byTruncatingHead
 
         for v in [glyph, focus, title, chip, state, age, field, excerpt, where_] { addSubview(v) }
+        if let icon = audio.icon {
+            // Grey, as everywhere: a readout here, not a button. The row is
+            // the target, and ↩ goes to the lane.
+            let speaker = NSImageView()
+            speaker.image = IconImage.make(icon, points: 13, colour: Theme.dimText)
+            speaker.translatesAutoresizingMaskIntoConstraints = false
+            speaker.toolTip = audio == .muted ? "muted" : "making sound"
+            addSubview(speaker)
+            NSLayoutConstraint.activate([
+                speaker.leadingAnchor.constraint(equalTo: title.trailingAnchor, constant: 8),
+                speaker.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+                speaker.widthAnchor.constraint(equalToConstant: 13),
+                speaker.heightAnchor.constraint(equalToConstant: 13),
+                chip.leadingAnchor.constraint(greaterThanOrEqualTo: speaker.trailingAnchor, constant: 10),
+            ])
+        }
         if let serverChip {
             addSubview(serverChip)
             NSLayoutConstraint.activate([
@@ -814,6 +835,13 @@ final class SearchPaletteController: PaletteController {
         } else {
             var seen = Set<String>()
             hits = store.search(query).filter { seen.insert("\($0.laneId)\u{1}\($0.text)").inserted }
+            // `audio` or `sound`: the lanes that are making some, first.
+            if Self.asksForSound(query) {
+                let sounding = Self.soundHits(
+                    lanes: store.allLanes, focusedPaneId: store.state.focusedPaneId, mark: store.audio.mark(of:))
+                let listed = Set(sounding.map(\.laneId))
+                hits = sounding + hits.filter { !listed.contains($0.laneId) }
+            }
         }
         super.reload()
         if query.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -846,6 +874,20 @@ final class SearchPaletteController: PaletteController {
                     .compactMap { $0 }.first { !$0.isEmpty } ?? "untitled"
                 return SearchHit(laneId: lane.id, paneId: pane.id, text: text, field: .title, score: 0)
             }
+    }
+
+    /// `audio` or `sound`, typed whole: "which lane is making that noise".
+    static func asksForSound(_ query: String) -> Bool {
+        ["audio", "sound"].contains(query.trimmingCharacters(in: .whitespaces).lowercased())
+    }
+
+    /// The lanes with a speaker on them: audible first, then muted, each most
+    /// recent first. A page that merely has "sound" in its title still
+    /// follows, from the ordinary search.
+    static func soundHits(lanes: [Lane], focusedPaneId: String?, mark: (Lane) -> AudioMark) -> [SearchHit] {
+        let byLane = Dictionary(uniqueKeysWithValues: lanes.map { ($0.id, mark($0)) })
+        let recent = recentHits(lanes: lanes.filter { byLane[$0.id] != .silent }, focusedPaneId: focusedPaneId)
+        return recent.filter { byLane[$0.laneId] == .audible } + recent.filter { byLane[$0.laneId] == .muted }
     }
 
     /// Which recent row ↩ should mean.
@@ -893,7 +935,8 @@ final class SearchPaletteController: PaletteController {
             path: path,
             telemetry: telemetry,
             isFocused: store.state.focusedPaneId == hit.paneId,
-            isPrivate: lane?.isPrivate == true)
+            isPrivate: lane?.isPrivate == true,
+            audio: lane.map(store.audio.mark(of:)) ?? .silent)
     }
 
     override func deliver(selected: Int) {

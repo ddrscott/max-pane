@@ -25,7 +25,7 @@ struct LanePaneLayoutTests {
              keepLive: false, dock: dock, span: 1,
              panes: [Pane(id: "P", laneId: "L", position: 0, kind: .web, relaySessionId: nil, relayServer: nil,
                           url: "https://e.com", scrollY: 0, dataStoreId: nil,
-                          snapshotPath: nil, state: .live, heightWeight: 1, zoom: 1, mobile: false)])
+                          snapshotPath: nil, state: .live, heightWeight: 1, zoom: 1, mobile: false, muted: false, volume: 100)])
     }
 
     /// A stand-in for `WebPaneContainer`: a host with a full-width row of text

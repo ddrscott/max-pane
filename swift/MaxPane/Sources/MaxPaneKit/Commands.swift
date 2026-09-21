@@ -70,6 +70,9 @@ public enum Command: String, CaseIterable, Sendable {
     case toggleMaximizePane
     case toggleMobileLayout
     case toggleBlocking
+    case toggleMute
+    case muteOthers
+    case muteAll
     case printPage
     case savePDF
     case showHelp
@@ -141,6 +144,9 @@ public enum Command: String, CaseIterable, Sendable {
         case .toggleMaximizePane: return "Maximize Pane"
         case .toggleMobileLayout: return "Mobile Layout"
         case .toggleBlocking: return "Block Ads on This Site"
+        case .toggleMute: return "Mute Pane"
+        case .muteOthers: return "Mute Other Panes"
+        case .muteAll: return "Mute All"
         case .printPage: return "Print…"
         case .savePDF: return "Save as PDF…"
         case .showHelp: return "Keyboard Shortcuts"
@@ -360,6 +366,15 @@ public enum Command: String, CaseIterable, Sendable {
         // No key either, for the same reason: it is flipped once for the one
         // site whose page a rule breaks, and then left. `keys` binds it.
         case .toggleBlocking: return nil
+        // ⌃⌘M. ⌘M is Minimize and ⌥⌘M is Minimize All, which are the
+        // system's; ⌃⌘M is nobody's, here or there, and keeps the letter.
+        // Claimed from a page like every ⌘ chord: the one key that silences
+        // a page has to work while the page has the keyboard.
+        case .toggleMute:      return ("m", [.command, .control])
+        // No keys. Both are for the moment a sound starts somewhere you are
+        // not looking, which is the status bar's speaker, one click; `keys`
+        // binds them for anyone who wants that on a chord.
+        case .muteOthers, .muteAll: return nil
         // ⌃⌘P, not ⌘P: ⌘P is the palette here, the key the owner presses
         // more than any other, and the keymap refuses two commands on one
         // chord. ⇧⌘P and ⌥⌘P were taken long before printing was. The
@@ -404,6 +419,7 @@ public enum Command: String, CaseIterable, Sendable {
         switch self {
         case .toggleMaximizePane: return "Restore Pane"
         case .copyMode: return "Leave Copy Mode"
+        case .toggleMute: return "Unmute Pane"
         default: return nil
         }
     }
@@ -564,6 +580,9 @@ public enum Command: String, CaseIterable, Sendable {
         // Under Navigate with Keep This Page and Fill Password: a thing you do
         // to the site in front of you, not to the lane's shape.
         case .toggleBlocking: return .navigate
+        // View, with Mobile Layout and the zooms: how a pane is presented to
+        // you, and nothing about where it is or what it has loaded.
+        case .toggleMute, .muteOthers, .muteAll: return .view
         // In the app menu, under About, where a Mac user reaches for it.
         case .showSettings: return .app
         }

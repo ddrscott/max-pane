@@ -153,6 +153,8 @@ final class WebPopupDialog: Popup {
 
     /// Everything a popup's web view needs to be this dialog's.
     private func wire(_ view: ChromeWebView) {
+        // Its sound is the opener pane's: muted with it, and shown on it.
+        pane?.adoptAudio(of: view)
         // The lane's ground rather than WebKit's white, for the same reason a
         // pane does it (`WebPaneController.wire`): a sign-in window arriving as
         // a white flash over a dark strip is the least welcome flash there is.
@@ -297,6 +299,7 @@ final class WebPopupDialog: Popup {
     /// A web view this dialog no longer shows. Released with the dialog, which
     /// is when WebKit closes the page and the opener's handle reads `closed`.
     private func retire(_ view: WKWebView) {
+        pane?.dropAudio(of: view)
         view.stopLoading()
         view.navigationDelegate = nil
         view.uiDelegate = nil

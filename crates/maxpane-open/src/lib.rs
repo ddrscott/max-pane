@@ -125,7 +125,13 @@ commands:
   open URL              open URL as a web lane, right of the calling terminal
   run [COMMAND...]      new terminal lane running COMMAND (default: your shell)
   run @NAME [COMMAND...] the same, on a remote server (maxpane server ls)
-  ls                    list what is on the strip
+  ls                    list what is on the strip; a web pane making sound
+                        reads web[audible], a muted one web[muted]
+  mute [LANE|all]       silence a lane's pages without pausing them. LANE is
+                        the number `ls` prints, or left / right for a dock.
+                        With none, or all: whatever is making sound
+  unmute [LANE|all]     the reverse. With none, or all: whatever is muted
+  volume LANE 0-100     how loud a lane's pages are; 0 is mute
   sessions              list every session, here and on each server
   attach [NAME:]ID      put a running session on the strip as a lane
   server add NAME URL   add a remote relay-tty server: NAME is what the lane
@@ -179,6 +185,15 @@ pub fn run() {
         Some("run") => run_command(&args[1..], &profile),
         Some("ls") => list_command(&profile),
         Some("sessions") => sessions_command(&profile),
+        Some("mute") => sound_command(mute_payload(true, args.get(1).map(String::as_str)), &profile),
+        Some("unmute") => sound_command(mute_payload(false, args.get(1).map(String::as_str)), &profile),
+        Some("volume") => match volume_payload(&args[1..]) {
+            Ok(payload) => sound_command(payload, &profile),
+            Err(why) => {
+                eprintln!("maxpane: {why}");
+                std::process::exit(2)
+            }
+        },
         Some("attach") => attach_command(&args[1..], &profile),
         Some("server") => server_command(&args[1..], &profile),
         Some(other) => {
@@ -357,6 +372,45 @@ fn attach_command(args: &[String], profile: &str) {
         Err(reason) => {
             eprintln!("maxpane: {reason}");
             std::process::exit(1);
+        }
+    }
+}
+
+// ---- sound -----------------------------------------------------------------
+
+/// The request for `maxpane mute [LANE|all]` and `maxpane unmute [LANE|all]`.
+/// No lane is `all`: the app decides what that means (what is audible, or
+/// what is muted), because only it knows.
+fn mute_payload(muted: bool, lane: Option<&str>) -> String {
+    format!(
+        "{{\"op\":\"{}\",\"lane\":{}}}",
+        if muted { "mute" } else { "unmute" },
+        json_string(lane.unwrap_or("all"))
+    )
+}
+
+/// The request for `maxpane volume LANE 0-100`. The range is checked here so
+/// a typo is an answer at the prompt and not a refused request.
+fn volume_payload(args: &[String]) -> Result<String, String> {
+    let (lane, level) = match args {
+        [lane, level] => (lane, level),
+        _ => return Err("volume needs LANE and a level, 0 to 100".into()),
+    };
+    let percent: u32 = level
+        .trim_end_matches('%')
+        .parse()
+        .ok()
+        .filter(|p| *p <= 100)
+        .ok_or_else(|| format!("volume is 0 to 100, not {level}"))?;
+    Ok(format!("{{\"op\":\"volume\",\"lane\":{},\"percent\":{percent}}}", json_string(lane)))
+}
+
+fn sound_command(payload: String, profile: &str) {
+    match request(&payload, profile) {
+        Ok(reply) => print!("{}", field(&reply, "lanes").unwrap_or_default()),
+        Err(reason) => {
+            eprintln!("maxpane: {reason}");
+            std::process::exit(1)
         }
     }
 }
@@ -598,6 +652,20 @@ mod tests {
     fn something_that_is_not_a_url_becomes_a_search() {
         assert!(normalize_url("rust lifetime elision").starts_with("https://duckduckgo.com/?q="));
         assert!(normalize_url("htop").starts_with("https://duckduckgo.com/?q="));
+    }
+
+    #[test]
+    fn mute_and_volume_say_which_lane_and_how_loud() {
+        assert_eq!(mute_payload(true, Some("3")), r#"{"op":"mute","lane":"3"}"#);
+        assert_eq!(mute_payload(true, None), r#"{"op":"mute","lane":"all"}"#, "no lane is everything audible");
+        assert_eq!(mute_payload(false, Some("left")), r#"{"op":"unmute","lane":"left"}"#);
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(volume_payload(&args(&["2", "40"])).unwrap(), r#"{"op":"volume","lane":"2","percent":40}"#);
+        assert_eq!(volume_payload(&args(&["2", "40%"])).unwrap(), r#"{"op":"volume","lane":"2","percent":40}"#);
+        assert_eq!(volume_payload(&args(&["2", "0"])).unwrap(), r#"{"op":"volume","lane":"2","percent":0}"#);
+        assert!(volume_payload(&args(&["2", "101"])).is_err());
+        assert!(volume_payload(&args(&["2", "loud"])).is_err());
+        assert!(volume_payload(&args(&["2"])).is_err(), "a level with no lane is not a request");
     }
 
     #[test]

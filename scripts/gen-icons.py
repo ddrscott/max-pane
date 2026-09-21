@@ -37,6 +37,8 @@ WANTED = [
     "lock",
     # the strip toolbar's layout switch: lanes | gallery
     "columns-3", "layout-grid",
+    # sound: a pane that is audible, and one that is muted
+    "volume-2", "volume-x",
 ]
 
 # Lucide draws everything as an outline. A filled variant is emitted for the

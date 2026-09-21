@@ -116,6 +116,12 @@ final class WebPaneController: NSObject, PaneController {
     /// (`WebPaneGeolocation.swift`).
     var geolocationAsks: [String: [(request: WebGeolocationCenter.Request, maximumAge: Double?)]] = [:]
     private var keyWindowObserver: (any NSObjectProtocol)?
+    /// One per web view whose sound is this pane's: its own page, and the
+    /// page of any popup it opened. See `adoptAudio`.
+    private var audioWatches: [ObjectIdentifier: WebAudioWatch] = [:]
+    private var audibleViews: Set<ObjectIdentifier> = []
+    private var audioViews: [ObjectIdentifier: WKWebView] = [:]
+    private var audioToken: UUID?
 
     /// True while an element of this pane's page fills the pane. See
     /// `setPaneFullscreen`.
@@ -183,6 +189,11 @@ final class WebPaneController: NSObject, PaneController {
         zoom = pane.zoom
         chrome.setZoom(zoom)
         mobile = pane.mobile
+        // The mute and the volume, before any page exists to make a sound:
+        // `adoptAudio` reads them as each web view is built. The chrome's
+        // speaker follows every change, wherever it was made.
+        store.audio.attach(paneId) { [weak self] state in self?.applyAudio(state) }
+        audioToken = store.audio.observe { [weak self] in self?.refreshSpeaker() }
 
         // A pane that is already evicted comes back as a placeholder, not as a
         // web view that immediately gets torn down again.
@@ -284,6 +295,15 @@ final class WebPaneController: NSObject, PaneController {
         chrome.onKeyMenu = { [weak self] in self?.passwordMenu() }
         chrome.onZoomReset = { [weak self] in self?.setZoom(1) }
         chrome.onBlockingChip = { [weak self] in self?.toggleBlocking() }
+        chrome.onToggleMute = { [weak self] in
+            guard let self else { return }
+            self.store.audio.toggleMute(pane: self.paneId)
+        }
+        chrome.onVolume = { [weak self] anchor in
+            guard let self else { return }
+            VolumePopup.show(
+                pane: self.paneId, title: self.chrome.addressForDisplay, center: self.store.audio, from: anchor)
+        }
         chrome.onNavigate = { [weak self] typed in self?.navigate(typed) }
         chrome.onBackMenu = { [weak self] in self?.historyMenu(back: true) }
         chrome.onForwardMenu = { [weak self] in self?.historyMenu(back: false) }
@@ -865,6 +885,55 @@ final class WebPaneController: NSObject, PaneController {
         pinchSettle = nil
     }
 
+    // MARK: - sound
+
+    /// This web view's sound is this pane's: muted and turned down as the
+    /// pane is, and watched. The pane's own page, and a popup's — a popup's
+    /// audio belongs to the pane that opened it, which is the only place a
+    /// person could find it (`WebPopupDialog.wire`).
+    func adoptAudio(of webView: WKWebView) {
+        let id = ObjectIdentifier(webView)
+        guard audioWatches[id] == nil else { return }
+        audioViews[id] = webView
+        apply(store.audio.state(of: paneId), to: webView)
+        audioWatches[id] = WebAudioWatch(webView) { [weak self] playing in
+            self?.audioChanged(id, playing: playing)
+        }
+    }
+
+    func dropAudio(of webView: WKWebView) {
+        let id = ObjectIdentifier(webView)
+        audioWatches.removeValue(forKey: id)?.stop()
+        audioViews[id] = nil
+        audioChanged(id, playing: false)
+    }
+
+    private func dropAllAudio() {
+        for watch in audioWatches.values { watch.stop() }
+        audioWatches = [:]
+        audioViews = [:]
+        audibleViews = []
+        store.audio.report(paneId, playing: false)
+    }
+
+    private func audioChanged(_ id: ObjectIdentifier, playing: Bool) {
+        if playing { audibleViews.insert(id) } else { audibleViews.remove(id) }
+        store.audio.report(paneId, playing: !audibleViews.isEmpty)
+    }
+
+    /// The mute or the volume changed, from wherever.
+    private func applyAudio(_ state: PaneAudio) {
+        for view in audioViews.values { apply(state, to: view) }
+        refreshSpeaker()
+    }
+
+    private func apply(_ state: PaneAudio, to webView: WKWebView) {
+        WebPaneAudio.setMuted(state.muted, on: webView)
+        WebPaneAudio.setVolume(Double(state.volume) / 100, on: webView)
+    }
+
+    private func refreshSpeaker() { chrome.setAudio(store.audio.mark(of: paneId)) }
+
     // MARK: - mobile layout
 
     /// Whether this page is asked for as a phone would ask for it.
@@ -1118,6 +1187,10 @@ final class WebPaneController: NSObject, PaneController {
         // A popup belongs to the page that opened it, and that page is going
         // away. There is nothing to give the keyboard back to.
         popupDialog?.dismiss(returningFocus: false)
+        dropAllAudio()
+        store.audio.detach(paneId)
+        audioToken.map(store.audio.stopObserving)
+        audioToken = nil
         scrollObservation?.invalidate()
         scrollObservation = nil
         titleObservation?.invalidate()
@@ -1194,6 +1267,9 @@ final class WebPaneController: NSObject, PaneController {
         // this lane is waiting; reclaiming it from underneath that is the one
         // case where the memory policy and the user disagree.
         guard !isAsking else { return }
+        // Nor is a page you are listening to: music in a lane scrolled away
+        // is the ordinary case, and reclaiming it would stop the song.
+        guard !store.audio.state(of: paneId).isAudible else { return }
         // A video playing in a PiP window is not idle memory either: the window
         // is the page's, and destroying the web view closes it (measured, in
         // `WebPictureInPictureTests`). The plan is recomputed on every scroll
@@ -1457,6 +1533,9 @@ final class WebPaneController: NSObject, PaneController {
         // Before the first request, which is the one a site decides the layout
         // on. Nil is the desktop string `buildWebView` configured; see `mobile`.
         webView.customUserAgent = mobile ? BrowserUserAgent.mobile : nil
+        // Muted before the first request, so a lane muted yesterday, or
+        // evicted muted, never gets a sound out first.
+        adoptAudio(of: webView)
         // Weak, and that matters: `WKUserContentController` holds its message
         // handlers for the life of the configuration, which this pane owns.
         let relay = ScriptMessageRelay { [weak self] body in
@@ -1545,6 +1624,8 @@ final class WebPaneController: NSObject, PaneController {
         // Its popup's `window.opener` is about to be nothing, and a sign-in
         // that cannot report back is not worth leaving on screen.
         popupDialog?.dismiss(returningFocus: false)
+        // The page is going, and its sound with it; the mute stays the pane's.
+        dropAllAudio()
         scrollObservation?.invalidate()
         scrollObservation = nil
         titleObservation?.invalidate()

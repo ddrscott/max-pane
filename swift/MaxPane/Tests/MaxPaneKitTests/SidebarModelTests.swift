@@ -32,7 +32,7 @@ struct SidebarModelTests {
             panes: [Pane(
                 id: "p-" + id, laneId: id, position: 0, kind: kind,
                 relaySessionId: session, relayServer: nil, url: url, scrollY: nil,
-                dataStoreId: nil, snapshotPath: nil, state: state, heightWeight: 1, zoom: 1, mobile: false)])
+                dataStoreId: nil, snapshotPath: nil, state: state, heightWeight: 1, zoom: 1, mobile: false, muted: false, volume: 100)])
     }
 
     private func entries(_ rows: [SidebarModel.Row]) -> [SidebarModel.Entry] {
@@ -345,7 +345,7 @@ struct SidebarModelTests {
                 Pane(
                     id: "\(id)-p\(position)", laneId: id, position: UInt32(position), kind: .pty,
                     relaySessionId: session, relayServer: nil, url: nil, scrollY: nil,
-                    dataStoreId: nil, snapshotPath: nil, state: .live, heightWeight: 1, zoom: 1, mobile: false)
+                    dataStoreId: nil, snapshotPath: nil, state: .live, heightWeight: 1, zoom: 1, mobile: false, muted: false, volume: 100)
             })
     }
 

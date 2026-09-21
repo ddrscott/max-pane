@@ -72,6 +72,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     /// Our subscription to `WebAskCenter`, so the bright count appears the
     /// instant a page asks rather than on the next status tick.
     private var askToken: UUID?
+    private var audioToken: UUID?
     /// The strip's distance from the top of its half of the split. Non-zero
     /// only when the sidebar is collapsed and the window is not fullscreen —
     /// the one arrangement where the traffic lights land on a lane header.
@@ -383,6 +384,10 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         // has stopped dead looks broken for — the whole reason this signal
         // exists is that the lane asking may be nowhere on screen.
         askToken = WebAskCenter.shared.observe { [weak self] in self?.refreshStatus() }
+        // Sound, pushed for the same reason: the count is how you learn that
+        // the noise is coming from this window at all.
+        audioToken = store.audio.observe { [weak self] in self?.refreshSound() }
+        statusBar.onClickSound = { [weak self] in self?.perform(.muteAll) }
         // WebKit's footprint is sampled, not pushed, so the footer needs its own
         // slow tick to stay honest about it.
         statusTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
@@ -415,7 +420,74 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return OpenServer.Reply(ok: true, lanes: describeServers())
         case .colourServer(let name, let colour):
             return colourServer(name: name, colour: colour)
+        case .mute(let lane, let muted):
+            return muteFromCLI(lane: lane, muted: muted)
+        case .volume(let lane, let percent):
+            return volumeFromCLI(lane: lane, percent: percent)
         }
+    }
+
+    // MARK: - sound, from the CLI
+
+    /// The lanes a CLI `LANE` names, as `maxpane ls` prints them: a strip
+    /// index, `left`/`right` (or the arrows `ls` draws) for a dock, `all`.
+    /// Nil when it names nothing. Static and pure, for tests.
+    static func lanes(named spec: String, in lanes: [Lane]) -> [Lane]? {
+        switch spec.lowercased() {
+        case "all": return lanes
+        case "left", "◀": return lanes.first { $0.dock?.side == .left }.map { [$0] }
+        case "right", "▶": return lanes.first { $0.dock?.side == .right }.map { [$0] }
+        default:
+            guard let index = Int(spec), index >= 0 else { return nil }
+            let strip = lanes.filter { $0.dock == nil }
+            return index < strip.count ? [strip[index]] : nil
+        }
+    }
+
+    private func muteFromCLI(lane spec: String, muted: Bool) -> OpenServer.Reply {
+        guard let lanes = Self.lanes(named: spec, in: store.state.lanes) else {
+            return .refused("no lane \(spec); maxpane ls lists them")
+        }
+        let audio = store.audio
+        let pages = lanes.flatMap(\.panes).filter { $0.kind == .web }.map(\.id)
+        // `all` is about what can be heard, or what was silenced: muting
+        // every quiet page on the strip would leave thirty muted marks to
+        // undo. A named lane is taken at its word, quiet or not.
+        let targets = spec.lowercased() == "all"
+            ? pages.filter { muted ? audio.state(of: $0).isAudible : audio.state(of: $0).muted }
+            : pages
+        guard !pages.isEmpty, !(spec.lowercased() != "all" && targets.isEmpty) else {
+            return .refused("lane \(spec) has no web pane to \(muted ? "mute" : "unmute")")
+        }
+        targets.forEach { audio.setMuted(muted, pane: $0) }
+        let word = muted ? "muted" : "unmuted"
+        return OpenServer.Reply(ok: true, lanes: targets.isEmpty
+            ? "nothing to \(muted ? "mute: no pane is making sound" : "unmute: no pane is muted")\n"
+            : "\(word) \(targets.count) pane\(targets.count == 1 ? "" : "s")\n")
+    }
+
+    private func volumeFromCLI(lane spec: String, percent: Int) -> OpenServer.Reply {
+        guard spec.lowercased() != "all", let lane = Self.lanes(named: spec, in: store.state.lanes)?.first else {
+            return .refused("no lane \(spec); volume takes one lane, as maxpane ls numbers them")
+        }
+        let pages = lane.panes.filter { $0.kind == .web }.map(\.id)
+        guard !pages.isEmpty else { return .refused("lane \(spec) has no web pane") }
+        guard WebPaneAudio.volumeIsSupported else {
+            return .refused("this macOS's WebKit cannot set a page's volume; maxpane mute still works")
+        }
+        pages.forEach { store.audio.setVolume(percent, pane: $0) }
+        return OpenServer.Reply(ok: true, lanes: percent == 0 ? "muted\n" : "volume \(percent)%\n")
+    }
+
+    /// A web pane's sound, for `maxpane ls`: `[audible]`, `[muted]`, and a
+    /// volume other than 100. Empty for a quiet pane at full volume, which is
+    /// nearly all of them. Square brackets, because the panes of a lane are
+    /// already joined with commas.
+    static func lsSound(_ state: PaneAudio) -> String {
+        var words: [String] = []
+        if state.muted { words.append("muted") } else if state.playing { words.append("audible") }
+        if state.volume != 100 { words.append("\(state.volume)%") }
+        return words.isEmpty ? "" : "[" + words.joined(separator: " ") + "]"
     }
 
     /// `maxpane server add NAME URL`. The URL is the one the server printed at
@@ -627,8 +699,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 // `pty:yorkshire:0368d543` for a session on a server: the one
                 // mark, and what `maxpane attach` takes back.
                 case .pty: return pane.sessionKey.map { "pty:\($0)" } ?? "pty"
-                case .web: return "web"
-                case .placeholder: return "web(evicted)"
+                case .web: return "web" + Self.lsSound(store.audio.state(of: pane.id))
+                case .placeholder: return "web(evicted)" + Self.lsSound(store.audio.state(of: pane.id))
                 }
             }.joined(separator: ",")
             let focused = lane.panes.contains { $0.id == state.focusedPaneId } ? "*" : " "
@@ -733,6 +805,14 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         case .toggleBlocking:
             // A lane with a page on a site, and a blocker that is on at all.
             return store.focusedLane.flatMap { strip.blocking(of: $0) } != nil
+        case .toggleMute:
+            // A lane with a page in it; a terminal has nothing to silence.
+            return store.focusedLane?.panes.contains { $0.kind == .web } == true
+        case .muteOthers, .muteAll:
+            // From anywhere, a terminal included: the noise is by definition
+            // somewhere else. Greyed out only when nothing is making any.
+            return !store.audio.audiblePanes(in: store.allLanes)
+                .filter { command == .muteAll || $0 != muteTarget }.isEmpty
         case .focusDockLeft:
             return store.dockedLane(.left) != nil
         case .focusDockRight:
@@ -742,11 +822,21 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         }
     }
 
+    /// The pane Mute Pane speaks for, and Mute Other Panes spares: the one
+    /// with the keyboard, when it is a page.
+    private var muteTarget: String? {
+        store.state.focusedPaneId.flatMap { store.pane($0) }.flatMap { $0.kind == .web ? $0.id : nil }
+    }
+
     public func title(for command: Command) -> String {
         if command == .toggleMaximizePane, strip.isPaneMaximized, let active = command.activeTitle {
             return active
         }
         if command == .copyMode, strip.focusedTerminalIsInCopyMode, let active = command.activeTitle {
+            return active
+        }
+        if command == .toggleMute, let active = command.activeTitle, let lane = store.focusedLane,
+           muteTarget.map({ store.audio.mark(of: $0) }) ?? store.audio.mark(of: lane) == .muted {
             return active
         }
         return command.title
@@ -983,6 +1073,21 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .toggleBlocking:
                 if let lane = focusedLane { strip.toggleBlocking(ofLane: lane.id) }
+
+            case .toggleMute:
+                // The pane with the keyboard when it is a page; from a
+                // terminal split over a page, the lane's pages.
+                if let paneId = muteTarget {
+                    store.audio.toggleMute(pane: paneId)
+                } else if let lane = focusedLane {
+                    store.audio.toggleMute(lane: lane)
+                }
+
+            case .muteOthers:
+                store.audio.muteAudible(in: store.allLanes, except: muteTarget)
+
+            case .muteAll:
+                store.audio.muteAudible(in: store.allLanes)
             }
         } catch {
             showError(error)
@@ -1242,6 +1347,10 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private func newSessionSize() -> (cols: Int, rows: Int) {
         TerminalPaneController.newSessionSize(
             config: config, viewHeight: strip.view.bounds.height)
+    }
+
+    private func refreshSound() {
+        statusBar.setAudible(store.audio.audiblePanes(in: store.allLanes).count)
     }
 
     private func refreshStatus() {

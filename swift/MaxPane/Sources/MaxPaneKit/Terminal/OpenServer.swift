@@ -46,6 +46,14 @@ public final class OpenServer: @unchecked Sendable {
         /// by (ADR-0025). The colour arrives as typed; the handler says what
         /// the eight are when it is not one of them.
         case colourServer(name: String, colour: String)
+        /// `maxpane mute [LANE|all]` and `maxpane unmute [LANE|all]`. `lane`
+        /// is as `maxpane ls` prints it: a strip index, `left` or `right` for
+        /// a dock, or `all`, which is also what leaving it out means — the
+        /// owner drives this with the screen locked, and "whatever is making
+        /// that noise" is the question then.
+        case mute(lane: String, muted: Bool)
+        /// `maxpane volume LANE 0-100`. Zero is mute.
+        case volume(lane: String, percent: Int)
     }
 
     /// What goes back. `session` carries the id of a session just started;
@@ -230,6 +238,16 @@ public final class OpenServer: @unchecked Sendable {
                   let colour = object["color"] as? String, !colour.isEmpty
             else { return nil }
             return .colourServer(name: name, colour: colour)
+
+        case "mute", "unmute":
+            let lane = (object["lane"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "all"
+            return .mute(lane: lane, muted: op == "mute")
+
+        case "volume":
+            guard let lane = object["lane"] as? String, !lane.isEmpty,
+                  let percent = object["percent"] as? Int, (0...100).contains(percent)
+            else { return nil }
+            return .volume(lane: lane, percent: percent)
 
         default:
             return nil

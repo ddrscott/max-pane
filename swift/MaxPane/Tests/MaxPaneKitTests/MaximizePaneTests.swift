@@ -36,9 +36,10 @@ struct MaximizePaneTests {
 
     @Test("`[keys]` moves it, and unbinds it")
     func rebinding() {
-        let moved = Keymap(overrides: KeyBindings(["toggleMaximizePane": ["ctrl+cmd+m"]]))
+        // ⌃⌘J: a chord nothing ships on. (It was ⌃⌘M until Mute Pane took it.)
+        let moved = Keymap(overrides: KeyBindings(["toggleMaximizePane": ["ctrl+cmd+j"]]))
         #expect(moved.complaints.isEmpty)
-        #expect(moved.chords(for: .toggleMaximizePane) == [KeyChord(key: "m", modifiers: [.command, .control])])
+        #expect(moved.chords(for: .toggleMaximizePane) == [KeyChord(key: "j", modifiers: [.command, .control])])
         let unbound = Keymap(overrides: KeyBindings(["toggleMaximizePane": []]))
         #expect(unbound.chords(for: .toggleMaximizePane).isEmpty)
     }

@@ -103,6 +103,10 @@ fn the_session_blob_stays_out_of_the_layout_snapshot() {
         // One byte, for the same reason again: the user agent is set before
         // the first request, so the shell has to know at build time.
         mobile: _,
+        // A byte and an integer, for the same reason once more: the page is
+        // muted before it makes its first sound, not after.
+        muted: _,
+        volume: _,
     } = pane.clone();
 }
 

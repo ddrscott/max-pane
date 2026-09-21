@@ -40,6 +40,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("../migrations/0015_pane_relay_server.sql"),
     ),
     ("0016_clip_history", include_str!("../migrations/0016_clip_history.sql")),
+    ("0017_pane_audio", include_str!("../migrations/0017_pane_audio.sql")),
 ];
 
 /// A needle as an FTS5 query: one quoted phrase, nothing else.
@@ -179,7 +180,8 @@ impl Ledger {
         // One pass over every pane beats one query per lane at 150 lanes.
         let mut stmt = self.conn.prepare(
             "SELECT id, lane_id, position, kind, relay_session_id, url, scroll_y,
-                    data_store_id, snapshot_path, state, height_weight, zoom, mobile, relay_server
+                    data_store_id, snapshot_path, state, height_weight, zoom, mobile, relay_server,
+                    muted, volume
              FROM pane ORDER BY lane_id, position ASC",
         )?;
         let panes: Vec<Pane> = stmt.query_map([], row_to_pane)?.collect::<rusqlite::Result<_>>()?;
@@ -210,7 +212,8 @@ impl Ledger {
             .ok_or_else(|| CoreError::NotFound { kind: "lane".into(), id: id.into() })?;
         let mut stmt = self.conn.prepare(
             "SELECT id, lane_id, position, kind, relay_session_id, url, scroll_y,
-                    data_store_id, snapshot_path, state, height_weight, zoom, mobile, relay_server
+                    data_store_id, snapshot_path, state, height_weight, zoom, mobile, relay_server,
+                    muted, volume
              FROM pane WHERE lane_id = ?1 ORDER BY position ASC",
         )?;
         lane.panes = stmt.query_map([id], row_to_pane)?.collect::<rusqlite::Result<_>>()?;
@@ -221,7 +224,8 @@ impl Ledger {
         self.conn
             .query_row(
                 "SELECT id, lane_id, position, kind, relay_session_id, url, scroll_y,
-                        data_store_id, snapshot_path, state, height_weight, zoom, mobile, relay_server
+                        data_store_id, snapshot_path, state, height_weight, zoom, mobile, relay_server,
+                    muted, volume
                  FROM pane WHERE id = ?1",
                 [id],
                 row_to_pane,
@@ -457,8 +461,8 @@ impl Ledger {
         self.conn.execute(
             "INSERT INTO pane (id, lane_id, position, kind, relay_session_id, url, scroll_y,
                                data_store_id, snapshot_path, state, height_weight, zoom, mobile,
-                               relay_server)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                               relay_server, muted, volume)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 pane.id,
                 pane.lane_id,
@@ -474,6 +478,8 @@ impl Ledger {
                 pane.zoom,
                 pane.mobile,
                 pane.relay_server,
+                pane.muted,
+                pane.volume,
             ],
         )?;
         Ok(())
@@ -2217,6 +2223,23 @@ impl Ledger {
         Ok(())
     }
 
+    /// A pane's sound. `volume` is the last level that was not silence, so it
+    /// is 1 to 100 and never 0: silence is `muted`, and a zero here would be
+    /// an unmute that restores nothing. Rejected rather than clamped, as zoom
+    /// is, and a pane that is not there is an error, as with `mobile`.
+    pub fn update_pane_audio(&self, pane_id: &str, muted: bool, volume: u32) -> Result<()> {
+        if !(1..=100).contains(&volume) {
+            return Err(CoreError::Ledger { message: format!("volume must be 1 to 100, got {volume}") });
+        }
+        let n = self
+            .conn
+            .execute("UPDATE pane SET muted = ?2, volume = ?3 WHERE id = ?1", params![pane_id, muted, volume])?;
+        if n == 0 {
+            return Err(CoreError::NotFound { kind: "pane".into(), id: pane_id.into() });
+        }
+        Ok(())
+    }
+
     pub fn height_weights(&self, lane_id: &str) -> Result<Vec<f64>> {
         let mut stmt = self
             .conn
@@ -2331,6 +2354,8 @@ fn row_to_pane(r: &Row) -> rusqlite::Result<Pane> {
         zoom: r.get(11)?,
         mobile: r.get::<_, i64>(12)? != 0,
         relay_server: r.get(13)?,
+        muted: r.get::<_, i64>(14)? != 0,
+        volume: r.get::<_, i64>(15)?.clamp(1, 100) as u32,
     })
 }
 

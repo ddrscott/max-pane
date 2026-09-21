@@ -9,7 +9,7 @@ private func pane(_ id: String, _ lane: String, _ position: UInt32,
                   kind: PaneKind = .pty, url: String? = nil, state: PaneState = .live) -> Pane {
     Pane(id: id, laneId: lane, position: position, kind: kind,
          relaySessionId: kind == .pty ? id : nil, relayServer: nil, url: url, scrollY: nil, dataStoreId: nil,
-         snapshotPath: nil, state: state, heightWeight: 1, zoom: 1, mobile: false)
+         snapshotPath: nil, state: state, heightWeight: 1, zoom: 1, mobile: false, muted: false, volume: 100)
 }
 
 private func lane(_ id: String, _ title: String, width: UInt32, span: UInt32 = 1, _ panes: [Pane]) -> Lane {

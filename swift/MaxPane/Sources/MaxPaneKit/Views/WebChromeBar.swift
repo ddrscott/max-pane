@@ -71,6 +71,10 @@ final class WebChromeBar: NSView {
     /// The `unblocked` chip: ads are let through on this site, and a click
     /// turns the blocker back on for it.
     var onBlockingChip: (() -> Void)?
+    /// The pane's own speaker: click mutes this pane, right-click hangs the
+    /// volume slider from the button it is handed.
+    var onToggleMute: (() -> Void)?
+    var onVolume: ((NSView) -> Void)?
     /// A line typed into the address field. Already trimmed; not yet resolved —
     /// the pane decides whether it is an address or a search.
     var onNavigate: ((String) -> Void)?
@@ -99,6 +103,9 @@ final class WebChromeBar: NSView {
     /// with the padlock, because it is a fact about where you are; a word in
     /// an outline, like `unblocked`, in the resting grey. It is not a button.
     private let privateChip = ChromeButton(glyph: "PRIVATE")
+    /// This pane's sound, so a lane with two pages can mute one. On the row
+    /// only while the pane is audible or muted.
+    private let speaker = ChromeButton(icon: .volume2)
     private let security = NSTextField(labelWithString: "")
     private let address = AddressField()
 
@@ -148,6 +155,12 @@ final class WebChromeBar: NSView {
         unblocked.onClick = { [weak self] in self?.onBlockingChip?() }
         unblocked.isOutlined = true
         unblocked.isHidden = true
+        speaker.onClick = { [weak self] in self?.onToggleMute?() }
+        speaker.onSecondary = { [weak self] in
+            guard let self else { return }
+            self.onVolume?(self.speaker)
+        }
+        speaker.isHidden = true
         privateChip.isOutlined = true
         privateChip.isHidden = true
         privateChip.toolTip = "A private lane: nothing here is kept — no history, no cookies past its close, no saved passwords"
@@ -167,7 +180,7 @@ final class WebChromeBar: NSView {
         // The star sits between the address and find: it is about *this page*,
         // which is what the field to its left says, where find and zoom are
         // about reading whatever is on screen.
-        let row = NSStackView(views: [back, forward, reload, security, privateChip, address, unblocked, star, key, find, zoom])
+        let row = NSStackView(views: [back, forward, reload, security, privateChip, address, unblocked, speaker, star, key, find, zoom])
         row.orientation = .horizontal
         row.spacing = 2
         row.alignment = .centerY
@@ -303,6 +316,26 @@ final class WebChromeBar: NSView {
         zoom.glyph = "\(Int((level * 100).rounded()))%"
         Self.reveal(zoom, !atRest)
     }
+
+    /// This pane's speaker: `volume-2` audible, `volume-x` muted, gone silent.
+    func setAudio(_ mark: AudioMark) {
+        audioMark = mark
+        if let icon = mark.icon, speaker.icon != icon {
+            if !speaker.isHidden { Motion.fade(speaker.layer) }
+            speaker.icon = icon
+        }
+        speaker.toolTip = mark == .silent ? nil : "\(mark.verb) this pane (right-click for volume)"
+        Self.reveal(speaker, mark != .silent)
+    }
+
+    /// What the speaker was last told to show.
+    private(set) var audioMark: AudioMark = .silent
+    /// For tests and the volume popup: press the speaker, and its anchor.
+    func pressSpeaker() { onToggleMute?() }
+    var speakerView: NSView { speaker }
+
+    /// The address as the bar holds it, for a popup that has to name the pane.
+    var addressForDisplay: String { currentURL }
 
     /// Whether the ad blocker is switched off for this page's site.
     func setBlockingOff(_ off: Bool, domain: String?) {
@@ -787,6 +820,9 @@ final class ChromeButton: NSView {
     /// Built lazily on press-and-hold or right-click. Returning nil means the
     /// button has no menu right now, and the press stays a plain click.
     var onMenu: (() -> NSMenu?)?
+    /// A right-click that is not a menu. One caller: the speaker, whose
+    /// right-click is a slider.
+    var onSecondary: (() -> Void)?
 
     var glyph: String { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
     /// Set instead of `glyph` for every control that is an affordance rather
@@ -874,6 +910,7 @@ final class ChromeButton: NSView {
 
     override func rightMouseDown(with event: NSEvent) {
         guard isEnabled else { return }
+        if let onSecondary { return onSecondary() }
         showMenu()
     }
 

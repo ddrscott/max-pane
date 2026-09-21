@@ -6,7 +6,7 @@ import Testing
 private func pane(_ id: String, _ lane: String, _ position: UInt32) -> Pane {
     Pane(id: id, laneId: lane, position: position, kind: .pty, relaySessionId: id, relayServer: nil,
          url: nil, scrollY: nil, dataStoreId: nil, snapshotPath: nil, state: .live,
-         heightWeight: 1, zoom: 1, mobile: false)
+         heightWeight: 1, zoom: 1, mobile: false, muted: false, volume: 100)
 }
 
 private func lane(_ id: String, _ paneIds: [String]) -> Lane {

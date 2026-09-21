@@ -27,6 +27,7 @@ final class SidebarViewController: NSViewController {
     /// survive a relaunch (ADR-0024); these do neither, as before.
     private var bookmarkFolds: Set<String> = []
     private var observer: UUID?
+    private var audioObserver: UUID?
     private var bookmarkObserver: UUID?
     private var bookmarks: [Bookmark] = []
 
@@ -394,6 +395,13 @@ final class SidebarViewController: NSViewController {
         NotificationCenter.default.addObserver(
             self, selector: #selector(serverColoursChanged), name: ServerColours.didChange, object: nil)
         observer = store.observe { [weak self] state in self?.rebuild(state) }
+        // Sound is not in the snapshot (`PaneAudioCenter`), so it is its own
+        // subscription; the rebuild below compares rows, so a volume step
+        // that changes no mark touches nothing.
+        audioObserver = store.audio.observe { [weak self] in
+            guard let self else { return }
+            self.rebuild(self.store.state)
+        }
         // Its own subscription, because bookmarks are not the strip: a page
         // being starred may not bump `revision` and make 150 lanes diff. See
         // `StripStore.observeBookmarks`.
@@ -406,7 +414,11 @@ final class SidebarViewController: NSViewController {
 
     deinit {
         // `observer` is only read here; the store outlives the sidebar.
-        if let observer { MainActor.assumeIsolated { store.stopObserving(observer) } }
+        let tokens = (observer, audioObserver)
+        MainActor.assumeIsolated {
+            if let token = tokens.0 { store.stopObserving(token) }
+            if let token = tokens.1 { store.audio.stopObserving(token) }
+        }
     }
 
     // MARK: - model
@@ -421,15 +433,22 @@ final class SidebarViewController: NSViewController {
         // attach, the focus landing in a folded group — and the triangle has
         // to follow.
         controls.collapsed = bookmarkFolds.union(store.collapsedGroups)
+        let lanes = store.allLanes
+        var audio: [String: AudioMark] = [:]
+        for lane in lanes {
+            let mark = store.audio.mark(of: lane)
+            if mark != .silent { audio[lane.id] = mark }
+        }
         let next = SidebarModel.rows(
-            lanes: store.allLanes,
+            lanes: lanes,
             telemetry: telemetry,
             created: createdAt,
             bookmarks: bookmarks,
             controls: controls,
             servers: registry?.serverStates ?? [:],
             serverErrors: registry?.serverErrors ?? [:],
-            hiddenLanes: Set(state.hiddenLaneIds))
+            hiddenLanes: Set(state.hiddenLaneIds),
+            audio: audio)
         updateFooter(state)
         syncFoldButton(Self.projectPaths(in: next))
         guard next != rows else {
@@ -465,6 +484,11 @@ final class SidebarViewController: NSViewController {
         else { return }
         guard table.selectedRow != index else { return }
         table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+    }
+
+    /// The table row a lane's entry is on, for tests.
+    func row(ofLane laneId: String) -> Int? {
+        rows.firstIndex { if case .entry(let e) = $0 { return e.laneId == laneId } else { return false } }
     }
 
     private func entry(at row: Int) -> SidebarModel.Entry? {
@@ -739,6 +763,44 @@ final class SidebarViewController: NSViewController {
         onOpen?(laneId, entry.paneId)
     }
 
+    // MARK: - sound
+
+    /// A click on a row's speaker: mute what is audible in its lane, or
+    /// unmute it. Nothing is selected and nothing is revealed; the speaker
+    /// swallowed the press, so `rowClicked` never ran. Internal for tests.
+    func toggleMute(laneId: String) {
+        guard let lane = store.allLanes.first(where: { $0.id == laneId }) else { return }
+        store.audio.toggleMute(lane: lane)
+    }
+
+    /// A right-click on a row's speaker, or Volume… from the row's menu.
+    @discardableResult
+    func showVolume(laneId: String, from anchor: NSView) -> VolumePopup? {
+        guard let lane = store.allLanes.first(where: { $0.id == laneId }),
+              let paneId = store.audio.volumePane(of: lane) else { return nil }
+        return VolumePopup.show(
+            pane: paneId, title: SidebarModel.laneTitle(lane), center: store.audio, from: anchor)
+    }
+
+    /// A folded header's speaker: mute everything it is hiding.
+    func muteHidden(_ laneIds: [String]) {
+        let wanted = Set(laneIds)
+        store.audio.muteAudible(in: store.allLanes.filter { wanted.contains($0.id) })
+    }
+
+    @objc private func muteClicked() {
+        guard let laneId = entry(at: table.clickedRow)?.laneId else { return }
+        toggleMute(laneId: laneId)
+    }
+
+    @objc private func volumeClicked() {
+        let row = table.clickedRow
+        guard let laneId = entry(at: row)?.laneId,
+              let cell = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarEntryView
+        else { return }
+        showVolume(laneId: laneId, from: cell.speaker)
+    }
+
     @objc private func revealClicked() {
         guard let entry = entry(at: table.clickedRow), let laneId = entry.laneId else { return }
         onSelect?(laneId, entry.paneId)
@@ -781,12 +843,17 @@ final class SidebarViewController: NSViewController {
 // MARK: - menu
 
 extension SidebarViewController: NSMenuDelegate {
-    func menuNeedsUpdate(_ menu: NSMenu) {
+    func menuNeedsUpdate(_ menu: NSMenu) { populate(menu, forRow: table.clickedRow) }
+
+    /// The menu for a right-click on `row`. Split from `menuNeedsUpdate` so a
+    /// test can ask without a mouse: AppKit only sets `clickedRow` from
+    /// inside its own tracking. The actions still read `clickedRow`.
+    func populate(_ menu: NSMenu, forRow clickedRow: Int) {
         menu.removeAllItems()
         let add = { (title: String, action: Selector) in
             menu.addItem(withTitle: title, action: action, keyEquivalent: "").target = self
         }
-        if let kept = bookmark(at: table.clickedRow) {
+        if let kept = bookmark(at: clickedRow) {
             if !kept.isFolder {
                 add("Open", #selector(openBookmarkClicked))
                 add("Copy Address", #selector(copyBookmarkAddress))
@@ -806,7 +873,7 @@ extension SidebarViewController: NSMenuDelegate {
             add(kept.isFolder ? "Delete Folder…" : "Stop Keeping", #selector(removeBookmarkClicked))
             return
         }
-        if let group = group(at: table.clickedRow) {
+        if let group = group(at: clickedRow) {
             // A server's header is where that server is dealt with: its
             // colour first, then what Settings › Servers does to it.
             if group.isServer, let server = group.server {
@@ -818,7 +885,7 @@ extension SidebarViewController: NSMenuDelegate {
             add("Expand All", #selector(expandAll))
             return
         }
-        guard let entry = entry(at: table.clickedRow) else {
+        guard let entry = entry(at: clickedRow) else {
             add("Expand All", #selector(expandAll))
             return
         }
@@ -826,6 +893,13 @@ extension SidebarViewController: NSMenuDelegate {
             add("Reveal on Strip", #selector(revealClicked))
             add(entry.pinned ? "Stop Keeping Loaded" : Command.toggleKeepLive.title, #selector(togglePin))
             add("Set Project Tag…", #selector(setTag))
+            // The speaker's click and right-click, for the keyboard and for
+            // the rest of the row. A web row only: a terminal has no page.
+            if entry.kind == .web {
+                menu.addItem(.separator())
+                add(entry.audio == .muted ? "Unmute" : "Mute", #selector(muteClicked))
+                if WebPaneAudio.volumeIsSupported { add("Volume…", #selector(volumeClicked)) }
+            }
         } else if entry.sessionId != nil {
             add("Attach to Strip", #selector(attachClicked))
         }
@@ -1001,8 +1075,17 @@ extension SidebarViewController: NSTableViewDelegate {
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard row < rows.count else { return nil }
         switch rows[row] {
-        case .group(let g): return SidebarGroupView(group: g)
-        case .entry(let e): return SidebarEntryView(entry: e)
+        case .group(let g):
+            let view = SidebarGroupView(group: g)
+            view.speaker.onToggle = { [weak self] in self?.muteHidden(g.audibleLanes) }
+            return view
+        case .entry(let e):
+            let view = SidebarEntryView(entry: e)
+            if let laneId = e.laneId, e.kind != .session {
+                view.onToggleMute = { [weak self] in self?.toggleMute(laneId: laneId) }
+                view.onVolume = { [weak self] mark in self?.showVolume(laneId: laneId, from: mark) }
+            }
+            return view
         case .bookmark(let b): return SidebarBookmarkView(row: b)
         }
     }

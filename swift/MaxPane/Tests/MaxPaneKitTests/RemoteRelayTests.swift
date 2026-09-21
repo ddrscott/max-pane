@@ -659,7 +659,7 @@ struct RemoteLaneTests {
             panes: [Pane(
                 id: "P", laneId: "L", position: 0, kind: .pty, relaySessionId: "0368d543", relayServer: "yorkshire",
                 url: nil, scrollY: nil, dataStoreId: nil, snapshotPath: nil, state: .live, heightWeight: 1,
-                zoom: 1, mobile: false)])
+                zoom: 1, mobile: false, muted: false, volume: 100)])
         let with = LaneHeaderModel(lane: lane, telemetry: telemetry("0368d543", server: "yorkshire", cwd: "/home/spierce/m7out"))
         #expect(with.path == "/home/spierce/m7out")
         #expect(with.server == "yorkshire")

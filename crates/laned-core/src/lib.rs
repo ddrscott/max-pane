@@ -1606,6 +1606,15 @@ impl Core {
         inner.ledger.update_pane_mobile(&pane_id, mobile)
     }
 
+    /// Remember a pane's mute and volume. No snapshot is published, as with
+    /// zoom: sound changes nothing about the strip's shape, and a slider
+    /// dragged across its track would otherwise diff every lane per tick. The
+    /// shell keeps the live value; this is what the next launch reads.
+    pub fn set_pane_audio(&self, pane_id: String, muted: bool, volume: u32) -> Result<()> {
+        let inner = self.inner.lock();
+        inner.ledger.update_pane_audio(&pane_id, muted, volume)
+    }
+
     pub fn set_pane_data_store(&self, pane_id: String, data_store_id: String) -> Result<()> {
         let inner = self.inner.lock();
         inner.ledger.set_pane_data_store(&pane_id, &data_store_id)
@@ -1946,6 +1955,9 @@ impl Core {
                     height_weight: p.height_weight,
                     zoom: p.zoom,
                     mobile: p.mobile,
+                    // A strip file is an arrangement, not a mixer: sound starts over.
+                    muted: false,
+                    volume: 100,
                 })?;
             }
         }
@@ -2011,6 +2023,8 @@ impl Core {
             height_weight: mean_weight(&inner.ledger.height_weights(&lane_id)?),
             zoom: 1.0,
             mobile: false,
+            muted: false,
+            volume: 100,
         };
         inner.ledger.insert_pane(&pane)?;
         inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane.id)?;
@@ -2248,6 +2262,8 @@ impl Core {
             height_weight: 1.0,
             zoom: 1.0,
             mobile: false,
+            muted: false,
+            volume: 100,
         };
         inner.ledger.insert_lane(&lane)?;
         inner.ledger.insert_pane(&pane)?;

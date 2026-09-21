@@ -845,6 +845,48 @@ fn a_mobile_layout_survives_a_restart_and_is_per_pane() {
     assert_eq!(imported[0].panes.iter().map(|p| p.mobile).collect::<Vec<_>>(), vec![true, false]);
 }
 
+/// A pane muted yesterday is muted at launch, at the level it was left: the
+/// pair is per pane, unmuted at 100 by default, and publishes no snapshot. A
+/// zero volume is refused: silence is `muted`, and zero is nothing to unmute to.
+#[test]
+fn a_mute_and_a_volume_survive_a_restart_and_are_per_pane() {
+    let dir = tempfile::tempdir().unwrap();
+    let top = {
+        let core = Core::open(db(&dir)).unwrap();
+        let st = core.create_lane(Placement::End, PaneKind::Web, None, Some("https://youtube.com".into()), None).unwrap();
+        let lane = st.lanes[0].id.clone();
+        let st = core.add_pane(lane, PaneKind::Web, None, Some("https://docs.rs".into())).unwrap();
+        for pane in &st.lanes[0].panes {
+            assert!(!pane.muted && pane.volume == 100, "unmuted at 100 by default");
+        }
+        let top = st.lanes[0].panes[0].id.clone();
+        let before = core.revision();
+        core.set_pane_audio(top.clone(), true, 40).unwrap();
+        assert_eq!(core.revision(), before, "no snapshot: sound is not the strip's shape");
+        assert!(core.set_pane_audio(top.clone(), true, 0).is_err(), "zero is muted, not a level");
+        assert!(core.set_pane_audio(top.clone(), false, 101).is_err());
+        assert!(core.set_pane_audio("no-such-pane".into(), true, 50).is_err(), "a missing pane is an error");
+        top
+    };
+
+    let core = Core::open(db(&dir)).unwrap();
+    let st = core.state().unwrap();
+    assert_eq!(st.lanes[0].panes[0].id, top);
+    assert!(st.lanes[0].panes[0].muted, "muted yesterday, muted at launch");
+    assert_eq!(st.lanes[0].panes[0].volume, 40, "and the refused writes changed nothing");
+    assert!(!st.lanes[0].panes[1].muted && st.lanes[0].panes[1].volume == 100, "the other pane was never touched");
+
+    core.set_pane_audio(top, false, 40).unwrap();
+    drop(core);
+    let core = Core::open(db(&dir)).unwrap();
+    let pane = &core.state().unwrap().lanes[0].panes[0];
+    assert!(!pane.muted && pane.volume == 40, "unmuted is a write too, and keeps the level");
+
+    // A strip file is an arrangement, not a mixer: an import starts over.
+    let json = core.export_strip().unwrap();
+    assert!(!json.contains("muted") && !json.contains("volume"), "{json}");
+}
+
 /// §13 Phase 3 — lane spanning. A deliberate, bounded exception to §1's
 /// portrait invariant, so the thing to prove is that it stays bounded.
 #[test]

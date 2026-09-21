@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Print (⌃⌘P) and Save as PDF for a web pane; Save as PDF writes the whole page and lands as a row in the download bar
 - Pinch to zoom in a web pane, the same persisted zoom as ⌘= and ⌘-
 - Web Inspector on every web pane: right-click, Inspect Element
+- Sound: a web lane's sidebar square becomes a speaker while its pane plays sound. Click it to mute, right-click for a per-pane volume slider. The same speaker is on the lane header, gallery tiles, a pane's address row, folded sidebar headers, ⌘P rows and the status bar, which counts audible panes and mutes them all on a click
+- Mute Pane (⌃⌘M), Mute Other Panes and Mute All in the View and lane menus; `maxpane mute`, `unmute` and `volume` from a shell. Mute and volume are remembered per pane across a relaunch, and muting never pauses
 - The build carries Apple's passkeys capability when a provisioning profile grants it, and is unchanged when none does
 
 ### Changed

@@ -1433,6 +1433,14 @@ public protocol CoreProtocol: AnyObject, Sendable {
      */
     func setManualTag(laneId: String, projectRoot: String?) throws  -> StripState
     
+    /**
+     * Remember a pane's mute and volume. No snapshot is published, as with
+     * zoom: sound changes nothing about the strip's shape, and a slider
+     * dragged across its track would otherwise diff every lane per tick. The
+     * shell keeps the live value; this is what the next launch reads.
+     */
+    func setPaneAudio(paneId: String, muted: Bool, volume: UInt32) throws 
+    
     func setPaneDataStore(paneId: String, dataStoreId: String) throws 
     
     /**
@@ -3099,6 +3107,23 @@ open func setManualTag(laneId: String, projectRoot: String?)throws  -> StripStat
         FfiConverterOptionString.lower(projectRoot),uniffiCallStatus
     )
 })
+}
+    
+    /**
+     * Remember a pane's mute and volume. No snapshot is published, as with
+     * zoom: sound changes nothing about the strip's shape, and a slider
+     * dragged across its track would otherwise diff every lane per tick. The
+     * shell keeps the live value; this is what the next launch reads.
+     */
+open func setPaneAudio(paneId: String, muted: Bool, volume: UInt32)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_set_pane_audio(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(paneId),
+        FfiConverterBool.lower(muted),
+        FfiConverterUInt32.lower(volume),uniffiCallStatus
+    )
+}
 }
     
 open func setPaneDataStore(paneId: String, dataStoreId: String)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
@@ -4888,6 +4913,16 @@ public struct Pane: Equatable, Hashable {
      * and WebKit's mobile content mode; a terminal ignores it.
      */
     public var mobile: Bool
+    /**
+     * `web` only: the shell's own mute on the page, which silences without
+     * pausing. Remembered so a lane muted yesterday is not blaring at launch.
+     */
+    public var muted: Bool
+    /**
+     * `web` only: how loud the page's media is, 1 to 100. The last level that
+     * was not silence: a slider at zero is `muted`, and unmuting returns here.
+     */
+    public var volume: UInt32
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -4932,7 +4967,15 @@ public struct Pane: Equatable, Hashable {
          * `web` only: ask sites for the layout an iPhone would get, because a
          * portrait lane is a phone's shape. The shell sends a mobile user agent
          * and WebKit's mobile content mode; a terminal ignores it.
-         */mobile: Bool) {
+         */mobile: Bool, 
+        /**
+         * `web` only: the shell's own mute on the page, which silences without
+         * pausing. Remembered so a lane muted yesterday is not blaring at launch.
+         */muted: Bool, 
+        /**
+         * `web` only: how loud the page's media is, 1 to 100. The last level that
+         * was not silence: a slider at zero is `muted`, and unmuting returns here.
+         */volume: UInt32) {
         self.id = id
         self.laneId = laneId
         self.position = position
@@ -4947,6 +4990,8 @@ public struct Pane: Equatable, Hashable {
         self.heightWeight = heightWeight
         self.zoom = zoom
         self.mobile = mobile
+        self.muted = muted
+        self.volume = volume
     }
 
     
@@ -4978,7 +5023,9 @@ public struct FfiConverterTypePane: FfiConverterRustBuffer {
                 state: FfiConverterTypePaneState.read(from: &buf), 
                 heightWeight: FfiConverterDouble.read(from: &buf), 
                 zoom: FfiConverterDouble.read(from: &buf), 
-                mobile: FfiConverterBool.read(from: &buf)
+                mobile: FfiConverterBool.read(from: &buf), 
+                muted: FfiConverterBool.read(from: &buf), 
+                volume: FfiConverterUInt32.read(from: &buf)
         )
     }
 
@@ -4997,6 +5044,8 @@ public struct FfiConverterTypePane: FfiConverterRustBuffer {
         FfiConverterDouble.write(value.heightWeight, into: &buf)
         FfiConverterDouble.write(value.zoom, into: &buf)
         FfiConverterBool.write(value.mobile, into: &buf)
+        FfiConverterBool.write(value.muted, into: &buf)
+        FfiConverterUInt32.write(value.volume, into: &buf)
     }
 }
 
@@ -8187,6 +8236,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_set_manual_tag() != 9906) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_set_pane_audio() != 56541) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_set_pane_data_store() != 42955) {

@@ -659,6 +659,11 @@ void uniffi_laned_core_fn_method_core_set_layout(uint64_t ptr, RustBuffer layout
 RustBuffer uniffi_laned_core_fn_method_core_set_manual_tag(uint64_t ptr, RustBuffer lane_id, RustBuffer project_root, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PANE_AUDIO
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PANE_AUDIO
+void uniffi_laned_core_fn_method_core_set_pane_audio(uint64_t ptr, RustBuffer pane_id, int8_t muted, uint32_t volume, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PANE_DATA_STORE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_PANE_DATA_STORE
 void uniffi_laned_core_fn_method_core_set_pane_data_store(uint64_t ptr, RustBuffer pane_id, RustBuffer data_store_id, RustCallStatus *_Nonnull out_status
@@ -1486,6 +1491,12 @@ uint16_t uniffi_laned_core_checksum_method_core_set_layout(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_MANUAL_TAG
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_MANUAL_TAG
 uint16_t uniffi_laned_core_checksum_method_core_set_manual_tag(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_PANE_AUDIO
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_PANE_AUDIO
+uint16_t uniffi_laned_core_checksum_method_core_set_pane_audio(void
     
 );
 #endif
