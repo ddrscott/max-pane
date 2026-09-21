@@ -2775,6 +2775,18 @@ still moves the strip as little as it can and the peek applies as above. A lane
 at least as wide as the window is never centred, because its header would be
 cut off. The threshold is fixed at three and has no config key.
 
+**A click that moves the strip only focuses.** When a click is about to slide
+the strip (a neighbour in the carousel, a lane half off the edge), the press and
+its release stop at the strip: the lane takes the keyboard and comes into view,
+and the pane never hears the click. The next click is the pane's. It used to be
+handed to the pane as well, and a terminal took the press as the start of a
+selection and then travelled several hundred points under a pointer that had not
+moved, so holding the button through the slide selected half a screen of text;
+on a page it pressed a button that was no longer under the pointer on release.
+It is what the first click on an inactive window does. A click that moves
+nothing goes through as it always has, and so does every click in the gallery,
+in a dock and in a maximized pane.
+
 `strip_edge_rails` is the other half: an 18 pt column at each end of the strip
 with a count of the lanes hidden that way (`◀ 7`, `5 ▶`), and a plain wall when
 there are none. A sliver says *there is more, this way*; it cannot say how many,

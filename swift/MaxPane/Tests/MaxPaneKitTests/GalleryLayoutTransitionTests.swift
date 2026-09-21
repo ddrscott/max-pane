@@ -99,3 +99,66 @@ struct GalleryLayoutTransitionTests {
         }
     }
 }
+
+/// A click that is about to slide the strip focuses its lane and is not handed
+/// to the pane: the press would otherwise start a selection in a terminal that
+/// then travels under a pointer that has not moved.
+@MainActor
+@Suite("a click that moves the strip only focuses", .serialized)
+struct FocusClickTests {
+    /// Wait for the strip to stop: the reveal eases over `Motion.lane`, and with
+    /// the whole suite running a fixed sleep is sometimes shorter than that.
+    /// While it is still sliding, a click in the focused lane *is* a focus
+    /// click, correctly, so the assertions below are about the settled strip.
+    private func atRest(_ rig: MaximizeRig, _ laneId: String) async -> Bool {
+        for _ in 0..<60 {
+            await rig.settle()
+            if !rig.strip.revealWouldMove(laneId: laneId) { return true }
+        }
+        return false
+    }
+
+    @Test("a neighbour's click is a focus click; a click in the lane you are in goes through")
+    func neighbourAndHome() async throws {
+        try await MaximizeRig.with { rig in
+            // Three 656 pt lanes in a 1600 pt window: fewer than three fit, so
+            // focus centres its lane and a neighbour's click moves the strip.
+            try rig.store.focusPane(rig.splitTop)
+            #expect(await atRest(rig, rig.splitLane))
+            #expect(!rig.strip.clickOnlyFocuses(paneId: rig.splitTop))
+            #expect(!rig.strip.clickOnlyFocuses(paneId: rig.splitBottom))
+
+            #expect(rig.strip.revealWouldMove(laneId: rig.rightLane))
+            #expect(rig.strip.clickOnlyFocuses(paneId: rig.right))
+            #expect(rig.strip.clickOnlyFocuses(paneId: rig.left))
+
+            // Once it is the lane you are in, and settled, its clicks are its own.
+            try rig.store.focusPane(rig.right)
+            #expect(await atRest(rig, rig.rightLane))
+            #expect(!rig.strip.clickOnlyFocuses(paneId: rig.right))
+        }
+    }
+
+    @Test("nothing moves in the gallery, under a maximized pane, or for a dock, so those clicks go through")
+    func whereNothingMoves() async throws {
+        try await MaximizeRig.with { rig in
+            try rig.store.focusPane(rig.splitTop)
+            #expect(await atRest(rig, rig.splitLane))
+
+            rig.strip.toggleMaximizeFocusedPane()
+            #expect(!rig.strip.clickOnlyFocuses(paneId: rig.right))
+            rig.strip.toggleMaximizeFocusedPane()
+            rig.strip.landMaximizeTransition()
+
+            try rig.store.dockLane(rig.rightLane, side: .right, mode: .inset)
+            await rig.settle()
+            #expect(!rig.strip.clickOnlyFocuses(paneId: rig.right))
+            try rig.store.undockLane(rig.rightLane)
+            await rig.settle()
+
+            #expect(rig.strip.setLayout(.gallery))
+            #expect(!rig.strip.clickOnlyFocuses(paneId: rig.right))
+            #expect(!rig.strip.revealWouldMove(laneId: rig.rightLane))
+        }
+    }
+}

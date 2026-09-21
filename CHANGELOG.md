@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A pane that is playing sound is not unloaded to reclaim memory, so music in a lane you scrolled away from keeps playing
 
 ### Fixed
+- Clicking a neighbouring lane and holding the button through the slide selected a swathe of text in it. A click that moves the strip now only focuses the lane, like the first click on an inactive window; the next click is the pane's
 - A video whose player muted itself (m.youtube.com in a Mobile Layout pane) plays with sound on the click that starts it, instead of needing a second click on the video
 - ⌘V of a file copied in Finder pasted only its name; it now pastes the full path, quoted when it needs to be, and several files space-separated
 - A middle click in a terminal pasted through the emulator's own path, which could wrap the text in bracketed-paste markers the far end never asked for

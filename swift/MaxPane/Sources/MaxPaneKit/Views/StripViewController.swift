@@ -460,6 +460,10 @@ public final class StripViewController: NSViewController {
     /// purposes, so neither tells us it was clicked. This watches the event on
     /// its way down and moves focus without consuming it — the click still
     /// places a cursor, starts a selection, or presses a button as it should.
+    ///
+    /// **Unless the click is about to move the strip** (`clickOnlyFocuses`).
+    /// Then the press and its release are consumed, and the click is a focus
+    /// click and nothing else: the first click on an inactive macOS window.
     private func startClickCapture() {
         clickMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDown, .leftMouseUp]
@@ -496,7 +500,13 @@ public final class StripViewController: NSViewController {
                         return nil
                     }
                 }
+                // Decided before the focus that would move it.
+                let focusOnly = self.clickOnlyFocuses(paneId: paneId)
                 self.focus(paneId)
+                if focusOnly {
+                    self.swallowNextMouseUp = true
+                    return nil
+                }
             } else if self.isGallery, self.expandedLaneId != nil {
                 // The gallery itself, between the tiles: put the expanded one
                 // back. Relay TTY's rule too, and the only click here that means
@@ -505,6 +515,47 @@ public final class StripViewController: NSViewController {
             }
             return event
         }
+    }
+
+    /// Whether a press on `paneId` should focus its lane and go no further.
+    ///
+    /// True when focusing that lane is about to slide the strip: a neighbour
+    /// clicked in the carousel, a lane half off the edge. The owner found the
+    /// reason: *"when I click a neighbouring lane, it's accidentally selecting
+    /// text if I hold down the click during the animation."* The press reached
+    /// the terminal as the start of a selection, the terminal then travelled
+    /// several hundred points under a pointer that had not moved, and the
+    /// smallest tremor of the hand was a drag across half the screen. A page
+    /// has the same fault with a different symptom: the button that was pressed
+    /// is not under the pointer when it is released.
+    ///
+    /// Moving the focus to mouse-up would cure it and make every lane change
+    /// feel late, and a seam or a pane drag has to start on the press. The
+    /// honest rule is about the content instead: once the strip moves, what
+    /// was under the pointer is not under it any more, so the press was never
+    /// a press *on* anything. It focuses, as the first click on an inactive
+    /// window does, and the next click is the pane's. A click that moves
+    /// nothing goes through exactly as before. True under Reduce Motion too:
+    /// the strip still moves, only at once.
+    func clickOnlyFocuses(paneId: String) -> Bool {
+        // Every tile is whole on screen, and a maximized pane covers the strip:
+        // neither moves for a click.
+        guard !isGallery, !maximizer.isActive else { return false }
+        guard let laneId = store.lane(containing: paneId)?.id else { return false }
+        return revealWouldMove(laneId: laneId)
+    }
+
+    /// Whether `ensureVisible(laneId)` would scroll: the same question, asked
+    /// of the same rule (`StripReveal.focused`), with `scroll(to:)`'s own half
+    /// point of tolerance.
+    func revealWouldMove(laneId: String) -> Bool {
+        guard !isGallery, store.lane(laneId)?.dock == nil else { return false }
+        let window = viewport
+        guard let target = StripReveal.focused(
+            from: window.offset, to: laneId,
+            lanes: store.stripLanes, viewport: window.width)
+        else { return false }
+        return abs(target - window.offset) > 0.5
     }
 
     /// Which pane is under a point in window coordinates.
