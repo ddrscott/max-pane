@@ -131,6 +131,12 @@ public struct Config: Codable, Equatable {
     /// removed, stray whitespace trimmed, and the pane says what it did
     /// (ADR-0029). ⌥⌘V pastes as copied whatever this says. Read at each paste.
     public var pasteTidy: Bool = true
+    /// Edit › Paste Special › Paste Slowly: how many bytes go in one piece,
+    /// for a program that drops characters when fed at full speed. Never more
+    /// than the 1 000 any piece may be. Read at each slow paste.
+    public var pasteSlowChunk: UInt32 = 16
+    /// …and how many milliseconds pass between one piece and the next.
+    public var pasteSlowDelayMs: UInt32 = 10
     /// A middle click in a terminal pastes: the pane's own selection if it
     /// has one (never through the clipboard), else the clipboard. A program
     /// with mouse reporting on keeps the click; ⌥ or ⇧ takes it back. Off, a
@@ -336,6 +342,8 @@ public struct Config: Codable, Equatable {
         pasteConfirmBytes = read(.pasteConfirmBytes, d.pasteConfirmBytes)
         pasteTabWidth = read(.pasteTabWidth, d.pasteTabWidth)
         pasteTidy = read(.pasteTidy, d.pasteTidy)
+        pasteSlowChunk = read(.pasteSlowChunk, d.pasteSlowChunk)
+        pasteSlowDelayMs = read(.pasteSlowDelayMs, d.pasteSlowDelayMs)
         middleClickPaste = read(.middleClickPaste, d.middleClickPaste)
         pasteImagesAsFiles = read(.pasteImagesAsFiles, d.pasteImagesAsFiles)
         pasteImageKeepDays = read(.pasteImageKeepDays, d.pasteImageKeepDays)

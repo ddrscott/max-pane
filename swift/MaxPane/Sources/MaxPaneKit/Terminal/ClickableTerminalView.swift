@@ -27,6 +27,16 @@ final class ClickableTerminalView: TerminalView {
         handler(convert(event.locationInWindow, from: nil))
     }
 
+    /// A key, before the emulator has it. True swallows it. For a slow paste,
+    /// which Esc stops without the program hearing an Esc, and which any
+    /// other key stops and then follows (`TerminalPaneController`).
+    var onKeyDown: ((NSEvent) -> Bool)?
+
+    override func keyDown(with event: NSEvent) {
+        if onKeyDown?(event) == true { return }
+        super.keyDown(with: event)
+    }
+
     /// A middle click, with whether ⌥ or ⇧ was down. True when the pane dealt
     /// with it (a paste, or deliberately nothing); false hands it to the
     /// emulator for a program that asked for the mouse. The decision is

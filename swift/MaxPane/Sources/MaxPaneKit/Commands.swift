@@ -43,6 +43,11 @@ public enum Command: String, CaseIterable, Sendable {
     case narrowLane
     case claimSession
     case pasteWithoutAsking
+    case pasteEscaped
+    case pasteAsBase64
+    case pasteBase64Decoded
+    case pasteFileAsBase64
+    case pasteSlowly
     case showMemory
     case pairWithNext
     case exportStrip
@@ -104,6 +109,11 @@ public enum Command: String, CaseIterable, Sendable {
         case .narrowLane: return "Narrow Lane"
         case .claimSession: return "Resize Session to This Lane…"
         case .pasteWithoutAsking: return "Paste Without Asking"
+        case .pasteEscaped: return "Paste Escaped"
+        case .pasteAsBase64: return "Paste as Base64"
+        case .pasteBase64Decoded: return "Paste Base64-Decoded"
+        case .pasteFileAsBase64: return "Paste File as Base64…"
+        case .pasteSlowly: return "Paste Slowly"
         case .showMemory: return "Memory"
         case .pairWithNext: return "Pair With Lane to the Right"
         case .exportStrip: return "Export Strip…"
@@ -251,6 +261,14 @@ public enum Command: String, CaseIterable, Sendable {
         // throughout this file, and no browser or page has a claim on it
         // (Paste and Match Style is ⌥⇧⌘V).
         case .pasteWithoutAsking: return ("v", [.command, .option])
+        // ⌃⌘V, the third V: the clipboard as one quoted word that runs
+        // nothing. Checked against this file (no other ⌃⌘ chord is on V),
+        // against macOS (its ⌃⌘ chords are Space, F, Q and D) and against
+        // browsers, which leave it alone.
+        case .pasteEscaped: return ("v", [.command, .control])
+        // No keys. Each is reached for a few times a month, from the menu,
+        // by name; `keys` binds any of them.
+        case .pasteAsBase64, .pasteBase64Decoded, .pasteFileAsBase64, .pasteSlowly: return nil
         case .showMemory:      return ("i", [.command, .option])
         case .pairWithNext:    return ("p", [.command, .option])
         case .exportStrip:     return ("s", [.command, .shift])
@@ -432,6 +450,20 @@ public enum Command: String, CaseIterable, Sendable {
         }
     }
 
+    /// The submenu of its menu this sits in, or nil for the menu itself.
+    ///
+    /// Edit › Paste Special ▸ holds every paste that is not ⌘V, the way
+    /// iTerm's does, so the Edit menu stays four items and a door.
+    public var submenu: String? {
+        switch self {
+        case .pasteWithoutAsking, .pasteEscaped, .pasteAsBase64, .pasteBase64Decoded,
+             .pasteFileAsBase64, .pasteSlowly:
+            return "Paste Special"
+        default:
+            return nil
+        }
+    }
+
     /// Which menu this belongs under.
     public var menu: MenuSection {
         switch self {
@@ -449,6 +481,7 @@ public enum Command: String, CaseIterable, Sendable {
         case .claimSession: return .file
         // Under Edit, below Paste, which it is the other one of.
         case .pasteWithoutAsking: return .edit
+        case .pasteEscaped, .pasteAsBase64, .pasteBase64Decoded, .pasteFileAsBase64, .pasteSlowly: return .edit
         case .showMemory, .showHelp: return .view
         case .reload, .hardReload, .editAddress: return .navigate
         // Under Navigate with ⌘Y's picker, not under View with the dashboards:

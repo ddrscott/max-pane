@@ -671,6 +671,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             // Asked of the responder chain, as ⌘V is: live exactly when a
             // terminal pane has the keyboard, whatever the ledger says.
             return NSApp.target(forAction: #selector(TerminalPasteTarget.pasteIntoTerminalPaneWithoutAsking(_:))) != nil
+        case .pasteEscaped, .pasteAsBase64, .pasteBase64Decoded, .pasteFileAsBase64, .pasteSlowly:
+            // The same question, of the same chain.
+            return NSApp.target(forAction: #selector(TerminalPasteTarget.pasteSpecialIntoTerminalPane(_:))) != nil
         case .claimSession:
             // Only meaningful for a terminal pane.
             return store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .pty
@@ -906,6 +909,13 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 // takes. No pane, no paste: a web page has no sheet to skip.
                 NSApp.sendAction(
                     #selector(TerminalPasteTarget.pasteIntoTerminalPaneWithoutAsking(_:)), to: nil, from: nil)
+
+            case .pasteEscaped, .pasteAsBase64, .pasteBase64Decoded, .pasteFileAsBase64, .pasteSlowly:
+                // Edit › Paste Special, to the terminal pane with the
+                // keyboard. The command's name is the sender, and is which.
+                NSApp.sendAction(
+                    #selector(TerminalPasteTarget.pasteSpecialIntoTerminalPane(_:)), to: nil,
+                    from: command.rawValue as NSString)
 
             case .claimSession:
                 confirmClaimSession()

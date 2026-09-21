@@ -95,9 +95,48 @@ final class TerminalOutbound: @unchecked Sendable {
 ///
 /// One FIFO, so what is typed during a long paste goes out after it, whole,
 /// and never in the middle of it.
+///
+/// **Paste Slowly is this queue too**, not a second one (`enqueue(_:pace:)`):
+/// a stretch of `pending` marked to leave in smaller pieces with a longer gap.
+/// A second queue beside this one would have to be interleaved with it by
+/// somebody, and the order of a byte stream is its meaning. What came before
+/// the slow stretch leaves at the usual pace, what comes after waits its turn,
+/// and cancelling removes the unsent part of the stretch and nothing else.
 @MainActor
 final class PacedInput {
     static let gap: TimeInterval = 0.005
+
+    /// How a slow stretch leaves: at most `chunk` bytes a message, one message
+    /// per `gap`. `paste_slow_chunk` and `paste_slow_delay_ms`.
+    struct Pace: Equatable {
+        var chunk: Int
+        var gap: TimeInterval
+
+        init(chunk: Int = 16, gap: TimeInterval = 0.010) {
+            // A message is never bigger than any other message may be.
+            self.chunk = min(max(chunk, 1), InputChunks.limit)
+            self.gap = max(gap, 0)
+        }
+    }
+
+    /// What became of a slow stretch, said to whoever asked for it.
+    enum SlowEvent: Equatable {
+        /// So many of its bytes have been handed over.
+        case sent(Int, of: Int)
+        case finished(Int)
+        /// Stopped early. The rest was removed and will never be sent.
+        case cancelled(sent: Int, of: Int)
+    }
+
+    private struct Slow {
+        /// Its bytes are `pending[start..<end]`.
+        var start: Int
+        var end: Int
+        var pace: Pace
+        var report: (SlowEvent) -> Void
+    }
+    /// The slow stretch, while there is one. One at a time.
+    private var slow: Slow?
 
     private var pending: [UInt8] = []
     /// Where the unsent part of `pending` starts. An index rather than a
@@ -132,9 +171,44 @@ final class PacedInput {
         if !isWaiting { sendNext() }
     }
 
+    /// A slow stretch is still going out.
+    var isSlow: Bool { slow != nil }
+
+    /// `bytes`, in order behind whatever is already waiting, at `pace`.
+    /// `report` hears how it goes, last of all `.finished` or `.cancelled`.
+    ///
+    /// One at a time: a second while the first is still going is ordinary
+    /// input, queued behind it at the usual pace, and says it finished.
+    func enqueue(_ bytes: ArraySlice<UInt8>, pace: Pace, report: @escaping (SlowEvent) -> Void) {
+        guard !bytes.isEmpty, slow == nil else {
+            enqueue(bytes)
+            report(.finished(bytes.count))
+            return
+        }
+        slow = Slow(start: pending.count, end: pending.count + bytes.count, pace: pace, report: report)
+        pending.append(contentsOf: bytes)
+        if !isWaiting { sendNext() }
+    }
+
+    /// Stop the slow stretch: what it has not sent is removed, and is never
+    /// sent. What was queued behind it (the key that cancelled it) follows at
+    /// the usual pace. Nothing to cancel, nothing done.
+    func cancelSlow() {
+        guard let slow else { return }
+        let from = max(head, slow.start)
+        pending.removeSubrange(from..<slow.end)
+        self.slow = nil
+        slow.report(.cancelled(sent: from - slow.start, of: slow.end - slow.start))
+    }
+
     /// Everything not yet sent, handed back. For a wire that has gone: the
     /// adapter holds it as it holds anything typed while disconnected.
+    ///
+    /// Not the rest of a slow stretch, which is cancelled instead: held input
+    /// is flushed at full speed on reconnect, which is the one thing whoever
+    /// asked for a slow paste said the far end could not take.
     func takeBacklog() -> [UInt8] {
+        cancelSlow()
         let rest = Array(pending[head...])
         pending.removeAll(keepingCapacity: false)
         head = 0
@@ -147,17 +221,38 @@ final class PacedInput {
             head = 0
             return
         }
-        let end = InputChunks.end(ofPieceAt: head, in: pending)
+        // A piece is all slow or all not: it stops where the stretch starts,
+        // and inside the stretch it is the stretch's size and gap.
+        var limit = InputChunks.limit
+        var wait = gap
+        var stop = pending.count
+        if let slow {
+            if head < slow.start {
+                stop = slow.start
+            } else {
+                limit = slow.pace.chunk
+                wait = slow.pace.gap
+                stop = slow.end
+            }
+        }
+        let end = min(InputChunks.end(ofPieceAt: head, in: pending, limit: limit), stop)
         let piece = Array(pending[head..<end])
         head = end
         isWaiting = true
         // The pacer is held by its adapter, and a gap that outlives both has
         // nothing left to send.
-        after(gap) { [weak self] in
+        after(wait) { [weak self] in
             self?.isWaiting = false
             self?.sendNext()
         }
         deliver(piece)
+        guard let slow, end > slow.start else { return }
+        if end >= slow.end {
+            self.slow = nil
+            slow.report(.finished(slow.end - slow.start))
+        } else {
+            slow.report(.sent(end - slow.start, of: slow.end - slow.start))
+        }
     }
 }
 

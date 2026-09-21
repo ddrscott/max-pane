@@ -187,10 +187,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let item = NSMenuItem(title: title, action: selector, keyEquivalent: key)
             item.target = selector == #selector(AppDelegate.pasteFromEditMenu(_:)) ? self : nil
             editMenu.addItem(item)
-            // The paste commands sit under Paste, before Select All.
+            // The paste commands sit under Paste, before Select All: in
+            // Paste Special ▸, those that say so (`Command.submenu`).
             if selector == #selector(AppDelegate.pasteFromEditMenu(_:)) {
+                var submenus: [String: NSMenu] = [:]
                 for command in Command.allCases where command.menu == .edit {
-                    editMenu.addItem(menuItem(for: command))
+                    guard let name = command.submenu else {
+                        editMenu.addItem(menuItem(for: command))
+                        continue
+                    }
+                    if submenus[name] == nil {
+                        let parent = NSMenuItem(title: name, action: nil, keyEquivalent: "")
+                        let menu = NSMenu(title: name)
+                        parent.submenu = menu
+                        editMenu.addItem(parent)
+                        submenus[name] = menu
+                    }
+                    submenus[name]?.addItem(menuItem(for: command))
                 }
             }
         }

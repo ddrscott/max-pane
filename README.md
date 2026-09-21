@@ -1735,7 +1735,7 @@ be sent, with control characters made visible (`␉`, `␛`).
 | **O** | Paste as One Line: lines joined with a space, so nothing in it presses Return. A line ending in `\` is a continuation and is joined the way the shell would join it. |
 | **T** | Tabs to Spaces, on and off (4 spaces, or `paste_tab_width`). The preview follows. |
 
-Nothing is remembered between pastes. **⌥⌘V, Edit › Paste Without Asking**,
+Nothing is remembered between pastes. **⌥⌘V, Edit › Paste Special › Paste Without Asking**,
 is the clipboard as it was copied, with the tidying and the sheet skipped once. `paste_confirm_multiline`,
 `paste_confirm_tabs` and `paste_confirm_bytes` (0 = never) turn each reason
 off, and apply to the next paste; see [Settings](#settings). A Finder-files
@@ -1752,6 +1752,21 @@ for a byte-at-a-time reader on such a host to get 256 KB whole. The cost is
 that 1 MB takes about seven seconds (measured: 7.1 s local, 7.2 s through a
 relaytty.com tunnel, sha256 equal both times), and a paste that will take a
 second or more says so in the pane's notice line.
+
+**Edit › Paste Special ▸** is for content a terminal makes awkward. Every item
+is a command, listed in ⌘/ and rebindable under `[keys]`, and live only when a
+terminal pane has the keyboard.
+
+| Item | `keys` name | Key | |
+|---|---|---|---|
+| **Paste Without Asking** | `pasteWithoutAsking` | ⌥⌘V | The clipboard as copied, untidied and unasked (above). |
+| **Paste Escaped** | `pasteEscaped` | ⌃⌘V | The clipboard text as **one shell word that runs nothing**, quoted by the rule a path is: bare when it can be, double quotes with `\` `"` `$` and the backtick escaped, single quotes when there is a `!`. A newline stays a newline *inside* the quotes, so the shell sees an open quote and asks for more (`dquote>`) instead of running a line; that is why this never asks first. Newlines at the end are dropped. Text with a tab, an escape or any other control character is written `$'a\tb\033[0m'` instead, every one spelled out, because inside ordinary quotes a tab still asks for completion; bash, zsh and ksh read that form, plain `sh` and fish do not. Never tidied. |
+| **Paste as Base64** | `pasteAsBase64` | | The text's UTF-8 as standard base64 on one line, never wrapped. |
+| **Paste Base64-Decoded** | `pasteBase64Decoded` | | The other way. Wrapped or unpadded base64 is fine; anything that is not base64, or that decodes to bytes that are not UTF-8 text, pastes nothing and the pane says so in one line. What comes out goes by ⌘V's door, so several lines of it ask first. |
+| **Paste File as Base64…** | `pasteFileAsBase64` | | The files copied in Finder if there are any, otherwise an open panel. Pastes `base64 -d > "NAME" <<'EOF'`, the file as base64 wrapped at 76 columns, and `EOF`, **without the final Return**: the prompt holds `EOF` and you press Return to write the file. `NAME` is the file's name, quoted like any path, written into whatever directory that shell is in. Several files are several heredocs. Refused above 5 MB in all. It skips the sheet (every line of it ends in Return by design) and goes out in the same paced pieces as any paste, about 50 s for 5 MB. **This is the no-scp way to get a small file onto a remote lane's machine until upload lands.** The delimiter is checked against the body and becomes `EOF_1`, `EOF_2`… if a line equals it. |
+| **Paste Slowly** | `pasteSlowly` | | The same bytes as ⌘V (tidied, asked about when risky), **16 bytes at a time with 10 ms between**, for a serial console or a program that drops characters fed at full speed. The pane says `pasting slowly · 1.2 KB of 18.2 KB · Esc cancels`. **Esc cancels it** and the program never hears that Esc; **typing cancels it** too, and what you typed follows what had already gone. Nothing of the paste is sent after. `paste_slow_chunk` and `paste_slow_delay_ms` set the pace, read at each slow paste. It is a stretch of the same queue every keystroke uses, not a second one, so order is kept; a connection that drops cancels it rather than flushing the rest at full speed on reconnect. |
+
+[ADR-0030](docs/decisions/0030-paste-special-is-five-pure-transforms-and-one-queue.md).
 
 **A middle click pastes**, as it does in iTerm and under X11. What it pastes:
 **this pane's selection if it has one**, read straight from the terminal and
@@ -2328,6 +2343,8 @@ paste_confirm_tabs = true
 paste_confirm_bytes = 16384
 paste_tab_width = 4
 paste_tidy = true
+paste_slow_chunk = 16
+paste_slow_delay_ms = 10
 middle_click_paste = true
 paste_images_as_files = true
 paste_image_keep_days = 7
@@ -2382,6 +2399,10 @@ each paste. See [Pasting into a terminal](#pasting-into-a-terminal).
 `paste_tidy` is whether copied text has its smart punctuation straightened, a
 copied `$ ` prompt removed and stray whitespace trimmed on its way into a
 terminal; ⌥⌘V pastes as copied either way. Read at each paste.
+
+`paste_slow_chunk` and `paste_slow_delay_ms` are Edit › Paste Special › Paste
+Slowly's pace: how many bytes go at a time (1 to 1000) and how many
+milliseconds pass between. Read at each slow paste.
 
 `middle_click_paste` is whether a middle click in a terminal pastes (the
 pane's selection first, else the clipboard). `false` makes a middle click do

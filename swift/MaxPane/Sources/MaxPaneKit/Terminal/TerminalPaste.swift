@@ -14,6 +14,10 @@ import RelayClient
     func pasteIntoTerminalPane(_ sender: Any?)
     /// ⌥⌘V, Paste Without Asking: the same paste, with the sheet skipped once.
     func pasteIntoTerminalPaneWithoutAsking(_ sender: Any?)
+    /// Edit › Paste Special. `sender` is an `NSString`: the raw value of the
+    /// `TerminalPaste.Special` wanted. One selector rather than five, since
+    /// which pane answers is the same question for all of them.
+    func pasteSpecialIntoTerminalPane(_ sender: Any?)
 }
 
 /// What ⌘V actually puts on the wire, given what is on the pasteboard.
@@ -702,6 +706,188 @@ enum TerminalPaste {
         if bytes < 1024 { return "\(bytes) byte\(bytes == 1 ? "" : "s")" }
         if bytes < 1024 * 1024 { return String(format: "%.1f KB", Double(bytes) / 1024) }
         return String(format: "%.1f MB", Double(bytes) / 1_048_576)
+    }
+
+    // MARK: - paste special
+
+    /// The items of Edit › Paste Special that are not plain pastes. The raw
+    /// value is the `Command`'s, which is how the menu's one selector says
+    /// which (`TerminalPasteTarget.pasteSpecialIntoTerminalPane`).
+    ///
+    /// Each is a pure function below with a stable name, so that anything else
+    /// may compose them: `escaped`, `base64Encoded`, `base64Decoded`,
+    /// `base64Heredoc`, `heredocDelimiter`.
+    enum Special: String, CaseIterable {
+        case escaped = "pasteEscaped"
+        case base64 = "pasteAsBase64"
+        case base64Decoded = "pasteBase64Decoded"
+        case fileAsBase64 = "pasteFileAsBase64"
+        case slowly = "pasteSlowly"
+    }
+
+    /// `text` as one shell word, whatever is in it; nil when there is nothing.
+    /// Paste Escaped: text that must arrive as itself and run nothing.
+    ///
+    /// `shellWord(for:)`'s rule, with its one refusal taken back. A control
+    /// character in a *file name* is refused because a path is typed at a
+    /// prompt; in copied text a newline or a tab is content. So:
+    ///
+    /// - Line endings become `\n`, and the ones at the end are dropped: they
+    ///   came along with the copy, and a paste never ends in Return.
+    /// - **Bare, double quotes, or single quotes on a `!`**, exactly as
+    ///   `shellWord(for:)` has it, when the only control characters are
+    ///   newlines. **A newline stays a newline inside the quotes.** It goes
+    ///   out as Return, the shell sees an open quote and asks for more
+    ///   (`dquote>`), and nothing runs. That is why this paste never asks.
+    /// - **`$'…'` when there is any other control character** (a tab, an
+    ///   escape, a ^C). Inside ordinary quotes those are still keys to a line
+    ///   editor: a tab asks for completion, ^C abandons the line. In `$'…'`
+    ///   every one is written out (`\t`, `\n`, `\033`, three octal digits so
+    ///   the next character cannot join it), so the paste is one line of
+    ///   printable text. `!` is `\041` there, since history expansion does not
+    ///   respect `$'…'` in every bash. bash, zsh and ksh read `$'…'`; plain
+    ///   `sh` and fish do not, which is the price of a tab that stays a tab.
+    static func escaped(_ text: String) -> String? {
+        var body = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        while body.hasSuffix("\n") { body.removeLast() }
+        guard !body.isEmpty else { return nil }
+        let scalars = body.unicodeScalars
+        let isControl = { (scalar: Unicode.Scalar) in scalar.properties.generalCategory == .control }
+        guard scalars.contains(where: { isControl($0) && $0 != "\n" }) else {
+            // Nothing in the way of the path rule but the newlines, which it
+            // never sees: quoted a line at a time, they would each be a word.
+            if scalars.allSatisfy(isBare) { return body }
+            if scalars.contains("!") { return "'" + body.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+            var out = "\""
+            for scalar in scalars {
+                if scalar == "\\" || scalar == "\"" || scalar == "$" || scalar == "`" { out.append("\\") }
+                out.unicodeScalars.append(scalar)
+            }
+            return out + "\""
+        }
+        var out = "$'"
+        for scalar in scalars {
+            switch scalar {
+            case "\\": out += "\\\\"
+            case "'": out += "\\'"
+            case "\n": out += "\\n"
+            case "\t": out += "\\t"
+            case "!": out += "\\041"
+            case _ where isControl(scalar):
+                for byte in String(scalar).utf8 {
+                    let octal = String(byte, radix: 8)
+                    out += "\\" + String(repeating: "0", count: 3 - octal.count) + octal
+                }
+            default: out.unicodeScalars.append(scalar)
+            }
+        }
+        return out + "'"
+    }
+
+    /// `text`'s UTF-8 as standard base64, on one line, padded.
+    static func base64Encoded(_ text: String) -> String {
+        Data(text.utf8).base64EncodedString()
+    }
+
+    /// Why a Paste Special pasted nothing, as the pane's one line.
+    struct Refusal: Error, Equatable {
+        var notice: String
+    }
+
+    /// The text `base64` encodes, or the line that says why there is none.
+    ///
+    /// Whitespace anywhere is ignored, since base64 out of a mail or a
+    /// terminal is wrapped, and missing `=` padding is supplied. Anything else
+    /// outside the standard alphabet refuses, and so does a result that is not
+    /// UTF-8: bytes that are not text have no business at a prompt (a file
+    /// goes the other way, `base64Heredoc`).
+    static func base64Decoded(_ base64: String) -> Result<String, Refusal> {
+        var compact = String(base64.unicodeScalars.filter { !$0.properties.isWhitespace })
+        let alphabet = { (scalar: Unicode.Scalar) -> Bool in
+            switch scalar {
+            case "a"..."z", "A"..."Z", "0"..."9", "+", "/": return true
+            default: return false
+            }
+        }
+        let unpadded = compact.unicodeScalars.prefix(while: { $0 != "=" })
+        let padding = compact.unicodeScalars.count - unpadded.count
+        guard !unpadded.isEmpty, unpadded.allSatisfy(alphabet), padding <= 2,
+              compact.unicodeScalars.dropFirst(unpadded.count).allSatisfy({ $0 == "=" }),
+              unpadded.count % 4 != 1
+        else { return .failure(Refusal(notice: "not pasted: the clipboard is not base64")) }
+        compact = String(String.UnicodeScalarView(unpadded))
+        compact += String(repeating: "=", count: (4 - compact.count % 4) % 4)
+        guard let data = Data(base64Encoded: compact) else {
+            return .failure(Refusal(notice: "not pasted: the clipboard is not base64"))
+        }
+        guard let text = String(data: data, encoding: .utf8) else {
+            return .failure(Refusal(notice: "not pasted: that base64 is \(size(data.count)) that are not UTF-8 text"))
+        }
+        return .success(text)
+    }
+
+    /// The most a Paste File as Base64 takes, all its files together. A third
+    /// more than this goes down the wire, at 200 KB/s at best.
+    static let fileLimit = 5 * 1_048_576
+
+    /// The one line that refuses files of `bytes` in all, or nil.
+    static func fileRefusal(bytes: Int) -> Refusal? {
+        guard bytes > fileLimit else { return nil }
+        return Refusal(notice: "not pasted: \(size(bytes)) is more than the 5 MB a file paste takes")
+    }
+
+    /// A heredoc delimiter that is not one of `lines`: `EOF`, else `EOF_1`,
+    /// `EOF_2`, … A line equal to the delimiter ends the heredoc early, and
+    /// what follows it is run as commands.
+    ///
+    /// Base64 cannot in fact collide with `EOF` (its lines are a multiple of
+    /// four characters long) and never holds a `_`. The rule is here anyway
+    /// because it is the whole safety of a heredoc, and the next caller's body
+    /// may be anything.
+    static func heredocDelimiter(notIn lines: [String]) -> String {
+        let taken = Set(lines)
+        var delimiter = "EOF"
+        var attempt = 0
+        while taken.contains(delimiter) {
+            attempt += 1
+            delimiter = "EOF_\(attempt)"
+        }
+        return delimiter
+    }
+
+    /// `base64 -d > NAME <<'EOF'`, `data` as base64 wrapped at `columns`, and
+    /// `EOF`, with **no line ending after it**: the file is on the prompt, and
+    /// Return is the owner's to press. How a small file gets onto a machine
+    /// that has no scp, only a shell.
+    ///
+    /// `name` is one shell word by `shellWord(for:)`, so `my notes.txt` is
+    /// `"my notes.txt"`; nil when it holds a control character, as a path
+    /// would be. The delimiter is quoted, so the body is taken literally.
+    /// `-d` and not `--decode`: GNU, BusyBox and macOS 13 and later all take it.
+    static func base64Heredoc(name: String, data: Data, columns: Int = 76) -> String? {
+        guard !name.isEmpty, let word = shellWord(for: name) else { return nil }
+        let encoded = Array(data.base64EncodedString().utf8)
+        let width = max(columns, 4)
+        let lines = stride(from: 0, to: encoded.count, by: width).map {
+            String(decoding: encoded[$0..<min($0 + width, encoded.count)], as: UTF8.self)
+        }
+        let delimiter = heredocDelimiter(notIn: lines)
+        return (["base64 -d > \(word) <<'\(delimiter)'"] + lines + [delimiter]).joined(separator: "\n")
+    }
+
+    /// What Paste Slowly reads from the config, each time.
+    static func slowPace(_ config: Config) -> PacedInput.Pace {
+        PacedInput.Pace(chunk: Int(config.pasteSlowChunk), gap: Double(config.pasteSlowDelayMs) / 1000)
+    }
+
+    /// The pane's line while a slow paste goes: `pasting slowly · 1.2 KB of
+    /// 18.2 KB · Esc cancels`.
+    static func slowNotice(_ event: PacedInput.SlowEvent) -> String {
+        switch event {
+        case .sent(let sent, let total): return "pasting slowly · \(size(sent)) of \(size(total)) · Esc cancels"
+        case .finished(let total): return "pasted slowly · \(size(total))"
+        case .cancelled(let sent, let total): return "slow paste cancelled · \(size(sent)) of \(size(total)) sent"
+        }
     }
 
     // MARK: - middle click

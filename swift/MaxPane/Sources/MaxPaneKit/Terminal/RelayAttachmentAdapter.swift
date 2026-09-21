@@ -166,6 +166,19 @@ final class RelayAttachmentAdapter: RelayAttachment {
         paced.enqueue(bytes)
     }
 
+    /// Paste Slowly. With no wire there is nothing to pace against: the bytes
+    /// are held like any others, and go at the usual pace when it is back.
+    func send(_ bytes: ArraySlice<UInt8>, pace: PacedInput.Pace, report: @escaping (PacedInput.SlowEvent) -> Void) {
+        guard session != nil, isAttached else {
+            send(bytes)
+            report(.finished(bytes.count))
+            return
+        }
+        paced.enqueue(bytes, pace: pace, report: report)
+    }
+
+    func cancelSlowSend() { paced.cancelSlow() }
+
     /// Everything that goes to the session goes through here: what is typed,
     /// what is pasted, what was held while the wire was down. At most 1 000
     /// bytes a message and one message per 5 ms; `PacedInput` has the numbers.

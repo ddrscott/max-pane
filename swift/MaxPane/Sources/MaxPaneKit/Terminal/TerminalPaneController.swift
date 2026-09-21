@@ -39,6 +39,12 @@ protocol RelayAttachment: AnyObject {
     func connect()
     func disconnect()
     func send(_ bytes: ArraySlice<UInt8>)
+    /// Paste Slowly: `bytes` in the same queue as everything else, in small
+    /// pieces with a longer gap (`PacedInput.enqueue(_:pace:)`). `report`
+    /// hears how it goes and, last, that it finished or was cancelled.
+    func send(_ bytes: ArraySlice<UInt8>, pace: PacedInput.Pace, report: @escaping (PacedInput.SlowEvent) -> Void)
+    /// Stop a slow send: what has not gone never goes.
+    func cancelSlowSend()
 
     /// Reshape the PTY. This changes the terminal for **every** client attached
     /// to the session, the phone included, which is why it is debounced to the
@@ -50,6 +56,12 @@ extension RelayAttachment {
     var onInputDropped: ((Int) -> Void)? { get { nil } set {} }
     var onClipboard: ((String) -> Void)? { get { nil } set {} }
     func serverStateChanged(_ state: ServerState) {}
+    /// An attachment with no pacing of its own has nothing to slow down.
+    func send(_ bytes: ArraySlice<UInt8>, pace: PacedInput.Pace, report: @escaping (PacedInput.SlowEvent) -> Void) {
+        send(bytes)
+        report(.finished(bytes.count))
+    }
+    func cancelSlowSend() {}
 }
 
 /// A terminal pane: Ghostty's terminal core attached to a RelayTTY session.
@@ -216,6 +228,8 @@ final class TerminalPaneController: NSObject, PaneController {
         terminal.onMiddleClick = { [weak self] forced in self?.middleClick(forced: forced) ?? true }
         container.onPaste = { [weak self] in self?.pasteFromClipboard() }
         container.onPasteWithoutAsking = { [weak self] in self?.pasteFromClipboard(asking: false) }
+        container.onPasteSpecial = { [weak self] special in self?.pasteSpecial(special) }
+        terminal.onKeyDown = { [weak self] event in self?.keyDuringSlowPaste(event) ?? false }
         container.onDropFiles = { [weak self] pasteboard in self?.dropFiles(from: pasteboard) ?? false }
 
         let outbound = TerminalOutbound { [weak self] bytes in
@@ -298,10 +312,15 @@ final class TerminalPaneController: NSObject, PaneController {
     ///
     /// `lasting: nil` stays until the next notice replaces it: an upload in
     /// progress is said for as long as it is true.
-    func showNotice(_ text: String, lasting seconds: TimeInterval? = 3) {
+    ///
+    /// A notice that replaces a notice with `fading: false` changes its words
+    /// in place: a count going up is one line being kept true, not a hundred
+    /// lines arriving, and a fade per step would be a flicker.
+    func showNotice(_ text: String, lasting seconds: TimeInterval? = 3, fading: Bool = true) {
+        let wasNotice = noticeText != nil
         status.isHidden = false
         status.setState(.notice(text))
-        Motion.fade(status.layer)
+        if fading || !wasNotice { Motion.fade(status.layer) }
         noticeTimer?.invalidate()
         noticeTimer = nil
         guard let seconds else { return }
@@ -610,7 +629,7 @@ final class TerminalPaneController: NSObject, PaneController {
     /// what is left, and the sheet shows what is left. Paths made from files
     /// and pictures are not text and are never tidied. ⌥⌘V skips this too: it
     /// is the way to get exactly what was copied.
-    func paste(_ clipboard: TerminalPaste.Clipboard, asking: Bool = true) {
+    func paste(_ clipboard: TerminalPaste.Clipboard, asking: Bool = true, slowly: Bool = false) {
         // A second paste while the first is still a question is not queued
         // behind it and does not answer it: the sheet is what has the floor.
         guard pasteSheet == nil, clipboardSheet == nil else { return }
@@ -631,9 +650,9 @@ final class TerminalPaneController: NSObject, PaneController {
             tidied = tidy.summary
         }
         if asking, TerminalPaste.asksFirst(text, settings) {
-            ask(about: text, settings, tidied: tidied)
+            ask(about: text, settings, tidied: tidied, slowly: slowly)
         } else {
-            send(pasted: text, tidied: tidied)
+            send(pasted: text, tidied: tidied, slowly: slowly)
         }
     }
 
@@ -644,9 +663,13 @@ final class TerminalPaneController: NSObject, PaneController {
     ///
     /// `tidied` is what tidying did, when it did anything: the pane says so in
     /// its notice line as the bytes go, never before and never for nothing.
-    private func send(pasted text: String, tidied: String? = nil) {
+    private func send(pasted text: String, tidied: String? = nil, slowly: Bool = false) {
         let bytes = TerminalPaste.bytes(for: text)
         guard !bytes.isEmpty else { return }
+        if slowly {
+            send(slowly: bytes)
+            return
+        }
         if let tidied { showNotice("pasted · \(tidied)", lasting: 5) }
         // A paste long enough to be watched going in says so, so the wait is
         // not mistaken for a hang. What is typed meanwhile follows it.
@@ -656,6 +679,158 @@ final class TerminalPaneController: NSObject, PaneController {
             showNotice("pasting \(TerminalPaste.size(bytes.count)), about \(Int(seconds.rounded())) s\(tidy)", lasting: 5)
         }
         session.sendInput(Data(bytes))
+    }
+
+    // MARK: paste special
+
+    /// Edit › Paste Special. Each transform is a pure function in
+    /// `TerminalPaste`; this is only which one, and which door.
+    func pasteSpecial(_ special: TerminalPaste.Special) {
+        guard pasteSheet == nil, clipboardSheet == nil else { return }
+        let live = liveConfig?() ?? config
+        switch special {
+        case .slowly:
+            // The same bytes as ⌘V, by the same door: tidied, asked about,
+            // a screenshot as its path. Only the pace differs.
+            guard !isPastingSlowly else { return }
+            paste(TerminalPaste.clipboard(pasteboard, images: TerminalPaste.ImageSettings(live).asFiles), slowly: true)
+        case .fileAsBase64:
+            pasteFilesAsBase64()
+        case .escaped, .base64, .base64Decoded:
+            // The clipboard as ⌘V would read it, a copied file being its path.
+            // A picture has no text to transform.
+            guard let text = TerminalPaste.clipboard(pasteboard, images: false).text else {
+                showNotice("not pasted: no text on the clipboard")
+                return
+            }
+            switch special {
+            case .escaped:
+                // One quoted word, so nothing in it presses Return at a
+                // prompt that will act on it: never tidied, never asked.
+                if let word = TerminalPaste.escaped(text) { send(pasted: word) }
+            case .base64:
+                paste(TerminalPaste.Clipboard(text: TerminalPaste.base64Encoded(text)))
+            default:
+                switch TerminalPaste.base64Decoded(text) {
+                // What comes out is anybody's text: by the door, so several
+                // lines of it ask first. Not tidied; it is not a copy.
+                case .success(let decoded): paste(TerminalPaste.Clipboard(text: decoded))
+                case .failure(let refusal): showNotice(refusal.notice)
+                }
+            }
+        }
+    }
+
+    /// How Paste File as Base64… asks which files, when the clipboard has
+    /// none. An open panel; a test puts its own here and never sees one.
+    var chooseFiles: (_ over: NSWindow?, _ chosen: @escaping ([URL]) -> Void) -> Void = { window, chosen in
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Paste"
+        panel.message = "Paste as a base64 heredoc, up to 5 MB."
+        let done: (NSApplication.ModalResponse) -> Void = { chosen($0 == .OK ? panel.urls : []) }
+        if let window { panel.beginSheetModal(for: window, completionHandler: done) } else { panel.begin(completionHandler: done) }
+    }
+
+    /// The files copied in Finder, if there are any; otherwise ask.
+    private func pasteFilesAsBase64() {
+        let copied = (pasteboard.readObjects(
+            forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [NSURL] ?? [])
+            .map { URL(fileURLWithPath: TerminalPaste.filePath(of: $0)) }
+        guard copied.isEmpty else {
+            pasteAsBase64(files: copied)
+            return
+        }
+        chooseFiles(container.window) { [weak self] urls in
+            guard let self, !urls.isEmpty else { return }
+            self.pasteAsBase64(files: urls)
+            // The panel had the keyboard; the Return that runs this is next.
+            self.takeFocus()
+        }
+    }
+
+    /// Each file as a heredoc that writes it, by name, into whatever directory
+    /// the far shell is in. Several are several heredocs, each but the last
+    /// ended by Return, as it has to be for the next to start. **The last has
+    /// none**, so the prompt holds `EOF` and the owner presses Return.
+    func pasteAsBase64(files: [URL]) {
+        var total = 0
+        var heredocs: [String] = []
+        for url in files {
+            let name = url.lastPathComponent
+            // Sized before it is read: a 4 GB mistake is refused, not loaded.
+            let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
+            if values?.isDirectory == true {
+                showNotice("not pasted: \(name) is a folder")
+                return
+            }
+            total += values?.fileSize ?? 0
+            if let refusal = TerminalPaste.fileRefusal(bytes: total) {
+                showNotice(refusal.notice)
+                return
+            }
+            guard let data = try? Data(contentsOf: url) else {
+                showNotice("not pasted: \(name) could not be read")
+                return
+            }
+            guard let heredoc = TerminalPaste.base64Heredoc(name: name, data: data) else {
+                showNotice("not pasted: a control character in the file's name")
+                return
+            }
+            heredocs.append(heredoc)
+        }
+        guard !heredocs.isEmpty else { return }
+        let what = files.count == 1 ? files[0].lastPathComponent : "\(files.count) files"
+        showNotice("\(what) as base64, \(TerminalPaste.size(total)) · Return writes it", lasting: 5)
+        // Not by the door: every line of it ends in Return by design, and the
+        // sheet would ask about exactly that.
+        send(pasted: heredocs.joined(separator: "\n"))
+    }
+
+    /// A slow paste is going out.
+    private(set) var isPastingSlowly = false
+    /// The last whole percent the notice said, so it changes a hundred times
+    /// and not once per sixteen bytes.
+    private var slowPercent = -1
+
+    /// Paste Slowly: straight to the attachment's queue, marked slow, rather
+    /// than through the emulator's write path, which has no way to say so.
+    private func send(slowly bytes: [UInt8]) {
+        guard let attachment, !isPastingSlowly else { return }
+        isPastingSlowly = true
+        slowPercent = -1
+        let pace = TerminalPaste.slowPace(liveConfig?() ?? config)
+        attachment.send(bytes[...], pace: pace) { [weak self] event in
+            guard let self else { return }
+            switch event {
+            case .sent(let sent, let total):
+                let percent = sent * 100 / max(total, 1)
+                guard percent != self.slowPercent else { return }
+                self.slowPercent = percent
+                self.showNotice(TerminalPaste.slowNotice(event), lasting: nil, fading: false)
+            case .finished, .cancelled:
+                self.isPastingSlowly = false
+                self.showNotice(TerminalPaste.slowNotice(event))
+            }
+        }
+    }
+
+    /// Stop a slow paste. What has not gone never goes.
+    func cancelSlowPaste() {
+        guard isPastingSlowly else { return }
+        attachment?.cancelSlowSend()
+    }
+
+    /// A key while a slow paste goes stops it. Esc is only that, and is
+    /// swallowed: the program should not hear Esc because a paste was called
+    /// off. Any other key is typing, which the paste gives way to, and it
+    /// goes on to the program behind what was already sent.
+    func keyDuringSlowPaste(_ event: NSEvent) -> Bool {
+        guard isPastingSlowly else { return false }
+        cancelSlowPaste()
+        return event.keyCode == 53
     }
 
     // MARK: images
@@ -733,10 +908,12 @@ final class TerminalPaneController: NSObject, PaneController {
     /// slack, as measured (1 MB, 1 049 pieces, in 7.1 s).
     private static let secondsPerPiece = 0.0068
 
-    private func ask(about text: String, _ settings: TerminalPaste.ConfirmSettings, tidied: String? = nil) {
+    private func ask(
+        about text: String, _ settings: TerminalPaste.ConfirmSettings, tidied: String? = nil, slowly: Bool = false
+    ) {
         let font = NSFont(name: config.fontName, size: 11)
         let sheet = PasteAskSheet(text: text, settings: settings, terminalFont: font, tidied: tidied) { [weak self] answer in
-            self?.pasteAnswered(answer, text: text, settings, tidied: tidied)
+            self?.pasteAnswered(answer, text: text, settings, tidied: tidied, slowly: slowly)
         }
         sheet.onClick = { [weak self] in
             guard let self else { return }
@@ -757,14 +934,15 @@ final class TerminalPaneController: NSObject, PaneController {
     }
 
     private func pasteAnswered(
-        _ answer: PasteAnswer, text: String, _ settings: TerminalPaste.ConfirmSettings, tidied: String? = nil
+        _ answer: PasteAnswer, text: String, _ settings: TerminalPaste.ConfirmSettings, tidied: String? = nil,
+        slowly: Bool = false
     ) {
         pasteSheet = nil
         if case .paste(let oneLine, let tabsToSpaces) = answer {
             var out = text
             if tabsToSpaces { out = TerminalPaste.tabsToSpaces(out, width: settings.tabWidth) }
             if oneLine { out = TerminalPaste.oneLine(out) }
-            send(pasted: out, tidied: tidied)
+            send(pasted: out, tidied: tidied, slowly: slowly)
         }
         // The terminal gets the keyboard back either way; without this the
         // pane is focused according to the ledger and deaf in fact.
@@ -1558,6 +1736,7 @@ final class TerminalPaneContainer: NSView {
     var onAttach: (() -> Void)?
     var onPaste: (() -> Void)?
     var onPasteWithoutAsking: (() -> Void)?
+    var onPasteSpecial: ((TerminalPaste.Special) -> Void)?
     /// Files from Finder dropped on the pane. Answers whether it took them.
     var onDropFiles: ((NSPasteboard) -> Bool)?
 
@@ -1602,6 +1781,10 @@ final class TerminalPaneContainer: NSView {
 extension TerminalPaneContainer: TerminalPasteTarget {
     func pasteIntoTerminalPane(_ sender: Any?) { onPaste?() }
     func pasteIntoTerminalPaneWithoutAsking(_ sender: Any?) { onPasteWithoutAsking?() }
+    func pasteSpecialIntoTerminalPane(_ sender: Any?) {
+        guard let name = sender as? String, let special = TerminalPaste.Special(rawValue: name) else { return }
+        onPasteSpecial?(special)
+    }
 }
 
 
