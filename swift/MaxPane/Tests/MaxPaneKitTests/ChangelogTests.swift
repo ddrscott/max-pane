@@ -52,8 +52,9 @@ struct ChangelogTests {
             }
         }
         #expect(log.sections.first?.isUnreleased == true)
-        #expect(log.unreleasedCount == counted["Unreleased"])
-        #expect(log.unreleasedCount > 0)
+        // Zero at the moment a release is cut, when everything has just moved
+        // under the new version; the corner then reads the bare version.
+        #expect(log.unreleasedCount == (counted["Unreleased"] ?? 0))
         // The link block at the foot is not a section and not an entry.
         #expect(!log.sections.contains { $0.version.hasPrefix("http") })
         // Every released section has a date; the link references did not

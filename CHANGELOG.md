@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-22
+
 ### Added
 - Remote relay-tty servers: sessions running on another machine appear in the sidebar and ⌘O beside the local ones and attach as ordinary lanes, rendered by libghostty. They split, dock, gather by project and survive a relaunch like any other lane
 - Settings › Servers: paste the Auth URL a relay-tty server prints at startup and it connects. The token is kept in the Keychain, never in `config.toml`, and adding, removing, renaming or disabling a server applies without a relaunch
@@ -104,7 +106,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Panes never inherit Claude session markers from the process that launched the app, so `claude` inside a pane saves its transcript
 - The core is linked statically, so a rebuild in the checkout cannot break the installed app
 
-[Unreleased]: https://github.com/ddrscott/max-pane/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/ddrscott/max-pane/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/ddrscott/max-pane/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/ddrscott/max-pane/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/ddrscott/max-pane/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/ddrscott/max-pane/releases/tag/v0.5.0
