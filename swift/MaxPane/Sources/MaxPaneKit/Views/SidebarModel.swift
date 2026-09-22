@@ -111,11 +111,35 @@ enum SidebarModel {
         var needsAttention: Bool { state == .blocked }
     }
 
+    /// Where a click on a folded header's state text goes: the first row
+    /// under it in that state, in the order the rows would be drawn. The
+    /// same three facts a row's click uses — a lane to reveal, or a session
+    /// to attach — and nothing that changes on the age tick, so a folded
+    /// header does not rebuild every second.
+    struct Target: Equatable {
+        var laneId: String?
+        var paneId: String?
+        var sessionKey: SessionKey?
+    }
+
+    /// One piece of a folded header's roll-up: `1 BLOCKED` in the blocked
+    /// green, `2 DONE` in orange, `3 WORKING` in the working green, and the
+    /// grey tail — `4 LANES HIDDEN`, `2 RUNNING` — with no state at all.
+    struct Segment: Equatable {
+        var text: String
+        var state: AgentState?
+    }
+
     struct Group: Equatable {
         var path: String
         var running: Int
         var blocked: Int
         var total: Int
+        /// Rows under this header that are DONE and WORKING. Counted always,
+        /// read only while the header is folded: an open group's rows say it
+        /// themselves.
+        var done = 0
+        var working = 0
         var collapsed: Bool
         /// What the header says instead of the session count. One caller: the
         /// bookmarks section, whose rows are not sessions and for which
@@ -139,6 +163,11 @@ enum SidebarModel {
         /// mutes them: a sound from a lane that is not on the strip has
         /// nowhere else to be found.
         var audibleLanes: [String] = []
+        /// The first BLOCKED and the first DONE row under a folded header, for
+        /// a click on `N BLOCKED` / `N DONE` to go to. Nil while open, and
+        /// when there is none.
+        var blockedTarget: Target?
+        var doneTarget: Target?
 
         /// A section header — a server's, or `// LOCAL` — rather than a
         /// project group: it heads a block and has no rows of its own.
@@ -183,35 +212,81 @@ enum SidebarModel {
             return path
         }
 
-        /// A collapsed group hides its rows, so the header has to carry the one
-        /// fact you cannot afford to have hidden.
+        /// The grey count: what is under the header, with no state in it.
+        ///
+        /// An open group says what it always said, BLOCKED included, because
+        /// its rows are on show and the header's one word is a summary. A
+        /// folded group is different: its rows are gone, so every state they
+        /// carried rolls up onto the header as its own segment (`rollUp`),
+        /// and this is only the tail — how many lanes the fold is holding
+        /// off the strip, or how many sessions are in it.
         var countText: String {
             if let countOverride { return countOverride }
             // A collapse that is holding lanes off the strip says so, in the
-            // place the count was: the rows are folded away, so what they
-            // were doing is not on show, and what is missing from the strip
-            // is the thing to know. BLOCKED is never folded into this; it
-            // has its own text beside it (`blockedText`).
+            // place the count was: what is missing from the strip is the
+            // thing to know.
             if hiddenLanes > 0 { return "\(hiddenLanes) LANE\(hiddenLanes == 1 ? "" : "S") HIDDEN" }
             if isSection {
                 // The section's line: what it holds. `total` is its session
                 // count across every project in it. A server's state is its
                 // own chip beside this (`stateChip`), not a word in its place.
-                if blocked > 0 { return "\(blocked) BLOCKED" }
+                if blocked > 0, !collapsed { return "\(blocked) BLOCKED" }
                 return "\(total) SESSION\(total == 1 ? "" : "S")"
             }
             // Under a server that is not answering, RUNNING is a claim nobody
             // can back. What is known is how many there were.
             if serverIsOffline { return "\(total) OFFLINE" }
-            return blocked > 0 ? "\(blocked) BLOCKED" : (running > 0 ? "\(running) RUNNING" : "\(total) CLOSED")
+            if blocked > 0, !collapsed { return "\(blocked) BLOCKED" }
+            return running > 0 ? "\(running) RUNNING" : "\(total) CLOSED"
         }
 
-        /// `2 BLOCKED`, beside a count that is saying something else: only a
-        /// header hiding lanes has both to say. Everywhere else `countText`
-        /// already leads with it.
+        /// `2 BLOCKED`, beside the grey count, on a folded header. An open
+        /// header's `countText` already leads with it.
         var blockedText: String? {
-            guard hiddenLanes > 0, blocked > 0 else { return nil }
+            guard collapsed, blocked > 0 else { return nil }
             return "\(blocked) BLOCKED"
+        }
+
+        /// `2 DONE`, on a folded header: the one state the owner set a colour
+        /// aside for, and the one a fold used to swallow.
+        var doneText: String? {
+            guard collapsed, done > 0 else { return nil }
+            return "\(done) DONE"
+        }
+
+        /// `2 WORKING`, on a folded header. An open group never says it: the
+        /// green mark on each row already does.
+        var workingText: String? {
+            guard collapsed, working > 0 else { return nil }
+            return "\(working) WORKING"
+        }
+
+        /// The folded header's right-hand slot, loudest first: BLOCKED, then
+        /// DONE, then WORKING, then the grey count. An open header is one
+        /// segment, its `countText`. The view drops the grey tail first when
+        /// the header has not the width for all of it.
+        var rollUp: [Segment] {
+            var out: [Segment] = []
+            if let blockedText { out.append(Segment(text: blockedText, state: .blocked)) }
+            if let doneText { out.append(Segment(text: doneText, state: .done)) }
+            if let workingText { out.append(Segment(text: workingText, state: .working)) }
+            out.append(Segment(text: countText, state: nil))
+            return out
+        }
+
+        /// `1 BLOCKED · 2 DONE · 3 LANES HIDDEN`: the roll-up as one line, for
+        /// tests and the tooltip.
+        var rollUpText: String { rollUp.map(\.text).joined(separator: " · ") }
+
+        /// The state the header's leading mark takes: the brightest one under
+        /// a folded header, by the row rule — blocked, else done, else
+        /// working — and nil (grey) for anything else, and for an open group.
+        var markState: AgentState? {
+            guard collapsed else { return nil }
+            if blocked > 0 { return .blocked }
+            if done > 0 { return .done }
+            if working > 0 { return .working }
+            return nil
         }
 
         /// The header's state is worth a colour: the server is not connected.
@@ -454,11 +529,29 @@ enum SidebarModel {
             return Set(entries.compactMap(\.laneId)).intersection(hiddenLanes)
                 .filter { audio[$0] == .audible }.sorted()
         }
+        // The first row in a state, in the order the rows would be drawn
+        // under the header: for a project its sort order, for a section each
+        // project in turn. What a click on the folded header's `N BLOCKED`
+        // or `N DONE` goes to.
+        func target(_ entries: [Entry], in state: AgentState) -> Target? {
+            entries.first { $0.state == state }
+                .map { Target(laneId: $0.laneId, paneId: $0.paneId, sessionKey: $0.sessionKey) }
+        }
+        func rolledUp(_ group: Group, over ordered: [Entry]) -> Group {
+            var group = group
+            group.done = ordered.filter { $0.state == .done }.count
+            group.working = ordered.filter { $0.state == .working }.count
+            guard group.collapsed else { return group }
+            group.blockedTarget = target(ordered, in: .blocked)
+            group.doneTarget = target(ordered, in: .done)
+            return group
+        }
         func emit(_ path: String) {
             let kept = grouped[path]!.filter { matches($0, controls) }
             guard !kept.isEmpty else { return }
             let collapsed = controls.collapsed.contains(path)
-            out.append(.group(Group(
+            let ordered = sorted(kept, controls)
+            out.append(.group(rolledUp(Group(
                 path: path,
                 running: kept.filter(\.isRunning).count,
                 blocked: kept.filter(\.needsAttention).count,
@@ -467,9 +560,13 @@ enum SidebarModel {
                 countOverride: nil,
                 serverState: LaneHeaderPath.splitServer(path).flatMap { servers[$0.server] },
                 hiddenLanes: collapsed ? hiding(grouped[path]!) : 0,
-                audibleLanes: collapsed ? sounding(grouped[path]!) : [])))
+                audibleLanes: collapsed ? sounding(grouped[path]!) : []), over: ordered)))
             guard !collapsed else { return }
-            out.append(contentsOf: sorted(kept, controls).map(Row.entry))
+            out.append(contentsOf: ordered.map(Row.entry))
+        }
+        // A section's rows in drawn order: each project in turn, sorted.
+        func ordered(_ paths: [String]) -> [Entry] {
+            paths.flatMap { sorted(grouped[$0]!.filter { matches($0, controls) }, controls) }
         }
         // `// LOCAL`, only beside at least one server: the blocks are then
         // parallel. With none configured there is no header and nothing
@@ -478,7 +575,7 @@ enum SidebarModel {
         if !servers.isEmpty {
             let entries = local.filter { $0 != looseWebGroup }
                 .flatMap { grouped[$0]! }.filter { $0.kind == .session && matches($0, controls) }
-            out.append(.group(Group(
+            out.append(.group(rolledUp(Group(
                 path: localSection,
                 running: entries.filter(\.isRunning).count,
                 blocked: entries.filter(\.needsAttention).count,
@@ -489,7 +586,8 @@ enum SidebarModel {
                 hiddenLanes: localFolded
                     ? hiding(local.filter { $0 != looseWebGroup }.flatMap { grouped[$0]! }) : 0,
                 audibleLanes: localFolded
-                    ? sounding(local.filter { $0 != looseWebGroup }.flatMap { grouped[$0]! }) : [])))
+                    ? sounding(local.filter { $0 != looseWebGroup }.flatMap { grouped[$0]! }) : []),
+                over: ordered(local.filter { $0 != looseWebGroup }).filter { $0.kind == .session })))
         }
         // A folded section folds every project under it. The loose web group
         // is under no section — `// LOCAL` never counted it — and stays.
@@ -498,7 +596,7 @@ enum SidebarModel {
             let paths = byServer[server] ?? []
             let entries = paths.flatMap { grouped[$0]! }.filter { matches($0, controls) }
             let folded = controls.collapsed.contains(Group.serverPath(server))
-            out.append(.group(Group(
+            out.append(.group(rolledUp(Group(
                 path: Group.serverPath(server),
                 running: entries.filter(\.isRunning).count,
                 blocked: entries.filter(\.needsAttention).count,
@@ -508,7 +606,7 @@ enum SidebarModel {
                 serverState: servers[server],
                 serverError: serverErrors[server],
                 hiddenLanes: folded ? hiding(paths.flatMap { grouped[$0]! }) : 0,
-                audibleLanes: folded ? sounding(paths.flatMap { grouped[$0]! }) : [])))
+                audibleLanes: folded ? sounding(paths.flatMap { grouped[$0]! }) : []), over: ordered(paths))))
             guard !folded else { continue }
             for path in paths { emit(path) }
         }
@@ -753,11 +851,13 @@ enum SidebarModel {
             if was.state != e.state || was.chip != e.chip || was.offline != e.offline
                 || was.badgeIsThroughput != e.badgeIsThroughput || was.audio != e.audio { return true }
         }
-        // A folded header's speaker arriving or leaving.
-        var sounding: [String: Bool] = [:]
-        for case .group(let g) in old { sounding[g.path] = !g.audibleLanes.isEmpty }
+        // A folded header's speaker arriving or leaving, or its roll-up
+        // changing: a state appearing on, or clearing from, a fold.
+        var headers: [String: (sounding: Bool, rollUp: String)] = [:]
+        for case .group(let g) in old { headers[g.path] = (!g.audibleLanes.isEmpty, g.rollUpText) }
         for case .group(let g) in new {
-            if let was = sounding[g.path], was != !g.audibleLanes.isEmpty { return true }
+            guard let was = headers[g.path] else { continue }
+            if was.sounding != !g.audibleLanes.isEmpty || was.rollUp != g.rollUpText { return true }
         }
         // A server going quiet or coming back is a change of state too.
         var chips: [String: String?] = [:]

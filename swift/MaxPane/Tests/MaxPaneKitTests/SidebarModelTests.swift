@@ -244,7 +244,9 @@ struct SidebarModelTests {
         controls.collapsed = ["~/life"]
         let group = groups(SidebarModel.rows(lanes: [], telemetry: t, controls: controls)).first!
         #expect(group.blocked == 1)
-        #expect(group.countText == "1 BLOCKED")
+        // Folded, BLOCKED is its own segment in front of the grey count.
+        #expect(group.blockedText == "1 BLOCKED")
+        #expect(group.rollUpText == "1 BLOCKED · 1 WORKING · 2 RUNNING")
         #expect(SidebarModel.blockedCount(t) == 1)
     }
 

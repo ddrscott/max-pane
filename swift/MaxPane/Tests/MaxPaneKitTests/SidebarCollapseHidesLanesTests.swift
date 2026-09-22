@@ -154,7 +154,7 @@ struct CollapseHidesLanesModelTests {
         #expect(max.hiddenLanes == 0 && max.blockedText == nil && max.countText == "2 RUNNING")
     }
 
-    @Test("the setting off: a folded header reads exactly as it did before")
+    @Test("the setting off: a folded header hides no lanes, and still rolls up what is under it")
     func settingOffHeader() {
         var t = sessions
         t["life"] = telemetry("life", cwd: home + "/life", state: .blocked)
@@ -163,7 +163,9 @@ struct CollapseHidesLanesModelTests {
         // Off, nothing is hidden, so nothing is handed in.
         let rows = SidebarModel.rows(lanes: lanes, telemetry: t, controls: controls)
         let life = groups(rows).first { $0.path == "~/life" }!
-        #expect(life.countText == "1 BLOCKED" && life.blockedText == nil && life.hiddenLanes == 0)
+        #expect(life.hiddenLanes == 0)
+        #expect(life.blockedText == "1 BLOCKED" && life.countText == "3 RUNNING", "life, the mixed lane, and the web lane")
+        #expect(life.rollUpText == "1 BLOCKED · 3 RUNNING")
     }
 
     @Test("a folded section keeps its header and drops every project under it; Web is under no section and stays")

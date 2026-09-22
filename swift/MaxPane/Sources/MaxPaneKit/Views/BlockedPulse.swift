@@ -114,3 +114,45 @@ final class PulseLabel: NSTextField {
         BlockedPulse.set(layer, on: isPulsing, inWindow: window != nil)
     }
 }
+
+/// An image that pulses while it marks something blocked: a folded sidebar
+/// header's triangle, carrying the brightest state under it. The same
+/// contract as `PulseLabel` — on screen only, in phase, off under Reduce
+/// Motion — for a mark that is a glyph rather than a word.
+final class PulseImageView: NSImageView {
+    var isPulsing = false {
+        didSet { if isPulsing != oldValue { sync() } }
+    }
+
+    private var displayOptions: NSObjectProtocol?
+
+    deinit {
+        MainActor.assumeIsolated {
+            if let displayOptions { NSWorkspace.shared.notificationCenter.removeObserver(displayOptions) }
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil, displayOptions == nil {
+            displayOptions = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+                object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.sync() }
+            }
+        } else if window == nil, let displayOptions {
+            NSWorkspace.shared.notificationCenter.removeObserver(displayOptions)
+            self.displayOptions = nil
+        }
+        sync()
+    }
+
+    /// Whether the pulse is running right now, for tests.
+    var isAnimatingPulse: Bool { layer?.animation(forKey: BlockedPulse.key) != nil }
+
+    func sync() {
+        wantsLayer = true
+        BlockedPulse.set(layer, on: isPulsing, inWindow: window != nil)
+    }
+}

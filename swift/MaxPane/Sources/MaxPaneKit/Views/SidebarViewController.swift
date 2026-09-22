@@ -511,6 +511,14 @@ final class SidebarViewController: NSViewController {
     @objc private func rowClicked() {
         let row = table.clickedRow
         if let group = group(at: row) {
+            // A folded header's `N BLOCKED` / `N DONE` is the way to that
+            // session: the same click as on its row, which the fold took
+            // off the screen. The reach-through (ADR-0024) opens the fold
+            // on the way, so it is unfolded and then you are there.
+            if group.collapsed, let target = stateTarget(of: group, at: row) {
+                go(to: target)
+                return
+            }
             // A server's header is two targets: its triangle folds the whole
             // server, and the rest of it is still the way to Settings ›
             // Servers (ADR-0023). `// LOCAL` has nowhere to go, so all of it
@@ -590,6 +598,30 @@ final class SidebarViewController: NSViewController {
     private func clickIsOnTriangle() -> Bool {
         guard let event = NSApp.currentEvent else { return false }
         return table.convert(event.locationInWindow, from: nil).x <= SidebarGroupView.triangleReach
+    }
+
+    /// The session the click being handled goes to, when it landed on a
+    /// folded header's `N BLOCKED` or `N DONE`; nil for a click anywhere
+    /// else on the header.
+    private func stateTarget(of group: SidebarModel.Group, at row: Int) -> SidebarModel.Target? {
+        guard let event = NSApp.currentEvent,
+              let view = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarGroupView
+        else { return nil }
+        switch view.stateHit(at: view.convert(event.locationInWindow, from: nil)) {
+        case .blocked: return group.blockedTarget
+        case .done: return group.doneTarget
+        case nil: return nil
+        }
+    }
+
+    /// What a row's click does, for a target that has no row on screen:
+    /// reveal the lane, or attach the session.
+    private func go(to target: SidebarModel.Target) {
+        if let laneId = target.laneId {
+            onSelect?(laneId, target.paneId)
+        } else if let key = target.sessionKey {
+            onAttach?(key)
+        }
     }
 
     /// Fold or open one header. A project group's or a section's fold goes to

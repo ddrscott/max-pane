@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The build carries Apple's passkeys capability when a provisioning profile grants it, and is unchanged when none does
 
 ### Changed
+- A folded sidebar group now shows what is under it, not only its hidden count: `1 BLOCKED · 2 DONE · 1 WORKING · 3 LANES HIDDEN`, loudest first, in the row's own colours, and its triangle takes the brightest state. Click `N BLOCKED` or `N DONE` on the header to go to that session; a DONE clears when the session is looked at, as a row's does
 - Selecting text in a terminal no longer copies it; ⌘C does. `copy_on_select = true` brings it back
 - ⌘C in a terminal copies clean text and no longer adds an HTML flavour no app reads. `copy_trim_trailing = false` keeps trailing spaces
 - Only the terminal with the keyboard blinks its cursor; in the gallery every terminal used to. `cursor_blink = "always"` or `"never"` changes it

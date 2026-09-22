@@ -352,13 +352,28 @@ final class SidebarEntryView: NSTableCellView {
 /// The house `// CAPS` header, with the bar's disclosure triangle and running
 /// count folded into it. Grouping is unconditional here: ten sessions across six
 /// projects is exactly when a flat list stops being a browser.
+///
+/// Folded, the header carries what its rows would have said (ADR-0024,
+/// amended): `1 BLOCKED · 2 DONE · 3 LANES HIDDEN`, loudest first, each in the
+/// row's own colour, and the triangle takes the brightest of them. A fold
+/// changes how much room a project takes, not what you can see.
 final class SidebarGroupView: NSTableCellView {
-    private let triangle = NSImageView()
+    private let triangle = PulseImageView()
     private let label = NSTextField(labelWithString: "")
+    /// The right-hand slot: BLOCKED, DONE, WORKING, then the grey count, as
+    /// one label each so BLOCKED can breathe on its own. `count` is the
+    /// tail, and on an open header the whole of it.
+    private let blockedCount = PulseLabel(labelWithString: "")
+    private let doneCount = NSTextField(labelWithString: "")
+    private let workingCount = NSTextField(labelWithString: "")
     private let count = PulseLabel(labelWithString: "")
+    private let slot = NSStackView()
     private let rule = NSView()
     /// A server's state when it is anything but connected, as a chip.
     private let stateChip = NSTextField(labelWithString: "")
+    /// Whether the grey tail has anything in front of it, so `layout` knows
+    /// there is something to keep when the width runs out.
+    private let hasStates: Bool
 
     /// The header as drawn, for tests.
     var labelText: String { label.stringValue }
@@ -372,23 +387,60 @@ final class SidebarGroupView: NSTableCellView {
     /// triangle, its inset, and the gap after it. Only a server's header asks,
     /// because only there does the rest of the row do something else.
     static let triangleReach: CGFloat = 24
-    /// `2 BLOCKED` beside `3 LANES HIDDEN`: what a header that is keeping
-    /// lanes off the strip has to say as well. Breathes, as any BLOCKED does.
+    /// The least of the path the roll-up may leave on screen before its grey
+    /// tail is dropped: `…/PANE` and a little.
+    static let leastLabel: CGFloat = 44
     /// A folded header's speaker: something it is hiding is making sound.
     /// Click mutes all of it. No slider: that is one pane's business.
     let speaker = SpeakerMark(points: 11)
-    private let blockedCount = PulseLabel(labelWithString: "")
     var blockedText: String { blockedCount.isHidden ? "" : blockedCount.stringValue }
-    var countText: String { count.stringValue }
+    var doneText: String { doneCount.isHidden ? "" : Self.plain(doneCount) }
+    var workingText: String { workingCount.isHidden ? "" : Self.plain(workingCount) }
+    var countText: String { Self.plain(count) }
+    /// The segments on screen after layout, in order, for tests: the tail
+    /// is the first to go when the header is short of room.
+    var shownRollUp: [String] {
+        [blockedCount, doneCount, workingCount, count].filter { !$0.isHidden }.map(Self.plain)
+    }
     var isBlockedPulsing: Bool { blockedCount.isPulsing || count.isPulsing }
+    /// The triangle's colour and breath, for tests.
+    var isMarkPulsing: Bool { triangle.isPulsing }
+    private(set) var markColour: NSColor = Theme.dimText
     var hasTriangle: Bool { !triangle.isHidden }
 
+    /// What a click on the state text goes to.
+    enum StateHit: Equatable { case blocked, done }
+
+    /// Which state text, if any, a point in this view's coordinates is on.
+    /// The controller asks on a click, so a press on `1 BLOCKED` goes to
+    /// that session and a press anywhere else folds or opens the header.
+    func stateHit(at point: NSPoint) -> StateHit? {
+        if !blockedCount.isHidden, blockedCount.frame.insetBy(dx: -3, dy: -6).contains(convert(point, to: slot)) {
+            return .blocked
+        }
+        if !doneCount.isHidden, doneCount.frame.insetBy(dx: -3, dy: -6).contains(convert(point, to: slot)) {
+            return .done
+        }
+        return nil
+    }
+
+    private static func plain(_ field: NSTextField) -> String {
+        field.stringValue.replacingOccurrences(of: " · ", with: "")
+    }
+
     init(group: SidebarModel.Group) {
+        hasStates = group.rollUp.count > 1
         super.init(frame: .zero)
 
+        // The leading mark, in the brightest state's colour under a folded
+        // header — blocked breathing, done orange, working green — and grey
+        // otherwise: one mark, one colour, the row's own rule.
+        let markState = group.markState
+        markColour = markState.map(Theme.agentStateColor) ?? Theme.dimText
         triangle.image = IconImage.make(
-            group.collapsed ? .chevronRight : .chevronDown, points: 11, colour: Theme.dimText)
+            group.collapsed ? .chevronRight : .chevronDown, points: 11, colour: markColour)
         triangle.imageScaling = .scaleProportionallyDown
+        triangle.isPulsing = markState == .blocked
 
         // A header separates by being *quieter* than the rows, not louder.
         //
@@ -409,36 +461,35 @@ final class SidebarGroupView: NSTableCellView {
         // this is. `…/WORKTREES/AGENT-AD3` beats `~/CODE/MAX-PA…`.
         label.lineBreakMode = .byTruncatingHead
 
-        // A collapsed group hides its rows; the count is then the only thing
-        // left to say "there is an agent in here waiting on you", so when there
-        // is one it takes the blocked green, breathing, and the rest stays quiet.
-        count.stringValue = group.countText
-        // A header that is hiding lanes says that in the count, at rest and
-        // grey, and says BLOCKED beside it in the blocked green: two facts,
-        // and only one of them is an alarm.
-        let alarmInCount = group.blocked > 0 && group.blockedText == nil
-        count.font = Theme.mono(9, weight: alarmInCount ? .bold : .regular)
-        // A server reconnecting or refused takes the accent green — a state,
-        // in the family every other state uses — unless an agent in the group
-        // is blocked, which is the louder of the two.
-        count.textColor = alarmInCount ? Theme.blocked : Theme.dimText
+        // The right-hand slot. An open header is one grey word — or, with an
+        // agent in it waiting on you, `N BLOCKED` in the blocked green,
+        // breathing. A folded header rolls its rows' states up in front of
+        // the grey count, each in the row's own colour, ` · ` between.
+        let alarmInCount = group.blocked > 0 && group.blockedText == nil && !group.collapsed
+        Self.style(count, text: group.countText, dot: hasStates,
+                   colour: alarmInCount ? Theme.blocked : Theme.dimText, weight: alarmInCount ? .bold : .regular)
         count.isPulsing = alarmInCount
-        count.alignment = .right
+        count.toolTip = nil
 
         blockedCount.isHidden = group.blockedText == nil
-        blockedCount.stringValue = group.blockedText ?? ""
-        blockedCount.font = Theme.mono(9, weight: .bold)
-        blockedCount.textColor = Theme.blocked
+        Self.style(blockedCount, text: group.blockedText ?? "", dot: false, colour: Theme.blocked, weight: .bold)
         blockedCount.isPulsing = group.blockedText != nil
-        blockedCount.isBezeled = false
-        blockedCount.drawsBackground = false
+        blockedCount.toolTip = group.blocked == 1 ? "Go to the blocked session" : "Go to the first blocked session"
+
+        doneCount.isHidden = group.doneText == nil
+        Self.style(doneCount, text: group.doneText ?? "", dot: group.blockedText != nil, colour: Theme.done, weight: .bold)
+        doneCount.toolTip = group.done == 1 ? "Go to the finished session" : "Go to the first finished session"
+
+        workingCount.isHidden = group.workingText == nil
+        Self.style(workingCount, text: group.workingText ?? "", dot: group.blockedText != nil || group.doneText != nil,
+                   colour: Theme.working, weight: .medium)
 
         // A hairline above the header instead of padding: the strip is made of
         // hard edges, and so is its index.
         rule.wantsLayer = true
         rule.layerBackgroundColor = Theme.laneBorder
 
-        for v in [label, count] {
+        for v in [label, count, blockedCount, doneCount, workingCount] {
             v.isBezeled = false
             v.drawsBackground = false
             v.usesSingleLineMode = true
@@ -446,7 +497,12 @@ final class SidebarGroupView: NSTableCellView {
         }
         // Set after `usesSingleLineMode`, which would otherwise reset it.
         label.lineBreakMode = .byTruncatingHead
-        for v: NSView in [triangle, label, count, blockedCount, rule, speaker] {
+        slot.orientation = .horizontal
+        slot.alignment = .centerY
+        slot.spacing = 0
+        slot.detachesHiddenViews = true
+        for v in [blockedCount, doneCount, workingCount, count] { slot.addArrangedSubview(v) }
+        for v: NSView in [triangle, label, slot, rule, speaker] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
@@ -465,30 +521,29 @@ final class SidebarGroupView: NSTableCellView {
             triangle.heightAnchor.constraint(equalToConstant: 11),
             triangle.centerYAnchor.constraint(equalTo: centerYAnchor, constant: 2),
 
-
             label.leadingAnchor.constraint(equalTo: triangle.trailingAnchor, constant: 6),
             label.centerYAnchor.constraint(equalTo: triangle.centerYAnchor),
 
-            speaker.trailingAnchor.constraint(
-                equalTo: (group.blockedText == nil ? count : blockedCount).leadingAnchor, constant: -4),
+            // Left of the state text, as the owner asked (ADR-0035).
+            speaker.trailingAnchor.constraint(equalTo: slot.leadingAnchor, constant: -4),
             speaker.centerYAnchor.constraint(equalTo: triangle.centerYAnchor),
             speaker.widthAnchor.constraint(equalToConstant: SpeakerMark.minimumHit),
             speaker.heightAnchor.constraint(equalToConstant: SpeakerMark.minimumHit),
 
-            blockedCount.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 6),
-            blockedCount.trailingAnchor.constraint(equalTo: count.leadingAnchor, constant: -8),
-            blockedCount.centerYAnchor.constraint(equalTo: triangle.centerYAnchor),
-            count.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 6),
-            count.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -9),
-            count.centerYAnchor.constraint(equalTo: triangle.centerYAnchor),
+            slot.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 6),
+            slot.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -9),
+            slot.centerYAnchor.constraint(equalTo: triangle.centerYAnchor),
         ])
         // Only while it is there: a silent header's path keeps every point.
         if !group.audibleLanes.isEmpty {
             label.trailingAnchor.constraint(lessThanOrEqualTo: speaker.leadingAnchor, constant: -2).isActive = true
         }
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        count.setContentCompressionResistancePriority(.required, for: .horizontal)
-        blockedCount.setContentCompressionResistancePriority(.required, for: .horizontal)
+        for v in [count, blockedCount, doneCount, workingCount] {
+            v.setContentCompressionResistancePriority(.required, for: .horizontal)
+            v.setContentHuggingPriority(.required, for: .horizontal)
+        }
+        slot.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         toolTip = group.path == SidebarModel.looseWebGroup ? "Web lanes" : group.path
 
@@ -523,8 +578,8 @@ final class SidebarGroupView: NSTableCellView {
             label.lineBreakMode = .byTruncatingTail
             let fold = group.collapsed ? "the triangle opens it" : "the triangle folds it"
             toolTip = group.isLocalSection
-                ? "This Mac — \(group.countText.lowercased()); click to \(group.collapsed ? "open" : "fold") it"
-                : "\(group.server ?? group.header) — \(group.countText.lowercased()); click for Settings › Servers, \(fold)"
+                ? "This Mac — \(group.rollUpText.lowercased()); click to \(group.collapsed ? "open" : "fold") it"
+                : "\(group.server ?? group.header) — \(group.rollUpText.lowercased()); click for Settings › Servers, \(fold)"
         }
         if group.hiddenLanes > 0 {
             toolTip = (toolTip ?? "") + " — \(group.hiddenLanes) lane\(group.hiddenLanes == 1 ? "" : "s") off the strip, still running; open this to bring \(group.hiddenLanes == 1 ? "it" : "them") back"
@@ -543,7 +598,7 @@ final class SidebarGroupView: NSTableCellView {
             stateChip.translatesAutoresizingMaskIntoConstraints = false
             addSubview(stateChip)
             NSLayoutConstraint.activate([
-                stateChip.trailingAnchor.constraint(equalTo: (group.blockedText == nil ? count : blockedCount).leadingAnchor, constant: -6),
+                stateChip.trailingAnchor.constraint(equalTo: slot.leadingAnchor, constant: -6),
                 stateChip.centerYAnchor.constraint(equalTo: count.centerYAnchor),
                 stateChip.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 6),
             ])
@@ -551,6 +606,51 @@ final class SidebarGroupView: NSTableCellView {
             let why = group.serverError ?? state.lowercased()
             toolTip = "\(group.server ?? group.header) — \(why); click for Settings › Servers"
         }
+    }
+
+    /// One segment of the slot: the text, a dim ` · ` in front of it when
+    /// something precedes it, in one colour and weight.
+    private static func style(_ field: NSTextField, text: String, dot: Bool, colour: NSColor, weight: NSFont.Weight) {
+        let out = NSMutableAttributedString()
+        // An absent segment is empty, dot and all: `layout` reads emptiness
+        // as absence.
+        if dot, !text.isEmpty {
+            out.append(NSAttributedString(
+                string: " · ", attributes: [.foregroundColor: Theme.dimText, .font: Theme.mono(9)]))
+        }
+        out.append(NSAttributedString(
+            string: text, attributes: [.foregroundColor: colour, .font: Theme.mono(9, weight: weight)]))
+        field.attributedStringValue = out
+        field.alignment = .right
+    }
+
+    /// The grey tail goes first when the width runs out, then the quietest
+    /// state, so what is left is always the loudest thing under the fold. A
+    /// truncated path is still a path; a truncated `3 LANES H` is nothing.
+    /// Decided from what the pieces want, not from where they landed, so
+    /// the answer is the same on the pass the hide triggers.
+    override func layout() {
+        if hasStates {
+            let fixed: CGFloat = 7 + 11 + 6 + 6 + 9 + Self.leastLabel
+                + (speaker.mark == .silent ? 0 : SpeakerMark.minimumHit + 4)
+                + (stateChip.isHidden ? 0 : stateChip.intrinsicContentSize.width + 6)
+            // Quietest first; BLOCKED is never dropped.
+            let droppable = [count, workingCount, doneCount].filter { $0.attributedStringValue.length > 0 }
+            var kept = Set(droppable.map(ObjectIdentifier.init))
+            func wanted() -> CGFloat {
+                ([blockedCount] + droppable)
+                    .filter { $0.attributedStringValue.length > 0 && ($0 === blockedCount || kept.contains(ObjectIdentifier($0))) }
+                    .reduce(CGFloat(0)) { $0 + $1.intrinsicContentSize.width }
+            }
+            for field in droppable where wanted() + fixed > bounds.width {
+                kept.remove(ObjectIdentifier(field))
+            }
+            for field in droppable {
+                let hide = !kept.contains(ObjectIdentifier(field))
+                if field.isHidden != hide { field.isHidden = hide }
+            }
+        }
+        super.layout()
     }
 
     @available(*, unavailable)

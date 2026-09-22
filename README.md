@@ -1359,10 +1359,20 @@ a lane a long way off, first to be evicted under pressure and reloaded when it
 is back. The folds and the hidden lanes are in the ledger, so a relaunch comes
 back the same way.
 
-**You can always tell.** A folded header that is holding lanes reads
-`3 LANES HIDDEN`, grey and at rest, and when an agent under it is BLOCKED it
-says `1 BLOCKED` beside that in the blocked green, breathing like every other
-BLOCKED. The status bar reads `4 lanes · 3 hidden`, and its `N BLOCKED` and the
+**You can always tell.** A fold changes how much room a project takes, not
+what you can see: the header rolls up every state of the rows it hides,
+loudest first, in the rows' own colours — `1 BLOCKED · 2 DONE · 1 WORKING ·
+3 LANES HIDDEN`. BLOCKED breathes in the blocked green as every BLOCKED does;
+DONE is Signal Orange and clears when the session is looked at, as a row's
+does; WORKING is the working green; the grey count of hidden lanes (or of
+running sessions, with `sidebar_collapse_hides_lanes` off) comes last and is
+the first to go when the sidebar is narrow, then WORKING, then DONE. The
+header's triangle takes the brightest state under it, so a folded project
+with an agent waiting on you is found across the room without reading a
+word. Click `N BLOCKED` or `N DONE` on the header and you are at that
+session, the fold opened on the way; a click anywhere else folds or opens.
+A section (`// LOCAL`, `// NAME`) rolls up every project under it the same
+way. The status bar reads `4 lanes · 3 hidden`, and its `N BLOCKED` and the
 sidebar footer's count every session, folded or not. An empty strip that is
 empty because everything is folded says that instead of offering to start
 something.

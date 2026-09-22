@@ -121,6 +121,23 @@ everything was folded says so instead of offering to start something. The
 status bar's and the footer's BLOCKED counts were never narrowed by anything
 and are not now.
 
+**Amended 2026-09-22.** BLOCKED was the only state that survived a fold; the
+owner asked that "the activity beneath it should still be indicated on the
+folder". A folded header now rolls up every state of the rows it hides, in
+the sidebar's own vocabulary and colours (ADR-0015), loudest first:
+`1 BLOCKED · 2 DONE · 1 WORKING · 3 LANES HIDDEN` — BLOCKED breathing in the
+blocked green, DONE in Signal Orange (clearing when the session is
+acknowledged, as a row's does), WORKING in the working green, the grey count
+last and the first to go when the header is short of room, then WORKING, then
+DONE; BLOCKED is never dropped. The header's triangle takes the brightest
+state under it — blocked pulsing, else orange, else green, else grey — one
+mark, one colour, the row's rule. A click on `N BLOCKED` or `N DONE` on the
+header goes to the first such session under it through the reach-through in
+§6; a click anywhere else still folds or opens. It applies to a project, a
+server's `// NAME` and `// LOCAL`, hiding lanes or not. An open header is as
+it was: its rows say it themselves, and the header's one word is a summary.
+`SidebarFoldedHeaderTests.swift` and the `folded-header-*` sheets.
+
 ### 6. Reach-through: the group expands, then you are there
 
 `leaveGather(ifItHides:)` became `bringBack(laneId:)` and does both: opens
