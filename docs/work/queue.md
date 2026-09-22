@@ -66,4 +66,4 @@
 - [x] Copying out of a terminal: trimmed and unwrapped by default, Copy with Styles, and a keyboard copy mode — [detail](terminal-copy-side.md)
 - [x] YouTube in a web pane: the first Play gives no sound until the video is clicked again — find the cause (focus click, autoplay policy, blocker, injected script), fix it, keep gesture-less autoplay quiet — [detail](web-first-play-silent.md)
 - [x] Audio indicators: a sidebar row's status square becomes a speaker while its pane plays sound (click mutes, right-click opens a volume slider); the same speaker on lane header, gallery tile and status bar; Mute Pane / Others / All; `maxpane mute|volume` — [detail](web-audio-indicators.md)
-- [-] A folded sidebar header rolls up the activity under it: BLOCKED (pulsing), DONE (orange), WORKING (green mark), not just the hidden count; a click on the state goes to that session — [detail](folded-header-activity.md)
+- [x] A folded sidebar header rolls up the activity under it: BLOCKED (pulsing), DONE (orange), WORKING (green mark), not just the hidden count; a click on the state goes to that session — [detail](folded-header-activity.md)
