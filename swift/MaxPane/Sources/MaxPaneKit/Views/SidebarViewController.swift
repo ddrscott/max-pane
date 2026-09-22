@@ -332,10 +332,12 @@ final class SidebarViewController: NSViewController {
         rule.layerBackgroundColor = Theme.laneBorder
         rule.translatesAutoresizingMaskIntoConstraints = false
 
-        let version = NSTextField(labelWithString: "v" + Self.versionString)
-        version.font = Theme.mono(9)
-        version.textColor = Theme.dimText
+        let version = versionLabel
+        version.attributedStringValue = Self.cornerText(Self.corner)
+        version.toolTip = VersionCorner.tooltip(build: Self.build, unreleased: Self.unreleasedCount)
         version.translatesAutoresizingMaskIntoConstraints = false
+        // A click opens What's New, hung from this label.
+        version.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(versionClicked)))
 
         countLabel.font = Theme.mono(9)
         countLabel.textColor = Theme.dimText
@@ -376,8 +378,32 @@ final class SidebarViewController: NSViewController {
         ])
     }
 
-    static var versionString: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
+    /// `v0.6.1`, or `v0.6.1+40` with forty unreleased entries in the bundled
+    /// changelog. Read once: neither the plist nor the bundled file changes
+    /// while the app runs.
+    static let build = BuildInfo.current
+    static let unreleasedCount = Changelog.bundled()?.unreleasedCount ?? 0
+    static var corner: VersionCorner.Text { VersionCorner.text(build: build, unreleased: unreleasedCount) }
+    static var versionString: String { corner.plain }
+
+    /// The label the What's New popup hangs from.
+    private let versionLabel = NSTextField(labelWithString: "")
+    var versionAnchor: NSView? { isViewLoaded ? versionLabel : nil }
+
+    /// The version in the footer's grey and the `+N` in the accent: the number
+    /// is the part that is news.
+    static func cornerText(_ text: VersionCorner.Text) -> NSAttributedString {
+        let out = NSMutableAttributedString(
+            string: text.version, attributes: [.font: Theme.mono(9), .foregroundColor: Theme.dimText])
+        if let suffix = text.suffix {
+            out.append(NSAttributedString(
+                string: suffix, attributes: [.font: Theme.mono(9, weight: .bold), .foregroundColor: Theme.accent]))
+        }
+        return out
+    }
+
+    @objc private func versionClicked() {
+        commandHandler?.perform(.showChangelog)
     }
 
     /// A server's colour changed: the rows are the same rows, so `rebuild`
@@ -756,7 +782,11 @@ final class SidebarViewController: NSViewController {
             item.representedObject = command.rawValue
         }
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Max Pane v\(Self.versionString)", action: nil, keyEquivalent: "")
+        // The version line is a door to What's New, as the corner is.
+        let about = menu.addItem(
+            withTitle: "Max Pane \(Self.versionString)", action: #selector(runCommand(_:)), keyEquivalent: "")
+        about.target = self
+        about.representedObject = Command.showChangelog.rawValue
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: -2), in: sender)
     }
 

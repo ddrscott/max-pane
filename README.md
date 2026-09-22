@@ -238,6 +238,24 @@ shipping a build that quietly lacks what was asked for. If Apple declines the
 request, nothing changes in the build: the ADR records it, and the paragraph
 in [A web lane](#a-web-lane) stays as it is.
 
+### Releasing
+
+`scripts/release.sh` cuts the GitHub release for the version in
+`swift/MaxPane/Resources/Info.plist`; its header comment has the three steps.
+The version is hand-set there and in `Cargo.toml`, and one contract keeps the
+app honest about it: **`CHANGELOG.md`'s top released section must be the
+plist's version.** `release.sh` refuses when it is not, beside its refusal of a
+dirty tree, through `scripts/changelog-version.sh` (which
+`scripts/tests/changelog-version.sh` pins). The check exists because the app
+reads the changelog: `build-app.sh` copies it into `Contents/Resources` and
+stamps the bundle's plist with `MaxPaneBuildCommit`, `MaxPaneBuildDate`,
+`MaxPaneBuildDirty` and, when HEAD is tagged, `MaxPaneBuildTag` — written to
+the copied plist only, so the checked-in file never changes — and the version
+in the sidebar's corner counts the entries under `## [Unreleased]` (see [The
+version in the corner](#the-version-in-the-corner)). So to release: move the
+Unreleased entries under `## [x.y.z] - date`, set the plist and `Cargo.toml`
+to `x.y.z`, commit, tag, and run the script.
+
 ## Test
 
 ```sh
@@ -1343,6 +1361,28 @@ focused lane's header is lifted a shade instead, which is what still says
 *which column* from across the strip. The lane's own border stays a neutral
 hairline, and flashes green only for the ⌘P jump, which is a place to look
 rather than a place to type.
+
+### The version in the corner
+
+The sidebar's bottom-left reads `v0.6.1` on a release and `v0.6.1+43` on a
+build from main, where `43` is the number of entries under `## [Unreleased]`
+in the `CHANGELOG.md` the build carries — every entry, fixes included, since a
+fix is a change you would want to know about as much as a feature; the owner
+said "features" and got the honest count. The version is the plist's, in the
+footer's grey; the `+N` is in the accent. It used to read the plist alone, so a
+build forty changes past the release said exactly what the release did. A
+build made at the release tag reads as the release whatever Unreleased holds
+at that commit. A dirty tree changes nothing visible; the tooltip has it:
+`0.6.1 · 43 unreleased changes · built 2026-09-22 from a8e73d6 (dirty)`.
+
+Click the version, or Help › What's New…, and the changelog opens in a popover
+hung from the label — square, mono, `// UNRELEASED · 43` first and open, then
+`// 0.6.1 · 2026-09-16` and the rest folded behind their counts, a click opens
+one. `copy` on a header puts that section on the clipboard as markdown, for a
+release note. Esc or a click away closes it; the command has no default key
+and `keys` can give it one. A `swift run` from the package has no bundle and
+no changelog, and the popover says so in one line. [Releasing](#releasing) has
+the contract that keeps the corner and the file in step.
 
 ### Folding a group puts its lanes away
 

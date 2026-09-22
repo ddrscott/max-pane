@@ -21,6 +21,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private var alternateMonitor: Any?
     private var memoryDashboard: MemoryDashboard?
     private var helpPanel: HelpPanel?
+    private var changelogPopup: ChangelogPopup?
     private var settingsWindow: SettingsWindow?
     /// `config.toml`, open for ⌘,. Set by the app delegate, which owns it
     /// because it also applies `theme` from it. Setting it opens the server
@@ -742,7 +743,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return store.isGathered
         case .gather:
             return store.focusedLane?.projectRoot != nil
-        case .showHelp:
+        case .showHelp, .showChangelog:
             return true
         case .showSettings:
             return configStore != nil
@@ -892,6 +893,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .showHelp:
                 showHelp()
+
+            case .showChangelog:
+                showChangelog()
 
             case .showSettings:
                 showSettings()
@@ -1589,6 +1593,24 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         let panel = HelpPanel()
         helpPanel = panel
         panel.present(over: window)
+    }
+
+    /// What's New — the bundled changelog, hung from the version in the
+    /// sidebar's corner, which is the click that usually opens it. From the
+    /// menu with the sidebar folded away there is nothing to hang it from,
+    /// and it opens centred like every other dialog. Pressed again while
+    /// open, it closes, like ⌘/.
+    private func showChangelog() {
+        if let existing = changelogPopup, existing.isOpen {
+            existing.closePopup()
+            return
+        }
+        let popup = ChangelogPopup(model: ChangelogPopupModel(changelog: Changelog.bundled()))
+        if let anchor = sidebar.versionAnchor, let window = anchor.window, !anchor.isHiddenOrHasHiddenAncestor {
+            popup.anchorRect = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
+        }
+        changelogPopup = popup
+        popup.present(over: window)
     }
 
     /// ⌘, — every setting and every key, written to `config.toml` as they

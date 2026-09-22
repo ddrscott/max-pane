@@ -76,6 +76,7 @@ public enum Command: String, CaseIterable, Sendable {
     case printPage
     case savePDF
     case showHelp
+    case showChangelog
     case showSettings
 
     public var title: String {
@@ -150,6 +151,7 @@ public enum Command: String, CaseIterable, Sendable {
         case .printPage: return "Print…"
         case .savePDF: return "Save as PDF…"
         case .showHelp: return "Keyboard Shortcuts"
+        case .showChangelog: return "What's New…"
         case .showSettings: return "Settings…"
         }
     }
@@ -387,6 +389,10 @@ public enum Command: String, CaseIterable, Sendable {
         case .savePDF:         return nil
         // The one everybody reaches for when they do not know the others.
         case .showHelp:        return ("/", [.command])
+        // No key. The version in the sidebar's corner opens it with a click,
+        // and the ⌘/ sheet lists it; `keys` binds it for anyone who wants it
+        // on one.
+        case .showChangelog:   return nil
         // ⌘, is Settings in every Mac app, which is the whole argument.
         case .showSettings:    return (",", [.command])
         }
@@ -550,7 +556,11 @@ public enum Command: String, CaseIterable, Sendable {
              .advancedPaste: return .edit
         // Below Paste Special: the pastes, then what was pasted.
         case .pasteHistory, .clearPasteHistory: return .edit
-        case .showMemory, .showHelp: return .view
+        case .showMemory: return .view
+        // The Help menu, where a Mac user reaches for a keyboard sheet and a
+        // what's-new: the ⌘/ sheet was under View while there was no Help
+        // menu to put it in.
+        case .showHelp, .showChangelog: return .help
         case .reload, .hardReload, .editAddress: return .navigate
         // Under Navigate with ⌘Y's picker, not under View with the dashboards:
         // what it is for is going back to a page, and the two keys that do that
@@ -599,6 +609,9 @@ public enum MenuSection: String, CaseIterable {
     case file = "File"
     case navigate = "Navigate"
     case view = "View"
+    /// Last, as macOS puts it: the ⌘/ sheet and What's New. `AppDelegate`
+    /// hands it to `NSApp.helpMenu`, which is what puts the search field in.
+    case help = "Help"
 }
 
 /// What handles a `Command`. One method, so adding a command is one `case` in

@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sound: a web lane's sidebar square becomes a speaker while its pane plays sound. Click it to mute, right-click for a per-pane volume slider. The same speaker is on the lane header, gallery tiles, a pane's address row, folded sidebar headers, ⌘P rows and the status bar, which counts audible panes and mutes them all on a click
 - Mute Pane (⌃⌘M), Mute Other Panes and Mute All in the View and lane menus; `maxpane mute`, `unmute` and `volume` from a shell. Mute and volume are remembered per pane across a relaunch, and muting never pauses
 - The build carries Apple's passkeys capability when a provisioning profile grants it, and is unchanged when none does
+- The version in the sidebar's corner reads `v0.6.1+43` on an unreleased build, the `+N` counting the entries under Unreleased in the changelog the build now carries; its tooltip says the commit, date and whether the tree was clean. Click it, or Help › What's New…, for the changelog itself, newest first, with `copy` on each version for a release note
 
 ### Changed
 - A folded sidebar group now shows what is under it, not only its hidden count: `1 BLOCKED · 2 DONE · 1 WORKING · 3 LANES HIDDEN`, loudest first, in the row's own colours, and its triangle takes the brightest state. Click `N BLOCKED` or `N DONE` on the header to go to that session; a DONE clears when the session is looked at, as a row's does

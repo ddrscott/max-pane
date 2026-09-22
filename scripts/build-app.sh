@@ -62,6 +62,27 @@ cp swift/MaxPane/Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 GHOSTTY_BUNDLE="swift/MaxPane/.build/$CONFIG/GhosttyKit_GhosttyTerminal.bundle"
 [ -d "$GHOSTTY_BUNDLE" ] || { echo "no Ghostty resource bundle at $GHOSTTY_BUNDLE" >&2; exit 1; }
 cp -R "$GHOSTTY_BUNDLE" "$APP/Contents/Resources/GhosttyKit_GhosttyTerminal.bundle"
+# The changelog, so the version in the sidebar's corner can say `+N` for the
+# entries under Unreleased and a click on it can list them (What's New). The
+# plist's CFBundleShortVersionString stays the hand-set release number —
+# release.sh reads it — and what this build came from goes in beside it as
+# MaxPaneBuild* keys, written to the COPIED plist only, never the checked-in
+# one. A tag exactly at HEAD makes the corner read as the release even before
+# the Unreleased section is emptied; a dirty tree shows in the tooltip.
+cp CHANGELOG.md "$APP/Contents/Resources/CHANGELOG.md"
+BUILD_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+BUILD_DATE="$(date -u +%Y-%m-%d)"
+BUILD_DIRTY=false
+[ -z "$(git status --porcelain 2>/dev/null)" ] || BUILD_DIRTY=true
+BUILD_TAG="$(git describe --tags --exact-match HEAD 2>/dev/null || true)"
+PB=/usr/libexec/PlistBuddy
+$PB -c "Add :MaxPaneBuildCommit string $BUILD_COMMIT" "$APP/Contents/Info.plist"
+$PB -c "Add :MaxPaneBuildDate string $BUILD_DATE" "$APP/Contents/Info.plist"
+$PB -c "Add :MaxPaneBuildDirty bool $BUILD_DIRTY" "$APP/Contents/Info.plist"
+[ -z "$BUILD_TAG" ] || $PB -c "Add :MaxPaneBuildTag string $BUILD_TAG" "$APP/Contents/Info.plist"
+BUILD_NOTE=""
+[ "$BUILD_DIRTY" = false ] || BUILD_NOTE=" (dirty)"
+echo "==> built from $BUILD_COMMIT on $BUILD_DATE$BUILD_NOTE${BUILD_TAG:+ at $BUILD_TAG}"
 
 # A throwaway bundle gets a throwaway bundle id.
 #

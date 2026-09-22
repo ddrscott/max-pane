@@ -117,6 +117,10 @@ default_run() {
   # cannot exercise without a profile from Apple; this runs every one of them
   # against decoded fixtures. Milliseconds, so it is in the edit-loop run.
   ./scripts/tests/entitlements.sh
+  # The release contract: CHANGELOG.md's top released version is the plist's
+  # (scripts/changelog-version.sh, which release.sh runs). Fixtures, then
+  # the real files.
+  ./scripts/tests/changelog-version.sh
 
   echo
   echo "==> laned-core"

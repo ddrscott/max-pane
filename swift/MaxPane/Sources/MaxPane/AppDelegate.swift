@@ -225,6 +225,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             item.submenu = menu
             main.addItem(item)
+            // The system's Help menu: this is what gives it the search field,
+            // and what ⇧⌘/ opens.
+            if section == .help { NSApp.helpMenu = menu }
         }
 
         NSApp.mainMenu = main

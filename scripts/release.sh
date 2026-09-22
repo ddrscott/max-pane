@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # Cut the GitHub release for the version in Info.plist.
 #
-# Refuses unless the working tree is clean, the tag `v<version>` exists, points
-# at HEAD and is on origin — the DMG is built from the working tree, and a
-# release whose asset does not match its tag is worse than no release. Then it
+# Refuses unless the working tree is clean, the changelog's top released
+# version equals the plist's, and the tag `v<version>` exists, points at HEAD
+# and is on origin — the DMG is built from the working tree, and a release
+# whose asset does not match its tag is worse than no release. The changelog
+# rule is the contract that keeps the version in the sidebar's corner honest:
+# the corner reads the plist's version and counts the bundled changelog's
+# Unreleased entries as `+N`, so at release the two must agree
+# (scripts/changelog-version.sh). Then it
 # builds the DMG through make-dmg.sh, takes the release notes from the matching
 # section of CHANGELOG.md, writes the cask for that DMG to dist/, and shows the
 # `gh release create` it would run.
@@ -42,6 +47,9 @@ if [ -n "$(git status --porcelain)" ]; then
   git status --short >&2
   exit 1
 fi
+# The changelog's top released version is the plist's, or the corner of the
+# shipped app and its release notes disagree about what shipped.
+./scripts/changelog-version.sh CHANGELOG.md --expect "$VERSION" >/dev/null
 if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
   echo "no tag $TAG. Create it on the commit that ships:" >&2
   echo "  git tag -a $TAG -m \"Max Pane $VERSION\" && git push origin $TAG" >&2
