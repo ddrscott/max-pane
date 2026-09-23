@@ -118,41 +118,19 @@ else
   echo "==> passkeys: off (no provisioning profile; see the README, \"Passkeys and the provisioning profile\")"
 fi
 
-# Stage a folder with the app and an Applications symlink — the drag-to-install
-# layout every Mac user already knows. `ditto` rather than `cp -R`: it keeps
-# the bundle byte-for-byte, and a copy that drops an extended attribute breaks
-# the code signature with no message until Gatekeeper refuses it.
-STAGE="$(mktemp -d "${TMPDIR:-/tmp}/maxpane-dmg.XXXXXX")"
-trap 'rm -rf "$STAGE"' EXIT
-ditto "$APP" "$STAGE/MaxPane.app"
-ln -s /Applications "$STAGE/Applications"
-
-echo "==> $DMG"
-mkdir -p dist
-rm -f "$DMG"
-# UDZO (zlib-compressed, read-only) is the format Finder mounts without asking
-# anything. HFS+ rather than APFS: it mounts on anything, and the image holds
-# one app and one symlink, so APFS buys nothing.
-hdiutil create -quiet -volname "$VOLNAME" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG"
-
-# Sign the image itself so Gatekeeper can name who made it, with a secure
-# timestamp because notarisation requires one. `--timestamp` talks to Apple's
-# timestamp server, so this is the first step here that needs the network.
-echo "==> signing DMG as $IDENTITY"
-codesign --force --sign "$IDENTITY" --timestamp "$DMG"
-codesign --verify --strict "$DMG"
-
 # Notarisation. `history` is the cheapest call that proves the profile exists
 # and the credentials in it work; anything else it says is treated as "cannot
-# notarise from here" and reported, never guessed around.
-notarize() {
-  local err submit id status
+# notarise from here" and reported, never guessed around. Decided once, here,
+# because two things get notarised below and the answer is the same for both.
+NOTARY_READY=0
+notary_check() {
+  local err
   if [ "${MAXPANE_NOTARIZE:-1}" = "0" ]; then
     echo "==> notarisation skipped (MAXPANE_NOTARIZE=0)"
     return 0
   fi
   if ! err="$(xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" 2>&1)"; then
-    echo "==> NOT notarised: $DMG is signed but Apple has not seen it."
+    echo "==> NOT notarised: the DMG will be signed but Apple will not have seen it."
     if grep -q 'No Keychain password item' <<<"$err"; then
       cat <<EOF
     A stranger's Mac will still warn on first open. To enable notarisation, run
@@ -170,26 +148,77 @@ EOF
     return 0
   fi
 
-  echo "==> notarising with profile $NOTARY_PROFILE (waits for Apple; minutes, not seconds)"
-  submit="$STAGE/submit.json"
-  xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait --output-format json > "$submit" || true
+  NOTARY_READY=1
+}
+notary_check
+
+# Submit one file to Apple and staple its ticket on. notarytool takes a DMG as
+# it is and an app only as a zip, so an app goes up zipped and the ticket comes
+# back onto the bundle itself.
+notarize_and_staple() {
+  local path="$1" what="$2" upload submit id status
+  echo "==> notarising $what with profile $NOTARY_PROFILE (waits for Apple; minutes, not seconds)"
+  upload="$path"
+  if [ -d "$path" ]; then
+    upload="$STAGE/$(basename "$path").zip"
+    ditto -c -k --keepParent "$path" "$upload"
+  fi
+  submit="$STAGE/submit-$what.json"
+  xcrun notarytool submit "$upload" --keychain-profile "$NOTARY_PROFILE" --wait --output-format json > "$submit" || true
   # plutil reads JSON, so no jq dependency on the release box.
   id="$(plutil -extract id raw -o - "$submit" 2>/dev/null || true)"
   status="$(plutil -extract status raw -o - "$submit" 2>/dev/null || true)"
   if [ "$status" != "Accepted" ]; then
-    echo "notarisation ${status:-failed} (submission ${id:-unknown}); Apple's log follows." >&2
+    echo "notarisation of $what ${status:-failed} (submission ${id:-unknown}); Apple's log follows." >&2
     [ -n "$id" ] && xcrun notarytool log "$id" --keychain-profile "$NOTARY_PROFILE" >&2 || true
     exit 1
   fi
+  echo "==> stapling $what"
+  xcrun stapler staple "$path"
+}
 
-  # Stapling puts the ticket inside the DMG so Gatekeeper passes it offline.
-  # It changes the file, which is why the sha256 below is printed last.
-  echo "==> stapling"
-  xcrun stapler staple "$DMG"
+# Stage a folder with the app and an Applications symlink — the drag-to-install
+# layout every Mac user already knows. `ditto` rather than `cp -R`: it keeps
+# the bundle byte-for-byte, and a copy that drops an extended attribute breaks
+# the code signature with no message until Gatekeeper refuses it.
+STAGE="$(mktemp -d "${TMPDIR:-/tmp}/maxpane-dmg.XXXXXX")"
+trap 'rm -rf "$STAGE"' EXIT
+ditto "$APP" "$STAGE/MaxPane.app"
+ln -s /Applications "$STAGE/Applications"
+
+# The app gets its own ticket, stapled before the image is built: the image is
+# read-only once made, so this is the only moment the bundle inside it can be
+# stapled. A DMG ticket alone lets the *download* open offline; the app copied
+# out of it still had to ask Apple, on a Mac with no network, the first time it
+# ran. Two submissions, one per thing a user ends up with.
+if [ "$NOTARY_READY" = 1 ]; then
+  notarize_and_staple "$STAGE/MaxPane.app" app
+  xcrun stapler validate "$STAGE/MaxPane.app"
+fi
+
+echo "==> $DMG"
+mkdir -p dist
+rm -f "$DMG"
+# UDZO (zlib-compressed, read-only) is the format Finder mounts without asking
+# anything. HFS+ rather than APFS: it mounts on anything, and the image holds
+# one app and one symlink, so APFS buys nothing.
+hdiutil create -quiet -volname "$VOLNAME" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG"
+
+# Sign the image itself so Gatekeeper can name who made it, with a secure
+# timestamp because notarisation requires one. `--timestamp` talks to Apple's
+# timestamp server, so this is the first step here that needs the network.
+echo "==> signing DMG as $IDENTITY"
+codesign --force --sign "$IDENTITY" --timestamp "$DMG"
+codesign --verify --strict "$DMG"
+
+# The image: its own ticket, so the download opens offline too. Stapling
+# changes the file, which is why the sha256 below is printed last.
+if [ "$NOTARY_READY" = 1 ]; then
+  notarize_and_staple "$DMG" dmg
   echo "==> Gatekeeper's verdict on the image:"
   spctl --assess --type open --context context:primary-signature -v "$DMG"
-}
-notarize
+fi
+
 
 echo
 echo "built $DMG"
