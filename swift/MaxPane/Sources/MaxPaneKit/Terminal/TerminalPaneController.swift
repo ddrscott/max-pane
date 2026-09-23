@@ -236,7 +236,8 @@ final class TerminalPaneController: NSObject, PaneController {
                 self.copyDriver.key(event)
                 return true
             }
-            return self.keyDuringSlowPaste(event)
+            if self.keyDuringSlowPaste(event) { return true }
+            return self.controlV(event)
         }
         terminal.swallowsKeys = { [weak self] in self?.copyDriver.isOn ?? false }
         terminal.onCopy = { [weak self] in self?.copySelection() ?? false }
@@ -949,6 +950,27 @@ final class TerminalPaneController: NSObject, PaneController {
         return event.keyCode == 53
     }
 
+    /// ⌃V, before the emulator has it. In a remote lane with a picture and
+    /// nothing else on the clipboard it is ⌘V's image paste — the upload,
+    /// the server's path at the cursor — and the byte is not sent; the notice
+    /// is the same one ⌘V shows, marked `⌃V`, so the two read as one.
+    /// Otherwise false, and the byte goes down as it always has
+    /// (`TerminalPaste.ctrlVIsImagePaste` is the rule).
+    func controlV(_ event: NSEvent) -> Bool {
+        guard TerminalPaste.isControlV(
+            flags: event.modifierFlags, characters: event.characters,
+            charactersIgnoringModifiers: event.charactersIgnoringModifiers)
+        else { return false }
+        guard pane.sessionKey?.server != nil else { return false }
+        let settings = TerminalPaste.ImageSettings(liveConfig?() ?? config)
+        let clipboard = TerminalPaste.clipboard(pasteboard, images: settings.asFiles)
+        guard TerminalPaste.ctrlVIsImagePaste(isRemote: true, clipboard: clipboard, settings: settings),
+              let image = clipboard.image
+        else { return false }
+        paste(image: image, record: !clipboard.doNotRecord, via: "⌃V")
+        return true
+    }
+
     // MARK: images
 
     /// Where a local pane's pasted pictures are written. The profile's cache
@@ -968,14 +990,15 @@ final class TerminalPaneController: NSObject, PaneController {
     /// this Mac for a local session, on the server for a remote one, because
     /// a path is only any use on the machine the program reading it runs on.
     /// Never asks: a path is one line with no tab in it.
-    private func paste(image png: Data, record: Bool) {
+    /// `via` names the key when it was not ⌘V, in front of the notice.
+    private func paste(image png: Data, record: Bool, via key: String? = nil) {
         let settings = TerminalPaste.ImageSettings(liveConfig?() ?? config)
         if let refusal = TerminalPaste.imageRefusal(bytes: png.count, settings) {
             showNotice(refusal)
             return
         }
         if let server = pane.sessionKey?.server {
-            upload(png, to: server, record: record)
+            upload(png, to: server, record: record, via: key)
             return
         }
         do {
@@ -994,14 +1017,15 @@ final class TerminalPaneController: NSObject, PaneController {
     /// `POST /api/upload` (`RelayUpload`), off the main thread; the prompt
     /// gets the server's path when there is one and nothing when there is
     /// not. What is typed meanwhile goes first, as it would have anyway.
-    private func upload(_ png: Data, to server: String, record: Bool) {
+    private func upload(_ png: Data, to server: String, record: Bool, via key: String? = nil) {
         guard !isUploadingImage else { return }
+        let mark = key.map { "\($0) · " } ?? ""
         guard let endpoint = uploadEndpoint?() else {
-            showNotice("\(server): could not upload the image — the server is not in config.toml")
+            showNotice("\(mark)\(server): could not upload the image — the server is not in config.toml")
             return
         }
         isUploadingImage = true
-        showNotice("uploading \(TerminalPaste.size(png.count)) to \(server)…", lasting: nil)
+        showNotice("\(mark)uploading \(TerminalPaste.size(png.count)) to \(server)…", lasting: nil)
         let filename = PastedImages.name(stem: PastedImages.stem(at: Date()), attempt: 1)
         RelayUpload(name: server, endpoint: endpoint).upload(png, filename: filename) { [weak self] result in
             guard let self else { return }

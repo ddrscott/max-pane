@@ -1912,7 +1912,13 @@ address, and the text is what was meant.
   the main thread, and the path arrives at the cursor when the server has
   answered. If it fails, the pane says why in one line naming the server and
   **the prompt gets nothing**. Nothing is written on this Mac, and nothing on
-  the server is pruned: those files are the server's.
+  the server is pruned: those files are the server's. **⌃V does the same
+  there**: Claude Code's own paste-image key reads the clipboard of the machine
+  it runs on, which in a remote lane has no picture, so a ⌃V in a remote lane
+  with a picture and nothing else on the clipboard is this upload (the pane
+  says `⌃V · uploading 1.2 MB to yorkshire…`) and the byte is not sent; any
+  other ⌃V — text or files on the clipboard, an empty one, a local lane,
+  `paste_images_as_files = false` — is the 0x16 byte, as it always was.
 
 A picture over `paste_image_max_mb` (25), measured as the PNG, is refused in
 one line. `paste_images_as_files = false` turns all of this off, and an
@@ -2539,7 +2545,9 @@ that stops answering says so everywhere within seconds (above). **Not yet:**
 path on the other machine, and the server's file API is Phase 4 — and
 `maxpane` inside a remote shell. A file pasted or dropped from Finder into a
 remote lane pastes its path on *this* Mac, unchanged; sending the file itself
-is Phase 4 too.
+is Phase 4 too. A picture alone on the clipboard is the exception: ⌘V, and ⌃V
+too, upload it through `POST /api/upload` and paste the server's path (see
+[Pasting into a terminal](#pasting-into-a-terminal)).
 
 **Against the relay-tty web app in a web lane** — the bar the plan sets. What
 you get here that the page cannot give: every server's sessions in the one

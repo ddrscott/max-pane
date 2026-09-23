@@ -226,6 +226,29 @@ enum TerminalPaste {
         }
     }
 
+    /// Whether a ⌃V keystroke is ⌘V's image paste rather than the byte 0x16.
+    ///
+    /// ⌃V is Claude Code's own paste-image shortcut, and it reads the
+    /// clipboard of the machine it runs on. In a remote lane that machine is
+    /// the server, which has no picture, so the keystroke reaches Claude Code
+    /// and fails honestly. The rule is deliberately narrow: only a remote lane,
+    /// only a clipboard holding a picture and neither files nor text, and only
+    /// with `paste_images_as_files` on. Every other ⌃V — any text or file on
+    /// the clipboard, an empty one, a local lane where Claude Code's own ⌃V
+    /// works, the setting off — is the byte, as it always was: literal-next in
+    /// a shell, page down in vim.
+    static func ctrlVIsImagePaste(isRemote: Bool, clipboard: Clipboard, settings: ImageSettings) -> Bool {
+        isRemote && settings.asFiles && clipboard.text == nil && clipboard.image != nil
+    }
+
+    /// Whether a key event is ⌃V: control held, no ⌘ ⌥ ⇧ beside it, and the
+    /// key is `v` — as the byte the terminal would send (0x16) or as the key
+    /// under the modifiers, since a layout may report either.
+    static func isControlV(flags: NSEvent.ModifierFlags, characters: String?, charactersIgnoringModifiers: String?) -> Bool {
+        guard flags.intersection([.command, .option, .shift, .control]) == [.control] else { return false }
+        return characters == "\u{16}" || charactersIgnoringModifiers?.lowercased() == "v"
+    }
+
     /// The one line that refuses an image of `bytes`, or nil when it may go.
     /// Measured on the PNG that would be written, in the MB `size(_:)` prints.
     static func imageRefusal(bytes: Int, _ settings: ImageSettings) -> String? {

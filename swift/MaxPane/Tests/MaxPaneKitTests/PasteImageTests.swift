@@ -299,7 +299,7 @@ struct LiveRelayUploadTests {
 @Suite("⌘V of a picture pastes a path", .serialized)
 @MainActor
 struct PasteImagePaneTests {
-    private final class Wire: RelayAttachment {
+    fileprivate final class Wire: RelayAttachment {
         let sessionId = "paste-image-test"
         var onData: ((ArraySlice<UInt8>) -> Void)?
         var onHostResize: ((Int, Int) -> Void)?
@@ -317,7 +317,7 @@ struct PasteImagePaneTests {
     }
 
     @MainActor
-    private final class Rig {
+    fileprivate final class Rig {
         let dir: URL
         let store: StripStore
         let window: NSWindow
@@ -483,5 +483,129 @@ struct PasteImagePaneTests {
         #expect(!rig.pane.isUploadingImage)
         #expect(rig.pane.noticeText == "yorkshire: could not upload the image — the server is not in config.toml")
         #expect(rig.wire.sent.isEmpty)
+    }
+}
+
+/// A ⌃V, as AppKit would deliver it.
+private func controlV(flags: NSEvent.ModifierFlags = .control, characters: String = "\u{16}", ignoring: String = "v") -> NSEvent {
+    NSEvent.keyEvent(
+        with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0, context: nil,
+        characters: characters, charactersIgnoringModifiers: ignoring, isARepeat: false, keyCode: 9)!
+}
+
+@Suite("⌃V is ⌘V's image paste only in a remote lane with a picture alone on the clipboard")
+struct ControlVRuleTests {
+    private let picture = TerminalPaste.Clipboard(image: Picture.png)
+
+    @Test("remote, image only, setting on: yes; every other branch is the byte")
+    func rule() {
+        let on = TerminalPaste.ImageSettings(asFiles: true)
+        let off = TerminalPaste.ImageSettings(asFiles: false)
+        #expect(TerminalPaste.ctrlVIsImagePaste(isRemote: true, clipboard: picture, settings: on))
+        // A local lane: Claude Code's own ⌃V works there and must keep working.
+        #expect(!TerminalPaste.ctrlVIsImagePaste(isRemote: false, clipboard: picture, settings: on))
+        // paste_images_as_files = false turns it off too.
+        #expect(!TerminalPaste.ctrlVIsImagePaste(isRemote: true, clipboard: picture, settings: off))
+        // Text, files (paths are text by the time they are a Clipboard), an empty clipboard.
+        let text = TerminalPaste.Clipboard(text: "hello", isCopiedText: true)
+        let files = TerminalPaste.Clipboard(text: "/tmp/a.txt")
+        let textAndPicture = TerminalPaste.Clipboard(text: "https://x/y.png", isCopiedText: true, image: Picture.png)
+        #expect(!TerminalPaste.ctrlVIsImagePaste(isRemote: true, clipboard: text, settings: on))
+        #expect(!TerminalPaste.ctrlVIsImagePaste(isRemote: true, clipboard: files, settings: on))
+        #expect(!TerminalPaste.ctrlVIsImagePaste(isRemote: true, clipboard: textAndPicture, settings: on))
+        #expect(!TerminalPaste.ctrlVIsImagePaste(isRemote: true, clipboard: TerminalPaste.Clipboard(), settings: on))
+    }
+
+    @Test("the key: control and v, by the 0x16 byte or by the key under the modifiers; not with ⌘, ⌥ or ⇧")
+    func key() {
+        func isIt(_ flags: NSEvent.ModifierFlags, _ chars: String?, _ ignoring: String?) -> Bool {
+            TerminalPaste.isControlV(flags: flags, characters: chars, charactersIgnoringModifiers: ignoring)
+        }
+        #expect(isIt(.control, "\u{16}", "v"))
+        #expect(isIt(.control, "\u{16}", nil))
+        #expect(isIt(.control, nil, "v"))
+        #expect(isIt(.control, nil, "V"))
+        #expect(isIt([.control, .numericPad, .function], "\u{16}", "v"))
+        #expect(!isIt([.control, .command], "\u{16}", "v"))
+        #expect(!isIt([.control, .option], "\u{16}", "v"))
+        #expect(!isIt([.control, .shift], "\u{16}", "V"))
+        #expect(!isIt(.command, "v", "v"), "⌘V is the menu's, not this")
+        #expect(!isIt([], "v", "v"))
+        #expect(!isIt(.control, "\u{03}", "c"), "⌃C is ⌃C")
+    }
+}
+
+/// ⌃V itself, through the pane's key hook.
+@Suite("⌃V through the pane", .serialized)
+@MainActor
+struct ControlVPaneTests {
+    @Test("remote, image only: the upload ⌘V would do, the byte is not sent, and the notice says ⌃V")
+    func remote() async throws {
+        let server = try FakeRelayServer()
+        defer { server.stop() }
+        server.home = "/home/spierce"
+        server.uploadDelay = 0.2
+        let rig = try PasteImagePaneTests.Rig(server: "yorkshire")
+        defer { rig.close() }
+        let endpoint = RelayServer(baseURL: server.baseURL, token: server.token)
+        rig.pane.uploadEndpoint = { endpoint }
+        rig.pasteboard.setData(Picture.png, forType: .png)
+
+        #expect(rig.pane.controlV(controlV()), "swallowed: the byte is not the program's")
+        #expect(rig.pane.isUploadingImage)
+        #expect(rig.pane.noticeText == "⌃V · uploading \(TerminalPaste.size(Picture.png.count)) to yorkshire…")
+        #expect(rig.wire.sent.isEmpty)
+        #expect(await rig.spin(5) { !rig.pane.isUploadingImage })
+        try await rig.settle()
+        let upload = try #require(server.uploads.first)
+        #expect(server.uploads.count == 1)
+        #expect(upload.body == Picture.png)
+        #expect(rig.wire.text == "/home/spierce/.relay-tty/uploads/\(upload.stored)")
+        #expect(!rig.wire.sent.contains(0x16))
+        #expect(rig.saved.isEmpty)
+    }
+
+    @Test("every other ⌃V is the byte: text on the clipboard, an empty one, the setting off, a local lane")
+    func byte() async throws {
+        let server = try FakeRelayServer()
+        defer { server.stop() }
+        let remote = try PasteImagePaneTests.Rig(server: "yorkshire")
+        defer { remote.close() }
+        remote.pane.uploadEndpoint = { RelayServer(baseURL: server.baseURL, token: server.token) }
+
+        // Empty.
+        #expect(!remote.pane.controlV(controlV()))
+        // Text beside the picture: a browser's Copy Image.
+        let item = NSPasteboardItem()
+        item.setString("https://example.com/a.png", forType: .string)
+        item.setData(Picture.png, forType: .png)
+        remote.pasteboard.writeObjects([item])
+        #expect(!remote.pane.controlV(controlV()))
+        // Text alone.
+        remote.pasteboard.clearContents()
+        remote.pasteboard.setString("hello", forType: .string)
+        #expect(!remote.pane.controlV(controlV()))
+        // A picture alone, but the setting off.
+        remote.pasteboard.clearContents()
+        remote.pasteboard.setData(Picture.png, forType: .png)
+        var off = Config()
+        off.pasteImagesAsFiles = false
+        remote.pane.liveConfig = { off }
+        #expect(!remote.pane.controlV(controlV()))
+        // A picture alone, the setting on, but not ⌃V: ⌘V is the menu's, ⌃C is ⌃C.
+        remote.pane.liveConfig = { Config() }
+        #expect(!remote.pane.controlV(controlV(flags: .command, characters: "v")))
+        #expect(!remote.pane.controlV(controlV(characters: "\u{03}", ignoring: "c")))
+        #expect(!remote.pane.isUploadingImage)
+        #expect(server.uploads.isEmpty)
+        #expect(remote.wire.sent.isEmpty, "the hook sends nothing itself; the emulator sends the byte")
+
+        // A local lane with a picture alone: Claude Code's own ⌃V works there.
+        let local = try PasteImagePaneTests.Rig()
+        defer { local.close() }
+        local.pasteboard.setData(Picture.png, forType: .png)
+        #expect(!local.pane.controlV(controlV()))
+        #expect(local.saved.isEmpty, "nothing written: ⌃V in a local lane is not a paste")
+        #expect(local.wire.sent.isEmpty)
     }
 }
