@@ -273,3 +273,31 @@ nothing about which tile was the lane you were in, which is the whole request.
 Known and accepted: the rails and an inset dock's chrome still cut rather than
 fade, and a tile that begins under the toolbar or a dock is clipped by the
 strip's scroll view for the first frames on the way out.
+
+## Amended 2026-09-23: the focus keys move an expanded tile
+
+The owner: *"when in gallery mode and a pane is expanded, using cmd-{ and
+cmd-} should auto contract and expand the next/previous lane so we can quickly
+cycle through them with shortcuts."* Until now ⌘[ / ⌘] in the gallery moved the
+focus ring between thumbnails and left the expanded tile where it was, so
+reading three lanes in turn was three double clicks.
+
+- **With a tile expanded, ⌘[ / ⌘] put it back and expand the previous / next
+  lane** in the gallery's order — the strip's, with the docks at their ordinal,
+  because a docked lane is an ordinary tile here (above). Focus goes to the new
+  tile's first pane.
+- **⇧⌘[ / ⇧⌘] cycle too**, which is the pair the owner named. Inside a split
+  lane they keep their meaning — the pane above or below — until the edge: the
+  bottom pane's ⇧⌘] and the top pane's ⇧⌘[ cross into the neighbour, landing on
+  the pane nearest the edge they came through. On single-pane lanes the ⇧ pair
+  is the plain pair exactly; on split ones it reads every pane in order. The
+  split case was kept rather than dropped because it costs one sentence in the
+  README and without it a split lane's lower panes would need a click.
+- **The ends stop.** No wrap: the one key that jumps from the last lane to the
+  first would be the one gesture in the gallery that loses where you are.
+- **Nothing expanded, nothing changes**: both pairs are the strip's focus keys.
+- **Motion**: `expandTile` runs `layoutGallery(animated:)`, which starts every
+  tile from its presentation-layer frame, so the old tile shrinks into its slot
+  while the new one grows from its own, on `Motion.lane`, and a repeat mid-flight
+  turns round from where the tiles are drawn — the same rule as a double click
+  during an expansion, with nothing added for it.

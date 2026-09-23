@@ -1764,6 +1764,17 @@ again, since that tile is big enough to read. The session browser follows the
 same gestures while the gallery is up — click to focus, double-click to expand —
 and keeps its usual behaviour on the strip. ⌘G is still the way out.
 
+**With a tile expanded, ⌘[ and ⌘] move the expansion**, not just the focus
+ring: the tile shrinks back into its slot as the previous or next lane's tile
+grows out of its own, both at once, and the keyboard goes to the new tile's
+first pane. Docked lanes are tiles here, so they are in the cycle at their place
+in the order. The ends stop — ⌘] on the last lane does nothing and the tile
+stays; there is no wrap. ⇧⌘[ and ⇧⌘] cycle too, with one difference: inside a
+split lane they still walk its stack, and cross to the neighbour only from the
+top or bottom pane, so the ⇧ pair reads every pane in order and on single-pane
+lanes is the plain pair exactly. Nothing expanded, and both pairs are the
+strip's usual focus keys.
+
 Unexpanded tiles do not resize anything: no width handle and no seams to drag,
 and no pane grips, which would be four points square at a tile's scale. **An
 expanded tile's seams are the strip's**: drag the separator between two stacked

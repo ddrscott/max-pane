@@ -129,6 +129,15 @@ final class HelpPanel: Popup {
             for command in Command.allCases where command.menu == section {
                 row(describe(command), command.title)
             }
+            if section == .navigate {
+                // The focus keys have a second job in the gallery, and the
+                // row that names them is where someone looks for it.
+                out.append(NSAttributedString(
+                    string: "          in the gallery with a tile expanded: \(describe(.focusLeft)) \(describe(.focusRight))"
+                        + " expand the previous / next lane instead;\n"
+                        + "          \(describe(.focusUp)) \(describe(.focusDown)) too, once at the top or bottom of a split lane\n",
+                    attributes: [.foregroundColor: NSColor.secondaryLabelColor, .font: Theme.mono(12)]))
+            }
             blank()
         }
 

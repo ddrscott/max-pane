@@ -69,4 +69,4 @@
 - [x] A folded sidebar header rolls up the activity under it: BLOCKED (pulsing), DONE (orange), WORKING (green mark), not just the hidden count; a click on the state goes to that session — [detail](folded-header-activity.md)
 - [x] The version in the corner reads `v0.6.1+40` on an unreleased build (count from the bundled CHANGELOG), a tooltip says what it was built from, and a click opens the changelog — [detail](version-from-changelog.md)
 - [x] ⌃V in a remote lane with an image-only clipboard does what ⌘V does (upload through the relay server, paste the remote path); every other ⌃V stays the raw byte — [detail](ctrl-v-image-remote.md)
-- [-] Gallery: with a tile expanded, ⌘[ ⌘] (and ⌘{ ⌘}) contract it and expand the previous/next lane, so the keys cycle through lanes — [detail](gallery-cycle-expanded.md)
+- [x] Gallery: with a tile expanded, ⌘[ ⌘] (and ⌘{ ⌘}) contract it and expand the previous/next lane, so the keys cycle through lanes — [detail](gallery-cycle-expanded.md)

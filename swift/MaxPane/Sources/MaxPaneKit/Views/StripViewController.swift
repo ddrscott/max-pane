@@ -3131,6 +3131,10 @@ public final class StripViewController: NSViewController {
 
     public func moveFocus(_ direction: FocusDirection) {
         let state = store.state
+        if isGallery, let expanded = expandedLaneId,
+           cycleExpandedTile(from: expanded, direction: direction) {
+            return
+        }
         // ⌘[ / ⌘] walk the strip only. The owner asked for that directly, and
         // it is right for a reason worth keeping: those keys scroll the strip,
         // and a docked lane does not scroll — landing on one would be a
@@ -3169,6 +3173,61 @@ public final class StripViewController: NSViewController {
         default:
             break
         }
+    }
+
+    /// The focus keys while a gallery tile is expanded: they move the
+    /// expansion, not just the ring.
+    ///
+    /// The owner: *"when in gallery mode and a pane is expanded, using cmd-{
+    /// and cmd-} should auto contract and expand the next/previous lane so we
+    /// can quickly cycle through them with shortcuts."* An expanded tile is
+    /// the lane you are reading, and the next thing to read is its neighbour;
+    /// a key that moved the ring to a thumbnail and left the big tile where it
+    /// was would need a double click to finish the job.
+    ///
+    /// - ⌘[ / ⌘] put the tile back and expand the previous / next lane in the
+    ///   gallery's order, which is the strip's with the docks at their place in
+    ///   it (a docked lane is an ordinary tile here, ADR-0011). Focus goes to
+    ///   the new tile's first pane.
+    /// - ⇧⌘[ / ⇧⌘] do the same, except inside a split lane, where they keep
+    ///   walking its stack until the edge: the bottom pane's ⇧⌘] and the top
+    ///   pane's ⇧⌘[ cross into the neighbour, landing on the pane nearest the
+    ///   edge they came through. So the ⇧ pair reads every pane in order, and
+    ///   on a strip of single-pane lanes is the plain pair exactly.
+    /// - The ends stop. No wrap: a key that jumps from the last lane to the
+    ///   first is the one gesture in the gallery that would lose where you are.
+    ///
+    /// Both tiles move at once — the old one shrinks into its slot as the new
+    /// one grows from its own — because `layoutGallery(animated:)` starts every
+    /// tile from where it is drawn, and a repeat mid-flight turns round from
+    /// there for the same reason. Returns false when the key is not this
+    /// gesture, and the ordinary walk takes it.
+    private func cycleExpandedTile(from expanded: String, direction: FocusDirection) -> Bool {
+        let lanes = store.state.lanes
+        guard let index = lanes.firstIndex(where: { $0.id == expanded }) else { return false }
+        let lane = lanes[index]
+        let focusedInLane = store.state.focusedPaneId.flatMap { id in lane.panes.firstIndex { $0.id == id } }
+        let step: Int
+        switch direction {
+        case .left: step = -1
+        case .right: step = 1
+        case .up:
+            if let pane = focusedInLane, pane > 0 { return false }
+            step = -1
+        case .down:
+            if let pane = focusedInLane, pane + 1 < lane.panes.count { return false }
+            step = 1
+        }
+        let next = index + step
+        guard lanes.indices.contains(next) else { return true }
+        let target = lanes[next]
+        let landing: Pane?
+        switch direction {
+        case .up: landing = target.panes.last
+        default: landing = target.panes.first
+        }
+        expandTile(laneId: target.id, paneId: landing?.id)
+        return true
     }
 
     /// The arrow keys with focus inside a dock.
