@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - In the gallery with a tile expanded, ⌘[ and ⌘] put it back and expand the previous or next lane, both tiles moving at once, so the lanes can be read through from the keyboard. ⇧⌘[ and ⇧⌘] do the same, walking a split lane's panes first and crossing at its top or bottom. The ends stop rather than wrap
 - ⌃V in a remote lane with a picture and nothing else on the clipboard does what ⌘V does: uploads it through the relay server and pastes the server's path, with the pane saying `⌃V · uploading…`. Claude Code's own ⌃V reads the clipboard of the machine it runs on, which over there has no picture. Every other ⌃V — text or files on the clipboard, an empty one, a local lane, `paste_images_as_files = false` — is still the byte
 
+### Changed
+- The window comes back where you left it: fullscreen, or its frame on its display, remembered per profile in the ledger and restored at launch, clamped onto a screen that still exists when a display has gone or shrunk. The first launch, with nothing remembered, is fullscreen as before. `MAXPANE_WINDOWED` still forces windowed and remembers nothing (ADR-0036)
+
 ## [0.7.0] - 2026-09-22
 
 ### Added

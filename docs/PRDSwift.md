@@ -99,6 +99,10 @@ To find out whether Scott will live in this layout for weeks, using only the two
 - Owns exactly: rendering, input, `WKWebView`/SwiftTerm lifecycle, snapshots, scroll position.
 - Owns **no** durable state. On launch it calls `laned_core.load()` and renders whatever it gets.
 - Fullscreen `NSWindow` (`.fullScreen` collection behavior). Menu bar auto-hides.
+  **[AMENDED — [ADR-0036](decisions/0036-the-window-comes-back-where-you-left-it.md)]**
+  Fullscreen on the first launch; after that, the window comes back the way it
+  was left — fullscreen, or its frame on its display, remembered in the ledger's
+  `app_state` and clamped onto a screen that still exists.
 
 ### 5.3 Process lifecycle
 - App crash → relaunch → strip identical, terminals reattach to Relay, web panes reload from URL.

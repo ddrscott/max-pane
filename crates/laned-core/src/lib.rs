@@ -91,6 +91,9 @@ const KEY_LAYOUT: &str = "strip_layout";
 const KEY_HIDDEN_LANES: &str = "hidden_lane_ids";
 /// The sidebar's collapsed groups and sections, as a JSON array of their keys.
 const KEY_SIDEBAR_COLLAPSED: &str = "sidebar_collapsed";
+/// Where the window was when the app last ran (ADR-0036): the shell's JSON,
+/// `{"fullscreen":true}` or `{"fullscreen":false,"frame":[x,y,w,h],"screen":"<display id>"}`.
+const KEY_WINDOW_STATE: &str = "window_state";
 
 pub fn now_ms() -> i64 {
     std::time::SystemTime::now()
@@ -1798,6 +1801,23 @@ impl Core {
         let set: BTreeSet<String> = groups.into_iter().collect();
         let stored = serde_json::to_string(&set.iter().collect::<Vec<_>>()).unwrap_or_else(|_| "[]".into());
         inner.ledger.set_app_state(KEY_SIDEBAR_COLLAPSED, &stored)
+    }
+
+    // ---- window ------------------------------------------------------------
+
+    /// The window's last state — fullscreen, or a frame on a display — as the
+    /// shell last stored it (ADR-0036). Opaque here: screens and frames are
+    /// the shell's to read and clamp. `None` on a ledger that has never been
+    /// told, which is the first launch.
+    pub fn window_state(&self) -> Result<Option<String>> {
+        let inner = self.inner.lock();
+        inner.ledger.app_state(KEY_WINDOW_STATE)
+    }
+
+    /// Store the window's state. No revision bump: nothing on the strip moved.
+    pub fn set_window_state(&self, json: String) -> Result<()> {
+        let inner = self.inner.lock();
+        inner.ledger.set_app_state(KEY_WINDOW_STATE, &json)
     }
 
     // ---- search ------------------------------------------------------------

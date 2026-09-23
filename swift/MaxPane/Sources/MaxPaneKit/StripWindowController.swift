@@ -92,6 +92,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     /// different from before servers existed.
     let servers: RelayServers
 
+    /// Where the window goes at launch (ADR-0036), read from the ledger once.
+    let placement: WindowState.Placement
+    /// Writes the window's state back to the ledger as it changes. Nil under
+    /// `MAXPANE_WINDOWED`, which is how a smoke test leaves the ledger alone.
+    private var windowState: WindowStateKeeper?
+
     public init(store: StripStore, config: Config) {
         self.store = store
         self.config = config
@@ -116,7 +122,22 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         window.titleVisibility = .hidden
         // The strip is the interface; the menu bar is an interruption.
         window.collectionBehavior = [.fullScreenPrimary, .managed]
+        // Where it was last time (ADR-0036): decided once, from the ledger and
+        // the screens plugged in now. A remembered frame is applied before
+        // the window is shown, so the strip lays out once at its final size;
+        // fullscreen has to wait until the window exists (`showWindow`).
+        let placement = WindowState.placement(
+            for: store.windowState, screens: NSScreen.screens.map(WindowState.Screen.init))
+        if case .windowed(let frame) = placement {
+            window.setFrame(frame, display: false)
+        }
+        self.placement = placement
         super.init(window: window)
+        // MAXPANE_WINDOWED writes nothing: a smoke test must not change what
+        // the owner comes back to.
+        if WindowState.writesEnabled() {
+            windowState = WindowStateKeeper(window: window) { [store] in store.setWindowState($0) }
+        }
 
         // Before any view reads the store: which lanes a folded sidebar group
         // hides is a question about sessions and a setting, and both live on
@@ -720,20 +741,31 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         // The title bar's buttons have real frames only once the window has one.
         updateTitlebarAvoidance()
         // Enter fullscreen after the window exists, so the strip lays out once
-        // at its final size rather than twice.
+        // at its final size rather than twice — when that is where it was
+        // last time, or there was no last time (ADR-0036). A remembered
+        // windowed frame was applied before the window was shown.
         //
         // MAXPANE_WINDOWED skips it: a fullscreen app that takes the display the
         // moment it launches is not something you want during a smoke test on a
         // machine somebody is using.
         let windowed = ProcessInfo.processInfo.environment["MAXPANE_WINDOWED"] != nil
-        if !windowed, window?.styleMask.contains(.fullScreen) == false {
-            window?.toggleFullScreen(nil)
+        guard !windowed, let window, case .fullscreen(let screen) = placement,
+              !window.styleMask.contains(.fullScreen) else { return }
+        // Fullscreen takes the display the window is on, so a remembered
+        // display that is still plugged in is where the window goes first.
+        if let screen, window.screen.map(WindowState.Screen.id(of:)) != screen.id {
+            window.setFrame(WindowState.clamp(window.frame, remembered: screen.id, onto: [screen]), display: false)
         }
+        window.toggleFullScreen(nil)
     }
 
     /// Called on quit, so a web pane's session reaches the ledger before the
-    /// process stops existing.
-    public func flushPaneState() { strip.flushPaneState() }
+    /// process stops existing — and the window's last frame, which a debounce
+    /// may still be holding.
+    public func flushPaneState() {
+        strip.flushPaneState()
+        windowState?.flush()
+    }
 
     // MARK: - CommandHandling
 

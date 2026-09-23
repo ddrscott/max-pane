@@ -1512,6 +1512,11 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func setSitePermission(dataStoreId: String, origin: String, feature: SiteFeature, allowed: Bool) throws 
     
     /**
+     * Store the window's state. No revision bump: nothing on the strip moved.
+     */
+    func setWindowState(json: String) throws 
+    
+    /**
      * The sidebar's collapsed groups and sections, as the shell last stored
      * them. Opaque here: the keys are the sidebar's (a directory, `host:path`,
      * `host:`, the local section), and only the shell can say which lanes a
@@ -1563,6 +1568,14 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func ungather() throws  -> StripState
     
     func unpair(ptyPaneId: String, webPaneId: String) throws 
+    
+    /**
+     * The window's last state — fullscreen, or a frame on a display — as the
+     * shell last stored it (ADR-0036). Opaque here: screens and frames are
+     * the shell's to read and clamp. `None` on a ledger that has never been
+     * told, which is the first launch.
+     */
+    func windowState() throws  -> String?
     
 }
 open class Core: CoreProtocol, @unchecked Sendable {
@@ -3277,6 +3290,18 @@ open func setSitePermission(dataStoreId: String, origin: String, feature: SiteFe
 }
     
     /**
+     * Store the window's state. No revision bump: nothing on the strip moved.
+     */
+open func setWindowState(json: String)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_set_window_state(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(json),uniffiCallStatus
+    )
+}
+}
+    
+    /**
      * The sidebar's collapsed groups and sections, as the shell last stored
      * them. Opaque here: the keys are the sidebar's (a directory, `host:path`,
      * `host:`, the local section), and only the shell can say which lanes a
@@ -3383,6 +3408,21 @@ open func unpair(ptyPaneId: String, webPaneId: String)throws   {try rustCallWith
         FfiConverterString.lower(webPaneId),uniffiCallStatus
     )
 }
+}
+    
+    /**
+     * The window's last state — fullscreen, or a frame on a display — as the
+     * shell last stored it (ADR-0036). Opaque here: screens and frames are
+     * the shell's to read and clamp. `None` on a ledger that has never been
+     * told, which is the first launch.
+     */
+open func windowState()throws  -> String?  {
+    return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_window_state(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
 }
     
 
@@ -8271,6 +8311,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_set_site_permission() != 10286) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_set_window_state() != 23342) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_sidebar_collapsed() != 49463) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -8290,6 +8333,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_unpair() != 1339) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_window_state() != 13868) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_constructor_core_open() != 65286) {

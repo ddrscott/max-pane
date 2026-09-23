@@ -823,6 +823,19 @@ public final class StripStore {
     /// same lanes off the strip.
     private(set) lazy var collapsedGroups: Set<String> = Set((try? core.sidebarCollapsed()) ?? [])
 
+    /// Where the window was when the app last ran (ADR-0036), or nil on a
+    /// ledger that has never been told — the first launch — and on a value
+    /// this build cannot read.
+    var windowState: WindowState? {
+        ((try? core.windowState()) ?? nil).flatMap(WindowState.decode)
+    }
+
+    /// Remember where the window is. No snapshot changes: nothing on the strip
+    /// moved.
+    func setWindowState(_ state: WindowState) {
+        try? core.setWindowState(json: state.encoded)
+    }
+
     /// The user folded or opened something in the sidebar. The one door that
     /// may take the keyboard's own lane off the strip, so the one that hands
     /// focus on: nearest lane still there to the right, else to the left.

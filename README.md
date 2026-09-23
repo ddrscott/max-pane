@@ -469,7 +469,7 @@ which was written from the Rust pty-host source and cites it.
 - **Spikes keep their code.** A number in `docs/spikes/` is only trustworthy if
   the program that produced it is still runnable.
 - When reality contradicts the PRD, surface the conflict in an ADR rather than
-  silently reinterpreting the requirement. Six such conflicts are tabulated in
+  silently reinterpreting the requirement. Seven such conflicts are tabulated in
   [`docs/acceptance.md`](docs/acceptance.md), and the PRD itself is annotated
   **[AMENDED]** in place.
 
@@ -2984,7 +2984,16 @@ Element**, or pick the pane from Safari's Develop menu. It is always on, not
 behind a switch, because the question "is that thing ours or the site's" has no
 answer without it.
 
-`MAXPANE_WINDOWED=1` skips fullscreen and `MAXPANE_DEBUG=1` turns on the chatty
+The window comes back where you left it (ADR-0036): fullscreen, or its frame
+on its display, remembered per profile in the ledger's `app_state` under
+`window_state` and written on every fullscreen enter and exit, half a second
+after a move or resize, and on quit. A frame that no longer fits — a display
+unplugged, a smaller screen — is clamped onto the nearest screen that still
+exists, never off screen or under the menu bar. The first launch, with nothing
+remembered, is fullscreen.
+
+`MAXPANE_WINDOWED=1` forces windowed and remembers nothing, so a smoke test
+does not change what you come back to; `MAXPANE_DEBUG=1` turns on the chatty
 logging. Both write to stderr, which you only see by running the executable
 inside the bundle directly rather than through `open`:
 

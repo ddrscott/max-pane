@@ -714,6 +714,11 @@ void uniffi_laned_core_fn_method_core_set_sidebar_collapsed(uint64_t ptr, RustBu
 void uniffi_laned_core_fn_method_core_set_site_permission(uint64_t ptr, RustBuffer data_store_id, RustBuffer origin, RustBuffer feature, int8_t allowed, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_WINDOW_STATE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SET_WINDOW_STATE
+void uniffi_laned_core_fn_method_core_set_window_state(uint64_t ptr, RustBuffer json, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SIDEBAR_COLLAPSED
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_SIDEBAR_COLLAPSED
 RustBuffer uniffi_laned_core_fn_method_core_sidebar_collapsed(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -747,6 +752,11 @@ RustBuffer uniffi_laned_core_fn_method_core_ungather(uint64_t ptr, RustCallStatu
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_UNPAIR
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_UNPAIR
 void uniffi_laned_core_fn_method_core_unpair(uint64_t ptr, RustBuffer pty_pane_id, RustBuffer web_pane_id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_WINDOW_STATE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_WINDOW_STATE
+RustBuffer uniffi_laned_core_fn_method_core_window_state(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_FUNC_CLIP_SECRET_SHAPE
@@ -1560,6 +1570,12 @@ uint16_t uniffi_laned_core_checksum_method_core_set_site_permission(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_WINDOW_STATE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SET_WINDOW_STATE
+uint16_t uniffi_laned_core_checksum_method_core_set_window_state(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SIDEBAR_COLLAPSED
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_SIDEBAR_COLLAPSED
 uint16_t uniffi_laned_core_checksum_method_core_sidebar_collapsed(void
@@ -1599,6 +1615,12 @@ uint16_t uniffi_laned_core_checksum_method_core_ungather(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_UNPAIR
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_UNPAIR
 uint16_t uniffi_laned_core_checksum_method_core_unpair(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_WINDOW_STATE
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_WINDOW_STATE
+uint16_t uniffi_laned_core_checksum_method_core_window_state(void
     
 );
 #endif
