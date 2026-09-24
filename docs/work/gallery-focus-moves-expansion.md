@@ -38,6 +38,15 @@ patching each caller.
   background (it collapses, as now), a focus change *inside* the expanded lane
   (a split lane's other pane stays put and the tile does not re-expand), and
   any focus that lands on the lane already expanded (no animation, no flicker).
+- **Nor by focus landing on a docked lane** — added 2026-09-24 from
+  [`docs/critiques/docking.md`](../critiques/docking.md) § 3, and it must land
+  with this task or this task ships a regression against the owner's stated
+  purpose of docking. A docked lane is pinned; it does not want expanding, and
+  ⌥⌘[ / ⌥⌘] into a dock is the first entry on this task's own list of focus
+  paths. As written, focusing a dock would yank the expansion onto the one lane
+  he pinned and the next ⌘J would yank it off again, churning precisely the
+  lane that exists not to be churned. One predicate at the same choke point,
+  one test.
 - **A single click on another tile while one is expanded** should move the
   expansion too: the screen is already given over to one tile, so taking it is
   no loss, and it is the same complaint. With **nothing** expanded a single
