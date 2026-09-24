@@ -379,6 +379,23 @@ public struct Keymap: Sendable {
         self.init(bindings: bindings, complaints: complaints)
     }
 
+    /// Why `chord` cannot be given to `command` in this map, or nil when it
+    /// can. Asked by the APP scope before it writes a binding: macOS's chords
+    /// are refused for the reason `reserved` gives, and a chord another
+    /// command holds is refused by name — the settings window lets that
+    /// collision happen and reports it on both rows, but a one-key recorder
+    /// with no rows to report on has to say no up front.
+    public func refusal(binding chord: KeyChord, to command: Command) -> String? {
+        if let reason = Self.reserved.first(where: { $0.0 == chord })?.1 {
+            return "\(chord.text) is not available — \(reason)"
+        }
+        if let held = bindings.first(where: { $0.key != command && $0.value.contains(chord) })?.key,
+           held != command.sharesChordWith {
+            return "\(chord.text) is \(held.title)'s"
+        }
+        return nil
+    }
+
     // MARK: - what a web pane may not swallow
 
     /// `charactersIgnoringModifiers` ignores every modifier *except* shift, so

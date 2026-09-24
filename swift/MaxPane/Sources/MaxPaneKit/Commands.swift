@@ -9,6 +9,7 @@ public enum Command: String, CaseIterable, Sendable {
     case openAnything
     case openPages
     case openSessions
+    case runCommand
     case reload
     case hardReload
     case editAddress
@@ -87,6 +88,7 @@ public enum Command: String, CaseIterable, Sendable {
         case .openAnything: return "Open…"
         case .openPages: return "Open a Page…"
         case .openSessions: return "Attach a Session…"
+        case .runCommand: return "Run Command…"
         case .reload: return "Reload"
         case .hardReload: return "Reload Ignoring Cache"
         case .editAddress: return "Edit Address"
@@ -185,6 +187,15 @@ public enum Command: String, CaseIterable, Sendable {
         case .openAnything:    return ("o", [.command])
         case .openPages:       return ("y", [.command])
         case .openSessions:    return ("o", [.command, .option])
+        // ⌘E: the same picker with its APP scope chosen — every command by
+        // name with its key beside it, the live settings, the servers. Not
+        // ⇧⌘P, the key every editor gives this: that is Keep Lane Loaded
+        // here, and a chord people have in their fingers stays where it is
+        // (see `toggleKeepLive`); ⌥⌘P pairs lanes and ⌃⌘P prints. ⌘E is
+        // nobody's: macOS reserves nothing on it, this file had nothing on
+        // it, and a browser's ⌘E (Use Selection for Find) is chrome, not a
+        // page's. `>` typed into ⌘O reaches the same scope.
+        case .runCommand:      return ("e", [.command])
         // The pane under the keyboard, terminal or page alike — one pair of
         // keys, because "this column is too small to read" is one thought.
         // ⌃⌘= and ⌃⌘- resize the *lane*; these resize what is inside it.
@@ -551,7 +562,7 @@ public enum Command: String, CaseIterable, Sendable {
     /// Which menu this belongs under.
     public var menu: MenuSection {
         switch self {
-        case .openAnything, .openPages, .openSessions, .newTerminalLane, .newPrivateWebLane,
+        case .openAnything, .openPages, .openSessions, .runCommand, .newTerminalLane, .newPrivateWebLane,
              .splitRight, .splitDown: return .file
         case .closePane, .closeLane: return .file
         case .focusLeft, .focusRight, .focusUp, .focusDown, .search, .gather, .ungather: return .navigate

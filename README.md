@@ -484,6 +484,7 @@ Press **⌘/** for every shortcut. The three that matter:
 | | |
 |---|---|
 | **⌘O** (also **⌘T**) | start anything — a command, a URL, a page you have been to or kept, a session that is already running |
+| **⌘E** | run Max Pane: every command by name with its key, the live settings, the servers — or type `>` into ⌘O |
 | **⌘[** / **⌘]** | move focus between lanes |
 | **⌃⌘[** / **⌃⌘]** | dock this lane to that edge of the window, or undock it |
 | **⌘G** | Lanes ⇄ Gallery: every lane on one screen, live; ⌘G again goes back |
@@ -499,9 +500,11 @@ fourth one. Anything you type is offered both ways — as a command and as a URL
 always the first two rows — so a wrong guess about `localhost:3000` never hides
 the other reading and ⌘O ↩ always does what you said.
 
-**⇥** narrows to pages, commands or sessions; **⌘Y** and **⌥⌘O** open the same
-picker with those scopes already chosen. **⌘⌫** forgets the selected row — or,
-on a page you have kept, stops keeping it.
+**⇥** narrows to pages, commands, sessions or the app itself; **⌘Y**, **⌥⌘O**
+and **⌘E** open the same picker with those scopes already chosen, and a line
+that starts with `>` is in the app scope whatever scope you were in. **⌘⌫**
+forgets the selected row — or, on a page you have kept, stops keeping it; on a
+command in the app scope it binds a key ([Run Command](#run-command)).
 
 A bookmark is a page, so it is offered by the key pages are offered by, marked
 **★** and carrying the folder it is in. A page that is both kept and visited is
@@ -2930,6 +2933,46 @@ fold was holding come straight back.
 
 Every field of `Config` is a key here, and every key is a row in the window. A
 skipped value also prints a line on stderr.
+
+### Run Command
+
+**⌘E** is ⌘O turned on the app itself: the `APP` scope, which `>` typed into
+⌘O also reaches, the way it does in an editor's quick-open. It lists three
+kinds of row, and never a shell line — that is ⌘O's job, and a list where ↩
+sometimes starts a process is what the scopes exist to keep apart:
+
+- **Every command**, by the name the menu bar gives it, with its key on the
+  right — the key your `[keys]` table gives it, not only the one it ships
+  with, and `—` for one with none. A command the menu would grey out is grey
+  here too, for the same reason and by the same rule, and says why on its
+  second line (`needs a page`, `not in a gather view`); ↩ on one says so
+  again instead of closing on nothing. It stays listed because a command you
+  cannot see is a command you cannot bind.
+- **The settings that apply live** — the booleans and choices Settings marks
+  `live` — with the current value on the right. ↩ flips a boolean or moves a
+  choice to the next option, written to `config.toml` with your comments
+  kept. Nothing read at launch is offered: a row that flipped a value the app
+  would not read until tomorrow would be a row that lies.
+- **Each server**: Reconnect, Disable and the next Colour for an enabled one,
+  Enable for a disabled one.
+
+Nothing typed lists all of it under `// COMMANDS`, `// SETTINGS` and
+`// SERVERS`, in menu order. Typing ranks by where the match landed, like every
+other scope, over a command's title and its `keys` name (`toggleGallery`), a
+setting's key with or without its underscores, and a server's name.
+
+**⌘⌫ on a command binds it.** The field becomes the recorder Settings ›
+Keyboard has: the next chord you press is the key, esc cancels. It is written
+to `[keys]` and shows on the row at once, marked `relaunch to apply`, since
+the keymap is read at launch. A chord is refused, with the reason, when macOS
+owns it (`⌘Q is not available — macOS quits the app`) or another command
+already has it (`⌘G is Toggle Gallery's`); the recorder stays open for the
+next try. ⌘⌫ on a setting or a server row does nothing but say so.
+
+⌘E rather than the ⇧⌘P every editor uses: ⇧⌘P is Keep Lane Loaded here and
+a chord people have in their fingers stays where it is; ⌥⌘P pairs lanes and
+⌃⌘P prints. ⌘E was nobody's — macOS reserves nothing on it, and a browser's
+⌘E is chrome, not a page's.
 
 ### Shortcuts
 

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- ⌘E Run Command: ⌘O's picker with an `APP` scope, also reached by typing `>` into ⌘O or by ⇥. Every command by its menu name with the key `[keys]` gives it on the right (`—` for none), greyed with the reason when the menu would grey it; the live boolean and choice settings with their value, which ↩ flips or cycles in `config.toml`; and Reconnect, Enable or Disable and the next Colour per server. ⌘⌫ on a command records the next chord into `[keys]` the way Settings › Keyboard does, refusing one macOS owns or another command already has, by name. Never a shell line
 - An agent going BLOCKED or DONE while Max Pane is not the frontmost app posts a macOS notification — its title, `BLOCKED · ~/code/x`, and the last line on its screen — and a click goes to it, opening a fold or attaching the session on the way. Taken down again when the session moves on; never for a server that is not answering or at a relaunch. `agent_notify = "away" | "always" | "never"`, live. The Dock icon carries the BLOCKED count as a badge (ADR-0037)
 - ⌘J Next Attention and ⇧⌘J Previous Attention: every BLOCKED session in strip order, then every DONE, walked from the lane you are in and wrapping, through a folded group or a gather like ⌘P
 - ⌥⌘J Attention: a `// ATTENTION · N` list from the status bar, one row per BLOCKED or DONE session. ↩ goes, ⌫ dismisses a DONE (never a BLOCKED), ⌘⌫ dismisses every DONE

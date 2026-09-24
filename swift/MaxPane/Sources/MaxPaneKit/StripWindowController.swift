@@ -886,6 +886,36 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         }
     }
 
+    /// Why `canPerform` said no, in the words the APP scope's greyed row
+    /// prints — or nil when it said yes. One sentence per rule above, so a
+    /// row is grey for exactly the reason the menu item is.
+    public func unavailable(_ command: Command) -> String? {
+        guard !canPerform(command) else { return nil }
+        switch command {
+        case .ungather: return "not in a gather view"
+        case .gather: return "the lane has no project"
+        case .showSettings: return "no config file"
+        case .copyWithStyles, .copyMode, .pasteWithoutAsking, .pasteEscaped, .pasteAsBase64,
+             .pasteBase64Decoded, .pasteFileAsBase64, .pasteSlowly, .advancedPaste, .claimSession:
+            return "needs a terminal with the keyboard"
+        case .savePassword:
+            return store.lane(containing: store.state.focusedPaneId ?? "")?.isPrivate == true
+                ? "not in a private lane" : "needs a page"
+        case _ where command.needsWebPane: return "needs a page"
+        case .pairWithNext: return "no lane to the right to pair with"
+        case .toggleDockMode: return "the lane is not docked"
+        case .laneSizeSmall, .laneSizeMedium, .laneSizeLarge, .laneSizeCycle:
+            return strip.isGallery ? "not in the gallery" : "needs a lane"
+        case .toggleMaximizePane: return "needs a pane with the keyboard"
+        case .toggleMobileLayout, .toggleMute: return "needs a lane with a page"
+        case .toggleBlocking: return "needs a page on a site, with blocking on"
+        case .muteOthers, .muteAll: return "nothing is making a sound"
+        case .focusDockLeft: return "nothing is docked left"
+        case .focusDockRight: return "nothing is docked right"
+        default: return "needs a lane"
+        }
+    }
+
     /// The pane Mute Pane speaks for, and Mute Other Panes spares: the one
     /// with the keyboard, when it is a page.
     private var muteTarget: String? {
@@ -918,6 +948,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 showOmniPicker(scope: .pages, near: focusedLane)
             case .openSessions:
                 showOmniPicker(scope: .sessions, near: focusedLane)
+            case .runCommand:
+                showOmniPicker(scope: .app, near: focusedLane)
 
             case .zoomIn, .zoomOut, .zoomReset:
                 strip.zoomFocusedPane(command)
@@ -1291,7 +1323,15 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     ) {
         let controller = OmniPicker(
             store: store, registry: sessions, scope: scope, destination: destination,
-            place: focusedPlace, servers: servers.names
+            place: focusedPlace, servers: servers.names,
+            app: { [weak self] in self?.appScope() ?? .empty },
+            binder: configStore.map { store in
+                { command, chord in
+                    if let why = store.keymap.refusal(binding: chord, to: command) { return why }
+                    store.setChords(command, to: [chord.configText])
+                    return store.writeError.map { "could not write \(store.path.path): \($0)" }
+                }
+            }
         ) { action in
             guard let action else { return }
             onChoose(action)
@@ -1302,10 +1342,50 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         if let notice { controller.showNotice(notice) }
     }
 
+    /// ⌘E's corpus, as things stand: every command with the file's chord and
+    /// the menu's verdict on it, the live settings, the servers.
+    func appScope() -> AppScope {
+        let keymap = configStore?.keymap ?? .active
+        return AppScope(
+            commands: AppScope.commandItems(
+                file: keymap, title: { [self] in title(for: $0) }, unavailable: { [self] in unavailable($0) }),
+            settings: configStore.map { AppScope.settingItems(config: $0.config) } ?? [],
+            servers: serverBook.map { book in
+                AppScope.serverItems(entries: book.entries) { entry in
+                    let status = book.status(of: entry)
+                    return status.sessions > 0
+                        ? "\(status.word) · \(status.sessions) \(status.sessions == 1 ? "session" : "sessions")"
+                        : status.word
+                }
+            } ?? [])
+    }
+
+    /// An APP row, chosen. Nothing here touches the strip.
+    func run(_ action: AppAction) {
+        switch action {
+        case .command(let command):
+            perform(command)
+        case .setting(let key, let value):
+            guard let field = ConfigField.all.first(where: { $0.key == key }) else { return }
+            configStore?.set(field, to: value)
+        case .server(let name, let act):
+            guard let book = serverBook else { return }
+            switch act {
+            case .enable: book.setEnabled(name, true)
+            case .disable: book.setEnabled(name, false)
+            case .reconnect: book.reconcile(tokenChanged: [name])
+            case .colour(let colour): book.setColour(name, colour)
+            }
+        }
+    }
+
     /// Put a choice on the strip, immediately right of `lane`.
     func launch(_ action: OmniAction, near lane: Lane?) {
         do {
             switch action {
+            case .app(let action):
+                run(action)
+
             case .open(let raw):
                 guard let url = normalizeURL(raw) else { return }
                 try store.newWebLane(url: url, near: lane?.id)

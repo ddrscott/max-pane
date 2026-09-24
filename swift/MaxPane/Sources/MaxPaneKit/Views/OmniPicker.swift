@@ -13,6 +13,9 @@ enum OmniAction: Equatable {
     /// Put an already-running Relay session on the strip, from whichever
     /// server it is on.
     case attach(SessionKey)
+    /// Run Max Pane itself: a command, a setting flipped, a server switched.
+    /// The one verb that puts nothing on the strip (`AppScope`).
+    case app(AppAction)
 }
 
 /// Which corpora ⌘O is looking at.
@@ -26,6 +29,9 @@ enum OmniScope: CaseIterable, Sendable {
     case pages
     case commands
     case sessions
+    /// Max Pane itself: every `Command`, the live settings, the servers.
+    /// ⌘E opens here; `>` typed into any scope jumps here (`split`).
+    case app
 
     var title: String {
         switch self {
@@ -33,6 +39,7 @@ enum OmniScope: CaseIterable, Sendable {
         case .pages: return "PAGES"
         case .commands: return "COMMANDS"
         case .sessions: return "SESSIONS"
+        case .app: return "APP"
         }
     }
 
@@ -42,12 +49,28 @@ enum OmniScope: CaseIterable, Sendable {
         case .pages: return "Open a page, or search history…"
         case .commands: return "Run a command…"
         case .sessions: return "Attach a Relay session…"
+        case .app: return "Run a Max Pane command, flip a setting…"
         }
     }
 
     var next: OmniScope {
         let all = OmniScope.allCases
         return all[(all.firstIndex(of: self)! + 1) % all.count]
+    }
+
+    var previous: OmniScope {
+        let all = OmniScope.allCases
+        return all[(all.firstIndex(of: self)! + all.count - 1) % all.count]
+    }
+
+    /// The `>` prefix: `>gather` in any scope is `gather` in the APP scope,
+    /// the way VS Code's quick-open reads it. One character, at the front,
+    /// and one that no command line or address starts with — so a line
+    /// without it is exactly the line it was, in the scope it was typed in.
+    static func split(_ scope: OmniScope, _ query: String) -> (scope: OmniScope, query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix(">") else { return (scope, query) }
+        return (.app, String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces))
     }
 
     var wantsPages: Bool { self == .everything || self == .pages }
@@ -65,6 +88,10 @@ enum OmniScope: CaseIterable, Sendable {
     /// picker's launch rows were for.
     func typedActions(_ text: String, at place: SpawnPlace = .local) -> [OmniAction] {
         switch self {
+        // Never a shell line: the APP scope runs Max Pane, and ⌘O runs
+        // programs. A row that started `>ls` as a process would be the one
+        // thing in this list that costs something it did not say.
+        case .app: return []
         case .pages: return [.open(text)]
         case .commands, .sessions: return [.run(text, at: place)]
         case .everything:
@@ -115,7 +142,7 @@ struct OmniServerPrefix: Equatable {
 
 /// One thing ⌘O can start, with everything the ranking and the row need.
 struct OmniCandidate: Equatable {
-    enum Kind: Equatable { case typed, command, page, bookmark, session }
+    enum Kind: Equatable { case typed, command, page, bookmark, session, app }
 
     var action: OmniAction
     var kind: Kind
@@ -134,6 +161,15 @@ struct OmniCandidate: Equatable {
     /// the row's address would find every placement of it, and this one is the
     /// one on screen.
     var bookmarkId: String?
+    /// APP rows only: what the right edge prints instead of an age — a
+    /// command's chord, a setting's value.
+    var trailing: String? = nil
+    /// APP rows only: why ↩ would do nothing right now, from the rule the
+    /// menu greys with. The row is drawn grey and says so; it is not hidden,
+    /// because a command you cannot see is a command you cannot bind.
+    var unavailable: String? = nil
+    /// APP rows only: the strings a query is matched against.
+    var searchable: [String] = []
 
     var urgent: Bool { telemetry.map { $0.isRunning && $0.needsAttention } ?? false }
 
@@ -143,7 +179,7 @@ struct OmniCandidate: Equatable {
     /// row cannot wear one server's chip and start something on another.
     var server: String? {
         switch action {
-        case .open: return nil
+        case .open, .app: return nil
         case .run(_, let place): return place.server
         case .attach(let key): return key.server
         }
@@ -157,6 +193,9 @@ struct OmniCandidate: Equatable {
         case .open(let url): return "url:" + OmniText.handle(url).lowercased()
         case .run(let line, _): return "cmd:" + line
         case .attach(let key): return "ses:" + key.description
+        case .app(.command(let command)): return "app:cmd:" + command.rawValue
+        case .app(.setting(let key, _)): return "app:set:" + key
+        case .app(.server(let name, let action)): return "app:srv:\(name):\(action.word)"
         }
     }
 }
@@ -259,8 +298,13 @@ enum OmniRanking {
         place focused: SpawnPlace = .local,
         servers: [String] = [],
         connected: Set<String> = [],
-        exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+        exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
+        app: AppScope = .empty
     ) -> [OmniRow] {
+        // `>` first: it is the one prefix that changes which corpus the rest
+        // of the line is about, so nothing below sees it.
+        let (scope, query) = OmniScope.split(scope, query)
+        if scope == .app { return app.rows(for: query) }
         let prefix = OmniServerPrefix.parse(query, servers: servers)
         let trimmed = prefix.line
         var rows: [OmniRow] = []
@@ -687,6 +731,14 @@ final class OmniPicker: PaletteController {
     /// One line above the footer — a remote spawn's refusal, shown when the
     /// picker comes back with the line still in the field.
     private var notice: String?
+    /// The APP scope's corpus, read when the scope is built and again after
+    /// a binding is written, so the row shows the chord it just took.
+    private let app: () -> AppScope
+    /// Write a chord for a command, answering why not; nil when there is no
+    /// config file to write to.
+    private let binder: ((Command, KeyChord) -> String?)?
+    /// ⌘⌫ on a command row: the next key press is its chord.
+    private var recording: Command?
 
     init(
         store: StripStore,
@@ -695,6 +747,8 @@ final class OmniPicker: PaletteController {
         destination: String,
         place: SpawnPlace = .local,
         servers: [String] = [],
+        app: @escaping () -> AppScope = { .empty },
+        binder: ((Command, KeyChord) -> String?)? = nil,
         completion: @escaping (OmniAction?) -> Void
     ) {
         self.store = store
@@ -703,6 +757,8 @@ final class OmniPicker: PaletteController {
         self.destination = destination
         self.place = place
         self.servers = servers
+        self.app = app
+        self.binder = binder
         self.completion = completion
         self.recents = store.recents(limit: 60)
         self.pageCount = store.historyCount
@@ -747,11 +803,13 @@ final class OmniPicker: PaletteController {
         // 80 rather than the old 60: Swift re-bands what comes back and then
         // drops the scattered guesses, so the list has to arrive with enough
         // literal matches in it to survive that.
-        let pages = scope.wantsPages ? store.history(query, limit: 80) : []
+        // `>` moves the line to the APP scope, which reads no history.
+        let effective = OmniScope.split(scope, query).scope
+        let pages = effective.wantsPages ? store.history(query, limit: 80) : []
         // Read per keystroke, like history and unlike `recents`, because the
         // ranking is Rust's — and cheap for the reason migration 0010 gives for
         // there being no index: this is the corpus the user curated by hand.
-        let bookmarks = scope.wantsPages ? store.searchBookmarks(query) : []
+        let bookmarks = effective.wantsPages ? store.searchBookmarks(query) : []
         rows = OmniRanking.build(
             query: query,
             scope: scope,
@@ -762,9 +820,14 @@ final class OmniPicker: PaletteController {
             destination: destination,
             place: place,
             servers: servers,
-            connected: Set(registry.serverStates.filter { $0.value == .connected }.map(\.key)))
+            connected: Set(registry.serverStates.filter { $0.value == .connected }.map(\.key)),
+            app: effective == .app ? app() : .empty)
         shortcuts = OmniRanking.shortcuts(for: rows)
     }
+
+    /// The scope the rows are in: the chosen one, or APP when the line
+    /// starts with `>`.
+    private var shownScope: OmniScope { OmniScope.split(scope, query).scope }
 
     /// The field, filled: how the picker comes back after a remote spawn
     /// failed, with the line as it was chosen.
@@ -819,13 +882,19 @@ final class OmniPicker: PaletteController {
         }
     }
 
-    /// ⌘1…⌘0 launches a row; ⇥ changes scope; ⌘⌫ forgets one.
+    /// ⌘1…⌘0 launches a row; ⇥ changes scope; ⌘⌫ forgets one — or, on a
+    /// command row, binds one.
     override func handleKey(_ event: NSEvent) -> Bool {
+        // While recording, every key is the answer. Nothing else in the
+        // picker sees it: not the field, not the ⌘-digits, not Esc.
+        if let command = recording {
+            record(event, for: command)
+            return true
+        }
         // Tab, unmodified. It does nothing else in a palette, and a scope that
         // needs a chord would never be found.
         if event.keyCode == 48, !event.modifierFlags.contains(.command) {
-            scope = event.modifierFlags.contains(.shift)
-                ? scope.next.next.next : scope.next
+            scope = event.modifierFlags.contains(.shift) ? scope.previous : scope.next
             field.placeholderString = scope.placeholder
             reload()
             return true
@@ -849,9 +918,73 @@ final class OmniPicker: PaletteController {
         return true
     }
 
+    /// ↩ on a greyed APP row says why instead of closing on nothing.
+    override func commit() {
+        let row = table.selectedRow
+        if row >= 0, row < rows.count, let why = rows[row].candidate?.unavailable,
+           let title = rows[row].candidate?.headline {
+            showNotice("\(title): \(why)")
+            return
+        }
+        super.commit()
+    }
+
+    // MARK: - binding a key
+
+    /// ⌘⌫ on a command row. The picker's field becomes the recorder Settings
+    /// › Keyboard has — the next chord you press is the key, esc cancels —
+    /// rather than a second window over the first: the row is already
+    /// selected, and the list is where the result has to show.
+    private func beginRecording(_ command: Command) {
+        guard binder != nil else {
+            showNotice("no config file to write a key to")
+            return
+        }
+        // The line stays as typed — the keys are swallowed, not written —
+        // so the list is still the one the row was chosen from afterwards.
+        recording = command
+        showNotice("press a chord for \(command.title) · esc cancels")
+    }
+
+    private func record(_ event: NSEvent, for command: Command) {
+        switch ChordRecorder.outcome(of: event) {
+        case .ignored:
+            return
+        case .cancelled:
+            endRecording(saying: nil)
+        case .chord(let chord):
+            // Refused with the reason, and still recording: a collision is
+            // an invitation to press a different key, not to start over.
+            if let why = binder?(command, chord) {
+                showNotice(why)
+                return
+            }
+            endRecording(saying: "\(command.title) is \(chord.text) · relaunch to apply")
+        }
+    }
+
+    private func endRecording(saying text: String?) {
+        recording = nil
+        notice = nil
+        rebuild()
+        refreshKeepingSelection()
+        updateFooter()
+        if let text { showNotice(text) }
+    }
+
     private func forgetSelected() {
         let row = table.selectedRow
         guard row >= 0, row < rows.count, let candidate = rows[row].candidate else { return }
+        // An APP row is not a memory. On a command, ⌘⌫ is the other thing a
+        // key can be to a row: bound.
+        if case .app(let action) = candidate.action {
+            if case .command(let command) = action {
+                beginRecording(command)
+            } else {
+                showNotice("only a command takes a key")
+            }
+            return
+        }
         // A kept page is not a memory of having been somewhere; ⌘⌫ on one
         // stops keeping it and leaves the visit alone. Without asking, because
         // unlike forgetting a page this is undone by the ★ on the same address —
@@ -899,7 +1032,7 @@ final class OmniPicker: PaletteController {
             return
         case .run(let line, _):
             store.forgetRecent(.command, line)
-        case .attach:
+        case .attach, .app:
             // A live session is not a memory. `relay stop` is elsewhere and on
             // purpose: nothing in a launcher should be able to kill work.
             return
@@ -945,7 +1078,13 @@ final class OmniPicker: PaletteController {
         let pages = searchable == pageCount
             ? "\(pageCount)"
             : "\(searchable) of \(pageCount) reachable"
-        switch scope {
+        switch shownScope {
+        case .app:
+            let corpus = app()
+            parts = [
+                "app", "\(corpus.commands.count) commands", "\(corpus.settings.count) settings",
+                "\(Set(corpus.servers.map(\.name)).count) servers",
+            ]
         case .everything:
             if matches > 0, !query.trimmingCharacters(in: .whitespaces).isEmpty {
                 parts.append("\(matches) \(matches == 1 ? "row" : "rows")")
@@ -984,7 +1123,9 @@ final class OmniPicker: PaletteController {
         } else {
             footerLeft.attributedStringValue = line
         }
-        footerRight.stringValue = "⇥ scope   ⌘1–⌘0   ⌘⌫ forget   ↩   esc"
+        footerRight.stringValue = shownScope == .app
+            ? "⇥ scope   ⌘1–⌘0   ⌘⌫ bind key   ↩   esc"
+            : "⇥ scope   ⌘1–⌘0   ⌘⌫ forget   ↩   esc"
     }
 }
 
@@ -1010,17 +1151,21 @@ final class OmniPickerRow: NSTableCellView {
         let key = PaletteStyle.label(shortcut ?? "", Theme.mono(11, weight: .medium), Theme.dimText)
         key.alignment = .right
 
+        // A greyed APP row is drawn the way a greyed menu item is: the text
+        // dim, the glyph dim, and the reason on the detail line.
+        let greyed = candidate.unavailable != nil
         let glyph = PaletteStyle.label(
             Self.glyph(candidate),
             Theme.mono(12, weight: candidate.urgent ? .bold : .medium),
-            candidate.telemetry.map { PaletteStyle.glyphColor($0.state) } ?? Theme.accent)
+            greyed ? Theme.dimText : candidate.telemetry.map { PaletteStyle.glyphColor($0.state) } ?? Theme.accent)
         glyph.alignment = .center
 
         let literal = candidate.quality.isLiteral
         let headline = NSTextField(labelWithAttributedString: PaletteStyle.highlighted(
             candidate.headline,
             matches: MatchQuality.offsets(query, in: candidate.headline, literal: literal),
-            color: candidate.telemetry.map { ($0.isRunning && !$0.isOffline) ? .labelColor : Theme.dimText }
+            color: greyed ? Theme.dimText
+                : candidate.telemetry.map { ($0.isRunning && !$0.isOffline) ? .labelColor : Theme.dimText }
                 ?? .labelColor))
         headline.usesSingleLineMode = true
         headline.lineBreakMode = .byTruncatingTail
@@ -1042,14 +1187,18 @@ final class OmniPickerRow: NSTableCellView {
         // A page gets a date and a clock time; a session keeps "6s ago".
         // Both are answers to "when", and which one is useful depends on
         // whether the thing is still moving — see `HistoryClock`.
+        // An APP row has no "when"; its right edge is the chord or the value,
+        // which is the thing the list exists to show.
         let when = Date(timeIntervalSince1970: Double(candidate.chosenAt) / 1000)
         let age = PaletteStyle.label(
-            candidate.chosenAt <= 0
-                ? ""
-                : (candidate.kind == .page || candidate.kind == .bookmark)
-                    ? HistoryClock.stamp(when)
-                    : SessionTelemetry.age(since: when),
-            Theme.mono(11), Theme.dimText)
+            candidate.trailing
+                ?? (candidate.chosenAt <= 0
+                    ? ""
+                    : (candidate.kind == .page || candidate.kind == .bookmark)
+                        ? HistoryClock.stamp(when)
+                        : SessionTelemetry.age(since: when)),
+            Theme.mono(11, weight: candidate.trailing == nil ? .regular : .medium),
+            greyed ? Theme.dimText.withAlphaComponent(0.6) : candidate.trailing == nil ? Theme.dimText : .labelColor)
         age.alignment = .right
 
         let detail = NSTextField(labelWithAttributedString: PaletteStyle.highlighted(
@@ -1126,6 +1275,11 @@ final class OmniPickerRow: NSTableCellView {
         case .run: return "$"
         case .open: return "◍"
         case .attach: return candidate.telemetry?.state.glyph ?? "▸"
+        // `>` is the prefix that reaches these rows; `=` sets; `@` is the
+        // grammar a server is already named by.
+        case .app(.command): return ">"
+        case .app(.setting): return "="
+        case .app(.server): return "@"
         }
     }
 
@@ -1136,6 +1290,7 @@ final class OmniPickerRow: NSTableCellView {
         case (.typed, .run): return "RUN"
         case (.typed, .open): return "OPEN"
         case (_, .attach): return "ATTACH"
+        case (_, .app(.setting)): return "SET"
         // A bookmark gets no tag. This column says what Return will *cost* —
         // a session, a web view, or neither — and opening a page you kept
         // costs exactly what opening a page you visited costs. The ★ in the

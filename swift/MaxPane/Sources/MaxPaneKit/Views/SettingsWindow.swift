@@ -385,10 +385,8 @@ final class SettingsWindow: Popup {
     private func finishRecording(_ row: KeyRow, with event: NSEvent) {
         recording = nil
         row.setRecording(false)
-        // Esc on its own cancels. A chord with Esc in it is still a chord.
-        let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
-        if event.keyCode == 53, modifiers.isEmpty { return }
-        guard let chord = KeyChord(event: event) else { return }
+        // The APP scope's ⌘⌫ reads the same key the same way (`ChordRecorder`).
+        guard case .chord(let chord) = ChordRecorder.outcome(of: event) else { return }
         store.setChords(row.command, to: [chord.configText])
     }
 }
