@@ -329,7 +329,7 @@ final class SettingsWindow: Popup {
         } else {
             line("Written the moment you change something. Edits made in a text editor show up here.", dim)
         }
-        line("theme and servers apply at once; everything else on the next launch.", dim)
+        line("Every row says whether it is live or waits for a relaunch.", dim)
         return out
     }
 
@@ -724,6 +724,23 @@ private final class SettingRow: NSView, NSTextFieldDelegate {
             segments.onChoose = { [weak self] index in self?.commit(.string(options[index])) }
             self.segments = segments
             controls.addArrangedSubview(segments)
+        case .themePick(let unset):
+            // A field to type a name into, and a menu with every name in it.
+            // Several hundred themes is too many for segments and too many for
+            // one flat menu, so the menu is a submenu per initial — which is
+            // also how anybody looks for a theme they already know the name of.
+            let input = makeField(width: 200)
+            input.placeholderString = unset
+            input.cell?.lineBreakMode = .byTruncatingTail
+            let pick = AskButton(label: "pick…", isDefault: false)
+            pick.onClick = { [weak self, weak pick] in
+                guard let self, let pick else { return }
+                self.themeMenu(unset: unset).popUp(
+                    positioning: nil, at: NSPoint(x: 0, y: pick.bounds.height + 2), in: pick)
+            }
+            pick.toolTip = "Every Ghostty theme, by name"
+            controls.addArrangedSubview(input)
+            controls.addArrangedSubview(pick)
         }
         reset.onClick = { [weak self] in
             guard let self, self.store.isSet(self.field) else { return }
@@ -782,6 +799,7 @@ private final class SettingRow: NSView, NSTextFieldDelegate {
         // the placeholder its field already shows.
         var unset = "unset"
         if case .text(let placeholder) = field.control { unset = placeholder }
+        if case .themePick(let placeholder) = field.control { unset = placeholder }
         let defaultText = field.defaultValue.map(Self.display) ?? unset
         let pending = !field.appliesLive && field.read(store.launched) != value
         text.setMeta(
@@ -830,6 +848,52 @@ private final class SettingRow: NSView, NSTextFieldDelegate {
             sender.stringValue = shown ?? ""
             refresh(animated: true)
         }
+    }
+
+    /// Every theme name, under a submenu per initial, with the one this key
+    /// wears ticked and the app's own palette at the top to go back to.
+    private func themeMenu(unset: String) -> NSMenu {
+        let menu = NSMenu()
+        let current = field.read(store.config).flatMap { value -> String? in
+            if case .string(let s) = value { return s }
+            return nil
+        }
+        let none = NSMenuItem(title: "\(unset) (the app's own)", action: #selector(pickedNone), keyEquivalent: "")
+        none.target = self
+        none.state = current == nil ? .on : .off
+        menu.addItem(none)
+        menu.addItem(.separator())
+        var initials: [String] = []
+        var byInitial: [String: [String]] = [:]
+        for name in TerminalThemes.names {
+            let initial = String(name.prefix(1)).uppercased()
+            if byInitial[initial] == nil { initials.append(initial) }
+            byInitial[initial, default: []].append(name)
+        }
+        for initial in initials.sorted() {
+            let parent = NSMenuItem(title: initial, action: nil, keyEquivalent: "")
+            let sub = NSMenu()
+            for name in byInitial[initial] ?? [] {
+                let item = NSMenuItem(title: name, action: #selector(pickedTheme(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = name
+                item.state = name == current ? .on : .off
+                sub.addItem(item)
+            }
+            parent.submenu = sub
+            menu.addItem(parent)
+        }
+        return menu
+    }
+
+    @objc private func pickedNone() {
+        localProblem = nil
+        store.set(field, to: nil)
+    }
+
+    @objc private func pickedTheme(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        commit(.string(name))
     }
 
     private struct Refusal: Error { let text: String }

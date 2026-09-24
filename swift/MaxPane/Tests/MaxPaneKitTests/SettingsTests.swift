@@ -474,7 +474,8 @@ struct SettingsRenderTests {
         var open: [Popup] = []
         for (name, group) in [
             ("top", ConfigGroup.lanes), ("editor", ConfigGroup.editorSearch),
-            ("apps", ConfigGroup.apps), ("keyboard", ConfigGroup.keyboard),
+            ("apps", ConfigGroup.apps), ("appearance", ConfigGroup.appearance),
+            ("keyboard", ConfigGroup.keyboard),
         ] {
             try AppearanceSheet.render(to: dir, named: "settings-\(name)") {
                 let popup = SettingsWindow(store: store) { _ in }

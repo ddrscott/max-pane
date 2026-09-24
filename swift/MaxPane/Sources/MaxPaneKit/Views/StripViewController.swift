@@ -2154,6 +2154,19 @@ public final class StripViewController: NSViewController {
         }
     }
 
+    /// `config.toml` was saved: the terminals take the new palette and the new
+    /// font without being rebuilt.
+    ///
+    /// One controller backs every pane (ADR-0009), so the push is one call;
+    /// each pane then puts its own ⌘= back on top, because a config push
+    /// resets every surface to the config's font size.
+    public func applyTerminalConfigLive(_ config: Config) {
+        guard TerminalControllerPool.shared.applyLive(config) else { return }
+        for controller in paneControllers.values {
+            (controller as? TerminalPaneController)?.terminalConfigurationDidChange()
+        }
+    }
+
     /// ⌘= / ⌘- / ⌘0 on whatever has the keyboard.
     ///
     /// The pane decides what scaling means for it — a terminal re-derives its

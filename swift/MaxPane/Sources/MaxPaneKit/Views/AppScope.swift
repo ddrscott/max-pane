@@ -3,12 +3,13 @@ import AppKit
 /// What a row of the APP scope does: run Max Pane itself rather than a program
 /// or a page.
 ///
-/// Four kinds, and no fifth: every `Command` (what the menu bar can do), the
-/// settings that apply live (what Settings can flip without a relaunch), a
-/// server's switches (what Settings › Servers can do to one), and the web apps
-/// with a chord (`[[apps]]`). A row that would run a shell line is refused
-/// here on purpose — that is ⌘O's job, and one list where ↩ sometimes starts
-/// a process is the confusion this scope exists to keep out of.
+/// Five kinds, and no sixth: every `Command` (what the menu bar can do), the
+/// settings that apply live (what Settings can flip without a relaunch), the
+/// Ghostty terminal themes, a server's switches (what Settings › Servers can
+/// do to one), and the web apps with a chord (`[[apps]]`). A row that would
+/// run a shell line is refused here on purpose — that is ⌘O's job, and one
+/// list where ↩ sometimes starts a process is the confusion this scope exists
+/// to keep out of.
 ///
 /// An app is in the APP scope rather than beside the pages in ⌘O because it
 /// is not a page: ↩ on it goes to the lane that app is on when there is one,
@@ -18,6 +19,10 @@ enum AppAction: Equatable {
     case command(Command)
     /// Write this value for this key, through `ConfigStore`, comments kept.
     case setting(key: String, to: TomlValue)
+    /// Wear this Ghostty theme, in the mode it is a theme for. Its own kind
+    /// rather than a `setting`, because there are several hundred of them and
+    /// the empty list must not be all of them.
+    case terminalTheme(name: String, dark: Bool)
     case server(name: String, ServerAction)
     /// Focus the lane this app is on, or open one.
     case app(name: String)
@@ -82,6 +87,16 @@ struct AppScope: Equatable {
         var summary: String
     }
 
+    struct ThemeItem: Equatable {
+        /// As the table spells it.
+        var name: String
+        /// Which key ↩ writes: the theme's own background decides, so picking
+        /// Dracula sets the dark one and picking Alabaster the light one.
+        var dark: Bool
+        /// This is the theme that mode is already wearing.
+        var current: Bool
+    }
+
     struct ServerItem: Equatable {
         var name: String
         var action: ServerAction
@@ -106,6 +121,7 @@ struct AppScope: Equatable {
     var commands: [CommandItem]
     var settings: [SettingItem]
     var servers: [ServerItem]
+    var themes: [ThemeItem] = []
     var apps: [AppItem] = []
 
     static let empty = AppScope(commands: [], settings: [], servers: [])
@@ -144,6 +160,21 @@ struct AppScope: Equatable {
                 return nil
             }
             return SettingItem(key: field.key, value: value, next: next, summary: field.summary)
+        }
+    }
+
+    /// One row per Ghostty theme, in the table's order, each marked for the
+    /// mode its own background puts it in and whether that mode wears it now.
+    ///
+    /// The names come from `TerminalThemes`, which reads libghostty's table —
+    /// there is no list of themes in this app to fall behind it.
+    static func themeItems(config: Config) -> [ThemeItem] {
+        let dark = config.terminalThemeDark ?? TerminalThemes.defaultDark
+        let light = config.terminalThemeLight ?? TerminalThemes.defaultLight
+        return TerminalThemes.all.map { definition in
+            ThemeItem(
+                name: definition.name, dark: definition.isDark,
+                current: definition.name == (definition.isDark ? dark : light))
         }
     }
 
@@ -221,6 +252,18 @@ struct AppScope: Equatable {
                 rows.append(.section(title: "APPS", note: "\(apps.count) · ⌘⌫ binds"))
                 rows.append(contentsOf: apps.map(OmniRow.item))
             }
+            // Not listed: several hundred rows under everything else is not a
+            // list, it is a wall. The header says how to reach them, and what
+            // the two modes are wearing now, which is the question anyone
+            // opening this to look at themes actually has.
+            if !themes.isEmpty {
+                let dark = themes.first { $0.dark && $0.current }?.name ?? TerminalThemes.defaultDark
+                let light = themes.first { !$0.dark && $0.current }?.name ?? TerminalThemes.defaultLight
+                rows.append(.section(title: "THEMES", note: "\(themes.count) themes"))
+                rows.append(.note(
+                    title: "\(dark) · \(light)",
+                    detail: "dark and light — type part of a name"))
+            }
             if rows.isEmpty {
                 rows.append(.note(title: OmniScope.app.title, detail: "nothing to run"))
             }
@@ -274,6 +317,16 @@ struct AppScope: Equatable {
                 trailing: Self.display(item.value),
                 unavailable: nil,
                 searchable: [item.key, item.key.replacingOccurrences(of: "_", with: " ")]))
+        }
+        for item in themes {
+            add(OmniCandidate(
+                action: .app(.terminalTheme(name: item.name, dark: item.dark)), kind: .app,
+                headline: item.name,
+                detail: "terminal theme · \(item.dark ? "dark" : "light") mode", quality: .prefix,
+                chosenAt: 0, count: 0, telemetry: nil, bookmarkId: nil,
+                trailing: item.current ? "worn" : nil,
+                unavailable: nil,
+                searchable: [item.name, "theme \(item.name)"]))
         }
         for item in servers {
             add(OmniCandidate(

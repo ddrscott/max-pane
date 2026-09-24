@@ -66,6 +66,10 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                     // `status_clock` turns the fullscreen clock on or off as
                     // the file is saved.
                     self.refreshStatusClock()
+                    // `terminal_theme_dark` / `_light`, `font_name`,
+                    // `font_size`, `copy_on_select` and `cursor_blink` reach
+                    // the terminals already on the strip (ADR-0043).
+                    if let live = self.configStore?.config { self.strip.applyTerminalConfigLive(live) }
                 }
             }
             store.applyPasteHistorySettings(configStore.config)
@@ -1551,6 +1555,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                         : status.word
                 }
             } ?? [],
+            themes: configStore.map { AppScope.themeItems(config: $0.config) } ?? [],
             apps: AppScope.appItems(entries: configStore?.config.apps ?? [], file: keymap) { [self] entry in
                 // What the row says ↩ will do, read off the strip as the
                 // picker opens: the lane's title when one is already on it.
@@ -1567,6 +1572,10 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         case .setting(let key, let value):
             guard let field = ConfigField.all.first(where: { $0.key == key }) else { return }
             configStore?.set(field, to: value)
+        case .terminalTheme(let name, let dark):
+            let key = dark ? "terminal_theme_dark" : "terminal_theme_light"
+            guard let field = ConfigField.all.first(where: { $0.key == key }) else { return }
+            configStore?.set(field, to: .string(name))
         case .server(let name, let act):
             guard let book = serverBook else { return }
             switch act {

@@ -561,7 +561,7 @@ final class TerminalPaneController: NSObject, PaneController {
     private func syncSurfaceFocus() {
         guard let window = container.window else { return }
         let ownsKeyboard = windowIsKey(window) && window.firstResponder === terminal
-        let want = config.cursorBlink == .always || ownsKeyboard
+        let want = settings.cursorBlink == .always || ownsKeyboard
         guard want != surfaceFocused else { return }
         terminal.tellSurface(focused: want)
     }
@@ -693,6 +693,22 @@ final class TerminalPaneController: NSObject, PaneController {
     /// (`paste_confirm_*`); the pane's own `config` is the one it was built
     /// with. Set by the strip; nil in a test, which gets the built-with one.
     var liveConfig: (() -> Config)?
+
+    /// The config as it is now, or the one this pane was built with. The font
+    /// and the cursor read through this so a saved file reaches them, the same
+    /// as a paste's settings do.
+    var settings: Config { liveConfig?() ?? config }
+
+    /// The file was saved and the shared controller has taken the new font and
+    /// the new palette (`TerminalControllerPool.Store.applyLive`). A config
+    /// push puts every surface back to the config's font size, so this pane's
+    /// own ⌘= is applied again on top; `cursor_blink` is not a config value at
+    /// all for the `focused` / `always` difference, so the surface is told
+    /// about focus again too.
+    func terminalConfigurationDidChange() {
+        syncSurfaceFocus()
+        applyZoom()
+    }
 
     /// The question a paste is waiting on, while it is. One at a time.
     private(set) var pasteSheet: PasteAskSheet?
@@ -1636,10 +1652,11 @@ final class TerminalPaneController: NSObject, PaneController {
         if sizeHold != nil { endSizeTransition() }
         let ladder = PaneZoom.ladder
         let next = min(max(target, ladder.first!), ladder.last!)
+        let live = settings
         let fromCell = LaneSizePreset.cellWidth(
-            fontName: config.fontName, fontSize: config.fontSize * zoom, backingScale: backingScale)
+            fontName: live.fontName, fontSize: live.fontSize * zoom, backingScale: backingScale)
         let toCell = LaneSizePreset.cellWidth(
-            fontName: config.fontName, fontSize: config.fontSize * next, backingScale: backingScale)
+            fontName: live.fontName, fontSize: live.fontSize * next, backingScale: backingScale)
         zoom = next
 
         // Nothing leaves for the far end until the grid has landed and gone
@@ -1747,7 +1764,10 @@ final class TerminalPaneController: NSObject, PaneController {
     /// however the surface got where it is.
     private func applyZoom() {
         terminal.performBindingAction("reset_font_size")
-        let delta = config.fontSize * (zoom - 1)
+        // The live size, not the built-with one: `font_size` applies as the
+        // file is saved, and a zoomed pane must step from where the surface
+        // now is rather than from the size it was born at.
+        let delta = settings.fontSize * (zoom - 1)
         guard abs(delta) > 0.01 else { return }
         terminal.performBindingAction(
             delta > 0 ? "increase_font_size:\(delta)" : "decrease_font_size:\(-delta)")
@@ -2303,6 +2323,35 @@ enum TerminalControllerPool {
             controller = made
             return made
         }
+
+        /// The file was saved: push the palette and the configuration at the
+        /// surfaces that already exist.
+        ///
+        /// `setTheme` and `setTerminalConfiguration` re-render the whole
+        /// config and hand it to `ghostty_app_update_config` and to
+        /// `ghostty_surface_update_config` for every live surface — so a
+        /// terminal already on the strip takes the new theme and the new font
+        /// without being rebuilt, and without losing what is on it. Both
+        /// return false when nothing changed, which is the common case for a
+        /// save that touched some other key.
+        ///
+        /// Nothing here is done when no controller has been built yet: the
+        /// first pane will be born from the config as it is by then.
+        @discardableResult
+        func applyLive(_ config: Config) -> Bool {
+            guard let controller else { return false }
+            return TerminalControllerPool.applyLive(config, to: controller)
+        }
+    }
+
+    /// The push itself, against one controller — the shared one in the app,
+    /// its own in a test that must not flip the palette under another suite.
+    /// True when anything moved.
+    @discardableResult
+    static func applyLive(_ config: Config, to controller: TerminalController) -> Bool {
+        let theme = controller.setTheme(TerminalThemes.theme(for: config))
+        let terminal = controller.setTerminalConfiguration(configuration(for: config))
+        return theme || terminal
     }
 
     /// A controller with the app's font, palette and padding, not shared.
@@ -2314,8 +2363,16 @@ enum TerminalControllerPool {
     /// shared one (`AppearanceTests` is, and did).
     static func makeController(for config: Config) -> TerminalController {
         TerminalController(
-                theme: theme,
-                terminalConfiguration: TerminalConfiguration { builder in
+                theme: TerminalThemes.theme(for: config),
+                terminalConfiguration: configuration(for: config))
+    }
+
+    /// Everything that is not a colour: the font, the padding, and the
+    /// switches Ghostty itself reads. Built apart from `makeController` so the
+    /// same lines can be pushed at surfaces that already exist when the file
+    /// is saved (`Store.applyLive`).
+    static func configuration(for config: Config) -> TerminalConfiguration {
+        TerminalConfiguration { builder in
                     builder.withFontFamily(config.fontName)
                     builder.withFontSize(Float(config.fontSize))
                     // The lane paints its own background; a terminal painting a
@@ -2364,17 +2421,20 @@ enum TerminalControllerPool {
                     // hard against the divider.
                     builder.withWindowPaddingX(Int(TerminalPaneController.terminalPadding.x))
                     builder.withWindowPaddingY(Int(TerminalPaneController.terminalPadding.y))
-                })
+                }
     }
 
-    /// Afterglow and Alabaster, with the three colours that are ours.
+    /// Afterglow and Alabaster, with the three colours that are ours — or
+    /// whatever `terminal_theme_dark` / `terminal_theme_light` name, with the
+    /// same three on top. `TerminalThemes` builds it and says why the theme is
+    /// where the colours go.
     ///
     /// The theme is rendered *after* the configuration, so a colour set in the
     /// config is overwritten by whatever the theme says — which is why these
-    /// belong here and not beside the font. Starting from Ghostty's defaults
-    /// keeps a full, legible ANSI palette; overriding the background makes the
-    /// pane the same colour as the lane around it, and the cursor is the
-    /// accent because a cursor marks where the focus is.
+    /// belong there and not beside the font. Starting from a full theme keeps
+    /// a legible ANSI palette; overriding the background makes the pane the
+    /// same colour as the lane around it, and the cursor is the accent because
+    /// a cursor marks where the focus is.
     ///
     /// A selection is a faint accent wash under text that keeps its own
     /// colour. The stock themes paint selected text in one flat grey on
@@ -2383,21 +2443,7 @@ enum TerminalControllerPool {
     /// leaves every cell's colour alone, so a selected `ls` still shows its
     /// directories in blue; the wash is light enough that both the dark and
     /// the light palettes stay legible over it.
-    static var theme: TerminalTheme {
-        TerminalTheme(
-            light: TerminalConfiguration(startingFrom: .alabaster) { builder in
-                builder.withBackground(hex(Theme.laneBackground, in: .aqua))
-                builder.withCursorColor(hex(Theme.accent, in: .aqua))
-                builder.withSelectionBackground(hex(selectionWash, in: .aqua))
-                builder.withSelectionForeground("cell-foreground")
-            },
-            dark: TerminalConfiguration(startingFrom: .afterglow) { builder in
-                builder.withBackground(hex(Theme.laneBackground, in: .darkAqua))
-                builder.withCursorColor(hex(Theme.accent, in: .darkAqua))
-                builder.withSelectionBackground(hex(selectionWash, in: .darkAqua))
-                builder.withSelectionForeground("cell-foreground")
-            })
-    }
+    static var theme: TerminalTheme { TerminalThemes.theme(for: Config()) }
 
     /// The accent, laid over the lane background at the same strength the
     /// sidebar uses for its selected row, then flattened: Ghostty takes an

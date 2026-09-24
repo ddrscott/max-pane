@@ -40,6 +40,10 @@ let package = Package(
             dependencies: [
                 .product(name: "LanedCore", package: "MaxPaneCore"),
                 .product(name: "GhosttyTerminal", package: "libghostty-spm"),
+                // The theme table — every Ghostty theme as a definition, which
+                // is where `terminal_theme_dark` / `_light` get their palettes
+                // and the only list of valid names (`TerminalThemes`).
+                .product(name: "GhosttyTheme", package: "libghostty-spm"),
                 "RelayClient",
             ],
             path: "Sources/MaxPaneKit"

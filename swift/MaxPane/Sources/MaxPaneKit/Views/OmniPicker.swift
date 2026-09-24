@@ -195,6 +195,7 @@ struct OmniCandidate: Equatable {
         case .attach(let key): return "ses:" + key.description
         case .app(.command(let command)): return "app:cmd:" + command.rawValue
         case .app(.setting(let key, _)): return "app:set:" + key
+        case .app(.terminalTheme(let name, let dark)): return "app:thm:\(dark ? "d" : "l"):" + name.lowercased()
         case .app(.server(let name, let action)): return "app:srv:\(name):\(action.word)"
         case .app(.app(let name)): return "app:app:" + name.lowercased()
         }
@@ -1308,6 +1309,9 @@ final class OmniPickerRow: NSTableCellView {
         // grammar a server is already named by.
         case .app(.command): return ">"
         case .app(.setting): return "="
+        // A theme is a setting with a table behind it, and `=` is what a row
+        // that writes a key looks like here.
+        case .app(.terminalTheme): return "="
         case .app(.server): return "@"
         // The lane's own glyph: an app row goes to a page, open or not.
         case .app(.app): return "◍"
@@ -1321,7 +1325,7 @@ final class OmniPickerRow: NSTableCellView {
         case (.typed, .run): return "RUN"
         case (.typed, .open): return "OPEN"
         case (_, .attach): return "ATTACH"
-        case (_, .app(.setting)): return "SET"
+        case (_, .app(.setting)), (_, .app(.terminalTheme)): return "SET"
         // A bookmark gets no tag. This column says what Return will *cost* —
         // a session, a web view, or neither — and opening a page you kept
         // costs exactly what opening a page you visited costs. The ★ in the

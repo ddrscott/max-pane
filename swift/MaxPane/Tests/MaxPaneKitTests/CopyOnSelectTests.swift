@@ -12,18 +12,19 @@ import Testing
 struct CopyOnSelectSettingTests {
     private var field: ConfigField? { ConfigField.all.first { $0.key == "copy_on_select" } }
 
-    @Test("off by default, a toggle under Terminals, taken on relaunch like the font")
+    @Test("off by default, a toggle under Terminals, applied live like the font")
     func schema() throws {
         #expect(Config().copyOnSelect == false)
         let field = try #require(field)
         #expect(field.name == "copyOnSelect")
         #expect(field.group == .terminals)
         #expect(field.defaultValue == .bool(false))
-        // Read once, when the terminals' shared configuration is built — the
-        // same as `font_name` and `font_size`. The window says "on relaunch".
+        // Pushed at the surfaces that already exist when the file is saved —
+        // the same as `font_name` and `font_size` (ADR-0043). The window says
+        // "live".
         let font = try #require(ConfigField.all.first { $0.key == "font_size" })
         #expect(field.appliesLive == font.appliesLive)
-        #expect(!field.appliesLive)
+        #expect(field.appliesLive)
     }
 
     @Test("a file with no such line is off; the line is read either way; a wrong type costs only itself")

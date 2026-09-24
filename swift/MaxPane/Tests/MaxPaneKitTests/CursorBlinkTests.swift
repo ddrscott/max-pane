@@ -10,7 +10,7 @@ import Testing
 struct CursorBlinkSettingTests {
     private var field: ConfigField? { ConfigField.all.first { $0.key == "cursor_blink" } }
 
-    @Test("focused by default, a choice of three under Terminals, taken on relaunch like the font")
+    @Test("focused by default, a choice of three under Terminals, applied live like the font")
     func schema() throws {
         #expect(Config().cursorBlink == .focused)
         let field = try #require(field)
@@ -22,9 +22,12 @@ struct CursorBlinkSettingTests {
             return
         }
         #expect(options == ["focused", "always", "never"])
+        // The shared controller takes a saved file's configuration and the
+        // panes are told (ADR-0043), so this applies as the file is saved —
+        // the same as `font_size`.
         let font = try #require(ConfigField.all.first { $0.key == "font_size" })
         #expect(field.appliesLive == font.appliesLive)
-        #expect(!field.appliesLive)
+        #expect(field.appliesLive)
     }
 
     @Test("each value is read; a word that is not one of them, or a wrong type, costs only itself")

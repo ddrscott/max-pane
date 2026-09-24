@@ -275,6 +275,23 @@ public struct Config: Codable, Equatable {
     /// says why it is only this one, for now.
     public var theme: ThemeChoice = .system
 
+    /// Which Ghostty theme the terminals wear in dark mode, by name, and which
+    /// in light. Unset is Afterglow and Alabaster, the two the app's palette
+    /// has always been built on (ADR-0009).
+    ///
+    /// ```toml
+    /// terminal_theme_dark = "Dracula"
+    /// terminal_theme_light = "Alabaster"
+    /// ```
+    ///
+    /// The name is one of `GhosttyThemeCatalog.allThemes`, matched without
+    /// regard to case; anything else is refused with a suggestion and the key
+    /// keeps its default. Whichever theme is named, three colours stay the
+    /// app's — the lane background, the accent cursor and the selection wash
+    /// (`TerminalThemes`). Applies the moment the file is saved.
+    public var terminalThemeDark: String?
+    public var terminalThemeLight: String?
+
     /// `14:32 · 78% ⚡ · wifi` at the right of the status bar while the
     /// window is fullscreen and the menu bar is away. Windowed, nothing
     /// either way. Applies as the file is saved.
@@ -433,6 +450,8 @@ public struct Config: Codable, Equatable {
         snapSeconds = read(.snapSeconds, d.snapSeconds)
         keys = read(.keys, d.keys)
         theme = read(.theme, d.theme)
+        terminalThemeDark = read(.terminalThemeDark, d.terminalThemeDark)
+        terminalThemeLight = read(.terminalThemeLight, d.terminalThemeLight)
         statusClock = read(.statusClock, d.statusClock)
         blocking = read(.blocking, d.blocking)
         blockingListUrl = read(.blockingListUrl, d.blockingListUrl)

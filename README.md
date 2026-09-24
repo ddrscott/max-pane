@@ -2933,17 +2933,54 @@ Motion is on:
 
 - **Chrome:** lanes, headers, the sidebar, the toolbar, docks, gallery tiles and
   any open popup.
-- **Terminals:** they swap Afterglow for Alabaster without resizing or losing
-  what is on screen.
+- **Terminals:** they swap Afterglow for Alabaster — or whichever pair
+  `terminal_theme_dark` and `terminal_theme_light` name — without resizing or
+  losing what is on screen.
 - **Web pages:** each page sees the new `prefers-color-scheme`, and its
   `matchMedia` listeners fire, with no reload.
 
 The greens have a light value and a dark value each; see [Colour](#colour).
 
 The `theme` [setting](#settings) overrides the system: `system` (the default),
-`light` or `dark`. It is the one key that applies the moment it changes, from
-Settings or from a save in a text editor. Every other key is still read at
-launch.
+`light` or `dark`. It applies the moment it changes, from Settings or from a
+save in a text editor.
+
+#### A terminal palette of your own
+
+`terminal_theme_dark` and `terminal_theme_light` name one of the **485 Ghostty
+themes** libghostty ships — the same table Ghostty itself picks from:
+
+```toml
+terminal_theme_dark = "Dracula"
+terminal_theme_light = "Alabaster"
+```
+
+Unset means Afterglow and Alabaster, which is what the app has always worn. The
+name is matched without regard to case and written back the way the table
+spells it, so `"dracula"` becomes `Dracula` everywhere it is shown; a name that
+is not a theme is refused with a line saying so and a near miss to try, and the
+key keeps its default.
+
+Three colours stay the app's, whatever theme is named: the **background**, so
+the pane is the lane's own colour and shows no seam under the header; the
+**cursor**, which is the accent because a cursor marks where the focus is; and
+the **selection** — a faint accent wash under text that keeps its own colour,
+so a selected `ls` still shows its directories in blue. Everything else, the
+sixteen ANSI colours and the foreground, is the theme's.
+
+Both keys apply **the moment the file is saved**: the terminals already on the
+strip repaint in the new palette without being rebuilt and without losing what
+is on them. Pick one in **Settings › Appearance** — type a name, or press
+`pick…` for every theme under a submenu per initial — or press **⌘E** and type
+any part of a name. ↩ there writes the key the theme's own background chooses,
+so picking a dark theme sets the dark one.
+
+`font_name` and `font_size` apply as the file is saved too, and so do
+`copy_on_select` and `cursor_blink`. **⌘=** and **⌘-** make one terminal's text
+bigger or smaller, on the same ladder a web pane climbs (50 % to 300 %), with
+**⌘0** for actual size; the size is that pane's, kept in the ledger, and it
+steps from whatever `font_size` currently says
+([ADR-0043](docs/decisions/0043-a-ghostty-theme-by-name-and-a-live-font.md)).
 
 An evicted web lane's placeholder picture keeps the appearance it was taken in.
 Its frame and caption follow the switch, and the page comes back in the current
@@ -2976,6 +3013,8 @@ writing today's value into it, so it goes on following the default.
 ```toml
 # comments are yours, and stay where you put them
 theme = "system"
+# terminal_theme_dark = "Dracula"     # unset: Afterglow
+# terminal_theme_light = "Alabaster"  # unset: Alabaster
 snap_to_lanes = true
 lane_default_pt = 656
 lane_peek_pt = 28
@@ -3047,14 +3086,13 @@ embedder. It reaches panes opened after the change.
 `copy_on_select` is whether selecting text in a terminal puts it on the
 clipboard. It is `false` by default, so a selection is only a selection and ⌘C
 is what copies; `true` copies every selection as it is made. Like the font, it
-is read when the terminals' shared configuration is built, so a change takes the
-next launch.
+applies as the file is saved.
 
 `copy_trim_trailing` is whether a copy out of a terminal drops the spaces and
 tabs at the end of every line ([Selecting and copying in a
 terminal](#selecting-and-copying-in-a-terminal)). `true` by default; `false`
 copies the selection as the emulator holds it. Read at each ⌘C; the copy that
-`copy_on_select` makes inside the emulator takes it at the next launch.
+`copy_on_select` makes inside the emulator takes it as the file is saved.
 
 `paste_confirm_multiline`, `paste_confirm_tabs` and `paste_confirm_bytes` are
 the three reasons a paste into a terminal asks first: a line ending inside it,

@@ -35,6 +35,10 @@ public enum ConfigControl: Sendable {
     /// `placeholder` says what an empty field means.
     case text(placeholder: String)
     case choice([String])
+    /// A name out of a table too long to be segments: a field to type in and a
+    /// menu to pick from. `unset` says what an empty field means, as
+    /// `text`'s placeholder does. `terminal_theme_dark` is the only one.
+    case themePick(unset: String)
 }
 
 /// One key of `config.toml`: its name, where it is listed, what it does, and
@@ -111,10 +115,10 @@ public struct ConfigField {
 
     private static func double(
         _ name: String, _ path: WritableKeyPath<Config, Double>, _ group: ConfigGroup,
-        _ range: ClosedRange<Double>, step: Double, _ summary: String
+        _ range: ClosedRange<Double>, step: Double, appliesLive: Bool = false, _ summary: String
     ) -> ConfigField {
         ConfigField(
-            name: name, group: group, control: .number(range, step: step), summary: summary, appliesLive: false,
+            name: name, group: group, control: .number(range, step: step), summary: summary, appliesLive: appliesLive,
             read: { .float($0[keyPath: path]) },
             apply: { config, value in
                 // A whole number is a number: `font_size = 13` is what anyone
@@ -162,11 +166,12 @@ public struct ConfigField {
     }
 
     private static func string(
-        _ name: String, _ path: WritableKeyPath<Config, String>, _ group: ConfigGroup, _ summary: String
+        _ name: String, _ path: WritableKeyPath<Config, String>, _ group: ConfigGroup,
+        appliesLive: Bool = false, _ summary: String
     ) -> ConfigField {
         ConfigField(
             name: name, group: group, control: .text(placeholder: Config()[keyPath: path]), summary: summary,
-            appliesLive: false,
+            appliesLive: appliesLive,
             read: { .string($0[keyPath: path]) },
             apply: { config, value in
                 guard case .string(let s) = value else { return "expected a string, got \(value.kind)" }
@@ -185,6 +190,34 @@ public struct ConfigField {
             apply: { config, value in
                 guard case .string(let s) = value else { return "expected a string, got \(value.kind)" }
                 config[keyPath: path] = s
+                return nil
+            })
+    }
+
+    /// A Ghostty theme by name, or unset for the app's own palette.
+    ///
+    /// Not a `choice`: that renders every option as a segment, and there are
+    /// several hundred themes. The value is held to the table all the same —
+    /// an unknown name is refused exactly as a bad choice is, with a
+    /// suggestion, and the key keeps its default rather than meaning nothing.
+    /// The settings window gives this control a menu of every name; ⌘E has
+    /// the same list, searchable.
+    private static func themeName(
+        _ name: String, _ path: WritableKeyPath<Config, String?>, _ group: ConfigGroup,
+        unset: String, _ summary: String
+    ) -> ConfigField {
+        ConfigField(
+            name: name, group: group, control: .themePick(unset: unset), summary: summary,
+            appliesLive: true,
+            read: { $0[keyPath: path].map(TomlValue.string) },
+            apply: { config, value in
+                guard case .string(let s) = value else { return "expected a string, got \(value.kind)" }
+                guard let definition = TerminalThemes.definition(named: s) else {
+                    return TerminalThemes.complaint(about: s)
+                }
+                // Spelled as the table spells it, so the file, the window and
+                // the picker all print one name for one theme.
+                config[keyPath: path] = definition.name
                 return nil
             })
     }
@@ -231,10 +264,10 @@ public struct ConfigField {
                    "Where the blocking rules come from: WebKit content-blocker JSON, fetched daily. Several URLs, separated by spaces, are joined."),
             choice("webAutoplay", \.webAutoplay, .web, appliesLive: false,
                    "What a page may play unasked. gesture: sound needs a click, muted video may start. allow: anything plays, with sound."),
-            string("fontName", \.fontName, .terminals, "The terminal font."),
-            double("fontSize", \.fontSize, .terminals, 6...72, step: 1,
-                   "The terminal font size, in points. ⌘= and ⌘- zoom a pane from here."),
-            bool("copyOnSelect", \.copyOnSelect, .terminals,
+            string("fontName", \.fontName, .terminals, appliesLive: true, "The terminal font."),
+            double("fontSize", \.fontSize, .terminals, 6...72, step: 1, appliesLive: true,
+                   "The terminal font size, in points. ⌘= and ⌘- zoom one pane from here, and stay where they were when this changes."),
+            bool("copyOnSelect", \.copyOnSelect, .terminals, appliesLive: true,
                  "Selecting text in a terminal copies it. Off, ⌘C copies."),
             bool("copyTrimTrailing", \.copyTrimTrailing, .terminals, appliesLive: true,
                  "Copying from a terminal drops the spaces at the end of each line."),
@@ -270,7 +303,7 @@ public struct ConfigField {
                    "A program setting the clipboard (OSC 52: tmux, vim, a remote yank). Allowed ones show COPIED in the lane header."),
             choice("osc52Read", \.osc52Read, .terminals, appliesLive: true,
                    "A program asking to read the clipboard (OSC 52). Ask shows what would be handed over, every time."),
-            choice("cursorBlink", \.cursorBlink, .terminals, appliesLive: false,
+            choice("cursorBlink", \.cursorBlink, .terminals, appliesLive: true,
                    "Which terminal cursors blink: the one with the keyboard, all of them, or none."),
             double("sessionPollSeconds", \.sessionPollSeconds, .terminals, 1...120, step: 1,
                    "How often RelayTTY's session files are read. pty-host writes every 5 s."),
@@ -290,6 +323,12 @@ public struct ConfigField {
                    "Where the address bar sends what is not an address. %s is the query."),
             choice("theme", \.theme, .appearance, appliesLive: true,
                    "Follow the Mac's light or dark mode, or pin one."),
+            themeName("terminalThemeDark", \.terminalThemeDark, .appearance,
+                      unset: TerminalThemes.defaultDark,
+                      "The Ghostty theme the terminals wear in dark mode. The lane background, the accent cursor and the selection wash stay the app's."),
+            themeName("terminalThemeLight", \.terminalThemeLight, .appearance,
+                      unset: TerminalThemes.defaultLight,
+                      "The Ghostty theme the terminals wear in light mode. The lane background, the accent cursor and the selection wash stay the app's."),
             bool("statusClock", \.statusClock, .appearance, appliesLive: true,
                  "The clock, battery and network at the right of the status bar while the window is fullscreen and the menu bar is away. Windowed, the menu bar has them."),
         ]

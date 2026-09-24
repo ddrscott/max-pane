@@ -157,9 +157,14 @@ struct AppScopeTests {
         #expect(keys.contains("paste_tidy"))
         #expect(keys.contains("theme"))
         #expect(keys.contains("agent_notify"))
+        // Live since ADR-0043: the terminals' own switches are rows too.
+        #expect(keys.contains("copy_on_select"))
+        #expect(keys.contains("cursor_blink"))
         // Read at launch: out, however simple the control.
-        #expect(!keys.contains("copy_on_select"))
         #expect(!keys.contains("blocking"))
+        // A theme is neither a toggle nor a choice — several hundred names
+        // have their own rows (`themeItems`), not a row that cycles.
+        #expect(!keys.contains("terminal_theme_dark"))
         // A live number: out, it is not a thing that flips.
         #expect(!keys.contains("paste_history_keep"))
         // Every row is one the schema says applies live.
