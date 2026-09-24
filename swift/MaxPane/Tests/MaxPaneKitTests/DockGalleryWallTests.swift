@@ -214,6 +214,38 @@ struct DockGalleryWallTests {
         }
     }
 
+    /// ⌃⌘= / ⌃⌘- route to the dock's width (`StripWindowController`'s
+    /// `widenLane` / `narrowLane`), and at a gallery wall that is the wall's
+    /// own width — the last of the four dock chords
+    /// `docs/critiques/docking.md` § 4 called a write with no feedback.
+    @Test("⌃⌘= / ⌃⌘- resize the wall in the gallery, and the grid re-flows behind it")
+    func resizingTheWallInTheGallery() async throws {
+        try await MaximizeRig.with { rig in
+            #expect(rig.strip.setLayout(.gallery))
+            try rig.store.dockLane(rig.rightLane, side: .right, mode: .inset, widthPt: 400)
+            await rig.settle()
+            let narrow = paneRect(rig, rig.right)
+            let roomAt400 = try #require(rig.strip.tileRect(rig.splitLane))
+
+            // ⌃⌘=: 60 pt wider, the step the key takes.
+            try rig.store.setDockWidth(rig.rightLane, 460)
+            await rig.settle()
+            let wide = paneRect(rig, rig.right)
+            #expect(abs(wide.width - narrow.width - 60) < 2)
+            #expect(abs(wide.minX - (narrow.minX - 60)) < 2)
+            // And the grid was laid into what the wider wall left it.
+            let roomAt460 = try #require(rig.strip.tileRect(rig.splitLane))
+            #expect(roomAt460.maxX <= wide.minX + 0.5)
+            #expect(roomAt460.maxX < roomAt400.maxX - 0.5)
+
+            // ⌃⌘- back again: the wall and the grid both return.
+            try rig.store.setDockWidth(rig.rightLane, 400)
+            await rig.settle()
+            #expect(abs(paneRect(rig, rig.right).width - narrow.width) < 2)
+            #expect(try #require(rig.strip.tileRect(rig.splitLane)) == roomAt400)
+        }
+    }
+
     @Test("docking the expanded tile puts the expansion down rather than carrying it to the wall")
     func dockingWhatWasExpanded() async throws {
         try await MaximizeRig.with { rig in
