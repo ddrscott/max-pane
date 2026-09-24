@@ -275,6 +275,15 @@ public struct Config: Codable, Equatable {
     /// says why it is only this one, for now.
     public var theme: ThemeChoice = .system
 
+    /// `14:32 · 78% ⚡ · wifi` at the right of the status bar while the
+    /// window is fullscreen and the menu bar is away. Windowed, nothing
+    /// either way. Applies as the file is saved.
+    ///
+    /// ```toml
+    /// status_clock = true
+    /// ```
+    public var statusClock: Bool = true
+
     /// Block ads and trackers in web panes, with WebKit's own content blocker
     /// running the list `blockingListUrl` names. On by default: YouTube and
     /// most of the news is unreadable for long without it, and that was the
@@ -405,6 +414,7 @@ public struct Config: Codable, Equatable {
         snapSeconds = read(.snapSeconds, d.snapSeconds)
         keys = read(.keys, d.keys)
         theme = read(.theme, d.theme)
+        statusClock = read(.statusClock, d.statusClock)
         blocking = read(.blocking, d.blocking)
         blockingListUrl = read(.blockingListUrl, d.blockingListUrl)
         webAutoplay = read(.webAutoplay, d.webAutoplay)

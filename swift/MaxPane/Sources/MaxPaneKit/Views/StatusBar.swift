@@ -48,6 +48,22 @@ public final class StatusBar: NSView {
     public var onClickUpdate: (() -> Void)?
     private let memory = NSTextField(labelWithString: "")
     private let hint = NSTextField(labelWithString: "")
+    /// `14:32 · 78% ⚡ · wifi`, last on the right, only while the window is
+    /// fullscreen and the menu bar that has all three is away. Grey, with
+    /// the battery in the hard-limit red under 15 %; never a green.
+    private let clock = NSTextField(labelWithString: "")
+    private var clockShown = false
+    /// The line as drawn, for tests; empty while windowed.
+    var clockText: String { clockShown ? clock.attributedStringValue.string : "" }
+    /// Whether the battery segment is in the red, for tests.
+    var clockLowBattery: Bool {
+        guard clockShown else { return false }
+        var low = false
+        clock.attributedStringValue.enumerateAttribute(.foregroundColor, in: NSRange(location: 0, length: clock.attributedStringValue.length)) { value, _, _ in
+            if value as? NSColor == NSColor.systemRed { low = true }
+        }
+        return low
+    }
 
     public var onClickSessions: (() -> Void)?
     public var onClickMemory: (() -> Void)?
@@ -102,7 +118,9 @@ public final class StatusBar: NSView {
         soundGroup.alphaValue = 0
         updateLabel.isHidden = true
         updateLabel.alphaValue = 0
-        let row = NSStackView(views: [sidebarToggle, profile, lanes, sessions, attention, soundGroup, spacer, updateLabel, memory, hint])
+        clock.isHidden = true
+        clock.alphaValue = 0
+        let row = NSStackView(views: [sidebarToggle, profile, lanes, sessions, attention, soundGroup, spacer, updateLabel, memory, hint, clock])
         row.orientation = .horizontal
         row.spacing = 14
         row.alignment = .centerY
@@ -116,7 +134,7 @@ public final class StatusBar: NSView {
         // The spacer view is what pushes the right-hand group to the edge.
         spacer.setContentHuggingPriority(.init(1), for: .horizontal)
 
-        for field in [profile, lanes, sessions, attention, sound, updateLabel, memory, hint] {
+        for field in [profile, lanes, sessions, attention, sound, updateLabel, memory, hint, clock] {
             field.font = Theme.mono(10)
             field.textColor = Theme.dimText
         }
@@ -197,6 +215,11 @@ public final class StatusBar: NSView {
         }
         if updateShown, updateLabel.convert(updateLabel.bounds, to: self).insetBy(dx: -6, dy: -4).contains(point) {
             onClickUpdate?()
+            return
+        }
+        // The clock is a readout and nothing else; a click on it is not a
+        // click on the memory dashboard it happens to sit beside.
+        if clockShown, clock.convert(clock.bounds, to: self).insetBy(dx: -6, dy: -4).contains(point) {
             return
         }
         // The right-hand third is the memory readout; the rest is sessions.
@@ -352,6 +375,61 @@ public final class StatusBar: NSView {
                 self.updateLabel.isHidden = true
             }
         })
+    }
+
+    /// The clock, battery and network, or nil to take them away (windowed,
+    /// or `status_clock = false`). Arrives and leaves with a fade, like the
+    /// `↻`; a minute ticking over or a percent dropping is just text.
+    public func setClock(_ reading: StatusClock.Reading?) {
+        if let reading {
+            let line = NSMutableAttributedString()
+            let font = Theme.mono(10)
+            for (index, segment) in reading.segments.enumerated() {
+                if index > 0 {
+                    line.append(NSAttributedString(string: " · ", attributes: [.font: font, .foregroundColor: Theme.dimText]))
+                }
+                line.append(NSAttributedString(
+                    string: segment.text,
+                    attributes: [.font: font, .foregroundColor: segment.low ? NSColor.systemRed : Theme.dimText]))
+            }
+            clock.attributedStringValue = line
+            clock.toolTip = Self.clockTooltip(reading)
+        }
+        guard (reading != nil) != clockShown else { return }
+        clockShown = reading != nil
+        let shown = clockShown
+        if shown { clock.isHidden = false }
+        guard window != nil else {
+            clock.alphaValue = shown ? 1 : 0
+            clock.isHidden = !shown
+            return
+        }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = Motion.isReduced ? 0 : Motion.pane
+            context.timingFunction = Motion.easeOutTiming
+            clock.animator().alphaValue = shown ? 1 : 0
+        }, completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, !self.clockShown else { return }
+                self.clock.isHidden = true
+            }
+        })
+    }
+
+    static func clockTooltip(_ reading: StatusClock.Reading) -> String {
+        var parts = ["The Mac's clock"]
+        if let battery = reading.battery {
+            parts.append(
+                (battery.isLow ? "battery low, \(battery.percent)%" : "battery \(battery.percent)%")
+                + (battery.charging ? ", on power" : ""))
+        }
+        switch reading.network {
+        case .wifi: parts.append("Wi-Fi")
+        case .wired: parts.append("wired network")
+        case .other: parts.append("online")
+        case .none: parts.append("no network")
+        }
+        return parts.joined(separator: " · ") + " — here while fullscreen hides the menu bar; status_clock = false takes it away"
     }
 
     static func mb(_ bytes: UInt64) -> String {

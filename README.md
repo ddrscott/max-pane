@@ -1552,6 +1552,27 @@ Neither command has a default key; `keys` binds them, and ⌘E finds them by
 name. Refused: Sparkle, a background download, a silent relaunch
 ([ADR-0038](docs/decisions/0038-the-update-lane.md)).
 
+### The clock in fullscreen
+
+Fullscreen takes the Mac's menu bar away, and with it the time, the battery
+and the Wi-Fi mark, so the status bar carries them while it is the only bar
+there is: `14:32 · 78% ⚡ · wifi`, last on the right, in the footer's mono
+grey. Windowed, nothing — the menu bar is back and has all three. The clock
+is 24-hour and ticks on the minute, aligned to `:00` rather than to whenever
+you went fullscreen. The battery is the percent from IOKit, `⚡` while on
+power (a plugged-in Mac at 100 % keeps its bolt), refreshed by the
+power-source notification rather than by polling; under 15 % the percent
+takes the red that already means "past the hard limit"
+([Colour](#colour)), and never a green, because a battery is not an agent
+state. A Mac with no battery shows no battery segment at all. The network is
+the kind of interface the default route is on — `wifi`, `wired`, `net` for
+anything else, `offline` for nothing — from `NWPathMonitor`, and never the
+network's name: the SSID needs Location permission, which was refused. A
+click on the line does nothing; its tooltip spells the segments out.
+
+`status_clock = false` in `config.toml` takes the line away, and applies as
+the file is saved. No weather, no tray.
+
 ### Folding a group puts its lanes away
 
 Folding a directory in the sidebar, a server's directory, or a whole section
@@ -2869,6 +2890,7 @@ osc52_write = "allow"
 osc52_read = "ask"
 cursor_blink = "focused"
 agent_notify = "away"
+status_clock = true
 # update_command = "brew upgrade --cask ddrscott/tap/max-pane"
 ```
 
@@ -2878,7 +2900,7 @@ your keys and keys it does not know all survive
 finder** shows the file, and **open in editor** opens it in a terminal lane with
 your `editor` setting, the same way ⌘-clicking a path does.
 
-`theme`, `sidebar_collapse_hides_lanes`, `osc52_write`, `osc52_read` and the
+`theme`, `status_clock`, `sidebar_collapse_hides_lanes`, `osc52_write`, `osc52_read` and the
 `paste_` keys (all but `paste_image_keep_days`, which is read at launch, when
 the pruning is) apply at once, and so does everything under Servers — each `[[servers]]` table's `name`, `url`, `enabled`
 and `color` (see [Remote servers](#remote-servers)). Every other

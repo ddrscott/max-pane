@@ -27,6 +27,10 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     /// hands one over with `startUpdateChecks`, which a test never does:
     /// a window built in a test runner reaches no feed.
     public private(set) var updateChecker: UpdateChecker?
+    /// The clock, battery and network at the bar's right: running only
+    /// while the window is fullscreen and `status_clock` is on, nil the
+    /// rest of the time so a windowed app has no timer and no monitor.
+    private var statusClock: StatusClockSource?
     private var settingsWindow: SettingsWindow?
     /// An agent going BLOCKED or DONE while the app is not in front posts a
     /// notification (ADR-0037). Built with the real poster; a test builds
@@ -59,6 +63,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                     // `paste_history = false` empties the table as the file is
                     // saved; a smaller cap or age applies then too (ADR-0031).
                     if let live = self.configStore?.config { self.store.applyPasteHistorySettings(live) }
+                    // `status_clock` turns the fullscreen clock on or off as
+                    // the file is saved.
+                    self.refreshStatusClock()
                 }
             }
             store.applyPasteHistorySettings(configStore.config)
@@ -2127,9 +2134,30 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 extension StripWindowController: NSWindowDelegate {
     public func windowDidEnterFullScreen(_ notification: Notification) {
         updateTitlebarAvoidance()
+        refreshStatusClock()
     }
 
     public func windowDidExitFullScreen(_ notification: Notification) {
         updateTitlebarAvoidance()
+        refreshStatusClock()
+    }
+
+    /// The bar's clock, battery and network follow two facts: fullscreen
+    /// (the menu bar is away) and `status_clock` (live). Both true starts
+    /// the source and shows the first reading now; either false stops it
+    /// and takes the readout away. Nothing to do when nothing changed.
+    func refreshStatusClock() {
+        let fullscreen = window?.styleMask.contains(.fullScreen) ?? false
+        let wanted = fullscreen && (configStore?.config ?? config).statusClock
+        if wanted, statusClock == nil {
+            let source = StatusClockSource()
+            source.onChange = { [weak self] reading in self?.statusBar.setClock(reading) }
+            statusClock = source
+            source.start()
+        } else if !wanted, let source = statusClock {
+            source.stop()
+            statusClock = nil
+            statusBar.setClock(nil)
+        }
     }
 }

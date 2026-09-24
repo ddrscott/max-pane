@@ -287,6 +287,8 @@ public struct ConfigField {
                    "Where the address bar sends what is not an address. %s is the query."),
             choice("theme", \.theme, .appearance, appliesLive: true,
                    "Follow the Mac's light or dark mode, or pin one."),
+            bool("statusClock", \.statusClock, .appearance, appliesLive: true,
+                 "The clock, battery and network at the right of the status bar while the window is fullscreen and the menu bar is away. Windowed, the menu bar has them."),
         ]
     }
 
