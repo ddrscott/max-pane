@@ -8,8 +8,8 @@
 # placeholder, deliberately: every DMG build hashes differently, and a real-
 # looking hash of an unshipped build is a lie `brew install` would catch late.
 cask "max-pane" do
-  version "0.7.0"
-  sha256 "c6c1e1fe0ad645dfbd37886001ccfa8e389d065d952be9d8ba0355a858f2bf1b"
+  version "0.8.0"
+  sha256 "b1b4236792425fa601064f1268c806035a0218f434058680e0c823e0609dc941"
 
   url "https://github.com/ddrscott/max-pane/releases/download/v#{version}/MaxPane-#{version}.dmg"
   name "Max Pane"
