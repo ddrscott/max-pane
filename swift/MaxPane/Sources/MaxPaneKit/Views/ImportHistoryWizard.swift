@@ -693,6 +693,11 @@ final class SectionHeader: NSTextField {
         isBordered = false
         drawsBackground = false
         isSelectable = false
+        setText(text)
+    }
+
+    /// The same header with new words: `// ATTENTION · 3` becoming `· 2`.
+    func setText(_ text: String) {
         let s = NSMutableAttributedString(string: "// ", attributes: [
             .font: Theme.mono(11, weight: .bold), .foregroundColor: Theme.accent,
         ])

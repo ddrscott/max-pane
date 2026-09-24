@@ -29,6 +29,9 @@ public enum Command: String, CaseIterable, Sendable {
     case moveLaneRight
     case toggleSidebar
     case search
+    case nextAttention
+    case previousAttention
+    case showAttention
     case gather
     case ungather
     case toggleGallery
@@ -104,6 +107,9 @@ public enum Command: String, CaseIterable, Sendable {
         case .moveLaneRight: return "Move Lane Right"
         case .toggleSidebar: return "Toggle Sidebar"
         case .search: return "Search…"
+        case .nextAttention: return "Next Attention"
+        case .previousAttention: return "Previous Attention"
+        case .showAttention: return "Attention…"
         case .gather: return "Gather Project"
         case .ungather: return "Leave Gather View"
         case .toggleGallery: return "Toggle Gallery"
@@ -223,6 +229,15 @@ public enum Command: String, CaseIterable, Sendable {
         case .moveLaneRight:   return ("\u{2192}", [.command, .shift])
         case .toggleSidebar:   return ("b", [.command])
         case .search:          return ("p", [.command])
+        // ⌘J: the next agent that needs you — BLOCKED first, then DONE, in
+        // strip order from the lane you are in, wrapping (ADR-0037). Nobody
+        // had the letter: macOS leaves ⌘J to apps (a text editor's Jump to
+        // Selection, which no pane here is), no browser chrome binds it, and
+        // nothing in this file did. ⇧⌘J walks the same ring backwards, and
+        // ⌥⌘J is the list itself, the way ⌥⌘O is ⌘O's picker with a scope.
+        case .nextAttention:     return ("j", [.command])
+        case .previousAttention: return ("j", [.command, .shift])
+        case .showAttention:     return ("j", [.command, .option])
         // Gather and Leave Gather ship with no key. The owner found gather too
         // surprising to be one keystroke away — *"Users can add a shortcut for
         // them if they know what they're doing"* — and a gather view is what let
@@ -540,6 +555,8 @@ public enum Command: String, CaseIterable, Sendable {
              .splitRight, .splitDown: return .file
         case .closePane, .closeLane: return .file
         case .focusLeft, .focusRight, .focusUp, .focusDown, .search, .gather, .ungather: return .navigate
+        // With ⌘P and ⌘[ ⌘]: they move focus, to the agent that needs it.
+        case .nextAttention, .previousAttention, .showAttention: return .navigate
         case .toggleGallery: return .view
         case .moveLaneLeft, .moveLaneRight, .toggleSidebar, .toggleKeepLive,
              .widenLane, .narrowLane, .peekDesktop: return .view

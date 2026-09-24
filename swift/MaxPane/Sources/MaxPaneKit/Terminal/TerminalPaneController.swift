@@ -1180,6 +1180,16 @@ final class TerminalPaneController: NSObject, PaneController {
     /// The rows on screen, as copy mode reads them: what a test looks at.
     var viewportText: String { session.readViewportText() ?? "" }
 
+    /// The last row on screen with anything on it, for an agent
+    /// notification's body: a prompt's question, a finish's last line. Nil
+    /// for a blank screen.
+    var lastNonEmptyLine: String? {
+        session.readViewportText()?
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .last { !$0.isEmpty }
+    }
+
     var isInCopyMode: Bool { copyDriver.isOn }
     /// Copy mode came on or went off: the lane's header says `COPY MODE`.
     var onCopyModeChanged: (() -> Void)?

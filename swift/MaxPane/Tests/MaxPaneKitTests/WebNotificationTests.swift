@@ -296,6 +296,7 @@ final class RecordedNotificationPoster: NotificationPosting, @unchecked Sendable
     struct Post: Equatable {
         let identifier: String
         let title: String
+        var subtitle: String = ""
         let body: String
         let icon: URL?
     }
@@ -314,9 +315,9 @@ final class RecordedNotificationPoster: NotificationPosting, @unchecked Sendable
         completion(true)
     }
 
-    func post(identifier: String, title: String, body: String, icon: URL?,
+    func post(identifier: String, title: String, subtitle: String, body: String, icon: URL?,
               completion: @escaping @Sendable (Error?) -> Void) {
-        lock.withLock { _posted.append(Post(identifier: identifier, title: title, body: body, icon: icon)) }
+        lock.withLock { _posted.append(Post(identifier: identifier, title: title, subtitle: subtitle, body: body, icon: icon)) }
         completion(nil)
     }
 

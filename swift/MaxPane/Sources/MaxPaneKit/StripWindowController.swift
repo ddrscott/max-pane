@@ -22,7 +22,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private var memoryDashboard: MemoryDashboard?
     private var helpPanel: HelpPanel?
     private var changelogPopup: ChangelogPopup?
+    private var attentionPopup: AttentionPopup?
     private var settingsWindow: SettingsWindow?
+    /// An agent going BLOCKED or DONE while the app is not in front posts a
+    /// notification (ADR-0037). Built with the real poster; a test builds
+    /// its own `AgentNotifier` over a recorder and never reaches this.
+    private let agentNotifier: AgentNotifier
     /// `config.toml`, open for ⌘,. Set by the app delegate, which owns it
     /// because it also applies `theme` from it. Setting it opens the server
     /// book, which is what makes `[[servers]]` apply live from then on.
@@ -107,6 +112,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             remotes: servers.sources(pollInterval: config.sessionPollSeconds))
         self.sidebar = SidebarViewController(store: store)
         self.strip = StripViewController(store: store, config: config, servers: servers)
+        self.agentNotifier = AgentNotifier(poster: WebNotificationCenter.shared.poster) { config.agentNotify }
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1600, height: 1000),
@@ -384,6 +390,30 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         sessions.onStateChange = { [weak self] telemetry, _, to in
             self?.alert(telemetry, became: to)
         }
+        // The notification, beside the bounce. The setting is read as it is
+        // now, the focused session decides `always`, and the body is the
+        // last line the pane has on screen. A click activates the app and
+        // goes to the session the way the sidebar does, fold and all.
+        let builtWith = config
+        agentNotifier.mode = { [weak self] in self?.configStore?.config.agentNotify ?? builtWith.agentNotify }
+        agentNotifier.focusedSession = { [weak self] in
+            guard let self, let paneId = self.store.state.focusedPaneId else { return nil }
+            return self.store.pane(paneId)?.sessionKey
+        }
+        agentNotifier.lastLine = { [weak self] key in
+            guard let self, let lane = self.store.lane(holdingSession: key),
+                  let pane = lane.panes.first(where: { $0.sessionKey == key }) else { return nil }
+            return self.strip.lastLine(ofPane: pane.id)
+        }
+        agentNotifier.ensureAuthorized = { WebNotificationCenter.shared.ensureAuthorized() }
+        agentNotifier.onActivate = { [weak self] key in
+            NSApp.activate(ignoringOtherApps: true)
+            self?.attach(key)
+        }
+        let notifier = agentNotifier
+        WebNotificationCenter.shared.addRoute(prefix: AgentNotifier.prefix) { identifier, dismissed in
+            notifier.activated(identifier: identifier, dismissed: dismissed)
+        }
         sessions.observe { [weak self] telemetry in
             guard let self else { return }
             // First: a session that moved directory may have moved group, and
@@ -393,6 +423,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             self.strip.sessionsChanged(telemetry, servers: self.sessions.serverStates)
             self.sidebar.sessionsChanged(telemetry)
             self.refreshStatus()
+            self.attentionPopup?.update(self.attentionList())
         }
         statusBar.onClickSessions = { [weak self] in self?.perform(.openSessions) }
         statusBar.onClickMemory = { [weak self] in self?.perform(.showMemory) }
@@ -1026,6 +1057,13 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             case .search:
                 showPalette()
 
+            case .nextAttention:
+                goToAttention(forward: true)
+            case .previousAttention:
+                goToAttention(forward: false)
+            case .showAttention:
+                showAttention()
+
             case .gather:
                 if let root = focusedLane?.projectRoot { try store.gather(projectRoot: root) }
 
@@ -1391,6 +1429,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
     private func refreshStatus() {
         stripToolbar.setSessions(sessions.sessions.values.filter(\.isRunning).count)
+        // The Dock badge: agents waiting on you, and nothing at zero. Offline
+        // sessions are `.unknown` and do not count (ADR-0023).
+        NSApp.dockTile.badgeLabel = AttentionBadge.label(blocked: sessions.blockedCount)
         statusBar.update(
             state: store.state,
             telemetry: sessions.sessions,
@@ -1404,8 +1445,64 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     /// be noise. `.informationalRequest` bounces once and stops; the
     /// critical kind keeps going until the app is activated.
     private func alert(_ telemetry: SessionTelemetry, became state: AgentState) {
+        // Every transition, so a banner is taken down when its session
+        // moves on; the notifier decides what to post (ADR-0037).
+        agentNotifier.stateChanged(telemetry, to: state)
         guard state == .done || state == .blocked, !NSApp.isActive else { return }
         NSApp.requestUserAttention(.informationalRequest)
+    }
+
+    // MARK: - attention (ADR-0037)
+
+    /// The ring ⌘J walks: every BLOCKED or DONE session with a lane, by the
+    /// lane's place on the strip (folded and docked lanes included).
+    private func attentionEntries() -> [AttentionOrder.Entry] {
+        let lanes = store.allLanes
+        return sessions.sessions.values.compactMap { t in
+            guard t.isRunning, t.state == .blocked || t.state == .done,
+                  let index = lanes.firstIndex(where: { $0.panes.contains { $0.sessionKey == t.key } })
+            else { return nil }
+            return AttentionOrder.Entry(key: t.key, state: t.state, laneIndex: index)
+        }
+    }
+
+    /// ⌘J / ⇧⌘J: the next or previous agent that needs you, from the lane
+    /// the keyboard is in, wrapping. Through `attach`, so a folded group
+    /// opens and a gather steps aside on the way.
+    private func goToAttention(forward: Bool) {
+        let entries = attentionEntries()
+        let lanes = store.allLanes
+        let focusedLane = store.focusedLane.flatMap { lane in lanes.firstIndex { $0.id == lane.id } }
+        let focusedSession = store.state.focusedPaneId.flatMap { store.pane($0)?.sessionKey }
+        let target = forward
+            ? AttentionOrder.next(entries, from: focusedLane, focusedSession: focusedSession)
+            : AttentionOrder.previous(entries, from: focusedLane, focusedSession: focusedSession)
+        guard let target else { return }
+        attach(target)
+    }
+
+    private func attentionList() -> AttentionList {
+        let lanes = store.allLanes
+        return AttentionList(sessions: Array(sessions.sessions.values)) { key in
+            lanes.firstIndex { $0.panes.contains { $0.sessionKey == key } }
+        }
+    }
+
+    /// ⌥⌘J: the list, hung from the status bar's count when it is showing
+    /// one, centred otherwise. Pressed again while open, it closes.
+    private func showAttention() {
+        if let existing = attentionPopup, existing.isOpen {
+            existing.closePopup()
+            return
+        }
+        let popup = AttentionPopup(list: attentionList())
+        popup.onGo = { [weak self] key in self?.attach(key) }
+        popup.onDismiss = { [weak self] key in self?.sessions.acknowledge(key) }
+        if let anchor = statusBar.attentionAnchor, let window = anchor.window {
+            popup.anchorRect = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
+        }
+        attentionPopup = popup
+        popup.present(over: window)
     }
 
     /// Go to the next BLOCKED agent that has a lane, after the one the

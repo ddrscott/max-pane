@@ -94,6 +94,15 @@ public struct Config: Codable, Equatable {
     /// until then.
     public var doneHoldSeconds: Double = 1800
 
+    /// When an agent going BLOCKED or DONE posts a macOS notification.
+    ///
+    /// `away`, the default: only while Max Pane is not the frontmost app —
+    /// the one moment the sidebar's chip cannot reach you. `always` posts
+    /// while the app is in front too, except for the pane with the keyboard,
+    /// which you are looking at. `never` posts nothing; the Dock bounce, the
+    /// chips and the badge stay. Read at each transition (ADR-0037).
+    public var agentNotify: AgentNotify = .away
+
     /// Where `relay-pty-host` lives. `nil` means "find it next to `relay` on
     /// PATH", which is right on this machine and wrong on someone else's.
     public var relayPtyHostPath: String?
@@ -356,6 +365,7 @@ public struct Config: Codable, Equatable {
         memorySampleSeconds = read(.memorySampleSeconds, d.memorySampleSeconds)
         sessionPollSeconds = read(.sessionPollSeconds, d.sessionPollSeconds)
         doneHoldSeconds = read(.doneHoldSeconds, d.doneHoldSeconds)
+        agentNotify = read(.agentNotify, d.agentNotify)
         relayPtyHostPath = read(.relayPtyHostPath, d.relayPtyHostPath)
         fontName = read(.fontName, d.fontName)
         fontSize = read(.fontSize, d.fontSize)
@@ -468,6 +478,15 @@ public struct RelayServerEntry: Codable, Equatable, Sendable {
 /// `osc52_write` and `osc52_read` in the config file. See `Config.osc52Write`.
 public enum ClipboardPermission: String, Codable, CaseIterable, Sendable {
     case allow, ask, deny
+}
+
+/// `agent_notify` in the config file. See `Config.agentNotify`.
+public enum AgentNotify: String, Codable, CaseIterable, Sendable {
+    /// While the app is not frontmost.
+    case away
+    /// Frontmost too, for every pane but the one with the keyboard.
+    case always
+    case never
 }
 
 /// `cursor_blink` in the config file. See `Config.cursorBlink`.

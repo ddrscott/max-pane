@@ -273,6 +273,8 @@ public struct ConfigField {
                    "How often RelayTTY's session files are read. pty-host writes every 5 s."),
             double("doneHoldSeconds", \.doneHoldSeconds, .terminals, 0...86_400, step: 60,
                    "How long DONE stays on a finished session before it lapses to idle. Focusing the pane clears it; 0 holds it until then."),
+            choice("agentNotify", \.agentNotify, .terminals, appliesLive: true,
+                   "A macOS notification when an agent goes BLOCKED or DONE: away — only while Max Pane is not in front; always — in front too, except the pane with the keyboard; never."),
             optionalString("relayPtyHostPath", \.relayPtyHostPath, .terminals,
                            unset: "found next to relay on PATH",
                            "Where relay-pty-host lives, when it is not next to relay."),

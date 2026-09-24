@@ -272,8 +272,10 @@ protocol NotificationPosting: AnyObject {
     /// time a site is granted — not at launch, where the question would be
     /// about nothing the person had asked for.
     func requestAuthorization(_ completion: @escaping @Sendable (Bool) -> Void)
-    /// Post one. `icon` is a local file, already fetched, or nil.
-    func post(identifier: String, title: String, body: String, icon: URL?,
+    /// Post one. `icon` is a local file, already fetched, or nil; `subtitle`
+    /// is the line under the title, empty for a page's (the Notification
+    /// API has none) and the state and directory for an agent's.
+    func post(identifier: String, title: String, subtitle: String, body: String, icon: URL?,
               completion: @escaping @Sendable (Error?) -> Void)
     /// Take delivered notifications down: the page's `close()`, or a tag
     /// replacing them.
@@ -291,10 +293,11 @@ final class SystemNotificationPoster: NotificationPosting {
         }
     }
 
-    func post(identifier: String, title: String, body: String, icon: URL?,
+    func post(identifier: String, title: String, subtitle: String, body: String, icon: URL?,
               completion: @escaping @Sendable (Error?) -> Void) {
         let content = UNMutableNotificationContent()
         content.title = title
+        content.subtitle = subtitle
         content.body = body
         content.sound = .default
         if let icon, let attachment = try? UNNotificationAttachment(identifier: "icon", url: icon) {
@@ -391,6 +394,10 @@ public final class WebNotificationCenter {
     private var panes: [String: WeakPane] = [:]
     private(set) var posted: [String: Posted] = [:]
     private var bridge: NotificationDelegateBridge?
+    /// Notifications that are not a page's — an agent's (`AgentNotifier`) —
+    /// by identifier prefix. There is one `UNUserNotificationCenter` delegate
+    /// per process, so every click lands here first and is handed on.
+    private var routes: [(prefix: String, activated: (String, Bool) -> Void)] = []
 
     init(poster: NotificationPosting) {
         self.poster = poster
@@ -419,8 +426,20 @@ public final class WebNotificationCenter {
         panes.values.compactMap(\.controller).filter { $0.dataStoreId == dataStoreId }
     }
 
+    /// A click on a notification whose identifier starts with `prefix` goes
+    /// to `activated` (with whether it was a dismissal) rather than to a pane.
+    func addRoute(prefix: String, activated: @escaping (String, Bool) -> Void) {
+        routes.removeAll { $0.prefix == prefix }
+        routes.append((prefix, activated))
+    }
+
     /// A site was just allowed. The first time, ask macOS.
-    func siteGranted() {
+    func siteGranted() { ensureAuthorized() }
+
+    /// Ask macOS whether this app may notify, once per process, the first
+    /// time there is something to say: a site allowed, or an agent stopping
+    /// while nobody is looking. Never at launch.
+    func ensureAuthorized() {
         guard !authorizationRequested else { return }
         authorizationRequested = true
         poster.requestAuthorization { granted in
@@ -452,7 +471,7 @@ public final class WebNotificationCenter {
         posted[identifier] = Posted(paneId: pane.paneId, pageId: pageId, frame: frame, webView: webView)
         let poster = self.poster
         icons.fetch(icon) { file in
-            poster.post(identifier: identifier, title: title, body: body, icon: file) { error in
+            poster.post(identifier: identifier, title: title, subtitle: "", body: body, icon: file) { error in
                 Task { @MainActor in completion(error) }
             }
         }
@@ -471,6 +490,10 @@ public final class WebNotificationCenter {
     /// forward and its page hears `click`; a dismissal is only `close`.
     func activated(identifier: String, dismissed: Bool = false) {
         guard let entry = posted[identifier] else {
+            if let route = routes.first(where: { identifier.hasPrefix($0.prefix) }) {
+                route.activated(identifier, dismissed)
+                return
+            }
             Log.debug("notifications: \(identifier) is nobody's now")
             return
         }

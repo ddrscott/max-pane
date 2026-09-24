@@ -23,6 +23,10 @@ public final class StatusBar: NSView {
 
     /// Whether the attention count is breathing right now, for tests.
     var isAttentionPulsing: Bool { attention.isAnimatingPulse }
+    /// The attention count, for ⌥⌘J's list to hang from — while it is
+    /// showing anything, since a popup hung from an empty label hangs from
+    /// nothing anyone can see.
+    var attentionAnchor: NSView? { attention.stringValue.isEmpty ? nil : attention }
     /// How many panes are making sound: the speaker and a count, and nothing
     /// at all while it is none. A click mutes every one of them.
     private let soundIcon = NSImageView()

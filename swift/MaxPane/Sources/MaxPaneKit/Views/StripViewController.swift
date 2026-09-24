@@ -3368,6 +3368,13 @@ public final class StripViewController: NSViewController {
         terminal.paste(fromHistory: text)
     }
 
+    /// The last line a terminal pane has on screen, for an agent
+    /// notification's body. Nil for a pane with no controller yet (far off
+    /// the strip, or in a folded group before it was ever built) or a page.
+    public func lastLine(ofPane paneId: String) -> String? {
+        (paneControllers[paneId] as? TerminalPaneController)?.lastNonEmptyLine
+    }
+
     /// ADR-0007 §5's escape hatch, routed to the pane that owns the session.
     public func claimSession(paneId: String) {
         (paneControllers[paneId] as? TerminalPaneController)?.claimSessionAtLaneWidth()

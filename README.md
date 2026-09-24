@@ -1335,7 +1335,8 @@ does not clear it, because in the gallery every lane is on screen. Working
 again, a prompt, or an exit clears it at once. Claude Code's title makes this
 sharp: the spinner becomes `✳` on the turn's last frame, not between tool
 calls, so there is nothing to debounce. A session that becomes DONE or BLOCKED
-while the app is not in front bounces the Dock icon once.
+while the app is not in front bounces the Dock icon once, and posts a
+notification — see [What calls you back](#what-calls-you-back).
 
 Relay alone was not enough. Its rate, `bps1`, is a sixty-second average, and its
 WORKING rule is that same rate, so the redraw every session does when a
@@ -1361,6 +1362,58 @@ focused lane's header is lifted a shade instead, which is what still says
 *which column* from across the strip. The lane's own border stays a neutral
 hairline, and flashes green only for the ⌘P jump, which is a place to look
 rather than a place to type.
+
+### What calls you back
+
+An agent that goes BLOCKED or DONE while Max Pane is not the frontmost app
+posts a macOS notification: the session's title (or its command), then
+`BLOCKED · ~/code/max-pane` — a remote session's path as its server gave it,
+`yorkshire:/home/spierce/x` — then the last line on the pane's screen, which
+for a prompt is the question and for a finish is usually the answer's last
+line (`Waiting on you` or `Finished` when the pane has nothing to read).
+Click it and you are there: the app comes forward, a folded group opens, a
+gather steps aside, and a session with no lane gets one, the way a click in
+the sidebar does. The Dock bounces once as before, and the Dock icon carries
+the number of BLOCKED agents as a badge until it is zero.
+
+**"Not in front" is the whole rule.** A lane folded away or scrolled off the
+strip is still in a window that is in front, where the sidebar chip, the
+status bar's `N BLOCKED` and the badge are all on screen; no banner is added
+on top of them. `agent_notify` in `config.toml` (Settings › Terminals &
+sessions, live) is `"away"` by default; `"always"` posts while the app is in
+front too, for every pane but the one with the keyboard; `"never"` posts
+nothing. A session on a server that has stopped answering never posts (its
+state is `OFFLINE`, not BLOCKED), a relaunch under ten waiting agents posts
+nothing (a first reading is not a transition), and a banner is taken down
+again the moment its session moves on — answered, looked at, working again —
+so Notification Center never says what the sidebar has stopped saying. macOS
+asks whether Max Pane may notify at the first banner, not at launch; a site's
+first Notification grant asks the same question, once per launch either way.
+
+**⌘J is the next agent that needs you.** One ring: every BLOCKED session
+with a lane, left to right along the strip, then every DONE the same way,
+folded and docked lanes included. From a lane in the ring ⌘J is the one
+after it and ⇧⌘J the one before, wrapping at both ends, so ⌘J pressed until
+it comes back has visited every prompt and then every finish. From any other
+lane it is the first BLOCKED to your right (round to the left when none),
+else the first DONE. It goes the way ⌘P goes: fold opened, gather left,
+lane focused and centred. Focusing a DONE clears it, as it always has, so
+⌘J through the finishes reads them off one by one.
+
+**⌥⌘J is the ATTENTION list**, a square panel hung from the status bar's
+count: `// ATTENTION · 3`, one row per BLOCKED or DONE session — lane or
+not — BLOCKED first, then DONE, each in strip order with the lane-less ones
+after (`· not on the strip`). The BLOCKED chip is the sidebar's, filled and
+breathing; DONE is the only orange; the rest is grey. ↑ ↓ move, ↩ goes (a
+lane-less session is attached at the end of the strip), ⌫ dismisses the
+selected DONE, ⌘⌫ dismisses every DONE, Esc closes. ⌫ never touches a
+BLOCKED: a DONE is cleared by looking at it, and this is looking; a BLOCKED
+is a question, and stays until it is answered. The list follows the sidebar
+while it is open, so a prompt answered from your phone leaves it, and when
+nothing is left it says so rather than vanishing under the pointer. A click
+on `N BLOCKED` in the status bar still goes straight to the next blocked
+agent (see [Folding a group](#folding-a-group-puts-its-lanes-away)); the
+list is one key further. ADR-0037.
 
 ### The version in the corner
 
@@ -2700,6 +2753,7 @@ paste_history_days = 30
 osc52_write = "allow"
 osc52_read = "ask"
 cursor_blink = "focused"
+agent_notify = "away"
 ```
 
 The window writes one value at a time, in place: your comments, the order of
@@ -2787,6 +2841,12 @@ clipboard with OSC 52, each `"allow"`, `"ask"` or `"deny"`. Setting it is
 `"allow"` by default and shows `COPIED` in the lane's header; reading it is
 `"ask"` by default, and the sheet's default is Deny. Both are read at each
 request. See [A program and the clipboard](#a-program-and-the-clipboard-osc-52).
+
+`agent_notify` is when an agent going BLOCKED or DONE posts a macOS
+notification: `"away"` (the default) only while Max Pane is not in front,
+`"always"` in front too for every pane but the one with the keyboard,
+`"never"` not at all. Read at each transition. See
+[What calls you back](#what-calls-you-back).
 
 `cursor_blink` is which terminal cursors blink: `"focused"`, `"always"` or
 `"never"`. `"focused"`, the default, blinks the one terminal that has the
