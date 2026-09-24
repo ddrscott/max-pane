@@ -73,7 +73,7 @@
 - [x] The window comes back where you left it: fullscreen or windowed, frame and display remembered in the ledger, clamped onto a screen that still exists; first launch stays fullscreen — [detail](window-state-restore.md)
 - [x] Omarchy F1: a notification when an agent goes BLOCKED/DONE while you are in another app, ⌘J / ⇧⌘J Next/Previous Attention, ⌥⌘J ATTENTION list, Dock badge — [detail](omarchy-f1-attention.md)
 - [x] Omarchy F3: ⇧⌘P Run Command — every command, live setting toggles and server actions in the picker, `>` prefix in ⌘O, ⌘⌫ binds a chord — [detail](omarchy-f3-run-command.md)
-- [ ] Omarchy F7: daily release check, `↻ vNEXT` in the status bar and version popover, Help › Update… runs brew in a terminal lane and offers Relaunch (env-scrubbed) — [detail](omarchy-f7-update-lane.md)
+- [-] Omarchy F7: daily release check, `↻ vNEXT` in the status bar and version popover, Help › Update… runs brew in a terminal lane and offers Relaunch (env-scrubbed) — [detail](omarchy-f7-update-lane.md)
 - [ ] Omarchy F10: ⌃⌘W End Session with a sheet, ⌘K clears scrollback, rename from the lane header — [detail](omarchy-f10-end-session.md)
 - [ ] Omarchy F2: clock, battery and network at the right of the status bar while fullscreen — [detail](omarchy-f2-status-clock.md)
 - [ ] Omarchy F6: ⌃⌘S Capture Pane to a PNG whose path is pasted into the nearest terminal, and `maxpane capture` — [detail](omarchy-f6-capture-pane.md)
