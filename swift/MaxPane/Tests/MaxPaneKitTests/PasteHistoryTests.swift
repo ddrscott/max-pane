@@ -444,10 +444,11 @@ struct PasteHistoryDoorTests {
 @MainActor
 struct PasteHistoryPickerTests {
     private func entry(
-        _ id: Int64, _ content: String, kind: ClipKind = .paste, redacted: Bool = false, at: Int64 = 0
+        _ id: Int64, _ content: String, kind: ClipKind = .paste, source: ClipSource = .pty,
+        redacted: Bool = false, at: Int64 = 0
     ) -> ClipEntry {
         ClipEntry(
-            id: id, kind: kind, content: content, redacted: redacted,
+            id: id, kind: kind, source: source, content: content, redacted: redacted,
             lineCount: UInt32(content.split(separator: "\n").count), byteCount: UInt64(content.utf8.count), at: at)
     }
 
@@ -486,6 +487,16 @@ struct PasteHistoryPickerTests {
         #expect(PasteHistory.detail(secret, now: now).hasPrefix("looked like a secret, not kept · pasted"))
     }
 
+    @Test("every row says which kind of pane it came from")
+    func chip() {
+        #expect(PasteHistory.chipText(entry(1, "ls")) == "PTY")
+        #expect(PasteHistory.chipText(entry(2, "a token", kind: .copy, source: .web)) == "WEB")
+        // The chip is on the row itself, not only in the model.
+        let row = PasteHistoryRow(entry: entry(3, "a token", kind: .copy, source: .web), query: "")
+        let words = row.subviews.flatMap { $0.subviews }.compactMap { ($0 as? NSTextField)?.stringValue }
+        #expect(words.contains("WEB"))
+    }
+
     @MainActor
     private final class Rig {
         let dir: URL
@@ -505,8 +516,8 @@ struct PasteHistoryPickerTests {
             pasteboard.clearContents()
         }
 
-        func keep(_ text: String, _ kind: ClipKind = .paste) {
-            store.recordClip(paneId: paneId, kind: kind, text: text, config: config)
+        func keep(_ text: String, _ kind: ClipKind = .paste, _ source: ClipSource = .pty) {
+            store.recordClip(paneId: paneId, kind: kind, source: source, text: text, config: config)
         }
 
         func picker(canPaste: Bool = true) -> PasteHistoryController {

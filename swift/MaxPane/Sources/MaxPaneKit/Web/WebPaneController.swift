@@ -21,6 +21,15 @@ final class WebPaneController: NSObject, PaneController {
     let paneId: String
     let store: StripStore
     private let config: Config
+    /// The settings as they are now, when the strip has wired them up: a
+    /// `paste_history` switched off in Settings has to reach the next ⌘C.
+    var liveConfig: (() -> Config)?
+    /// Where a copy this pane performs lands. The general one, except in a
+    /// test, which must never write the owner's (ADR-0041).
+    var clipPasteboard: NSPasteboard = .general
+    /// Where a copied picture becomes a file (ADR-0027). A test hands over a
+    /// directory of its own.
+    var pastedImages = PastedImages()
     /// The ad and tracker blocker every pane's view is attached to. The app's
     /// one, unless a test hands over its own with its own list.
     let blocker: ContentBlocker
@@ -134,6 +143,10 @@ final class WebPaneController: NSObject, PaneController {
     /// The page ends where the bars start, or — full screen — at the pane's foot.
     private var contentAboveBars: NSLayoutConstraint!
     private var contentFillsPane: NSLayoutConstraint!
+
+    /// The settings as the app has them now: the live ones when the strip has
+    /// wired them up, and the ones this pane was built with otherwise.
+    var settings: Config { liveConfig?() ?? config }
 
     /// Set by the strip so a lane this pane opens can be scrolled to.
     ///
@@ -346,6 +359,10 @@ final class WebPaneController: NSObject, PaneController {
         // belong to whatever has the keyboard rather than to the app — and
         // because ⌘R, ⌘L and ⌘[ are already spoken for there. See the report.
         container.onKeyEquivalent = { [weak self] event in self?.handleKey(event) ?? false }
+        // ⌘C, before the web view claims it: the copy is still WebKit's, and
+        // what it copies is kept (ADR-0041). False when the page does not
+        // have the keyboard, so the address field keeps its own ⌘C.
+        container.onCopyKey = { [weak self] in self?.copyFromPage() ?? false }
         container.onMovedToWindow = { [weak self] in
             // One turn later. `viewDidMoveToWindow` fires while AppKit is still
             // moving the hierarchy around, and a `makeFirstResponder` from
@@ -2146,6 +2163,9 @@ final class DataStorePool {
 @MainActor
 final class WebPaneContainer: NSView {
     var onKeyEquivalent: ((NSEvent) -> Bool)?
+    /// ⌘C while this pane's page has the keyboard. Before the subviews, and
+    /// so before the web view: see `performKeyEquivalent`.
+    var onCopyKey: (() -> Bool)?
     /// The strip recycles lane views, so a pane's container lands in a window
     /// more than once in its life — and every one of those landings costs it
     /// first-responder status.
@@ -2167,7 +2187,48 @@ final class WebPaneContainer: NSView {
         // app key belongs; the fields keep ⌘A and ⌘C because neither is in
         // `Commands.swift`, and ⌘F stays a pane key for the same reason.
         if Command.claims(event) { return false }
+        // ⌘C is the one chord that has to be taken before the subviews rather
+        // than after: a focused web view claims it and copies inside WebKit,
+        // and the pane would never learn what was copied (ADR-0041). The hook
+        // declines unless the *page* has the keyboard, which is how the
+        // address field and the find field keep their own ⌘C.
+        if WebPaneContainer.isCopyKey(event), onCopyKey?() == true { return true }
         if super.performKeyEquivalent(with: event) { return true }
         return onKeyEquivalent?(event) ?? false
+    }
+
+    /// ⌘C exactly: not ⌥⌘C (Copy with Styles) and not ⇧⌘C. Caps lock and the
+    /// function flags are not modifiers a person pressed, so a ⌘C typed with
+    /// caps lock on is still ⌘C.
+    static func isCopyKey(_ event: NSEvent) -> Bool {
+        let held = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            .subtracting([.capsLock, .function, .numericPad])
+        return held == [.command] && event.charactersIgnoringModifiers?.lowercased() == "c"
+    }
+}
+
+/// The Edit menu's Copy, answered by the pane when its page has the keyboard.
+///
+/// The same shape as `TerminalPasteTarget`: the menu item is targeted at the
+/// app delegate, which sends this down the responder chain first and falls
+/// back to `copy:` when nothing answers. The container answers, not the web
+/// view — a `WKWebView` subclass cannot override `copy:`, which WebKit
+/// declares in no header this module can see.
+///
+/// `@MainActor`, unlike `TerminalPasteTarget`: this one sends `copy:` on
+/// itself when it declines, and that is AppKit.
+@MainActor
+@objc public protocol WebCopyTarget {
+    func copyFromWebPane(_ sender: Any?)
+}
+
+extension WebPaneContainer: WebCopyTarget {
+    /// The pane declines when the keyboard is in its address or find field
+    /// rather than in the page, and then the copy is that field's and is sent
+    /// on unrecorded — which is what the Edit menu would have done anyway.
+    func copyFromWebPane(_ sender: Any?) {
+        if onCopyKey?() != true {
+            NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: sender)
+        }
     }
 }

@@ -1231,15 +1231,15 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func recents(limit: UInt32) throws  -> [Recent]
     
     /**
-     * Remember `text` as pasted into, or copied out of, the terminal pane
-     * `pane_id`. True when it was kept. `keep` and `days` are the settings
+     * Remember `text` as pasted into, or copied out of, the pane `pane_id`
+     * — a terminal's, or a web pane's own ⌘C (`source`, ADR-0041). True when it was kept. `keep` and `days` are the settings
      * `paste_history_keep` and `paste_history_days` as they are now; `keep`
      * of 0 is off. What is refused and what is redacted is decided in the
      * ledger and in [`clips`], not by the caller: a private lane's pane, an
      * unknown pane, blank text and anything over 64 KB are never written,
      * and text shaped like a secret is written as four characters and `•••`.
      */
-    func recordClip(paneId: String, kind: ClipKind, text: String, keep: UInt32, days: UInt32) throws  -> Bool
+    func recordClip(paneId: String, kind: ClipKind, source: ClipSource, text: String, keep: UInt32, days: UInt32) throws  -> Bool
     
     /**
      * A web pane settled on a page. One call, from wherever the shell learns a
@@ -2753,21 +2753,22 @@ open func recents(limit: UInt32)throws  -> [Recent]  {
 }
     
     /**
-     * Remember `text` as pasted into, or copied out of, the terminal pane
-     * `pane_id`. True when it was kept. `keep` and `days` are the settings
+     * Remember `text` as pasted into, or copied out of, the pane `pane_id`
+     * — a terminal's, or a web pane's own ⌘C (`source`, ADR-0041). True when it was kept. `keep` and `days` are the settings
      * `paste_history_keep` and `paste_history_days` as they are now; `keep`
      * of 0 is off. What is refused and what is redacted is decided in the
      * ledger and in [`clips`], not by the caller: a private lane's pane, an
      * unknown pane, blank text and anything over 64 KB are never written,
      * and text shaped like a secret is written as four characters and `•••`.
      */
-open func recordClip(paneId: String, kind: ClipKind, text: String, keep: UInt32, days: UInt32)throws  -> Bool  {
+open func recordClip(paneId: String, kind: ClipKind, source: ClipSource, text: String, keep: UInt32, days: UInt32)throws  -> Bool  {
     return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
         uniffiCallStatus in
     uniffi_laned_core_fn_method_core_record_clip(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(paneId),
         FfiConverterTypeClipKind_lower(kind),
+        FfiConverterTypeClipSource_lower(source),
         FfiConverterString.lower(text),
         FfiConverterUInt32.lower(keep),
         FfiConverterUInt32.lower(days),uniffiCallStatus
@@ -3694,6 +3695,10 @@ public struct ClipEntry: Equatable, Hashable {
     public var id: Int64
     public var kind: ClipKind
     /**
+     * The kind of pane it happened in, which is the row's `web` / `pty` chip.
+     */
+    public var source: ClipSource
+    /**
      * The text, or four characters and `•••` when `redacted`.
      */
     public var content: String
@@ -3713,6 +3718,9 @@ public struct ClipEntry: Equatable, Hashable {
     // declare one manually.
     public init(id: Int64, kind: ClipKind, 
         /**
+         * The kind of pane it happened in, which is the row's `web` / `pty` chip.
+         */source: ClipSource, 
+        /**
          * The text, or four characters and `•••` when `redacted`.
          */content: String, 
         /**
@@ -3724,6 +3732,7 @@ public struct ClipEntry: Equatable, Hashable {
          */lineCount: UInt32, byteCount: UInt64, at: Int64) {
         self.id = id
         self.kind = kind
+        self.source = source
         self.content = content
         self.redacted = redacted
         self.lineCount = lineCount
@@ -3749,6 +3758,7 @@ public struct FfiConverterTypeClipEntry: FfiConverterRustBuffer {
             try ClipEntry(
                 id: FfiConverterInt64.read(from: &buf), 
                 kind: FfiConverterTypeClipKind.read(from: &buf), 
+                source: FfiConverterTypeClipSource.read(from: &buf), 
                 content: FfiConverterString.read(from: &buf), 
                 redacted: FfiConverterBool.read(from: &buf), 
                 lineCount: FfiConverterUInt32.read(from: &buf), 
@@ -3760,6 +3770,7 @@ public struct FfiConverterTypeClipEntry: FfiConverterRustBuffer {
     public static func write(_ value: ClipEntry, into buf: inout [UInt8]) {
         FfiConverterInt64.write(value.id, into: &buf)
         FfiConverterTypeClipKind.write(value.kind, into: &buf)
+        FfiConverterTypeClipSource.write(value.source, into: &buf)
         FfiConverterString.write(value.content, into: &buf)
         FfiConverterBool.write(value.redacted, into: &buf)
         FfiConverterUInt32.write(value.lineCount, into: &buf)
@@ -6120,7 +6131,8 @@ public enum ClipKind: Equatable, Hashable {
      */
     case paste
     /**
-     * Copied out of a terminal: ⌘C, copy-on-select, or a program's OSC 52.
+     * Copied out of a pane: a terminal's ⌘C, copy-on-select or OSC 52, or a
+     * web pane's ⌘C (ADR-0041).
      */
     case copy
 
@@ -6180,6 +6192,82 @@ public func FfiConverterTypeClipKind_lift(_ buf: RustBuffer) throws -> ClipKind 
 #endif
 public func FfiConverterTypeClipKind_lower(_ value: ClipKind) -> RustBuffer {
     return FfiConverterTypeClipKind.lower(value)
+}
+
+
+
+/**
+ * Which kind of pane a paste-history entry came from (ADR-0041). Both are
+ * panes of this app; neither is the clipboard at large.
+ */
+
+public enum ClipSource: Equatable, Hashable {
+    
+    /**
+     * A terminal pane: everything ADR-0031 records.
+     */
+    case pty
+    /**
+     * A web pane, where the only entry is a copy the app itself performed.
+     */
+    case web
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ClipSource: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeClipSource: FfiConverterRustBuffer {
+    typealias SwiftType = ClipSource
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ClipSource {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .pty
+        
+        case 2: return .web
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ClipSource, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .pty:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .web:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClipSource_lift(_ buf: RustBuffer) throws -> ClipSource {
+    return try FfiConverterTypeClipSource.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeClipSource_lower(_ value: ClipSource) -> RustBuffer {
+    return FfiConverterTypeClipSource.lower(value)
 }
 
 
@@ -8221,7 +8309,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_recents() != 56922) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_laned_core_checksum_method_core_record_clip() != 55716) {
+    if (uniffi_laned_core_checksum_method_core_record_clip() != 16145) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_record_visit() != 22985) {

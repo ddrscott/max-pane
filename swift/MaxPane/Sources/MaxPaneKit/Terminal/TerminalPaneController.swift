@@ -1214,7 +1214,7 @@ final class TerminalPaneController: NSObject, PaneController {
     /// which pane: the ledger looks the lane up and refuses a private one, so
     /// no caller here can record in a private lane by forgetting to check.
     private func remember(_ kind: ClipKind, _ text: String) {
-        store.recordClip(paneId: paneId, kind: kind, text: text, config: liveConfig?() ?? config)
+        store.recordClip(paneId: paneId, kind: kind, source: .pty, text: text, config: liveConfig?() ?? config)
     }
 
     /// Paste an entry of paste history: exactly as it was kept, so never

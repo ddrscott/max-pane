@@ -731,7 +731,16 @@ measured and rejected (ADR-0040).
 
 From a shell, `maxpane capture [LANE] [--full]` does the same and prints the
 path, so an agent can ask for a picture of its own terminal, or of the page in
-the lane beside it, without anyone pressing a key. With no LANE it is the
+the lane beside it, without anyone pressing a key.
+
+**⌘C in a page is in ⇧⌘H.** A copy you make in a web pane — the key, or Edit ›
+Copy — is kept in paste history beside the terminals', marked `WEB`, so a token
+copied off a dashboard survives copying something else; a picture copied that
+way is kept as the path of the file it became. It is still not a clipboard
+manager: nothing a page copies for you, nothing in a sign-in popup and nothing
+copied in another app is ever recorded, and no timer watches the clipboard. See
+[Pasting into a terminal](#pasting-into-a-terminal) and
+[ADR-0041](docs/decisions/0041-a-web-pane-s-copy-is-paste-history-too.md). With no LANE it is the
 focused pane.
 
 **Web notifications.** WebKit has no `window.Notification` on macOS, so Slack,
@@ -2304,9 +2313,10 @@ nothing at all unless a program asked for the mouse. It does not fall back to
 the emulator's own middle-click paste, which would frame the clipboard by a
 guess at bracketed paste (ADR-0026).
 
-**⇧⌘H, Edit › Paste History…, lists what you pasted into and copied out of
-terminals lately**, newest first. Copy a path, copy something else, and the
-path is still here. Type to filter (any words, case ignored).
+**⇧⌘H, Edit › Paste History…, lists what this app's panes pasted and copied
+lately**, newest first — what went into a terminal, what came out of one, and
+**a ⌘C you made in a web pane**. Copy a token off a dashboard, copy something
+else, and the token is still here. Type to filter (any words, case ignored).
 
 | Key | |
 |---|---|
@@ -2315,17 +2325,31 @@ path is still here. Type to filter (any words, case ignored).
 | **⌘⌫**, or **⌫** with nothing typed | Delete it, after asking (↩ is Cancel). |
 | **Esc** | Close. |
 
-Each row is one line, with `↓` for pasted in or `↑` for copied out, its line
-count, size and age. With a web pane focused the list still opens, for ⌘C.
+Each row is one line, with `↓` for pasted in or `↑` for copied out, a grey
+`PTY` or `WEB` chip for the kind of pane it happened in, and its line count,
+size and age. With a web pane focused the list still opens, for ⌘C.
 
-**It is not a clipboard manager. Max Pane never reads the system clipboard
-unless you paste**, so what you copy in another app, or copy here and never
-paste into a terminal, is not in the list. What is kept is **what was sent to
-the prompt**: tidied text, quoted file paths, the path a screenshot became,
-the output of Paste Escaped or Paste as Base64, the one line the sheet made.
-A paste you cancelled in the sheet sent nothing and keeps nothing. Copies out
-are ⌘C (and the right-click Copy), a program's OSC 52 copy, and
+**It is not a clipboard manager. Max Pane never watches the system
+clipboard**, so what you copy in another app is never in the list — there is no
+timer anywhere near `NSPasteboard`. A row is there because a pane of this app
+pasted or copied it. What is kept of a paste is **what was sent to the
+prompt**: tidied text, quoted file paths, the path a screenshot became, the
+output of Paste Escaped or Paste as Base64, the one line the sheet made. A
+paste you cancelled in the sheet sent nothing and keeps nothing. Copies out of
+a terminal are ⌘C (and the right-click Copy), a program's OSC 52 copy, and
 `copy_on_select` when it is on. The same text again moves to the top.
+
+**In a web pane it is ⌘C and Edit › Copy, and only those.** The copy is
+WebKit's own; the pane performs it and then keeps what it put on the clipboard,
+for the fifth of a second that takes and no longer. A **picture** copied that
+way becomes a file where a pasted one goes — `copy-20260923-143205.png`, swept
+by the same `paste_image_keep_days` — and the row is its path, so ⇧⌘H ↩ hands
+an agent a picture you copied off a page. What a **page** copies for you is
+not recorded: a "copy" button, `navigator.clipboard.writeText`, or the
+right-click Copy in WebKit's own menu, none of which the app performs and the
+first two of which a page could fire at you unasked. Nor is anything copied in
+a sign-in popup. A copy in the address bar or the find field is that field's
+and is not kept either.
 
 **Never kept:** a copy a password manager marked as concealed, transient or
 auto-generated (1Password, Bitwarden and KeePassXC do); any
@@ -2335,7 +2359,9 @@ first four characters and `•••`, so the list shows that something was ther
 and the token is never written to disk: `sk-…`, GitHub's `ghp_…` and
 `github_pat_…`, AWS `AKIA…`/`ASIA…`, any `-----BEGIN …-----` PEM header, a
 JWT, Slack's `xoxb-…`, GitLab's `glpat-…`. That is a net, not a guarantee: a
-password copied from a note looks like a word.
+password copied from a note looks like a word. All of it is the ledger's
+decision and not the pane's, so a web pane is refused exactly where a terminal
+is ([ADR-0041](docs/decisions/0041-a-web-pane-s-copy-is-paste-history-too.md)).
 
 It lives in the ledger, at most `paste_history_keep` (200) entries and
 `paste_history_days` (30) days, and is not part of a strip export.
@@ -2997,8 +3023,9 @@ read at each paste. `paste_image_keep_days` is how long a saved picture stays
 in `~/Library/Caches/app.ljs.maxpane/paste/` before a launch removes it; `0`
 keeps them all.
 
-`paste_history` keeps what was pasted into and copied out of terminals for
-⇧⌘H ([Pasting into a terminal](#pasting-into-a-terminal)); `false` records
+`paste_history` keeps what this app's panes pasted and copied — a terminal's
+pastes and copies, and a web pane's own ⌘C — for ⇧⌘H
+([Pasting into a terminal](#pasting-into-a-terminal)); `false` records
 nothing and deletes what was kept. `paste_history_keep` is how many entries
 stay (`0` is also off) and `paste_history_days` how long (`0` keeps any age).
 All three apply as the file is saved.

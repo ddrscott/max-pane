@@ -41,6 +41,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ),
     ("0016_clip_history", include_str!("../migrations/0016_clip_history.sql")),
     ("0017_pane_audio", include_str!("../migrations/0017_pane_audio.sql")),
+    ("0018_clip_source", include_str!("../migrations/0018_clip_source.sql")),
 ];
 
 /// A needle as an FTS5 query: one quoted phrase, nothing else.
@@ -333,6 +334,8 @@ impl Ledger {
     ///
     /// - `keep == 0`: history is off.
     /// - a pane in a **private lane**, and a pane the ledger does not know.
+    ///   True of a web pane as of a terminal one: `source` says which kind it
+    ///   was, and changes nothing about what may be kept (ADR-0041).
     ///   The second is the opposite of `pane_is_private`'s answer on purpose:
     ///   a visit from a pane that has just closed is harmless, and text from a
     ///   pane whose lane cannot be checked is not known to be.
@@ -344,6 +347,7 @@ impl Ledger {
         &self,
         pane_id: &str,
         kind: ClipKind,
+        source: ClipSource,
         text: &str,
         keep: u32,
         days: u32,
@@ -369,10 +373,11 @@ impl Ledger {
             params![kept.content, kept.redacted as i64, kept.byte_count as i64],
         )?;
         self.conn.execute(
-            "INSERT INTO clip (kind, content, redacted, line_count, byte_count, at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO clip (kind, source, content, redacted, line_count, byte_count, at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 crate::clips::kind_str(kind),
+                crate::clips::source_str(source),
                 kept.content,
                 kept.redacted as i64,
                 kept.line_count,
@@ -404,18 +409,19 @@ impl Ledger {
     /// Paste history, newest first.
     pub fn clips(&self) -> Result<Vec<ClipEntry>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, kind, content, redacted, line_count, byte_count, at
+            "SELECT id, kind, source, content, redacted, line_count, byte_count, at
              FROM clip ORDER BY at DESC, id DESC",
         )?;
         let rows = stmt.query_map([], |r| {
             Ok(ClipEntry {
                 id: r.get(0)?,
                 kind: crate::clips::kind_from(&r.get::<_, String>(1)?),
-                content: r.get(2)?,
-                redacted: r.get::<_, i64>(3)? != 0,
-                line_count: r.get(4)?,
-                byte_count: r.get::<_, i64>(5)? as u64,
-                at: r.get(6)?,
+                source: crate::clips::source_from(&r.get::<_, String>(2)?),
+                content: r.get(3)?,
+                redacted: r.get::<_, i64>(4)? != 0,
+                line_count: r.get(5)?,
+                byte_count: r.get::<_, i64>(6)? as u64,
+                at: r.get(7)?,
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)

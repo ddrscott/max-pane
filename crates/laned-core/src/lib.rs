@@ -1047,8 +1047,8 @@ impl Core {
 
     // ---- paste history (ADR-0031) ------------------------------------------
 
-    /// Remember `text` as pasted into, or copied out of, the terminal pane
-    /// `pane_id`. True when it was kept. `keep` and `days` are the settings
+    /// Remember `text` as pasted into, or copied out of, the pane `pane_id`
+    /// — a terminal's, or a web pane's own ⌘C (`source`, ADR-0041). True when it was kept. `keep` and `days` are the settings
     /// `paste_history_keep` and `paste_history_days` as they are now; `keep`
     /// of 0 is off. What is refused and what is redacted is decided in the
     /// ledger and in [`clips`], not by the caller: a private lane's pane, an
@@ -1058,6 +1058,7 @@ impl Core {
         &self,
         pane_id: String,
         kind: ClipKind,
+        source: ClipSource,
         text: String,
         keep: u32,
         days: u32,
@@ -1065,7 +1066,7 @@ impl Core {
         let inner = self.inner.lock();
         inner
             .ledger
-            .record_clip(&pane_id, kind, &text, keep, days, now_ms())
+            .record_clip(&pane_id, kind, source, &text, keep, days, now_ms())
     }
 
     /// Paste history, newest first, after ageing it by the settings.

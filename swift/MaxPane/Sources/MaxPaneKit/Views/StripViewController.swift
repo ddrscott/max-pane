@@ -2725,6 +2725,9 @@ public final class StripViewController: NSViewController {
                 pane: pane, lane: lane, store: store, config: config,
                 deferLoad: lane.dock == nil && isColdLaunch
                     && distanceFromViewport(laneId: lane.id) > config.rehydrateDistance)
+            // Looked up at each ⌘C, not captured: `paste_history` switched
+            // off in Settings has to reach the next copy in this pane.
+            controller.liveConfig = { [weak self, config] in self?.liveConfig?() ?? config }
             // A lane this page opens while it is scrolled off the strip is
             // created and focused in the ledger, and never brought on screen
             // without this.

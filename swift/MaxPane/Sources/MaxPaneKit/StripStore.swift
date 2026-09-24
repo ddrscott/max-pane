@@ -567,19 +567,20 @@ public final class StripStore {
 
     // MARK: - paste history (ADR-0031)
 
-    /// Keep `text` as pasted into or copied out of the terminal pane `paneId`.
-    /// True when it was kept. The settings are read from `config` as it is
-    /// now; off, nothing is kept and what was kept goes. What else is refused
-    /// (a private lane, an unknown pane, blank or over 64 KB) and what is
-    /// redacted is the core's decision, not this method's and not a caller's.
+    /// Keep `text` as pasted into or copied out of the pane `paneId` — a
+    /// terminal's, or a web pane's own ⌘C (`source`, ADR-0041). True when it
+    /// was kept. The settings are read from `config` as it is now; off,
+    /// nothing is kept and what was kept goes. What else is refused (a private
+    /// lane, an unknown pane, blank or over 64 KB) and what is redacted is the
+    /// core's decision, not this method's and not a caller's.
     @discardableResult
-    func recordClip(paneId: String, kind: ClipKind, text: String, config: Config) -> Bool {
+    func recordClip(paneId: String, kind: ClipKind, source: ClipSource, text: String, config: Config) -> Bool {
         guard config.pasteHistory, config.pasteHistoryKeep > 0 else {
             clearClipHistory()
             return false
         }
         return (try? core.recordClip(
-            paneId: paneId, kind: kind, text: text,
+            paneId: paneId, kind: kind, source: source, text: text,
             keep: config.pasteHistoryKeep, days: config.pasteHistoryDays)) ?? false
     }
 

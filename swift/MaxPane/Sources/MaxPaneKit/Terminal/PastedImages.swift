@@ -34,15 +34,24 @@ public struct PastedImages {
         return base.appendingPathComponent("paste", isDirectory: true)
     }
 
-    /// The two things that land in this directory. A captured pane
+    /// The picture a ⌘C in a web pane copied (ADR-0041), which is written
+    /// here so paste history has a path to keep. It says `copy` because that
+    /// is what it was: nothing has been pasted yet, and a row in ⇧⌘H is how
+    /// it gets to a prompt.
+    static let copiedPrefix = "copy"
+
+    /// The three things that land in this directory. A captured pane
     /// (`PaneCapture`, ⌃⌘S) is a picture the app made of itself rather than
-    /// one off a clipboard, so it says so in its name — and is otherwise the
-    /// same kind of file, kept on the same clock and swept by the same prune.
-    static let prefixes = ["paste", PaneCapture.stemPrefix]
+    /// one off a clipboard, and a copied one is on its way to a clipboard
+    /// rather than off it, so each says so in its name — and both are
+    /// otherwise the same kind of file, kept on the same clock and swept by
+    /// the same prune.
+    static let prefixes = ["paste", PaneCapture.stemPrefix, copiedPrefix]
 
     /// `paste-YYYYMMDD-HHMMSS`, in this Mac's time zone: the name is for the
     /// person looking in the directory, and the file's own date is the record.
-    /// `prefix` is `capture` for a captured pane.
+    /// `prefix` is `capture` for a captured pane and `copy` for a picture
+    /// copied in a web pane.
     static func stem(at date: Date, prefix: String = "paste", timeZone: TimeZone = .current) -> String {
         let format = DateFormatter()
         format.locale = Locale(identifier: "en_US_POSIX")

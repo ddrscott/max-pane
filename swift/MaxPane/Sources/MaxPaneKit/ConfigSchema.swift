@@ -258,7 +258,7 @@ public struct ConfigField {
             unsigned("pasteImageMaxMb", \.pasteImageMaxMb, .terminals, 0...100, appliesLive: true,
                      "A pasted image bigger than this many MB is refused. 0 refuses nothing."),
             bool("pasteHistory", \.pasteHistory, .terminals, appliesLive: true,
-                 "Keep what was pasted into and copied out of terminals, for ⇧⌘H. Never the system clipboard at large, a password manager's copy, or a private lane. Off, nothing is kept and what was kept is deleted."),
+                 "Keep what this app's panes pasted and copied — a terminal's, and a ⌘C in a web pane — for ⇧⌘H. Never the system clipboard at large, what a page copies for you, a password manager's copy, or a private lane. Off, nothing is kept and what was kept is deleted."),
             unsigned("pasteHistoryKeep", \.pasteHistoryKeep, .terminals, 0...10_000, appliesLive: true,
                      "How many paste history entries are kept. 0 keeps none."),
             unsigned("pasteHistoryDays", \.pasteHistoryDays, .terminals, 0...3650, appliesLive: true,

@@ -1,5 +1,5 @@
 //! Paste history: what decides whether a piece of text may be kept, and in
-//! what form (ADR-0031).
+//! what form (ADR-0031, widened to web panes by ADR-0041).
 //!
 //! Everything here is pure. The table is `clip` (migration 0016); the one
 //! writer is [`crate::ledger::Ledger::record_clip`], and it goes through
@@ -25,7 +25,7 @@
 //! is kept as `expo•••`. What else was in it goes too, since deciding which
 //! half of a line is safe is exactly the judgment this module does not have.
 
-use crate::model::ClipKind;
+use crate::model::{ClipKind, ClipSource};
 
 /// Nothing bigger is kept. A paste that size is a file, and a history of files
 /// is a second copy of somebody's disk.
@@ -189,6 +189,23 @@ pub(crate) fn kind_from(s: &str) -> ClipKind {
         ClipKind::Copy
     } else {
         ClipKind::Paste
+    }
+}
+
+pub(crate) fn source_str(source: ClipSource) -> &'static str {
+    match source {
+        ClipSource::Pty => "pty",
+        ClipSource::Web => "web",
+    }
+}
+
+/// Anything that is not `web` is a terminal's, which is what every row
+/// written before migration 0018 was.
+pub(crate) fn source_from(s: &str) -> ClipSource {
+    if s == "web" {
+        ClipSource::Web
+    } else {
+        ClipSource::Pty
     }
 }
 

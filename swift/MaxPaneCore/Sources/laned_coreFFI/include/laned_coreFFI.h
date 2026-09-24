@@ -566,7 +566,7 @@ RustBuffer uniffi_laned_core_fn_method_core_recents(uint64_t ptr, uint32_t limit
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECORD_CLIP
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECORD_CLIP
-int8_t uniffi_laned_core_fn_method_core_record_clip(uint64_t ptr, RustBuffer pane_id, RustBuffer kind, RustBuffer text, uint32_t keep, uint32_t days, RustCallStatus *_Nonnull out_status
+int8_t uniffi_laned_core_fn_method_core_record_clip(uint64_t ptr, RustBuffer pane_id, RustBuffer kind, RustBuffer source, RustBuffer text, uint32_t keep, uint32_t days, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECORD_VISIT

@@ -179,19 +179,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Paste is the exception, and is targeted here: a terminal pane needs
         // its own paste rather than the emulator's. `pasteFromEditMenu(_:)`
         // says why, and still ends at `paste:` for every other kind of pane.
+        // Copy is targeted here for the same reason and to the same end: a
+        // web pane performs WebKit's copy itself so that paste history can
+        // keep what was copied (ADR-0041), and everything else still ends at
+        // `copy:`.
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: "Edit")
         for (title, selector, key) in [
             ("Cut", #selector(NSText.cut(_:)), "x"),
-            ("Copy", #selector(NSText.copy(_:)), "c"),
+            ("Copy", #selector(AppDelegate.copyFromEditMenu(_:)), "c"),
             ("Paste", #selector(AppDelegate.pasteFromEditMenu(_:)), "v"),
             ("Select All", #selector(NSText.selectAll(_:)), "a"),
         ] as [(String, Selector, String)] {
             let item = NSMenuItem(title: title, action: selector, keyEquivalent: key)
-            item.target = selector == #selector(AppDelegate.pasteFromEditMenu(_:)) ? self : nil
+            item.target = [#selector(AppDelegate.pasteFromEditMenu(_:)),
+                           #selector(AppDelegate.copyFromEditMenu(_:))].contains(selector) ? self : nil
             editMenu.addItem(item)
             // Copy with Styles and Copy Mode sit under Copy.
-            if selector == #selector(NSText.copy(_:)) {
+            if selector == #selector(AppDelegate.copyFromEditMenu(_:)) {
                 for command in Command.allCases where command.followsCopy {
                     editMenu.addItem(menuItem(for: command))
                 }
@@ -272,6 +277,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let toTerminal = #selector(TerminalPasteTarget.pasteIntoTerminalPane(_:))
         if NSApp.sendAction(toTerminal, to: nil, from: sender) { return }
         NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: sender)
+    }
+
+    /// Edit › Copy. A web pane whose *page* has the keyboard copies through
+    /// the pane, which keeps what was copied (ADR-0041); the pane declines
+    /// when the keyboard is in its address field, and everything else — a
+    /// terminal, a text field, a picker — gets the `copy:` it always got.
+    ///
+    /// ⌘C rarely arrives here: a focused web view claims it in
+    /// `performKeyEquivalent` before the menu is asked, which is why
+    /// `WebPaneContainer` takes it there too.
+    @objc private func copyFromEditMenu(_ sender: Any?) {
+        let toWeb = #selector(WebCopyTarget.copyFromWebPane(_:))
+        if NSApp.sendAction(toWeb, to: nil, from: sender) { return }
+        NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: sender)
     }
 
     @objc private func runCommand(_ sender: NSMenuItem) {

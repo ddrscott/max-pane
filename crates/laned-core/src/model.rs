@@ -57,8 +57,19 @@ pub struct SiteGrant {
 pub enum ClipKind {
     /// Sent to a terminal's prompt by a paste.
     Paste,
-    /// Copied out of a terminal: ⌘C, copy-on-select, or a program's OSC 52.
+    /// Copied out of a pane: a terminal's ⌘C, copy-on-select or OSC 52, or a
+    /// web pane's ⌘C (ADR-0041).
     Copy,
+}
+
+/// Which kind of pane a paste-history entry came from (ADR-0041). Both are
+/// panes of this app; neither is the clipboard at large.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ClipSource {
+    /// A terminal pane: everything ADR-0031 records.
+    Pty,
+    /// A web pane, where the only entry is a copy the app itself performed.
+    Web,
 }
 
 /// One row of paste history, as the picker lists it.
@@ -66,6 +77,8 @@ pub enum ClipKind {
 pub struct ClipEntry {
     pub id: i64,
     pub kind: ClipKind,
+    /// The kind of pane it happened in, which is the row's `web` / `pty` chip.
+    pub source: ClipSource,
     /// The text, or four characters and `•••` when `redacted`.
     pub content: String,
     /// The text looked like a secret and was never stored. Such a row can be

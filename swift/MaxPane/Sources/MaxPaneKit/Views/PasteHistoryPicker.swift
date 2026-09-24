@@ -52,6 +52,13 @@ enum PasteHistory {
         return Array(lit)
     }
 
+    /// `WEB` or `PTY`: which kind of pane this went through (ADR-0041). Grey
+    /// and on every row, because a list where only some rows are labelled
+    /// reads as a list where the label means trouble.
+    static func chipText(_ entry: ClipEntry) -> String {
+        entry.source == .web ? "WEB" : "PTY"
+    }
+
     /// `pasted · 3 lines · 1.2 KB · 5m ago`. The counts are the original's,
     /// for a redacted entry too.
     static func detail(_ entry: ClipEntry, now: Date = Date()) -> String {
@@ -72,7 +79,8 @@ enum PasteHistory {
     }
 }
 
-/// ⇧⌘H: what was pasted into and copied out of terminals lately.
+/// ⇧⌘H: what this app's panes pasted and copied lately — a terminal's pastes
+/// and copies, and a web pane's own ⌘C (ADR-0041).
 ///
 /// ↩ pastes the row into the terminal that had the keyboard, through the
 /// pane's own door: untidied (it is kept as it was sent) and asked about in
@@ -224,9 +232,9 @@ final class PasteHistoryController: PaletteController {
         } else if !live.pasteHistory || live.pasteHistoryKeep == 0 {
             summary = "paste history is off · paste_history in settings"
         } else if all.isEmpty {
-            summary = "nothing yet · what you paste into or copy out of a terminal is listed here"
+            summary = "nothing yet · what a pane of this app pasted or copied is listed here"
         } else if query.isEmpty {
-            summary = "\(all.count) kept · newest first · terminals only, never the clipboard at large"
+            summary = "\(all.count) kept · newest first · this app's panes, never the clipboard at large"
         } else {
             summary = "\(visible.count) of \(all.count)"
         }
@@ -235,7 +243,8 @@ final class PasteHistoryController: PaletteController {
     }
 }
 
-/// One entry: an arrow for which way it went, the line, and the rest under it.
+/// One entry: an arrow for which way it went, the line, a chip for the kind of
+/// pane it happened in, and the rest under it.
 final class PasteHistoryRow: NSTableCellView {
     init(entry: ClipEntry, query: String, now: Date = Date()) {
         super.init(frame: .zero)
@@ -251,8 +260,11 @@ final class PasteHistoryRow: NSTableCellView {
         line.lineBreakMode = .byTruncatingTail
         let detail = PaletteStyle.label(PasteHistory.detail(entry, now: now), Theme.mono(10), Theme.dimText)
         detail.lineBreakMode = .byTruncatingTail
+        // Grey, like the arrow: which pane it happened in is a fact about the
+        // row and never a state (ADR-0015).
+        let chip = PaletteStyle.chip(text: PasteHistory.chipText(entry), colour: Theme.dimText)
 
-        for v in [glyph, line, detail] { addSubview(v) }
+        for v in [glyph, line, detail, chip] { addSubview(v) }
         NSLayoutConstraint.activate([
             glyph.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
             glyph.centerYAnchor.constraint(equalTo: line.centerYAnchor),
@@ -260,11 +272,14 @@ final class PasteHistoryRow: NSTableCellView {
 
             line.topAnchor.constraint(equalTo: topAnchor, constant: 6),
             line.leadingAnchor.constraint(equalTo: glyph.trailingAnchor, constant: 8),
-            line.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -18),
+            line.trailingAnchor.constraint(lessThanOrEqualTo: chip.leadingAnchor, constant: -8),
+
+            chip.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -18),
+            chip.centerYAnchor.constraint(equalTo: line.centerYAnchor),
 
             detail.topAnchor.constraint(equalTo: line.bottomAnchor, constant: 2),
             detail.leadingAnchor.constraint(equalTo: line.leadingAnchor),
-            detail.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -18),
+            detail.trailingAnchor.constraint(lessThanOrEqualTo: chip.leadingAnchor, constant: -8),
         ])
         line.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
