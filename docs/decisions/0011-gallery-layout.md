@@ -301,3 +301,51 @@ reading three lanes in turn was three double clicks.
   while the new one grows from its own, on `Motion.lane`, and a repeat mid-flight
   turns round from where the tiles are drawn — the same rule as a double click
   during an expansion, with nothing added for it.
+
+## Amended 2026-09-24: anything that focuses another lane moves the expansion
+
+The owner: *"anytime we're using a shortcut to focus on a pane/lane while we're
+in expanded mode, we should compress the current and animate to the newly
+focused lane so that we don't need to double click the selected lane to read
+its contents."* The amendment above gave ⌘[ / ⌘] that behaviour; every other
+way of landing on a lane still left the expansion behind, and since 0.8.0 that
+is a long list.
+
+- **While a tile is expanded, anything that lands focus on a different lane
+  expands that lane instead**, and the one that was expanded compresses back
+  into its slot. While nothing is expanded, nothing changes.
+- **One rule at one place.** `StripViewController.ensureVisible(_:)` is where
+  `focus(_:)` ends and where focus arriving through the ledger ends too
+  (`select(laneId:paneId:)`, and `apply(_:)`'s "the ledger says this pane is
+  focused and the view does not have it" branch). So ⌘J / ⇧⌘J, ⌥⌘J's list, ⌘P,
+  ⌘O, ⌘E, an `[[apps]]` chord, `maxpane attach` and `maxpane app`, a sidebar
+  row, the status bar's BLOCKED count and a search hit are covered by the same
+  four lines, with no case per command.
+- **A single click on another tile moves it too.** The screen is already given
+  over to one tile, so taking it is no loss, and reaching a tile you cannot
+  read is the same complaint. It needs no code of its own: the click path ends
+  at `focus`. With nothing expanded a click still only focuses, and the double
+  click is still what expands.
+- **Focus is not moved by the rule, only followed.** The pane focused within
+  the newly expanded lane keeps the keyboard, and a focus change *inside* the
+  expanded lane — a split lane's other pane — leaves the tile alone, as does
+  focus landing on the lane already expanded: no animation, no flicker.
+- **A docked lane is exempt**, and the guard is `ensureVisible`'s existing
+  first line. The purpose of docking is *"to pin one or more lanes in expanded
+  mode so I can keep them readable as I navigate some other lanes
+  temporarily"*; without the exemption ⌥⌘[ / ⌥⌘] into a dock would yank the
+  expansion onto the one lane he pinned and the next ⌘J would yank it off
+  again, churning precisely the lane that exists not to be churned
+  (`docs/critiques/docking.md` § 3). This narrows *Docked lanes are ordinary
+  tiles* by one clause, and for the same reason ⌘[ / ⌘] now walk `stripLanes`
+  and step over a dock, exactly as they do on the strip — stepping onto a tile
+  that cannot take the expansion would move the ring off the only readable
+  thing on screen.
+- **`cycleExpandedTile` is now `moveFocusAcrossTiles`** and moves focus only;
+  the rule above does the expanding. It survives for the one thing the plain
+  walk does not know: the ⇧ pair steps between panes *within* a split lane and
+  crosses to the neighbour only at the top or bottom edge.
+- **Motion**: the existing one. `layoutGallery(animated:)` starts every tile
+  from its presentation-layer frame, so both tiles move at once and a repeat
+  mid-flight turns round from where they are drawn. Nothing new, nothing
+  instant.

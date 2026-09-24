@@ -3,10 +3,15 @@ import Testing
 @testable import MaxPaneKit
 
 /// ⌘[ ⌘] and ⇧⌘[ ⇧⌘] with a gallery tile expanded: the expansion moves to
-/// the neighbour (ADR-0011, amended 2026-09-23).
+/// the neighbour (ADR-0011, amended 2026-09-23 and 2026-09-24).
+///
+/// Since the general rule landed, the keys only move *focus*
+/// (`moveFocusAcrossTiles`) and `ensureVisible` moves the expansion after it —
+/// so what these tests pin is the walk: where it goes, where it stops, the
+/// split lane's stack, and the dock it steps over.
 ///
 /// On the `MaximizeRig` strip — three lanes, the middle one split — put up as
-/// a gallery. Docking the right lane puts a dock in the cycle at its ordinal.
+/// a gallery.
 @Suite("gallery cycle", .serialized)
 @MainActor
 struct GalleryCycleTests {
@@ -87,27 +92,43 @@ struct GalleryCycleTests {
         }
     }
 
-    @Test("a docked lane is in the cycle at its place in the order")
-    func dockInTheCycle() async throws {
+    /// The cycle walks `stripLanes`, which is the strip's own order.
+    ///
+    /// A docked lane cannot take the expansion (`docs/critiques/docking.md`
+    /// § 3, and `GalleryFocusExpansionTests`), so stepping onto one would move
+    /// the ring off the tile being read and leave nothing readable behind it —
+    /// the complaint this whole rule exists to fix. ⌥⌘[ / ⌥⌘] remain the way
+    /// in, and going in leaves the expansion where it is.
+    @Test("the cycle steps over a docked lane, exactly as ⌘[ / ⌘] do on the strip")
+    func dockIsNotInTheCycle() async throws {
         try await MaximizeRig.with { rig in
             try rig.store.dockLane(rig.rightLane, side: .right, mode: .inset)
-            try rig.store.focusPane(rig.splitTop)
+            try rig.store.focusPane(rig.left)
             await rig.settle()
             #expect(rig.strip.setLayout(.gallery))
             await rig.settle()
-            rig.strip.expandTile(laneId: rig.splitLane, paneId: rig.splitTop)
+            rig.strip.expandTile(laneId: rig.leftLane, paneId: rig.left)
             await rig.settle()
 
-            // On the strip ⌘] never lands in a dock; in the gallery the dock
-            // is a tile like any other.
+            // Left → the split lane, and no further: the dock is not a stop,
+            // and the split lane is now the end of the walk.
             rig.strip.moveFocus(.right)
-            #expect(rig.strip.expandedLaneId == rig.rightLane)
-            #expect(rig.store.state.focusedPaneId == rig.right)
-            // And from the dock, back — the strip's own rule (most recently
-            // focused lane) does not apply while a tile is expanded.
-            rig.strip.moveFocus(.left)
             #expect(rig.strip.expandedLaneId == rig.splitLane)
             #expect(rig.store.state.focusedPaneId == rig.splitTop)
+            rig.strip.moveFocus(.right)
+            #expect(rig.strip.expandedLaneId == rig.splitLane)
+            #expect(rig.store.state.focusedPaneId == rig.splitTop)
+
+            // The ⇧ pair still reads the stack, and still stops at the dock.
+            rig.strip.moveFocus(.down)
+            #expect(rig.store.state.focusedPaneId == rig.splitBottom)
+            rig.strip.moveFocus(.down)
+            #expect(rig.strip.expandedLaneId == rig.splitLane)
+            #expect(rig.store.state.focusedPaneId == rig.splitBottom)
+
+            rig.strip.moveFocus(.left)
+            #expect(rig.strip.expandedLaneId == rig.leftLane)
+            #expect(rig.store.state.focusedPaneId == rig.left)
         }
     }
 

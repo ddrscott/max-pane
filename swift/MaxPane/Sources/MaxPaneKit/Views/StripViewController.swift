@@ -468,53 +468,69 @@ public final class StripViewController: NSViewController {
         clickMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDown, .leftMouseUp]
         ) { [weak self] event in
-            guard let self, let window = self.view.window, event.window === window else { return event }
-            if event.type == .leftMouseUp {
-                guard self.swallowNextMouseUp else { return event }
-                self.swallowNextMouseUp = false
-                return nil
-            }
-            let inStrip = self.view.convert(event.locationInWindow, from: nil)
-            guard self.view.bounds.contains(inStrip) else { return event }
-            if let paneId = self.pane(at: event.locationInWindow) {
-                // A double click in the gallery expands a tile in place, over its
-                // own spot — Relay TTY's behaviour, which the owner asked for
-                // instead of a trip to the strip — and a double click on an
-                // expanded tile's header puts it back. Inside an expanded tile's
-                // pane the double click is the program's again: that tile is big
-                // enough to read, so selecting a word in it is something you want.
-                // The first click went through and focused the pane either way.
-                // Nor over a maximized pane, which covers the gallery and is the
-                // largest a pane gets: every click in it is the program's.
-                if self.isGallery, event.clickCount >= 2,
-                   !self.maximizer.contains(windowPoint: event.locationInWindow),
-                   let laneId = self.store.lane(containing: paneId)?.id {
-                    let isExpanded = laneId == self.expandedLaneId
-                    if !isExpanded || !self.isPaneContent(at: event.locationInWindow, laneId: laneId) {
-                        self.swallowNextMouseUp = true
-                        if isExpanded {
-                            self.collapseExpandedTile()
-                        } else {
-                            self.expandTile(laneId: laneId, paneId: paneId)
-                        }
-                        return nil
+            self?.handleClick(event) ?? event
+        }
+    }
+
+    /// The monitor's whole body, as a method so a test can post a click at it
+    /// without going through `NSApp`. Returns the event to let it through, nil
+    /// to swallow it.
+    func handleClick(_ event: NSEvent) -> NSEvent? {
+        guard let window = view.window, event.window === window else { return event }
+        if event.type == .leftMouseUp {
+            guard swallowNextMouseUp else { return event }
+            swallowNextMouseUp = false
+            return nil
+        }
+        let inStrip = view.convert(event.locationInWindow, from: nil)
+        guard view.bounds.contains(inStrip) else { return event }
+        if let paneId = pane(at: event.locationInWindow) {
+            // A double click in the gallery expands a tile in place, over its
+            // own spot — Relay TTY's behaviour, which the owner asked for
+            // instead of a trip to the strip — and a double click on an
+            // expanded tile's header puts it back. Inside an expanded tile's
+            // pane the double click is the program's again: that tile is big
+            // enough to read, so selecting a word in it is something you want.
+            // The first click went through and focused the pane either way.
+            // Nor over a maximized pane, which covers the gallery and is the
+            // largest a pane gets: every click in it is the program's.
+            if isGallery, event.clickCount >= 2,
+               !maximizer.contains(windowPoint: event.locationInWindow),
+               let laneId = store.lane(containing: paneId)?.id {
+                let isExpanded = laneId == expandedLaneId
+                if !isExpanded || !isPaneContent(at: event.locationInWindow, laneId: laneId) {
+                    swallowNextMouseUp = true
+                    if isExpanded {
+                        collapseExpandedTile()
+                    } else {
+                        expandTile(laneId: laneId, paneId: paneId)
                     }
-                }
-                // Decided before the focus that would move it.
-                let focusOnly = self.clickOnlyFocuses(paneId: paneId)
-                self.focus(paneId)
-                if focusOnly {
-                    self.swallowNextMouseUp = true
                     return nil
                 }
-            } else if self.isGallery, self.expandedLaneId != nil {
-                // The gallery itself, between the tiles: put the expanded one
-                // back. Relay TTY's rule too, and the only click here that means
-                // nothing else.
-                self.collapseExpandedTile()
             }
-            return event
+            // Decided before the focus that would move it.
+            //
+            // **A single click on another tile while one is expanded moves the
+            // expansion**, and it needs no line of its own: `focus` ends at
+            // `ensureVisible`, which is where that rule lives. The owner asked
+            // for it and it is right — the screen is already given over to one
+            // tile, so taking it is no loss, and reaching a tile you cannot
+            // read is the same complaint as ⌘J's. With **nothing** expanded the
+            // click only focuses, because the rule does nothing then, and the
+            // double click above still expands.
+            let focusOnly = clickOnlyFocuses(paneId: paneId)
+            focus(paneId)
+            if focusOnly {
+                swallowNextMouseUp = true
+                return nil
+            }
+        } else if isGallery, expandedLaneId != nil {
+            // The gallery itself, between the tiles: put the expanded one
+            // back. Relay TTY's rule too, and the only click here that means
+            // nothing else.
+            collapseExpandedTile()
         }
+        return event
     }
 
     /// Whether a press on `paneId` should focus its lane and go no further.
@@ -1458,6 +1474,47 @@ public final class StripViewController: NSViewController {
         guard expandedLaneId != nil else { return }
         expandedLaneId = nil
         if isGallery { layoutGallery(animated: true) }
+    }
+
+    /// **While a tile is expanded, anything that lands focus on a different
+    /// lane expands that lane instead, and the one that was expanded compresses
+    /// back into its slot.** While nothing is expanded, nothing changes.
+    ///
+    /// The owner: *"anytime we're using a shortcut to focus on a pane/lane
+    /// while we're in expanded mode, we should compress the current and animate
+    /// to the newly focused lane so that we don't need to double click the
+    /// selected lane to read its contents."* An expanded tile is the gallery's
+    /// only readable state; a key that moved the ring to a thumbnail and left
+    /// the big tile where it was needed a double click to finish the job.
+    ///
+    /// One rule at one place, not a case per command. `ensureVisible` is that
+    /// place: `focus(_:)` ends there, and so does every focus that arrives
+    /// through the ledger — `select(laneId:paneId:)` and `apply(_:)`'s
+    /// "the ledger says this pane is focused and the view does not have it"
+    /// branch. So ⌘J, ⌥⌘J's list, ⌘P, ⌘O, ⌘E, an `[[apps]]` chord, `maxpane
+    /// attach`, a sidebar row, the BLOCKED count and a search hit all come
+    /// through here already, and a single click on another tile does too.
+    ///
+    /// Focus is not touched: it has already landed, on the pane the caller
+    /// chose, so the pane focused within the newly expanded lane keeps the
+    /// keyboard. Nothing happens for the lane already expanded, which is also
+    /// what makes a focus change *inside* it — a split lane's other pane — no
+    /// animation and no flicker.
+    ///
+    /// **A docked lane is exempt**, and the guard that does it is
+    /// `ensureVisible`'s first line. The purpose of docking is *"to pin one or
+    /// more lanes in expanded mode so I can keep them readable as I navigate
+    /// some other lanes temporarily"*; a pinned lane does not want expanding,
+    /// and without the exemption ⌥⌘[ / ⌥⌘] into a dock would yank the
+    /// expansion onto the one lane he pinned and the next ⌘J would yank it off
+    /// again — churning precisely the lane that exists not to be churned
+    /// (`docs/critiques/docking.md` § 3).
+    private func moveExpansion(toFocused laneId: String) {
+        guard isGallery, let expanded = expandedLaneId, expanded != laneId,
+              store.lane(laneId) != nil
+        else { return }
+        expandedLaneId = laneId
+        layoutGallery(animated: true)
     }
 
     /// Ease a tile from where it was drawn to where it now is.
@@ -3275,7 +3332,7 @@ public final class StripViewController: NSViewController {
     public func moveFocus(_ direction: FocusDirection) {
         let state = store.state
         if isGallery, let expanded = expandedLaneId,
-           cycleExpandedTile(from: expanded, direction: direction) {
+           moveFocusAcrossTiles(from: expanded, direction: direction) {
             return
         }
         // ⌘[ / ⌘] walk the strip only. The owner asked for that directly, and
@@ -3318,35 +3375,37 @@ public final class StripViewController: NSViewController {
         }
     }
 
-    /// The focus keys while a gallery tile is expanded: they move the
-    /// expansion, not just the ring.
+    /// The focus keys while a gallery tile is expanded, and the one thing they
+    /// know that the plain strip walk does not.
     ///
-    /// The owner: *"when in gallery mode and a pane is expanded, using cmd-{
-    /// and cmd-} should auto contract and expand the next/previous lane so we
-    /// can quickly cycle through them with shortcuts."* An expanded tile is
-    /// the lane you are reading, and the next thing to read is its neighbour;
-    /// a key that moved the ring to a thumbnail and left the big tile where it
-    /// was would need a double click to finish the job.
+    /// Moving the expansion is no longer this function's job — `ensureVisible`
+    /// does that for every focus path, this one included
+    /// (`moveExpansion(toFocused:)`). What is left is the walk itself, and it
+    /// differs from `moveFocus`'s in exactly one way, which is why it survives:
     ///
-    /// - ⌘[ / ⌘] put the tile back and expand the previous / next lane in the
-    ///   gallery's order, which is the strip's with the docks at their place in
-    ///   it (a docked lane is an ordinary tile here, ADR-0011). Focus goes to
-    ///   the new tile's first pane.
-    /// - ⇧⌘[ / ⇧⌘] do the same, except inside a split lane, where they keep
-    ///   walking its stack until the edge: the bottom pane's ⇧⌘] and the top
+    /// - ⌘[ / ⌘] step to the previous / next lane. The ends stop; no wrap, a
+    ///   key that jumped from the last lane to the first is the one gesture in
+    ///   the gallery that would lose where you are.
+    /// - ⇧⌘[ / ⇧⌘] do the same, **except inside a split lane, where they keep
+    ///   walking its stack until the edge**: the bottom pane's ⇧⌘] and the top
     ///   pane's ⇧⌘[ cross into the neighbour, landing on the pane nearest the
     ///   edge they came through. So the ⇧ pair reads every pane in order, and
-    ///   on a strip of single-pane lanes is the plain pair exactly.
-    /// - The ends stop. No wrap: a key that jumps from the last lane to the
-    ///   first is the one gesture in the gallery that would lose where you are.
+    ///   on a strip of single-pane lanes is the plain pair exactly. `moveFocus`
+    ///   stops at the end of a stack instead, which is right on the strip and
+    ///   wrong here, where the next thing to read is the neighbouring tile.
     ///
-    /// Both tiles move at once — the old one shrinks into its slot as the new
-    /// one grows from its own — because `layoutGallery(animated:)` starts every
-    /// tile from where it is drawn, and a repeat mid-flight turns round from
-    /// there for the same reason. Returns false when the key is not this
-    /// gesture, and the ordinary walk takes it.
-    private func cycleExpandedTile(from expanded: String, direction: FocusDirection) -> Bool {
-        let lanes = store.state.lanes
+    /// **`stripLanes`, so the walk skips a dock**, which is the strip's own
+    /// order and the strip's own rule. A docked lane cannot take the expansion
+    /// (see `moveExpansion(toFocused:)`), so stepping onto one would be a
+    /// keypress that moved the ring off the tile being read and left nothing
+    /// readable behind it — the complaint this whole rule exists to fix.
+    /// ⌥⌘[ / ⌥⌘] remain the way into a dock and back out, and going in leaves
+    /// the expansion where it was.
+    ///
+    /// Returns false when the key is not this gesture, and the ordinary walk
+    /// takes it.
+    private func moveFocusAcrossTiles(from expanded: String, direction: FocusDirection) -> Bool {
+        let lanes = store.stripLanes
         guard let index = lanes.firstIndex(where: { $0.id == expanded }) else { return false }
         let lane = lanes[index]
         let focusedInLane = store.state.focusedPaneId.flatMap { id in lane.panes.firstIndex { $0.id == id } }
@@ -3369,7 +3428,10 @@ public final class StripViewController: NSViewController {
         case .up: landing = target.panes.last
         default: landing = target.panes.first
         }
-        expandTile(laneId: target.id, paneId: landing?.id)
+        guard let landing else { return true }
+        // Focus alone: `ensureVisible` moves the expansion after it, both tiles
+        // at once, on the lane's clock.
+        focus(landing.id)
         return true
     }
 
@@ -3430,10 +3492,15 @@ public final class StripViewController: NSViewController {
     private func ensureVisible(_ laneId: String) {
         // Focusing a dock moves nothing: it is already at the wall, and
         // scrolling the strip to "reach" it would move every lane the user was
-        // reading for no reason they could see.
+        // reading for no reason they could see. **In the gallery this same
+        // line is the docked-lane exemption** — see `moveExpansion(toFocused:)`.
         guard store.lane(laneId)?.dock == nil else { return }
-        // Every tile is already whole on screen.
-        guard !isGallery else { return }
+        // Every tile is already whole on screen, so there is nothing to scroll
+        // — but the expansion follows the focus that just landed.
+        guard !isGallery else {
+            moveExpansion(toFocused: laneId)
+            return
+        }
         let window = viewport
         guard let target = StripReveal.focused(
             from: window.offset, to: laneId,

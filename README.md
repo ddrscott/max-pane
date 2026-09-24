@@ -2123,16 +2123,32 @@ again, since that tile is big enough to read. The session browser follows the
 same gestures while the gallery is up — click to focus, double-click to expand —
 and keeps its usual behaviour on the strip. ⌘G is still the way out.
 
-**With a tile expanded, ⌘[ and ⌘] move the expansion**, not just the focus
-ring: the tile shrinks back into its slot as the previous or next lane's tile
-grows out of its own, both at once, and the keyboard goes to the new tile's
-first pane. Docked lanes are tiles here, so they are in the cycle at their place
-in the order. The ends stop — ⌘] on the last lane does nothing and the tile
-stays; there is no wrap. ⇧⌘[ and ⇧⌘] cycle too, with one difference: inside a
-split lane they still walk its stack, and cross to the neighbour only from the
-top or bottom pane, so the ⇧ pair reads every pane in order and on single-pane
-lanes is the plain pair exactly. Nothing expanded, and both pairs are the
-strip's usual focus keys.
+**With a tile expanded, anything that focuses another lane moves the
+expansion** — not just the focus ring, and not just ⌘[ and ⌘]. The tile
+shrinks back into its slot as the newly focused lane's tile grows out of its
+own, both at once, and the pane that was focused there keeps the keyboard. ⌘J
+and ⇧⌘J, ⌥⌘J's list, ⌘P, ⌘O, ⌘E, an `[[apps]]` chord, `maxpane attach`, a
+sidebar row, the status bar's BLOCKED count and a search hit all land you on a
+lane you can read, instead of on a thumbnail you then have to double-click.
+**A single click on another tile moves it too**, since the screen is already
+given over to one tile; with nothing expanded a click still only focuses, and
+the double click is still what expands.
+
+Four things do not move it. **⌘G**, which leaves the gallery. **A click on the
+gallery background**, which puts the expansion back, as ever. **A focus change
+inside the expanded lane** — a split lane's other pane — which leaves the tile
+exactly where it is. And **focus landing on a docked lane**: a docked lane is
+pinned to stay readable while you navigate elsewhere, so expanding it would
+churn the one lane that exists not to be churned. ⌥⌘[ / ⌥⌘] into a dock move
+the keyboard and leave the expansion alone.
+
+⌘[ and ⌘] step the expansion to the previous or next lane, over any dock, the
+same lanes those keys walk on the strip. The ends stop — ⌘] on the last lane
+does nothing and the tile stays; there is no wrap. ⇧⌘[ and ⇧⌘] step too, with
+one difference: inside a split lane they still walk its stack, and cross to the
+neighbour only from the top or bottom pane, so the ⇧ pair reads every pane in
+order and on single-pane lanes is the plain pair exactly. Nothing expanded, and
+both pairs are the strip's usual focus keys.
 
 Unexpanded tiles do not resize anything: no width handle and no seams to drag,
 and no pane grips, which would be four points square at a tile's scale. **An
@@ -2148,7 +2164,8 @@ The ⋯ menu still works.
 A few things behave the way the rest of the strip made them:
 
 - **Docked lanes are ordinary tiles**, at their place in the order, and go back to
-  their edge when the gallery closes.
+  their edge when the gallery closes — except that focusing one never moves the
+  expansion onto it, and ⌘[ / ⌘] step over it.
 - **Gather has no key.** It narrows the strip, and the gallery, to one project,
   and it was too easy to land in without meaning to — one keystroke, or a double
   click on a lane header. It is in the View menu, and `keys` will bind it for

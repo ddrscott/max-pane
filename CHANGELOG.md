@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- In the gallery with a tile expanded, anything that focuses another lane now moves the expansion to it — ⌘J, ⌘P, ⌘O, ⌘E, an app chord, a sidebar row, a search hit, a single click on another tile — so a key that selects a lane also leaves it readable. ⌘G, a click on the background, a focus change inside the expanded lane, and focus landing on a docked lane leave it where it is; ⌘[ / ⌘] now step over a dock, as they do on the strip
+
 ## [0.8.0] - 2026-09-24
 
 ### Added
