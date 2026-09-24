@@ -192,6 +192,17 @@ final class RelayAttachmentAdapter: RelayAttachment {
         session?.sendResize(cols: cols, rows: rows)
     }
 
+    /// Rename Lane on a terminal lane. Not held while the wire is down: the
+    /// ledger already has the name, and a rename typed at a dead pane is
+    /// not something to surprise the session with on reconnect.
+    func setTitle(_ title: String) {
+        guard let session, isAttached else {
+            Log.warn("\(label): not attached; the name is in the ledger but not on the session")
+            return
+        }
+        session.sendSetTitle(title)
+    }
+
     // MARK: - connection
 
     private func openSession() {

@@ -198,8 +198,9 @@ struct AdvancedPasteSheetTests {
         // A web pane asks `claimed` before it lets a page see a ⌘-chord.
         #expect(!Keymap.defaults.claimed.contains(chord), "the page gets ⌥⇧⌘V")
         #expect(Keymap.defaults.claimed.contains(KeyChord(key: "v", modifiers: [.command, .option])))
-        // With ⌥⌘C and ⇧⌘C (ADR-0033): terminal-only, on chords a browser uses.
-        #expect(Command.allCases.filter(\.yieldsToPage) == [.copyWithStyles, .copyMode, command])
+        // With ⌥⌘C and ⇧⌘C (ADR-0033) and ⌘K (ADR-0039): terminal-only, on
+        // chords a browser or a page uses.
+        #expect(Command.allCases.filter(\.yieldsToPage) == [.copyWithStyles, .copyMode, command, .clearScrollback])
     }
 
     @Test("it opens over the pane with the clipboard in it, nothing sent, every toggle off")

@@ -128,6 +128,14 @@ public final class RelayServers {
         return endpoints[server].map { RemoteSpawner(name: server, endpoint: $0) }
     }
 
+    /// What ends a session on `server`: `SIGTERM` from this Mac for `nil`, a
+    /// `DELETE` over the named server's endpoint, or nil for a name the file
+    /// does not configure. See `SessionEnding`.
+    func ender(for server: String?) -> SessionEnding? {
+        guard let server else { return LocalSessionEnder() }
+        return endpoints[server].map { RemoteSessionEnder(name: server, endpoint: $0) }
+    }
+
     /// The adapter a pane attaches through: the WebSocket transport for a
     /// session on a named server, the Unix socket for a local one. A pane
     /// naming a server this app does not know gets the adapter anyway, so

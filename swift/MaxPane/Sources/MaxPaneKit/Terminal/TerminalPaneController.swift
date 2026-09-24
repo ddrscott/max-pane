@@ -50,9 +50,15 @@ protocol RelayAttachment: AnyObject {
     /// to the session, the phone included, which is why it is debounced to the
     /// size the user settles on. See ADR-0007.
     func claimSize(cols: Int, rows: Int)
+    /// Rename the session for every client: `SET_TITLE` (0x24), which pins
+    /// `title` over the program's own until an empty one unpins it. Only
+    /// from the user's Rename Lane, which is the one place a name is typed.
+    func setTitle(_ title: String)
 }
 
 extension RelayAttachment {
+    /// A stub wire has no session to name.
+    func setTitle(_ title: String) {}
     var onInputDropped: ((Int) -> Void)? { get { nil } set {} }
     var onClipboard: ((String) -> Void)? { get { nil } set {} }
     func serverStateChanged(_ state: ServerState) {}
@@ -595,6 +601,26 @@ final class TerminalPaneController: NSObject, PaneController {
     /// The session this pane is attached to, for the strip to find every
     /// pane on one server.
     var sessionKey: SessionKey? { pane.sessionKey }
+
+    /// ⌘K. Ghostty's `clear_screen`: the scrollback goes, and so does every
+    /// row above the cursor, so the last prompt is the first line. Local
+    /// only — relay's ring is untouched, so the phone keeps its scrollback
+    /// and a fresh attach at the next launch replays it. Ghostty declines
+    /// on the alternate screen, where the program owns every cell. The
+    /// search index keeps what it saw, as it does across a `clear`.
+    func clearScrollback() {
+        leaveCopyMode()
+        _ = terminal.performBindingAction("clear_screen")
+    }
+
+    /// Rename Lane: the name goes on the session as well as in the ledger,
+    /// because for a terminal the session is where the ledger's title comes
+    /// from — every `TITLE` frame is written straight through `adoptTitle`,
+    /// and a name only the ledger held would last until the program's next
+    /// OSC title. pty-host pins it; "" unpins.
+    func setSessionTitle(_ title: String) {
+        attachment?.setTitle(title)
+    }
 
     // MARK: - clipboard
 

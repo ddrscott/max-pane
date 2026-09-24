@@ -390,6 +390,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             }
         }
         strip.onLaneLostWire = { [weak self] server in self?.sessions.laneLostWire(server: server) }
+        strip.onEndSession = { [weak self] paneId in self?.confirmEndSession(paneId: paneId) }
         sessions.doneHold = config.doneHoldSeconds
         sessions.onStateChange = { [weak self] telemetry, _, to in
             self?.alert(telemetry, became: to)
@@ -835,6 +836,17 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         case .claimSession:
             // Only meaningful for a terminal pane.
             return store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .pty
+        case .endSession:
+            // A terminal pane with a session behind it. A pty pane whose
+            // session never started has nothing to end; ⌘W closes it.
+            return store.state.focusedPaneId.flatMap { store.pane($0) }?.sessionKey != nil
+        case .clearScrollback:
+            // The ledger's focused pane, not the responder chain: in a web
+            // pane the chord never gets here (`yieldsToPage`), and greying
+            // the item for a page is what the menu should do.
+            return store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .pty
+        case .renameLane:
+            return store.focusedLane != nil && !strip.isGallery
         case .savePassword:
             // A page, and not a private one: a private lane fills passwords
             // and never offers to keep one, so the item says so by being grey.
@@ -909,8 +921,11 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         case .showSettings: return "no config file"
         case .checkForUpdates: return "no update check in this build"
         case .copyWithStyles, .copyMode, .pasteWithoutAsking, .pasteEscaped, .pasteAsBase64,
-             .pasteBase64Decoded, .pasteFileAsBase64, .pasteSlowly, .advancedPaste, .claimSession:
+             .pasteBase64Decoded, .pasteFileAsBase64, .pasteSlowly, .advancedPaste, .claimSession,
+             .clearScrollback:
             return "needs a terminal with the keyboard"
+        case .endSession: return "needs a terminal with a session"
+        case .renameLane: return strip.isGallery ? "not in the gallery" : "needs a lane"
         case .savePassword:
             return store.lane(containing: store.state.focusedPaneId ?? "")?.isPrivate == true
                 ? "not in a private lane" : "needs a page"
@@ -1058,6 +1073,15 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .closeLane:
                 if let lane = focusedLane { try store.closeLane(lane.id) }
+
+            case .endSession:
+                if let focused = store.state.focusedPaneId { confirmEndSession(paneId: focused) }
+
+            case .clearScrollback:
+                if let focused = store.state.focusedPaneId { strip.clearScrollback(ofPane: focused) }
+
+            case .renameLane:
+                if let lane = focusedLane { strip.renameLane(lane.id) }
 
             case .focusLeft:  strip.moveFocus(.left)
             case .focusRight: strip.moveFocus(.right)
@@ -2013,6 +2037,52 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     /// ADR-0007 §5: the one path that sends `RESIZE`. It reshapes the PTY for
     /// every other attached client — Scott's phone included — so it asks first,
     /// every time, and names who else it affects.
+    /// ⌃⌘W, and the ⋯ menu's End Session…. The sheet names what it is
+    /// about to kill and defaults to Cancel, like every destructive one
+    /// here; "End Session" is a click or a ⇥ ↩ away. On yes the session is
+    /// ended by `SessionEnding` for its server and, once that has gone
+    /// through, the pane is closed in the ledger — the lane with it when
+    /// the pane was its last — and the strip animates it out the way an
+    /// exit or a ⌘W goes. A refusal leaves the lane where it is and says
+    /// why in a popup: a pane closed over a session still running would be
+    /// the sidebar's problem to find again.
+    func confirmEndSession(paneId: String) {
+        guard let pane = store.pane(paneId), let key = pane.sessionKey else { return }
+        let telemetry = sessions.sessions[key]
+        let sheet = EndSessionSheet(
+            name: telemetry?.title ?? store.lane(containing: paneId)?.title ?? key.id,
+            command: telemetry?.command ?? "", server: key.server)
+        ConfirmPopup.confirm(
+            over: window, title: sheet.title, detail: sheet.detail,
+            action: EndSessionSheet.action, returnConfirms: false
+        ) { [weak self] yes in
+            guard yes, let self else { return }
+            self.endSession(paneId: paneId, key: key)
+        }
+    }
+
+    /// The kill and the close, in that order. `ender` is looked up here so a
+    /// test can hand the window one that touches nothing.
+    var makeEnder: (String?) -> SessionEnding? = { _ in nil }
+
+    func endSession(paneId: String, key: SessionKey) {
+        guard let ender = makeEnder(key.server) ?? servers.ender(for: key.server) else {
+            showError(ServerNotConfigured(name: key.server ?? ""))
+            return
+        }
+        ender.end(sessionId: key.id) { [weak self] error in
+            guard let self else { return }
+            if let error {
+                self.showError(error)
+                return
+            }
+            Log.debug("ended session \(key)")
+            // Gone already — closed by hand while the sheet was up.
+            guard self.store.pane(paneId) != nil else { return }
+            do { try self.store.closePane(paneId) } catch { self.showError(error) }
+        }
+    }
+
     private func confirmClaimSession() {
         guard let paneId = store.state.focusedPaneId else { return }
         ConfirmPopup.confirm(

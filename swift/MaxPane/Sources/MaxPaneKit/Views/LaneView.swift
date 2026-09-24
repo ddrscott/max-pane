@@ -93,6 +93,15 @@ final class LaneView: NSView {
     /// session. Whoever connects this owes the user a confirmation first.
     var onClaimSession: (() -> Void)?
     var onCloseLane: (() -> Void)?
+    /// End Session…, for a terminal lane: kills the session behind a sheet.
+    /// Whoever connects this owes the user the sheet, as with the claim.
+    var onEndSession: (() -> Void)?
+    /// Rename Lane…, and the header's double-click.
+    var onRenameLane: (() -> Void)?
+    var onHeaderDoubleClick: (() -> Void)? {
+        get { header.onDoubleClick }
+        set { header.onDoubleClick = newValue }
+    }
     /// The header's `s | m | xl` switch and the menu's Small / Medium / Extra
     /// Large. The strip does the work; see `StripViewController.applySizePreset`.
     var onSizePreset: ((LaneSizePreset) -> Void)?
@@ -1065,6 +1074,8 @@ protocol LaneHeaderActions: AnyObject {
     var onToggleDockMode: (() -> Void)? { get }
     var onClaimSession: (() -> Void)? { get }
     var onCloseLane: (() -> Void)? { get }
+    var onEndSession: (() -> Void)? { get }
+    var onRenameLane: (() -> Void)? { get }
     var onSizePreset: ((LaneSizePreset) -> Void)? { get }
     var onToggleMobileLayout: (() -> Void)? { get }
     /// Whether the lane's pages are on their phone layout, or nil for a lane
@@ -1670,6 +1681,8 @@ final class LaneHeaderView: NSView {
             command: .toggleKeepLive, action: #selector(menuTogglePin), enabled: actions?.onTogglePin != nil)
         add(to: menu, "Set Project Tag…",
             command: nil, action: #selector(menuSetProjectTag), enabled: actions?.onSetProjectTag != nil)
+        add(to: menu, Command.renameLane.title,
+            command: .renameLane, action: #selector(menuRenameLane), enabled: actions?.onRenameLane != nil)
 
         // The size presets, always: the header's switch gives way on a narrow
         // lane, and a lane is never too narrow for its menu. Ticked like the
@@ -1750,6 +1763,12 @@ final class LaneHeaderView: NSView {
         menu.addItem(.separator())
         add(to: menu, Command.closeLane.title,
             command: .closeLane, action: #selector(menuCloseLane), enabled: actions?.onCloseLane != nil)
+        if model.isTerminal {
+            // Last, under Close Lane, which leaves the session running: this
+            // one does not, and its sheet says so.
+            add(to: menu, Command.endSession.title,
+                command: .endSession, action: #selector(menuEndSession), enabled: actions?.onEndSession != nil)
+        }
         return menu
     }
 
@@ -1789,6 +1808,8 @@ final class LaneHeaderView: NSView {
     @objc private func menuToggleDockMode() { actions?.onToggleDockMode?() }
     @objc private func menuClaimSession() { actions?.onClaimSession?() }
     @objc private func menuCloseLane() { actions?.onCloseLane?() }
+    @objc private func menuEndSession() { actions?.onEndSession?() }
+    @objc private func menuRenameLane() { actions?.onRenameLane?() }
 
     /// No callback needed: the header already holds the only untruncated copy of
     /// the path in the UI, so it may as well be the thing that hands it over.

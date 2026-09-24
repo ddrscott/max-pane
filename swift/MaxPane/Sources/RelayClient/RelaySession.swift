@@ -111,6 +111,8 @@ public final class RelaySession {
     public func send(_ payload: [UInt8]) { transport.send(payload) }
     public func sendInput(_ bytes: [UInt8]) { send(encodePayload(WSMsg.data, bytes)) }
     public func sendResize(cols: Int, rows: Int) { send(encodeResize(cols: cols, rows: rows)) }
+    /// `relay rename`: pin `title` on the session, or unpin with "".
+    public func sendSetTitle(_ title: String) { send(encodeSetTitle(title)) }
 
     public func close() { transport.close() }
 

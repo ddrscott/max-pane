@@ -791,6 +791,25 @@ deadline as the CLI). On `201`, `~/.relay-tty/sockets/<id>.sock` is connectable.
 
 **Auth**: none needed from localhost — see §9.
 
+**Ending a session** is the same route with `DELETE`:
+
+```
+DELETE {base}/api/sessions/:id
+```
+
+`server/api.ts` `router.delete("/sessions/:id")`: owner only (`isOwnerRequest`, else
+`403 {"error":"forbidden"}`), `404 {"error":"Session not found"}` for an id the store does not
+hold, else `ptyManager.kill(id)` — **`SIGTERM` to pty-host's own pid** read from
+`sessions/<id>.json` (`pty-manager.ts` `kill`) — then `cleanup`, the row dropped, `200 {"ok":true}`.
+pty-host's SIGTERM task (`main.rs`, "SIGTERM handler") `SIGTERM`s the session leader, writes
+`status: "exited"`, `exitCode: -1`, removes the socket and `process::exit(0)`s — so **no `EXIT`
+frame is promised** on this path; clients see the socket close. Closing the PTY master hangs up
+whatever the shell had left. The CLI's `stopSession` (`cli/sessions.ts`) tries this and, with no
+server answering, sends the same `SIGTERM` to the same pid itself. Max Pane's End Session does the
+latter for a local session and the former for a remote one (ADR-0039). `SIGNAL` (0x25) is not an
+end: it reaches the foreground process group, and a shell whose program it killed is back at its
+prompt with the session alive — that is `relay kill`, a Ctrl-C from afar.
+
 ### Path (b) — direct spawn of `relay-pty-host`
 
 **argv** (`main.rs:5`, `:1482-1499`):

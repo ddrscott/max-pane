@@ -490,6 +490,7 @@ Press **⌘/** for every shortcut. The three that matter:
 | **⌘G** | Lanes ⇄ Gallery: every lane on one screen, live; ⌘G again goes back |
 | **⇧⌘↩** | Maximize Pane: the focused pane over the whole visible strip; ⇧⌘↩ again puts it back |
 | **⌘P** | find a lane by title, URL or something it printed |
+| **⌃⌘W** | End Session: kill the session behind the focused terminal, after a sheet; ⌘K clears it, ⌃⌘R renames the lane |
 
 ⌘O is the only door into the strip, because "something goes to the right of
 this" is a single decision — and until recently it was three keys that each saw
@@ -1365,6 +1366,61 @@ focused lane's header is lifted a shade instead, which is what still says
 *which column* from across the strip. The lane's own border stays a neutral
 hairline, and flashes green only for the ⌘P jump, which is a place to look
 rather than a place to type.
+
+### Ending a session, clearing a terminal, renaming a lane
+
+**⌘W closes the pane and ⇧⌘W the lane; neither ends the session.** It keeps
+running behind the sidebar's row and ⌘O offers it again, which is the right
+default for an agent you meant to come back to and the wrong one for the
+`htop` you are done with. **⌃⌘W End Session** is the one that ends it — one
+modifier further on the same key, the way ⌃⌘[ is to ⌘[ — and it is also the
+last item in the lane's ⋯ menu, under Close Lane. A sheet first, naming what
+it is about to kill and where (`✳ Claude Code — claude, on this Mac`), with
+↩ on Cancel like every destructive sheet here; End Session is a click or ⇥ ↩
+away. On yes the session is killed and its pane closes, the lane with it
+when the pane was its last, by the same animation an exit or a ⌘W gets. A
+refusal — the server said 404, the token is a guest's, the box is off —
+leaves the lane exactly where it is and says why.
+
+What "kill" means is what relay-tty's own *stop session* means, in both of
+its forms: **`SIGTERM` to pty-host's pid**, read from the session file. On
+this Mac the app sends it itself, as `relay` does when no server is
+answering, so ending a local session needs no server. On a remote one it is
+`DELETE /api/sessions/:id` with the cookie, and the server signals its own
+pty-host. pty-host `SIGTERM`s the program, marks the session exited, drops
+its socket and goes; closing the PTY hangs up whatever the shell had left.
+Every client attached to the session loses it — the Relay web client on
+your phone included — which is what the sheet says. Deliberately **not**
+relay's `SIGNAL` frame: that reaches the *foreground* process group, and a
+shell whose `claude` it killed is back at its prompt with the session very
+much alive. That is `relay kill`, a Ctrl-C from across the room, and the
+sheet would be lying.
+
+**⌘K clears the terminal**, the key every Mac terminal clears on: the
+scrollback goes and so does every row above the cursor, so the last prompt
+is the first line. It is this pane's emulator only — relay's ring is
+untouched, so the phone keeps its scrollback and a fresh attach at the next
+launch replays it, and the search index keeps what it saw as it does across
+a `clear`. Ghostty declines on the alternate screen, where the program owns
+every cell. In a web pane ⌘K is the page's: Slack, Linear and Notion bind it,
+and the command is grey there.
+
+**Rename a lane** by double-clicking its header, from the ⋯ menu's Rename
+Lane…, or with **⌃⌘R**. One prompt with the current name in it. The name
+goes into the ledger, which is what the header reads first — and for a
+terminal lane that is not enough, because a terminal's title comes *from*
+the session: every `TITLE` frame is written straight into the same field,
+and a name only the ledger held would last until the program's next OSC
+title, which for Claude Code is its next spinner frame. So the name is also
+**pinned on the session** with relay's `SET_TITLE`, which is what `relay
+rename` sends: pty-host stops honouring the program's titles, writes the
+name to its file, and broadcasts it to every client, so the phone's list
+says it too. The one cost is that a renamed Claude lane no longer shows its
+spinner, so the header's WORKING falls back to relay's own reading of the
+session (see [the session browser](#the-session-browser-and-which-pane-has-the-keyboard),
+rule 4). An empty name unpins and clears the ledger's title, and the header
+falls back to the session's own title, then the command. A web lane has no
+session to pin on: its name lasts until the page next sets a `<title>`.
 
 ### What calls you back
 

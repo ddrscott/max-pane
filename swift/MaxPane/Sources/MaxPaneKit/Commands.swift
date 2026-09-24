@@ -22,6 +22,7 @@ public enum Command: String, CaseIterable, Sendable {
     case splitDown
     case closePane
     case closeLane
+    case endSession
     case focusLeft
     case focusRight
     case focusUp
@@ -37,6 +38,7 @@ public enum Command: String, CaseIterable, Sendable {
     case ungather
     case toggleGallery
     case toggleKeepLive
+    case renameLane
     case dockLaneLeft
     case dockLaneRight
     case toggleDockMode
@@ -57,6 +59,7 @@ public enum Command: String, CaseIterable, Sendable {
     case advancedPaste
     case pasteHistory
     case clearPasteHistory
+    case clearScrollback
     case showMemory
     case pairWithNext
     case exportStrip
@@ -103,6 +106,7 @@ public enum Command: String, CaseIterable, Sendable {
         case .splitDown: return "Split Down"
         case .closePane: return "Close Pane"
         case .closeLane: return "Close Lane"
+        case .endSession: return "End Session…"
         case .focusLeft: return "Focus Lane Left"
         case .focusRight: return "Focus Lane Right"
         case .focusUp: return "Focus Pane Above"
@@ -118,6 +122,7 @@ public enum Command: String, CaseIterable, Sendable {
         case .ungather: return "Leave Gather View"
         case .toggleGallery: return "Toggle Gallery"
         case .toggleKeepLive: return "Keep Lane Loaded"
+        case .renameLane: return "Rename Lane…"
         case .dockLaneLeft: return "Dock Lane Left"
         case .dockLaneRight: return "Dock Lane Right"
         case .toggleDockMode: return "Dock Floats Over Strip"
@@ -138,6 +143,7 @@ public enum Command: String, CaseIterable, Sendable {
         case .advancedPaste: return "Advanced Paste…"
         case .pasteHistory: return "Paste History…"
         case .clearPasteHistory: return "Clear Paste History…"
+        case .clearScrollback: return "Clear Scrollback"
         case .showMemory: return "Memory"
         case .pairWithNext: return "Pair With Lane to the Right"
         case .exportStrip: return "Export Strip…"
@@ -235,6 +241,12 @@ public enum Command: String, CaseIterable, Sendable {
         case .splitDown:       return ("d", [.command, .shift])
         case .closePane:       return ("w", [.command])
         case .closeLane:       return ("w", [.command, .shift])
+        // ⌘W closes the pane and ⇧⌘W the lane; both leave the session
+        // running for the sidebar to offer again. ⌃⌘W is the one that ends
+        // it — one modifier further on the same key, the way ⌃⌘[ is to ⌘[,
+        // and behind a sheet because it kills a program. macOS has no ⌃⌘W
+        // (its ⌃⌘ chords are Space, F, Q and D) and nothing here had it.
+        case .endSession:      return ("w", [.command, .control])
         case .focusLeft:       return ("[", [.command])
         case .focusRight:      return ("]", [.command])
         case .focusUp:         return ("[", [.command, .shift])
@@ -270,6 +282,11 @@ public enum Command: String, CaseIterable, Sendable {
         // moving a binding people have in their fingers to rename a concept
         // costs more than it buys.
         case .toggleKeepLive:  return ("p", [.command, .shift])
+        // ⌃⌘R. ⌘R reloads and ⇧⌘R reloads harder; ⌃⇧⌘R is the deliberately
+        // awkward resize. The letter stays with the lane's name and the
+        // header's double-click and ⋯ menu reach the same prompt; macOS has
+        // nothing on ⌃⌘R and no browser's chrome does.
+        case .renameLane:      return ("r", [.command, .control])
         // ⌘[ / ⌘] move focus between lanes; ⌃⌘[ / ⌃⌘] push a lane out to that
         // edge entirely. Same axis, one modifier further. Both toggle, so the
         // key that docked a lane is the key that gives the edge back.
@@ -337,6 +354,11 @@ public enum Command: String, CaseIterable, Sendable {
         case .pasteHistory: return ("h", [.command, .shift])
         // No key: it destroys something, once in a while, from a menu.
         case .clearPasteHistory: return nil
+        // ⌘K, the key every Mac terminal clears on (Terminal, iTerm, Ghostty)
+        // and nobody else's here. Slack, Linear and Notion bind it in the
+        // page, so in a web pane it is the page's (`yieldsToPage`), the way
+        // ⌥⇧⌘V is: a terminal-only command on a chord pages use.
+        case .clearScrollback: return ("k", [.command])
         case .showMemory:      return ("i", [.command, .option])
         case .pairWithNext:    return ("p", [.command, .option])
         case .exportStrip:     return ("s", [.command, .shift])
@@ -532,7 +554,7 @@ public enum Command: String, CaseIterable, Sendable {
     /// ⇧⌘C are a browser's own (page source, the inspector) and a page's to
     /// bind.
     public var yieldsToPage: Bool {
-        self == .advancedPaste || self == .copyWithStyles || self == .copyMode
+        self == .advancedPaste || self == .copyWithStyles || self == .copyMode || self == .clearScrollback
     }
 
     /// Commands only a page can answer: an address, a form, a document to
@@ -573,12 +595,16 @@ public enum Command: String, CaseIterable, Sendable {
         case .openAnything, .openPages, .openSessions, .runCommand, .newTerminalLane, .newPrivateWebLane,
              .splitRight, .splitDown: return .file
         case .closePane, .closeLane: return .file
+        // With Close Lane, which it is the stronger form of.
+        case .endSession: return .file
         case .focusLeft, .focusRight, .focusUp, .focusDown, .search, .gather, .ungather: return .navigate
         // With ⌘P and ⌘[ ⌘]: they move focus, to the agent that needs it.
         case .nextAttention, .previousAttention, .showAttention: return .navigate
         case .toggleGallery: return .view
         case .moveLaneLeft, .moveLaneRight, .toggleSidebar, .toggleKeepLive,
              .widenLane, .narrowLane, .peekDesktop: return .view
+        // With Keep Lane Loaded and the sizes: a fact about the lane.
+        case .renameLane: return .view
         case .dockLaneLeft, .dockLaneRight, .toggleDockMode: return .view
         // Under Navigate, not View: these move focus, which is the same thing
         // ⌘[ / ⌘] do and the reason they exist at all.
@@ -592,6 +618,8 @@ public enum Command: String, CaseIterable, Sendable {
              .advancedPaste: return .edit
         // Below Paste Special: the pastes, then what was pasted.
         case .pasteHistory, .clearPasteHistory: return .edit
+        // Under Edit with the other Clear, and where iTerm keeps its ⌘K.
+        case .clearScrollback: return .edit
         case .showMemory: return .view
         // The Help menu, where a Mac user reaches for a keyboard sheet and a
         // what's-new: the ⌘/ sheet was under View while there was no Help

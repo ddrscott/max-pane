@@ -290,7 +290,8 @@ public struct Keymap: Sendable {
     /// command that can never run, because the App menu's item is matched
     /// before anything built from `Command`. Shipping a key that silently does
     /// something else is worse than saying no in one line on stderr.
-    private static let reserved: [(KeyChord, String)] = [
+    /// Internal for the tests, which check a new default against it.
+    static let reserved: [(KeyChord, String)] = [
         (KeyChord(key: "q", modifiers: [.command]), "macOS quits the app"),
         (KeyChord(key: "h", modifiers: [.command]), "macOS hides the app"),
         (KeyChord(key: "h", modifiers: [.command, .option]), "macOS hides the other apps"),

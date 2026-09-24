@@ -95,3 +95,11 @@ public func encodeResize(cols: Int, rows: Int) -> [UInt8] {
     let c = UInt16(clamping: cols), r = UInt16(clamping: rows)
     return encodePayload(WSMsg.resize, [UInt8(c >> 8), UInt8(c & 0xff), UInt8(r >> 8), UInt8(r & 0xff)])
 }
+
+/// `SET_TITLE` as a payload (no length prefix): `[0x24] + UTF-8`, what
+/// relay-tty's `encodeSetTitle` builds (`messages.ts:53`). pty-host trims
+/// it, pins it over the program's own OSC titles and broadcasts `TITLE` to
+/// every client; empty unpins and broadcasts nothing (§11).
+public func encodeSetTitle(_ title: String) -> [UInt8] {
+    encodePayload(WSMsg.setTitle, Array(title.utf8))
+}

@@ -25,6 +25,9 @@ final class FakeRelayServer: @unchecked Sendable {
     var sessions: [[String: Any]] = []
     /// Every `POST /api/sessions` body, decoded, in order.
     private var posted: [[String: Any]] = []
+    /// Every id a `DELETE /api/sessions/:id` removed, in order.
+    private var deleted: [String] = []
+    var deletedIds: [String] { lock.lock(); defer { lock.unlock() }; return deleted }
     var spawnBodies: [[String: Any]] { lock.lock(); defer { lock.unlock() }; return posted }
     /// The home the fake server starts a session in when the body names no
     /// `cwd` — what relay-tty does with `process.env.HOME`.
@@ -211,6 +214,24 @@ final class FakeRelayServer: @unchecked Sendable {
             uploaded.append((sent: sent, stored: stored, body: body))
             lock.unlock()
             answer("200 OK", ["ok": true, "path": "\(uploadDir)/\(stored)", "name": stored, "size": body.count])
+            return
+        }
+        if method == "DELETE", path.hasPrefix("/api/sessions/") {
+            // relay-tty's `router.delete("/sessions/:id")`: owner only (the
+            // cookie check above), 404 for an id it does not hold, else the
+            // pty-host is SIGTERMed and the row dropped, `{"ok": true}`.
+            let id = String(path.dropFirst("/api/sessions/".count))
+            lock.lock()
+            let index = sessions.firstIndex { ($0["id"] as? String) == id }
+            if let index { sessions.remove(at: index); deleted.append(id) }
+            lock.unlock()
+            guard index != nil else {
+                let out = Data("{\"error\":\"Session not found\"}".utf8)
+                respond(conn, "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: \(out.count)\r\nConnection: close\r\n\r\n", out)
+                return
+            }
+            let out = Data("{\"ok\":true}".utf8)
+            respond(conn, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(out.count)\r\nConnection: close\r\n\r\n", out)
             return
         }
         if method == "GET", path.hasPrefix("/api/sessions/") {

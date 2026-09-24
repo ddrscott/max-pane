@@ -1108,6 +1108,16 @@ public final class StripViewController: NSViewController {
         laneView.onCloseLane = { [weak self] in
             try? self?.store.closeLane(lane.id)
         }
+        laneView.onRenameLane = { [weak self] in self?.renameLane(lane.id) }
+        // The header's double-click was unspoken for; a name is the one
+        // thing on it a person would try to edit by clicking.
+        laneView.onHeaderDoubleClick = { [weak self] in self?.renameLane(lane.id) }
+        laneView.onEndSession = { [weak self] in
+            guard let self, let onEndSession = self.onEndSession,
+                  let pane = self.store.lane(lane.id)?.panes.first(where: { $0.kind == .pty && $0.sessionKey != nil })
+            else { return }
+            onEndSession(pane.id)
+        }
         laneView.onToggleMute = { [weak self] in
             guard let self, let lane = self.store.lane(lane.id) else { return }
             self.store.audio.toggleMute(lane: lane)
@@ -3417,6 +3427,62 @@ public final class StripViewController: NSViewController {
     /// ADR-0007 §5's escape hatch, routed to the pane that owns the session.
     public func claimSession(paneId: String) {
         (paneControllers[paneId] as? TerminalPaneController)?.claimSessionAtLaneWidth()
+    }
+
+    /// The lane's view on the strip, or nil for one not built. For tests.
+    func laneView(for laneId: String) -> LaneView? { laneViews[laneId] }
+    /// The pane's controller, or nil for one not built. For tests.
+    func paneController(_ paneId: String) -> PaneController? { paneControllers[paneId] }
+
+    /// ⌘K, routed to the pane with the keyboard. Nothing for a page.
+    public func clearScrollback(ofPane paneId: String) {
+        (paneControllers[paneId] as? TerminalPaneController)?.clearScrollback()
+    }
+
+    /// The ⋯ menu's End Session…, for the lane under the pointer. The
+    /// window controller connects it: the sheet and the kill are its.
+    public var onEndSession: ((_ paneId: String) -> Void)?
+
+    /// Rename Lane (⌃⌘R, the header's double-click, the ⋯ menu): one
+    /// prompt, then the name goes where the header reads it from.
+    ///
+    /// The ledger's `title` wins in `LaneHeaderModel`, so it is written
+    /// first and the header changes now. For a terminal lane that is not
+    /// enough: every `TITLE` frame is written into the same field
+    /// (`adoptTitle`), so a name the session did not know would last until
+    /// the program's next OSC title — for Claude Code, its next spinner
+    /// frame. The name is therefore also pinned on the session with
+    /// `SET_TITLE`, which is `relay rename`: pty-host stops honouring OSC
+    /// titles, writes the name to its file, and broadcasts it to every
+    /// client, so the phone's list says it too. An empty name unpins and
+    /// clears the ledger's title, and the header falls back to the
+    /// session's own title, the page's host or the command. A web lane
+    /// has no session to pin on: its name lasts until the page next sets
+    /// a `<title>`, as the README says.
+    public func renameLane(_ laneId: String) {
+        guard let lane = store.lane(laneId) else { return }
+        let terminal = lane.panes.first(where: { $0.kind == .pty && $0.sessionKey != nil })
+            .flatMap { paneControllers[$0.id] as? TerminalPaneController }
+        let current = LaneHeaderModel(
+            lane: lane, telemetry: lane.panes.first(where: { $0.kind == .pty })?.sessionKey.flatMap { laneTelemetry[$0] }
+        ).title
+        let detail = terminal != nil
+            ? "Pinned on the session, so the program's own title stops replacing it. Empty gives the title back to the program."
+            : "Until the page next sets a title of its own. Empty clears it."
+        ConfirmPopup.ask(
+            over: view.window, title: "Rename this lane", detail: detail,
+            text: current == "untitled" ? "" : current, action: "Rename"
+        ) { [weak self] text in
+            guard let self, let text, self.store.lane(laneId) != nil else { return }
+            self.applyRename(laneId, to: text, on: terminal)
+        }
+    }
+
+    /// The write, without the prompt: the ledger, then the session. A test
+    /// reads both.
+    func applyRename(_ laneId: String, to text: String, on terminal: TerminalPaneController?) {
+        try? store.setLaneTitle(laneId, text.isEmpty ? nil : text)
+        terminal?.setSessionTitle(text)
     }
 
     /// A pty pane's current working directory *on this Mac*, for spawning a
