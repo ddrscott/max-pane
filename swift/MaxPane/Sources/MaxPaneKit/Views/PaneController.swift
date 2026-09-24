@@ -68,6 +68,13 @@ protocol PaneController: AnyObject {
     func printPage()
     func savePDF()
 
+    /// ⌃⌘S — this pane's contents as PNG bytes (`PaneCapture`, ADR-0040).
+    /// `fullPage` is the ⇧ variant: everything below the fold of a web page,
+    /// and nothing extra for a terminal, which has no fold — what a terminal
+    /// shows is its viewport. Answers on the main actor, exactly once; a pane
+    /// that cannot draw itself answers `.noPane`.
+    func capture(fullPage: Bool, completion: @escaping @MainActor (Result<Data, Error>) -> Void)
+
     /// Write anything the pane would otherwise lose, without tearing it down.
     ///
     /// Called on quit. A terminal has nothing to save — the session lives in
@@ -90,6 +97,13 @@ protocol PaneController: AnyObject {
 
 extension PaneController {
     func flushState() {}
+
+    /// A pane kind with no way to draw itself into a bitmap. There is none
+    /// today — both kinds capture — but the placeholder of an evicted pane is
+    /// a controller too, and "nothing to capture" is the true answer for it.
+    func capture(fullPage _: Bool, completion: @escaping @MainActor (Result<Data, Error>) -> Void) {
+        completion(.failure(PaneCapture.Failure.noPane))
+    }
 
     /// A pane that does not scale reports actual size and ignores the keys.
     var zoom: Double { 1 }

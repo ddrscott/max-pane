@@ -54,6 +54,11 @@ public final class OpenServer: @unchecked Sendable {
         case mute(lane: String, muted: Bool)
         /// `maxpane volume LANE 0-100`. Zero is mute.
         case volume(lane: String, percent: Int)
+        /// `maxpane capture [LANE] [--full]`: a PNG of that lane's focused
+        /// pane, so an agent can ask for a picture of its own terminal or of
+        /// the page beside it. The reply is the path, which is why this op
+        /// answers later than the others (see `handler`).
+        case capture(lane: String, fullPage: Bool)
     }
 
     /// What goes back. `session` carries the id of a session just started;
@@ -81,11 +86,18 @@ public final class OpenServer: @unchecked Sendable {
     private var fd: Int32 = -1
     private var source: DispatchSourceRead?
     private let queue = DispatchQueue(label: "maxpane.open-server")
-    private let handler: @Sendable (Request) -> Reply
+    private let handler: @Sendable (Request, @escaping @Sendable (Reply) -> Void) -> Void
 
-    /// `handler` answers each request. A refused `open` makes the shim fall back
-    /// to the system browser, so refusing is a real answer rather than a failure.
-    public init(handler: @escaping @Sendable (Request) -> Reply) throws {
+    /// `handler` answers each request — through the completion it is handed,
+    /// exactly once, on the main actor. A completion rather than a return
+    /// value because one op cannot answer synchronously: `capture` has to
+    /// wait for WebKit's snapshot and, on a remote lane, for the upload, and
+    /// the whole point of the op is that the caller gets the path. Everything
+    /// else calls the completion before it returns.
+    ///
+    /// A refused `open` makes the shim fall back to the system browser, so
+    /// refusing is a real answer rather than a failure.
+    public init(handler: @escaping @Sendable (Request, @escaping @Sendable (Reply) -> Void) -> Void) throws {
         self.handler = handler
         try listen()
     }
@@ -166,13 +178,18 @@ public final class OpenServer: @unchecked Sendable {
         let outcome = Outcome()
         let done = DispatchSemaphore(value: 0)
         DispatchQueue.main.async { [handler] in
-            outcome.set(handler(request))
-            done.signal()
+            handler(request) { reply in
+                // Once: a handler that answered twice would signal a
+                // semaphore whose waiter has gone, and the second reply
+                // would be written into a buffer nobody reads.
+                if outcome.setOnce(reply) { done.signal() }
+            }
         }
-        // Spawning a session polls for its socket for up to 3 s, so this has to
-        // outlast that. If the app is genuinely wedged, answer anyway rather
-        // than hanging the user's terminal.
-        _ = done.wait(timeout: .now() + 8)
+        // Spawning a session polls for its socket for up to 3 s, and a
+        // capture waits on WebKit's snapshot and possibly an upload, so this
+        // has to outlast both. If the app is genuinely wedged, answer anyway
+        // rather than hanging the user's terminal.
+        _ = done.wait(timeout: .now() + 35)
 
         let reply = Self.encode(outcome.get())
         _ = reply.withCString { write(client, $0, strlen($0)) }
@@ -243,6 +260,12 @@ public final class OpenServer: @unchecked Sendable {
             let lane = (object["lane"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "all"
             return .mute(lane: lane, muted: op == "mute")
 
+        case "capture":
+            // No lane is the focused one, which is what an agent asking for
+            // "my pane" means; `ls` names the others.
+            let lane = (object["lane"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "focused"
+            return .capture(lane: lane, fullPage: object["full"] as? Bool ?? false)
+
         case "volume":
             guard let lane = object["lane"] as? String, !lane.isEmpty,
                   let percent = object["percent"] as? Int, (0...100).contains(percent)
@@ -285,11 +308,16 @@ public final class OpenServer: @unchecked Sendable {
 private final class Outcome: @unchecked Sendable {
     private let lock = NSLock()
     private var value = OpenServer.Reply.refused("not handled")
+    private var answered = false
 
-    func set(_ v: OpenServer.Reply) {
+    /// True the first time only.
+    func setOnce(_ v: OpenServer.Reply) -> Bool {
         lock.lock()
+        defer { lock.unlock() }
+        guard !answered else { return false }
+        answered = true
         value = v
-        lock.unlock()
+        return true
     }
 
     func get() -> OpenServer.Reply {

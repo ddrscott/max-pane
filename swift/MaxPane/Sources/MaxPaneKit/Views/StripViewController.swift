@@ -2496,6 +2496,84 @@ public final class StripViewController: NSViewController {
         paneControllers[paneId]?.savePDF()
     }
 
+    /// ⌃⌘S / ⇧⌃⌘S, and `maxpane capture` — a pane as a PNG, and its path
+    /// somewhere a program can read it (`PaneCapture`, ADR-0040).
+    ///
+    /// The path goes to the nearest terminal in the same lane, which in a
+    /// split is the pane under or over the one captured; that terminal writes
+    /// the file (or uploads it to its server, for a remote session) and types
+    /// the quoted path at its prompt. A lane with no terminal in it has
+    /// nowhere to type, so the file is written here and its quoted path goes
+    /// on the clipboard with the lane's `COPIED` chip — the same chip a
+    /// program's own copy raises, because to the person watching it is the
+    /// same event.
+    ///
+    /// `completion` gets the path, for the CLI, which is waiting on a socket
+    /// for it.
+    public func capturePane(_ paneId: String, fullPage: Bool,
+                            completion: (@MainActor (Result<String, Error>) -> Void)? = nil)
+    {
+        guard let controller = paneControllers[paneId] else {
+            completion?(.failure(PaneCapture.Failure.noPane))
+            return
+        }
+        controller.capture(fullPage: fullPage) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .failure(let error):
+                self.noteCaptureFailure(error, paneId: paneId)
+                completion?(.failure(error))
+            case .success(let png):
+                self.deliver(capture: png, from: paneId, completion: completion)
+            }
+        }
+    }
+
+    /// Who the picture's path is for, and what happens when nobody is.
+    private func deliver(capture png: Data, from paneId: String,
+                         completion: (@MainActor (Result<String, Error>) -> Void)?)
+    {
+        let panes = store.lane(containing: paneId)?.panes ?? []
+        if let target = PaneCapture.nearestTerminal(to: paneId, among: panes),
+           let terminal = paneControllers[target.id] as? TerminalPaneController
+        {
+            // The terminal owns the file from here, and answers with the
+            // path the program will actually read — this Mac's, or the
+            // server's once the upload lands.
+            terminal.typeCapturedPath(png) { completion?($0) }
+            return
+        }
+        do {
+            let url = try PastedImages().save(png, prefix: PaneCapture.stemPrefix)
+            let word = TerminalPaste.shellWord(for: url.path) ?? url.path
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(word, forType: .string)
+            if let laneId = store.lane(containing: paneId)?.id {
+                _ = laneViews[laneId]?.flashCopied()
+            }
+            completion?(.success(url.path))
+        } catch {
+            noteCaptureFailure(error, paneId: paneId)
+            completion?(.failure(error))
+        }
+    }
+
+    /// A capture that could not be made says so where the pane already says
+    /// things, so a key that did nothing is never silent: a terminal's banner
+    /// line, and for a page the download bar's failed row — the same place
+    /// Save as PDF reports itself, since a capture is the same kind of
+    /// promise about a file.
+    private func noteCaptureFailure(_ error: Error, paneId: String) {
+        let why = "capture: \(error.localizedDescription)"
+        if let terminal = paneControllers[paneId] as? TerminalPaneController {
+            terminal.showNotice(why)
+        } else if let web = paneControllers[paneId] as? WebPaneController {
+            web.reportFailedCapture(why)
+        }
+        Log.warn(why)
+    }
+
     /// Ask every live pane to write down what it would otherwise lose.
     ///
     /// Only web panes have anything to say — their history and scroll live in

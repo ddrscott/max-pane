@@ -32,6 +32,9 @@ final class WebPaneController: NSObject, PaneController {
     /// and that address is how you recognise it on the strip.
     /// Internal: `WebPaneAsks.swift` parents the ask sheet here.
     let contentHost = NSView()
+    /// The web view's bottom pin to `contentHost`, lifted only by a full-page
+    /// capture and put straight back (`WebCapture`).
+    var contentBottomPin: NSLayoutConstraint?
     /// Internal: the password menu in `WebPanePasswords.swift` hangs off this
     /// row's key button, and a fill's answer is reported on its failure line.
     let chrome = WebChromeBar()
@@ -1604,12 +1607,18 @@ final class WebPaneController: NSObject, PaneController {
     private func install(_ view: NSView) {
         view.translatesAutoresizingMaskIntoConstraints = false
         contentHost.addSubview(view)
+        let bottom = view.bottomAnchor.constraint(equalTo: contentHost.bottomAnchor)
         NSLayoutConstraint.activate([
             view.topAnchor.constraint(equalTo: contentHost.topAnchor),
             view.leadingAnchor.constraint(equalTo: contentHost.leadingAnchor),
             view.trailingAnchor.constraint(equalTo: contentHost.trailingAnchor),
-            view.bottomAnchor.constraint(equalTo: contentHost.bottomAnchor),
+            bottom,
         ])
+        // Held because a full-page capture has to let go of it for the length
+        // of one snapshot: the pin is what keeps the web view the height of
+        // the pane, and WebKit will not render what it has not laid out
+        // (`WebCapture`). Nothing else ever touches it.
+        contentBottomPin = bottom
         isParented = true
         // The view just moved into a hierarchy, which is exactly when AppKit
         // takes first-responder status away from it.

@@ -333,12 +333,12 @@ pane that spawned it, and when the script merely defaulted the profile, a run
 from there saw the empty default salt, every real-WebKit suite printed
 `SKIPPED`, and the run went green having proved less than it said.
 
-The real-WebKit suites — the twelve that guard on the profile's salt and serve
+The real-WebKit suites — the thirteen that guard on the profile's salt and serve
 real pages to a real `WebPaneController` — are accounted for at the end of every
 default run:
 
 ```
-real-WebKit suites: 12 in the tree, 11 ran, 1 opted out, 0 skipped by the profile guard
+real-WebKit suites: 13 in the tree, 12 ran, 1 opted out, 0 skipped by the profile guard
       opted out (--skip): WebPrintTests
 ```
 
@@ -708,6 +708,31 @@ screen, and the result lands as a finished row in the pane's download bar, so it
 appears where a download would and a click shows it in the Finder. Both are
 greyed out on a terminal lane. Save as PDF ships without a key; `keys` binds
 `savePDF`.
+
+**Capture Pane.** ⌃⌘S, or File › Capture Pane, writes a PNG of the pane with
+the keyboard and **types its quoted path at the nearest prompt in that lane** —
+the pane under or over it in a split, or the terminal itself when that is what
+you captured. So "look at this rendering bug" is one key: the file is there and
+the agent has been handed the path, with no trip through ⇧⌘4 and the clipboard.
+⇧⌃⌘S is **Capture Full Page**, the whole document below the fold and not just
+the screen; it is greyed on a terminal lane, which has no fold (⇧⌘C copy mode
+takes a piece of scrollback as text). A lane with no terminal in it has nowhere
+to type, so the path is copied instead and the lane's header says `COPIED`.
+
+The file goes where a pasted picture goes — `~/Library/Caches/app.ljs.maxpane/paste/`,
+named `capture-20260923-143205.png`, swept by the same `paste_image_keep_days`
+(see [Pasting into a terminal](#pasting-into-a-terminal)) — and when the prompt
+that will read it is a session on a relay server, it is uploaded there first and
+the server's path is what gets typed, because a path is only any use on the
+machine the program runs on. A pane that has not drawn anything yet says so
+rather than writing a blank PNG. **No Screen Recording permission is involved:**
+the app reads its own views, and the alternative that would have needed it was
+measured and rejected (ADR-0040).
+
+From a shell, `maxpane capture [LANE] [--full]` does the same and prints the
+path, so an agent can ask for a picture of its own terminal, or of the page in
+the lane beside it, without anyone pressing a key. With no LANE it is the
+focused pane.
 
 **Web notifications.** WebKit has no `window.Notification` on macOS, so Slack,
 Gmail, Linear and every chat app in a pane could neither ask nor notify, and
@@ -2429,6 +2454,10 @@ maxpane open google.com   # a web lane
 maxpane ls                # what is on the strip
 maxpane mute [LANE|all]   # silence a lane's pages, or whatever is audible; unmute is the reverse
 maxpane volume LANE 0-100 # how loud a lane's pages are; see "Sound"
+maxpane capture [LANE] [--full]
+                          # PNG of a lane's focused pane; prints the path and
+                          # types it at the nearest prompt in that lane. No LANE
+                          # is the focused pane; --full is the whole web page
 maxpane server add NAME URL   # a remote relay-tty server, from its startup Auth URL; see "Remote servers"
 maxpane server ls             # the configured servers, their colour and how they are doing
 maxpane server color WSL violet   # the colour a server is known by: slate cyan blue violet magenta rose lemon ink

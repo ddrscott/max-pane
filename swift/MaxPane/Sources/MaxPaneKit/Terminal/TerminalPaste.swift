@@ -311,6 +311,14 @@ enum TerminalPaste {
     ///   in a file name would press Return in the middle of the path, quotes
     ///   or no quotes, since a line editor acts on it before any shell parses
     ///   it. The caller leaves that file out and says so.
+    /// A refusal already phrased for the pane's notice, carried as an error
+    /// so a caller waiting on a completion (`maxpane capture`) gets the same
+    /// sentence the banner shows rather than a second wording of it.
+    struct Refused: LocalizedError, Equatable {
+        var why: String
+        var errorDescription: String? { why }
+    }
+
     static func shellWord(for text: String) -> String? {
         let scalars = text.unicodeScalars
         if scalars.contains(where: { $0.properties.generalCategory == .control }) { return nil }

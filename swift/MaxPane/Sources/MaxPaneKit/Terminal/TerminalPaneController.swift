@@ -1046,54 +1046,117 @@ final class TerminalPaneController: NSObject, PaneController {
     /// Never asks: a path is one line with no tab in it.
     /// `via` names the key when it was not ⌘V, in front of the notice.
     private func paste(image png: Data, record: Bool, via key: String? = nil) {
+        deliver(image: png, record: record, via: key, prefix: "paste", verb: "saved")
+    }
+
+    /// ⌃⌘S — what this terminal is showing, as PNG bytes (ADR-0040).
+    ///
+    /// `snapshotImage()` is libghostty's own `cacheDisplay` of the surface
+    /// view. Measured on 2026-09-23 against a live surface: the text, its
+    /// colours and the cursor all come back, because by the time a pane has
+    /// drawn once its backing layer is an `IOSurfaceLayer` and not the
+    /// `CAMetalLayer` the view was built with. A pane that has *not* drawn
+    /// yet is still the Metal layer and comes back flat, which `encode`
+    /// catches and reports rather than writing a blank PNG. No Screen
+    /// Recording permission is involved: this reads the app's own view.
+    ///
+    /// There is no full-page variant. A terminal's scrollback is text, not a
+    /// picture of one — `⇧⌘C` copy mode is how you take a piece of it — so ⇧
+    /// captures the same viewport, and the command that carries it is greyed
+    /// out on a terminal lane.
+    func capture(fullPage _: Bool, completion: @escaping @MainActor (Result<Data, Error>) -> Void) {
+        let image = terminal.snapshotImage()?
+            .cgImage(forProposedRect: nil, context: nil, hints: nil)
+        completion(PaneCapture.encode(image).mapError { $0 as Error })
+    }
+
+    /// ⌃⌘S put a picture of a pane here (`PaneCapture`, ADR-0040). The same
+    /// road a pasted picture takes — the same directory, the same upload for
+    /// a remote session, the same quoted word at the prompt — because to the
+    /// program reading it there is no difference, and a second road would be
+    /// a second set of bugs. Only the file's name and the notice's verb say
+    /// where the picture came from.
+    ///
+    /// Never recorded in paste history: this is not something that was on a
+    /// clipboard, and the path is in the scrollback already.
+    /// `landed` gets the path the program will read: this Mac's for a local
+    /// session, answered at once, and the *server's* for a remote one, which
+    /// is not known until the upload comes back. That is why it is a
+    /// completion and not a return value — `maxpane capture` on a remote lane
+    /// is waiting for the second one.
+    func typeCapturedPath(_ png: Data, landed: (@MainActor (Result<String, Error>) -> Void)? = nil) {
+        deliver(image: png, record: false, via: nil, prefix: PaneCapture.stemPrefix,
+                verb: "captured", landed: landed)
+    }
+
+    private func deliver(image png: Data, record: Bool, via key: String?, prefix: String, verb: String,
+                         landed: (@MainActor (Result<String, Error>) -> Void)? = nil)
+    {
         let settings = TerminalPaste.ImageSettings(liveConfig?() ?? config)
         if let refusal = TerminalPaste.imageRefusal(bytes: png.count, settings) {
             showNotice(refusal)
+            landed?(.failure(TerminalPaste.Refused(why: refusal)))
             return
         }
         if let server = pane.sessionKey?.server {
-            upload(png, to: server, record: record, via: key)
+            upload(png, to: server, record: record, via: key, prefix: prefix, landed: landed)
             return
         }
         do {
-            let url = try pastedImages.save(png)
+            let url = try pastedImages.save(png, prefix: prefix)
             guard let word = TerminalPaste.shellWord(for: url.path) else {
-                showNotice("image saved, but its path cannot be typed at a prompt: \(pastedImages.directory.path)")
+                let why = "image saved, but its path cannot be typed at a prompt: \(pastedImages.directory.path)"
+                showNotice(why)
+                landed?(.failure(TerminalPaste.Refused(why: why)))
                 return
             }
-            showNotice("saved \(url.lastPathComponent), \(TerminalPaste.size(png.count))")
+            showNotice("\(verb) \(url.lastPathComponent), \(TerminalPaste.size(png.count))")
             send(pasted: word, record: record)
+            landed?(.success(url.path))
         } catch {
             showNotice("image not pasted: \(error.localizedDescription)")
+            landed?(.failure(error))
         }
     }
 
     /// `POST /api/upload` (`RelayUpload`), off the main thread; the prompt
     /// gets the server's path when there is one and nothing when there is
     /// not. What is typed meanwhile goes first, as it would have anyway.
-    private func upload(_ png: Data, to server: String, record: Bool, via key: String? = nil) {
-        guard !isUploadingImage else { return }
+    private func upload(_ png: Data, to server: String, record: Bool, via key: String? = nil,
+                        prefix: String = "paste",
+                        landed: (@MainActor (Result<String, Error>) -> Void)? = nil)
+    {
+        guard !isUploadingImage else {
+            landed?(.failure(TerminalPaste.Refused(why: "an upload to \(server) is already going")))
+            return
+        }
         let mark = key.map { "\($0) · " } ?? ""
         guard let endpoint = uploadEndpoint?() else {
-            showNotice("\(mark)\(server): could not upload the image — the server is not in config.toml")
+            let why = "\(mark)\(server): could not upload the image — the server is not in config.toml"
+            showNotice(why)
+            landed?(.failure(TerminalPaste.Refused(why: why)))
             return
         }
         isUploadingImage = true
         showNotice("\(mark)uploading \(TerminalPaste.size(png.count)) to \(server)…", lasting: nil)
-        let filename = PastedImages.name(stem: PastedImages.stem(at: Date()), attempt: 1)
+        let filename = PastedImages.name(stem: PastedImages.stem(at: Date(), prefix: prefix), attempt: 1)
         RelayUpload(name: server, endpoint: endpoint).upload(png, filename: filename) { [weak self] result in
             guard let self else { return }
             self.isUploadingImage = false
             switch result {
             case .failure(let error):
                 self.showNotice(error.localizedDescription, lasting: 6)
+                landed?(.failure(error))
             case .success(let path):
                 guard let word = TerminalPaste.shellWord(for: path) else {
-                    self.showNotice("\(server): uploaded, but the server's path cannot be typed at a prompt")
+                    let why = "\(server): uploaded, but the server's path cannot be typed at a prompt"
+                    self.showNotice(why)
+                    landed?(.failure(TerminalPaste.Refused(why: why)))
                     return
                 }
                 self.showNotice("uploaded \((path as NSString).lastPathComponent), \(TerminalPaste.size(png.count)), to \(server)")
                 self.send(pasted: word, record: record)
+                landed?(.success(path))
             }
         }
     }

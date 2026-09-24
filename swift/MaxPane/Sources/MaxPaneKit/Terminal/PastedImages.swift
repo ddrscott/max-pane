@@ -34,14 +34,21 @@ public struct PastedImages {
         return base.appendingPathComponent("paste", isDirectory: true)
     }
 
+    /// The two things that land in this directory. A captured pane
+    /// (`PaneCapture`, ⌃⌘S) is a picture the app made of itself rather than
+    /// one off a clipboard, so it says so in its name — and is otherwise the
+    /// same kind of file, kept on the same clock and swept by the same prune.
+    static let prefixes = ["paste", PaneCapture.stemPrefix]
+
     /// `paste-YYYYMMDD-HHMMSS`, in this Mac's time zone: the name is for the
     /// person looking in the directory, and the file's own date is the record.
-    static func stem(at date: Date, timeZone: TimeZone = .current) -> String {
+    /// `prefix` is `capture` for a captured pane.
+    static func stem(at date: Date, prefix: String = "paste", timeZone: TimeZone = .current) -> String {
         let format = DateFormatter()
         format.locale = Locale(identifier: "en_US_POSIX")
         format.timeZone = timeZone
         format.dateFormat = "yyyyMMdd-HHmmss"
-        return "paste-" + format.string(from: date)
+        return prefix + "-" + format.string(from: date)
     }
 
     /// The `n`th name for a stem: `paste-….png`, then `paste-…-2.png`, `-3`.
@@ -53,9 +60,9 @@ public struct PastedImages {
     /// second get `…-2`; the write itself refuses to replace a file
     /// (`O_EXCL`), so a name taken between the look and the write is the
     /// next name rather than somebody's lost picture.
-    func save(_ png: Data, at date: Date = Date()) throws -> URL {
+    func save(_ png: Data, at date: Date = Date(), prefix: String = "paste") throws -> URL {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let stem = Self.stem(at: date)
+        let stem = Self.stem(at: date, prefix: prefix)
         var lastError: Error = CocoaError(.fileWriteFileExists)
         for attempt in 1...1000 {
             let url = directory.appendingPathComponent(Self.name(stem: stem, attempt: attempt))
@@ -69,7 +76,7 @@ public struct PastedImages {
         throw lastError
     }
 
-    /// Remove this directory's `paste-*.png` files last modified more than
+    /// Remove this directory's `paste-*.png` and `capture-*.png` files last modified more than
     /// `days` ago; 0 keeps everything. Only files of that name, and never a
     /// subdirectory: another profile's pictures live under this one's parent
     /// and a person may have put something of their own beside them.
@@ -84,7 +91,7 @@ public struct PastedImages {
         var removed: [URL] = []
         for url in files {
             let name = url.lastPathComponent
-            guard name.hasPrefix("paste-"), name.hasSuffix(".png"),
+            guard Self.prefixes.contains(where: { name.hasPrefix($0 + "-") }), name.hasSuffix(".png"),
                   let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
                   values.isRegularFile == true, let modified = values.contentModificationDate, modified < cutoff
             else { continue }
@@ -101,7 +108,7 @@ public struct PastedImages {
         DispatchQueue.global(qos: .utility).async {
             let removed = images.prune(olderThanDays: days)
             if !removed.isEmpty {
-                Log.debug("paste: removed \(removed.count) pasted image\(removed.count == 1 ? "" : "s") older than \(days) days")
+                Log.debug("paste: removed \(removed.count) saved image\(removed.count == 1 ? "" : "s") older than \(days) days")
             }
         }
     }

@@ -374,9 +374,16 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         SnapshotStore.sweep(keeping: live)
 
         do {
-            openServer = try OpenServer { [weak self] request in
+            openServer = try OpenServer { [weak self] request, answer in
                 MainActor.assumeIsolated {
-                    self?.handle(request) ?? .refused("max pane is shutting down")
+                    guard let self else { return answer(.refused("max pane is shutting down")) }
+                    // One op answers later than this socket does; the rest
+                    // answer where they always did, before returning.
+                    if case .capture(let lane, let fullPage) = request {
+                        self.captureFromCLI(lane: lane, fullPage: fullPage, answer: answer)
+                    } else {
+                        answer(self.handle(request))
+                    }
                 }
             }
         } catch {
@@ -495,6 +502,47 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return muteFromCLI(lane: lane, muted: muted)
         case .volume(let lane, let percent):
             return volumeFromCLI(lane: lane, percent: percent)
+        case .capture:
+            // Answered by `captureFromCLI`, which the socket routes to
+            // directly because it cannot answer inside this switch.
+            return .refused("capture is answered elsewhere")
+        }
+    }
+
+    /// `maxpane capture [LANE] [--full]` — a PNG of that lane's focused pane,
+    /// and the path on stdout (`PaneCapture`, ADR-0040). The reason this op
+    /// exists: an agent in a terminal can ask for a picture of what it is
+    /// looking at, or of the page in the lane beside it, without a person
+    /// pressing anything.
+    ///
+    /// No lane means the focused one — "my pane", which is what an agent
+    /// running in a lane means by it.
+    private func captureFromCLI(lane spec: String, fullPage: Bool,
+                                answer: @escaping @Sendable (OpenServer.Reply) -> Void)
+    {
+        let paneId: String?
+        if spec == "focused" {
+            paneId = store.state.focusedPaneId
+        } else if let lane = Self.lanes(named: spec, in: store.state.lanes)?.first, lane.panes.count > 0 {
+            // The lane's focused pane when it holds the keyboard, else its
+            // top one: a split lane captured from a script should give the
+            // pane a person would call that lane's.
+            let focused = store.state.focusedPaneId
+            paneId = lane.panes.first { $0.id == focused }?.id
+                ?? lane.panes.min(by: { $0.position < $1.position })?.id
+        } else {
+            answer(.refused("no lane \(spec); maxpane ls lists them"))
+            return
+        }
+        guard let paneId else {
+            answer(.refused("nothing is focused; maxpane ls lists the lanes"))
+            return
+        }
+        strip.capturePane(paneId, fullPage: fullPage) { result in
+            switch result {
+            case .success(let path): answer(OpenServer.Reply(ok: true, lanes: path + "\n"))
+            case .failure(let error): answer(.refused(error.localizedDescription))
+            }
         }
     }
 
@@ -866,6 +914,10 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             // `Command.needsWebPane` for the list and the sharper reason the
             // password keys are on it.
             return store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .web
+        case .capturePane:
+            // Any pane, both kinds: a terminal captures its viewport and a
+            // page captures its fold. Nothing to capture with no pane.
+            return store.state.focusedPaneId != nil
         case .pairWithNext:
             return pairCandidates() != nil
         case .splitRight:
@@ -937,6 +989,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return store.lane(containing: store.state.focusedPaneId ?? "")?.isPrivate == true
                 ? "not in a private lane" : "needs a page"
         case _ where command.needsWebPane: return "needs a page"
+        case .capturePane: return "needs a pane"
         case .pairWithNext: return "no lane to the right to pair with"
         case .toggleDockMode: return "the lane is not docked"
         case .laneSizeSmall, .laneSizeMedium, .laneSizeLarge, .laneSizeCycle:
@@ -1014,6 +1067,11 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .savePDF:
                 strip.saveFocusedPageAsPDF()
+
+            case .capturePane, .captureFullPage:
+                if let focused = store.state.focusedPaneId {
+                    strip.capturePane(focused, fullPage: command == .captureFullPage)
+                }
 
             case .newTerminalLane:
                 try newTerminal(near: focusedLane)

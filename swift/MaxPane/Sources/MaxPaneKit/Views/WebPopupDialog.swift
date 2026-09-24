@@ -339,7 +339,11 @@ final class WebPopupDialog: Popup {
         case .fillPassword: return .fill
         case .reload, .hardReload: return .reload
         case .printPage: return .print
-        case .editAddress, .zoomIn, .zoomOut, .zoomReset, .bookmarkPage, .savePassword, .closeLane, .savePDF:
+        // A capture in the middle of somebody's sign-in would write a PNG of
+        // their provider's password field and type its path at a prompt.
+        // Ignored here for the reason `savePDF` is.
+        case .editAddress, .zoomIn, .zoomOut, .zoomReset, .bookmarkPage, .savePassword, .closeLane, .savePDF,
+             .capturePane, .captureFullPage:
             return .ignore
         default: return .app
         }

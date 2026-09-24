@@ -132,6 +132,12 @@ commands:
                         With none, or all: whatever is making sound
   unmute [LANE|all]     the reverse. With none, or all: whatever is muted
   volume LANE 0-100     how loud a lane's pages are; 0 is mute
+  capture [LANE] [--full]
+                        write a PNG of a lane's focused pane and print its
+                        path. With no LANE, the focused pane. --full is the
+                        whole page for a web pane, below the fold as well;
+                        a terminal has no fold and ignores it. The path is
+                        typed at the nearest prompt in that lane too
   sessions              list every session, here and on each server
   attach [NAME:]ID      put a running session on the strip as a lane
   server add NAME URL   add a remote relay-tty server: NAME is what the lane
@@ -188,6 +194,13 @@ pub fn run() {
         Some("mute") => sound_command(mute_payload(true, args.get(1).map(String::as_str)), &profile),
         Some("unmute") => sound_command(mute_payload(false, args.get(1).map(String::as_str)), &profile),
         Some("volume") => match volume_payload(&args[1..]) {
+            Ok(payload) => sound_command(payload, &profile),
+            Err(why) => {
+                eprintln!("maxpane: {why}");
+                std::process::exit(2)
+            }
+        },
+        Some("capture") => match capture_payload(&args[1..]) {
             Ok(payload) => sound_command(payload, &profile),
             Err(why) => {
                 eprintln!("maxpane: {why}");
@@ -405,6 +418,28 @@ fn volume_payload(args: &[String]) -> Result<String, String> {
     Ok(format!("{{\"op\":\"volume\",\"lane\":{},\"percent\":{percent}}}", json_string(lane)))
 }
 
+/// The request for `maxpane capture [LANE] [--full]`. The flag may come on
+/// either side of the lane, because `capture --full 2` and `capture 2 --full`
+/// are the same thought and a CLI that accepts only one of them is a CLI you
+/// have to remember. No lane at all is the focused pane, which is what an
+/// agent asking for a picture of "my pane" means.
+fn capture_payload(args: &[String]) -> Result<String, String> {
+    let mut lane: Option<&str> = None;
+    let mut full = false;
+    for arg in args {
+        match arg.as_str() {
+            "--full" | "-f" => full = true,
+            other if other.starts_with('-') => return Err(format!("capture: unknown flag {other}")),
+            other if lane.is_none() => lane = Some(other),
+            other => return Err(format!("capture takes one lane, not also {other:?}")),
+        }
+    }
+    Ok(format!(
+        "{{\"op\":\"capture\",\"lane\":{},\"full\":{full}}}",
+        json_string(lane.unwrap_or(""))
+    ))
+}
+
 fn sound_command(payload: String, profile: &str) {
     match request(&payload, profile) {
         Ok(reply) => print!("{}", field(&reply, "lanes").unwrap_or_default()),
@@ -510,7 +545,10 @@ fn request(payload: &str, profile: &str) -> Result<String, String> {
     let path = socket_path(profile);
     let mut stream = UnixStream::connect(&path)
         .map_err(|e| format!("max pane not listening at {}: {e}", path.display()))?;
-    stream.set_read_timeout(Some(Duration::from_secs(10))).map_err(|e| e.to_string())?;
+    // Longer than the app's own 35 s answer window, so a slow op reaches its
+    // reply rather than being cut off here: `capture` waits on WebKit's
+    // snapshot and, on a remote lane, on the upload after it.
+    stream.set_read_timeout(Some(Duration::from_secs(40))).map_err(|e| e.to_string())?;
 
     stream.write_all(payload.as_bytes()).map_err(|e| e.to_string())?;
     stream.write_all(b"\n").map_err(|e| e.to_string())?;
@@ -652,6 +690,25 @@ mod tests {
     fn something_that_is_not_a_url_becomes_a_search() {
         assert!(normalize_url("rust lifetime elision").starts_with("https://duckduckgo.com/?q="));
         assert!(normalize_url("htop").starts_with("https://duckduckgo.com/?q="));
+    }
+
+    #[test]
+    fn capture_says_which_lane_and_how_much_of_it() {
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            capture_payload(&args(&[])).unwrap(),
+            r#"{"op":"capture","lane":"","full":false}"#,
+            "no lane is the focused pane; the app decides what that is"
+        );
+        assert_eq!(capture_payload(&args(&["2"])).unwrap(), r#"{"op":"capture","lane":"2","full":false}"#);
+        assert_eq!(capture_payload(&args(&["left"])).unwrap(), r#"{"op":"capture","lane":"left","full":false}"#);
+        // The flag reads the same on either side of the lane.
+        assert_eq!(capture_payload(&args(&["2", "--full"])).unwrap(), r#"{"op":"capture","lane":"2","full":true}"#);
+        assert_eq!(capture_payload(&args(&["--full", "2"])).unwrap(), r#"{"op":"capture","lane":"2","full":true}"#);
+        assert_eq!(capture_payload(&args(&["-f"])).unwrap(), r#"{"op":"capture","lane":"","full":true}"#);
+        // A typo is a refusal, not a lane named --fll.
+        assert!(capture_payload(&args(&["--fll"])).is_err());
+        assert!(capture_payload(&args(&["1", "2"])).is_err());
     }
 
     #[test]

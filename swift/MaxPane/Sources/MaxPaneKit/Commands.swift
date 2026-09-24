@@ -82,6 +82,8 @@ public enum Command: String, CaseIterable, Sendable {
     case muteAll
     case printPage
     case savePDF
+    case capturePane
+    case captureFullPage
     case showHelp
     case showChangelog
     case checkForUpdates
@@ -166,6 +168,8 @@ public enum Command: String, CaseIterable, Sendable {
         case .muteAll: return "Mute All"
         case .printPage: return "Print…"
         case .savePDF: return "Save as PDF…"
+        case .capturePane: return "Capture Pane"
+        case .captureFullPage: return "Capture Full Page"
         case .showHelp: return "Keyboard Shortcuts"
         case .showChangelog: return "What's New…"
         case .checkForUpdates: return "Check for Updates…"
@@ -439,6 +443,17 @@ public enum Command: String, CaseIterable, Sendable {
         // the one for a whole page in one file, chosen through a save panel,
         // and `keys` binds it for anyone who wants that on a key.
         case .savePDF:         return nil
+        // ⌃⌘S. ⇧⌘S is Export Strip and ⌘S is nothing here, but neither is
+        // the reason: a capture is the sibling of ⌃⌘P — the other command
+        // that turns a pane into a file — and it reads as one on the same
+        // modifier. macOS has no ⌃⌘S (its ⌃⌘ chords are Space, F, Q and D),
+        // no browser has one, and nothing here had it. ⇧⌘4 is still the
+        // system's; this is the one that does not leave the app.
+        case .capturePane:     return ("s", [.command, .control])
+        // ⇧ on the same key, the way ⇧⌘R is to ⌘R and ⇧⌘W to ⌘W: the same
+        // action, asking for more of it. A page only; a terminal has no
+        // fold to reach past.
+        case .captureFullPage: return ("s", [.command, .control, .shift])
         // The one everybody reaches for when they do not know the others.
         case .showHelp:        return ("/", [.command])
         // No key. The version in the sidebar's corner opens it with a click,
@@ -564,7 +579,8 @@ public enum Command: String, CaseIterable, Sendable {
     /// dead everywhere it does not mean anything.
     public var needsWebPane: Bool {
         switch self {
-        case .editAddress, .bookmarkPage, .fillPassword, .savePassword, .printPage, .savePDF:
+        case .editAddress, .bookmarkPage, .fillPassword, .savePassword, .printPage, .savePDF,
+             .captureFullPage:
             return true
         default:
             return false
@@ -648,6 +664,9 @@ public enum Command: String, CaseIterable, Sendable {
         // Under File, where every Mac app keeps Print: the two produce a
         // document out of the pane rather than acting on the site.
         case .printPage, .savePDF: return .file
+        // With them, and for their reason: a capture is the third way a pane
+        // becomes a file.
+        case .capturePane, .captureFullPage: return .file
         case .laneSizeSmall, .laneSizeMedium, .laneSizeLarge, .laneSizeCycle: return .view
         // Beside the sizes and not one of them: it changes how much of the
         // window a pane is shown in, and nothing about the lane (ADR-0019).
