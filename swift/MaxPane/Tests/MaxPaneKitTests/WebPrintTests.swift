@@ -4,6 +4,10 @@ import Testing
 import WebKit
 @testable import MaxPaneKit
 
+// serial pass: asserts the PDF deadline fires, and renders in real WebKit. The
+// whole suite runs in `scripts/test.sh`'s second, --no-parallel pass; see
+// README, "The serial pass".
+
 /// Print and Save as PDF: the commands, and the PDF itself in real WebKit.
 ///
 /// The print panel is macOS's and is not driven here — what is worth a test is

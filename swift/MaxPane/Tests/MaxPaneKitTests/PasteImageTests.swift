@@ -5,6 +5,10 @@ import Testing
 @testable import MaxPaneKit
 @testable import RelayClient
 
+// serial pass: a real upload to a loopback server, timed. The whole suite runs
+// in `scripts/test.sh`'s second, --no-parallel pass; see README, "The serial
+// pass".
+
 /// A small picture, as the bytes a pasteboard would hold.
 private enum Picture {
     static func rep(_ side: Int = 4) -> NSBitmapImageRep {

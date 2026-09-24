@@ -3,6 +3,10 @@ import Testing
 import WebKit
 @testable import MaxPaneKit
 
+// serial pass: real WebKit on two origins, with wall-clock `eventually`. The
+// whole suite runs in `scripts/test.sh`'s second, --no-parallel pass; see
+// README, "The serial pass".
+
 /// A page's full screen, proven in real WebKit rather than argued.
 ///
 /// The owner uses this app as his browser, and "full screen works" is a claim

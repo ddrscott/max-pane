@@ -4,6 +4,10 @@ import Testing
 @testable import MaxPaneKit
 @testable import RelayClient
 
+// serial pass: a real loopback server, and spins measured against the wall
+// clock. The whole suite runs in `scripts/test.sh`'s second, --no-parallel
+// pass; see README, "The serial pass".
+
 // MARK: - the pasted line
 
 @Suite("the line pasted into Settings › Servers")

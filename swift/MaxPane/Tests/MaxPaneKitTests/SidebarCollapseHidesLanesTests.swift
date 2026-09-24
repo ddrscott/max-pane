@@ -4,6 +4,10 @@ import LanedCore
 import Testing
 @testable import MaxPaneKit
 
+// serial pass: real surfaces and strip motion, settled against the wall clock.
+// The whole suite runs in `scripts/test.sh`'s second, --no-parallel pass; see
+// README, "The serial pass".
+
 // Collapsing a sidebar group hides its lanes (ADR-0024). Three layers, three
 // suites: which lanes a set of folds covers (pure), what the store does with
 // that against a real ledger (hide, persist, hand focus on, reach through),

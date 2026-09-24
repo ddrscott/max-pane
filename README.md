@@ -259,7 +259,7 @@ to `x.y.z`, commit, tag, and run the script.
 ## Test
 
 ```sh
-./scripts/test.sh                # the edit-loop run: Rust + Swift, ~1.5 s
+./scripts/test.sh                # the edit-loop run: Rust + Swift, ~100 s (two Swift passes)
 ./scripts/test.sh --skip SUITE   # the same, minus one suite (swift test's --skip, passed through)
 ./scripts/test.sh bench          # the cost tests, in release
 ./scripts/test.sh shots DIR      # render the header and picker sheets as PNGs
@@ -275,6 +275,85 @@ The default run opens with `scripts/tests/entitlements.sh`, a shell test of the
 signing decision in `scripts/entitlements.sh` (see [Passkeys and the
 provisioning profile](#passkeys-and-the-provisioning-profile)): every branch,
 against decoded fixture profiles, in milliseconds. It runs on its own too.
+
+### The serial pass, and what "load-sensitive" means
+
+The Swift half runs **twice**: everything in parallel, then twelve suites again
+with `--no-parallel`. That is not belt and braces, it is the fix for a run that
+used to fail 15–22 tests for no reason and pass every one of them alone — three
+runs to tell a regression from noise when 0.8.0 was cut.
+
+**What it was.** Not the machine, and not a port. A full parallel run leaves
+this machine idle — 0.36 of twelve cores — and still fails; the same tree with
+`--no-parallel` passes all 1 571 tests. A probe dropped inside a full parallel
+run says where the time goes:
+
+| a 10 ms `Task.sleep`, 200 times | mean overshoot | worst |
+|---|---|---|
+| off the main actor, full run | 1 ms | 38 ms |
+| **on the main actor, full run** | **58 ms** | **5 368 ms** |
+| either one, alone | 1 ms | 2 ms |
+
+The contended resource is **the main actor**. Around 250 `@MainActor` suites
+drive one thread at once, and `sample` catches that thread blocked inside
+`[MTLCommandBuffer waitUntilCompleted]` — the synchronous GPU wait under the
+`CVDisplayLink` tick of every live libghostty surface. So a single main-actor
+hop can take five seconds on a machine doing nothing.
+
+**Why only twelve suites cared.** A test that asserts a *value* does not mind a
+slow main actor; it just finishes later. A test that asserts a *duration* does —
+"the source flips inside the window", "the deadline, not some other wait, ended
+it" — because the timer it is measuring shares a thread with everyone else's
+work. Those assertions are the point of those suites, so raising the bounds
+until the noise stopped would have deleted what they prove. Running them without
+the contention keeps it.
+
+**The census comes from the tree**, exactly as the real-WebKit one does. A suite
+joins the serial pass by carrying a `serial pass:` marker naming the real thing
+it drives, and no list in `scripts/test.sh` needs editing:
+
+```
+load-sensitive suites: 12 in the tree, run alone in the serial pass
+      (each carries a `serial pass:` marker saying what real thing it drives;
+       they assert durations, so they do not share a main actor with the rest)
+      AdvancedPasteTests
+      CapturePaneTests
+      PasteImageTests
+      RelayServerBookTests
+      RemotePresenceTests
+      RemoteRelayTests
+      RemoteSpawnTests
+      SidebarCollapseHidesLanesTests
+      WebAppChordTests
+      WebFullscreenTests
+      WebPopupDialogTests
+      WebPrintTests
+```
+
+**The cost.** The parallel pass is 1 328 tests in ~42 s and the serial pass 243
+in ~25 s, against ~44 s for the old single parallel run and ~149 s if everything
+went serial. Twenty-five seconds is what a run nobody has to repeat costs.
+
+Nothing was deleted, mocked or made vacuous to get there: both passes together
+run the same 1 571 tests the old one did, against the same real WebKit, real
+libghostty surfaces and real loopback sockets.
+
+**Still load-sensitive, on purpose.** The parallel pass still sees main-actor
+hops of ~43 ms mean and ~3.8 s worst — the display-link contention is real and
+is not fixed here, only routed around. Nothing left in that pass asserts a
+duration, so nothing in it can fail for it. A *new* test that asserts one
+belongs in the serial pass: give its suite the marker.
+
+**The other collision, which was not about time at all.** Ten runs of the two
+passes turned up one more failure, once: `ShimAndSpawnTests` counting
+`~/.relay-tty/sessions/` before and after a refused spawn and finding one file
+*fewer* afterwards. That directory is not the test profile's — pty-host owns
+those files and MaxPane only reads them, so it is the owner's **live** one, and
+his real pty-host reaps a finished session whenever it likes. No amount of
+serialising helps, because the other writer is not in this process. The test
+now compares the *set* of names and asserts only that nothing was **added**,
+which is what "a refused run left a session behind" actually claims: a reaped
+session is not ours, and a leaked one still fails it.
 
 ### What the default run leaves out, and why
 

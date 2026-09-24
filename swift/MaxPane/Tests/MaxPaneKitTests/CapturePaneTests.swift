@@ -4,6 +4,10 @@ import LanedCore
 import Testing
 @testable import MaxPaneKit
 
+// serial pass: a real libghostty surface and a real WebKit page, both settled
+// on the clock. The whole suite runs in `scripts/test.sh`'s second, --no-
+// parallel pass; see README, "The serial pass".
+
 private func pane(_ id: String, _ position: UInt32, kind: PaneKind = .pty) -> Pane {
     Pane(id: id, laneId: "L", position: position, kind: kind,
          relaySessionId: kind == .pty ? id : nil, relayServer: nil, url: nil, scrollY: nil,

@@ -6,6 +6,10 @@ import Testing
 @testable import MaxPaneKit
 @testable import RelayClient
 
+// serial pass: a real loopback server, and waits measured against the wall
+// clock. The whole suite runs in `scripts/test.sh`'s second, --no-parallel
+// pass; see README, "The serial pass".
+
 // MARK: - a fake relay-tty server, HTTP and WebSocket on one loopback port
 
 /// Enough of relay-tty's server to exercise `RemoteSessionSource`: `GET

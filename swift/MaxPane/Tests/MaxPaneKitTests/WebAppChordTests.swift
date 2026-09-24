@@ -4,6 +4,10 @@ import Foundation
 import LanedCore
 @testable import MaxPaneKit
 
+// serial pass: real WebKit surfaces, settled against the wall clock. The whole
+// suite runs in `scripts/test.sh`'s second, --no-parallel pass; see README,
+// "The serial pass".
+
 /// `[[apps]]`: a chord per web app. What can be wrong here is what the file
 /// parses to, which chord each app ends up with once every command has had
 /// its say, which lane counts as "already open", and what the four surfaces

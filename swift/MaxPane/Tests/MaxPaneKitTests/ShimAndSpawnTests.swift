@@ -210,15 +210,24 @@ struct RelaySpawnTests {
         // The guard sits ahead of `locatePtyHost`, so this throws whether or not
         // there is a relay-pty-host on the machine — and, more to the point, no
         // session id exists to hand back and no lane is written for one.
-        let before = (try? FileManager.default.contentsOfDirectory(
-            atPath: RelaySessionDirectory.sessionsDir.path))?.count ?? 0
+        // Which names are there, not how many. `RelaySessionDirectory.root` is
+        // `~/.relay-tty` — the owner's *live* one, not the test profile's, since
+        // pty-host owns those files and MaxPane only reads them. His real
+        // pty-host reaps a finished session whenever it likes, including in the
+        // microseconds this test is inside `spawn`, and a count then drops by one
+        // and fails an assertion about something nobody did. What this test
+        // actually claims is that the refusal *added* nothing, so compare the
+        // sets and look only at what appeared: a reaped session is not ours, and
+        // a leaked one still fails.
+        let names = { Set((try? FileManager.default.contentsOfDirectory(
+            atPath: RelaySessionDirectory.sessionsDir.path)) ?? []) }
+        let before = names()
         #expect(throws: LocalSpawner.SpawnError.self) {
             try LocalSpawner(config: Config())
                 .spawn(cwd: "/tmp", command: "yes | head")
         }
-        let after = (try? FileManager.default.contentsOfDirectory(
-            atPath: RelaySessionDirectory.sessionsDir.path))?.count ?? 0
-        #expect(after == before, "a refused run left a session behind")
+        let added = names().subtracting(before)
+        #expect(added.isEmpty, "a refused run left a session behind: \(added.sorted())")
     }
 
     @Test("session ids are 8 lowercase hex characters")

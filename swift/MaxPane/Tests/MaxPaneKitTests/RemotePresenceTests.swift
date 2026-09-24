@@ -5,6 +5,10 @@ import Testing
 @testable import MaxPaneKit
 @testable import RelayClient
 
+// serial pass: asserts a timeout fires *inside* a window, on a real socket.
+// The whole suite runs in `scripts/test.sh`'s second, --no-parallel pass; see
+// README, "The serial pass".
+
 // Remote presence (ADR-0023): a dead server shows at once, everywhere, and a
 // remote session is recognisably remote. The fake servers are the ones the
 // remote relay suites already use: `FakeRelayServer` (HTTP + /ws/events) and

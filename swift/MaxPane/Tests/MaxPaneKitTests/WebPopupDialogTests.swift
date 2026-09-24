@@ -4,6 +4,10 @@ import Testing
 import WebKit
 @testable import MaxPaneKit
 
+// serial pass: real WebKit on two origins, and a main run-loop pump. The whole
+// suite runs in `scripts/test.sh`'s second, --no-parallel pass; see README,
+// "The serial pass".
+
 /// A page's popup as a dialog, proven against real WebKit rather than argued.
 ///
 /// The owner uses this app as his browser, so "OAuth works" is a claim about

@@ -4,6 +4,10 @@ import Foundation
 import LanedCore
 @testable import MaxPaneKit
 
+// serial pass: a real surface, settled against the wall clock. The whole suite
+// runs in `scripts/test.sh`'s second, --no-parallel pass; see README, "The
+// serial pass".
+
 /// Advanced Paste (ADR-0032): the order the steps are applied in, the regular
 /// expression, and that the sheet shows and sends `TerminalPaste.compose` and
 /// nothing else. Every pasteboard here is a private named one;
