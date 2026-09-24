@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- ⌘↩ expands the focused lane's tile in the gallery, and puts it back when that tile is the one already up — expanding was a double click and collapsing was a click on the background, so the keyboard could reach everything around an expansion and not the expansion itself. It reads with ⇧⌘↩ Maximize Pane beside it, is greyed outside the gallery, and says *the lane is docked* rather than doing nothing on a wall. Esc still belongs to the focused tile, and ⌘G is still the only way out of the gallery
+
 ### Changed
 - The gallery has walls: a docked lane stays at the left or right edge there too, at full size, and the tiles are laid into what is left. ⌘G no longer throws the pin away — the lane does not move one point in either direction — and ⌃⌘[ ⌃⌘] ⌃⌘\ ⌃⌘= ⌃⌘- and a drag of the wall's inner edge all work in the gallery. A docked lane has no tile there: it can never be the expanded one, ⌘[ / ⌘] and the expansion cycle step over it, a drop cannot land on it, and ⇧⌘↩ maximizes clear of it
 - In the gallery with a tile expanded, anything that focuses another lane now moves the expansion to it — ⌘J, ⌘P, ⌘O, ⌘E, an app chord, a sidebar row, a search hit, a single click on another tile — so a key that selects a lane also leaves it readable. ⌘G, a click on the background, a focus change inside the expanded lane, and focus landing on a docked lane leave it where it is; ⌘[ / ⌘] now step over a dock, as they do on the strip

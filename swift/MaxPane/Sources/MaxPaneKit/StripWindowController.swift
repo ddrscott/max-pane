@@ -1022,6 +1022,10 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             // A pane with the keyboard — on the strip, in a dock, in a gallery
             // tile — or one that is already up, which can always come down.
             return strip.canToggleMaximize
+        case .toggleExpandTile:
+            // In the gallery, on a lane that is not a wall. `expandTileRefusal`
+            // holds the three ways this says no and the wording for each.
+            return strip.canToggleExpandTile
         case .toggleMobileLayout:
             // A lane with a page in it. The pages are asked, not the snapshot,
             // for the same reason the lane's menu asks them.
@@ -1072,6 +1076,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         case .laneSizeSmall, .laneSizeMedium, .laneSizeLarge, .laneSizeCycle:
             return strip.isGallery ? "not in the gallery" : "needs a lane"
         case .toggleMaximizePane: return "needs a pane with the keyboard"
+        case .toggleExpandTile: return strip.expandTileRefusal
         case .toggleMobileLayout, .toggleMute: return "needs a lane with a page"
         case .toggleBlocking: return "needs a page on a site, with blocking on"
         case .muteOthers, .muteAll: return "nothing is making a sound"
@@ -1089,6 +1094,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
     public func title(for command: Command) -> String {
         if command == .toggleMaximizePane, strip.isPaneMaximized, let active = command.activeTitle {
+            return active
+        }
+        if command == .toggleExpandTile, strip.focusedTileIsExpanded, let active = command.activeTitle {
             return active
         }
         if command == .copyMode, strip.focusedTerminalIsInCopyMode, let active = command.activeTitle {
@@ -1363,6 +1371,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .toggleMaximizePane:
                 strip.toggleMaximizeFocusedPane()
+
+            case .toggleExpandTile:
+                strip.toggleExpandFocusedTile()
 
             case .toggleMobileLayout:
                 if let lane = focusedLane { strip.toggleMobileLayout(ofLane: lane.id) }

@@ -37,6 +37,7 @@ public enum Command: String, CaseIterable, Sendable {
     case gather
     case ungather
     case toggleGallery
+    case toggleExpandTile
     case toggleKeepLive
     case renameLane
     case dockLaneLeft
@@ -123,6 +124,7 @@ public enum Command: String, CaseIterable, Sendable {
         case .gather: return "Gather Project"
         case .ungather: return "Leave Gather View"
         case .toggleGallery: return "Toggle Gallery"
+        case .toggleExpandTile: return "Expand Tile"
         case .toggleKeepLive: return "Keep Lane Loaded"
         case .renameLane: return "Rename Lane…"
         case .dockLaneLeft: return "Dock Lane Left"
@@ -280,6 +282,20 @@ public enum Command: String, CaseIterable, Sendable {
         // belongs to the focused tile, because answering an agent's prompt from
         // its thumbnail is what the gallery is for.
         case .toggleGallery:   return ("g", [.command])
+        // ⌘↩, beside ⇧⌘↩'s Maximize Pane: "open this" and "open this all the
+        // way" on one key and its shift. Nothing here binds plain ⌘↩ — Return
+        // appears once in this file, on Maximize Pane — `Keymap.reserved` has
+        // no Return at all, and macOS keeps no system chord on it (an app's
+        // Return keys are its own: Mail sends, Finder renames, and neither is
+        // a service or a system binding that would reach over this window).
+        // A terminal sees Ghostty's bindings cleared (ADR-0009) and a page
+        // gives it up through `claims(_:)`, so it arrives from inside a tile.
+        //
+        // **Not Esc**, which the 2026-09-13 gallery rule already spent: in the
+        // gallery Esc belongs to the focused tile, and the expanded tile is
+        // exactly the tile whose agent is being answered. See `toggleGallery`
+        // above and ADR-0011, amended 2026-09-24.
+        case .toggleExpandTile: return ("\r", [.command])
         // ⇧⌘P kept its key and lost its word. It used to be "Pin Lane", which
         // meant "never evict this lane" — and the owner has since said plainly
         // that pinning is what he calls docking. The key is not the word, and
@@ -495,6 +511,7 @@ public enum Command: String, CaseIterable, Sendable {
     public var activeTitle: String? {
         switch self {
         case .toggleMaximizePane: return "Restore Pane"
+        case .toggleExpandTile: return "Collapse Tile"
         case .copyMode: return "Leave Copy Mode"
         case .toggleMute: return "Unmute Pane"
         default: return nil
@@ -617,6 +634,9 @@ public enum Command: String, CaseIterable, Sendable {
         // With ⌘P and ⌘[ ⌘]: they move focus, to the agent that needs it.
         case .nextAttention, .previousAttention, .showAttention: return .navigate
         case .toggleGallery: return .view
+        // Directly under Toggle Gallery: it is the other half of getting into
+        // the gallery and reading something there.
+        case .toggleExpandTile: return .view
         case .moveLaneLeft, .moveLaneRight, .toggleSidebar, .toggleKeepLive,
              .widenLane, .narrowLane, .peekDesktop: return .view
         // With Keep Lane Loaded and the sizes: a fact about the lane.

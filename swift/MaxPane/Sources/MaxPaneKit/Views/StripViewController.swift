@@ -1505,6 +1505,61 @@ public final class StripViewController: NSViewController {
         if isGallery { layoutGallery(animated: true) }
     }
 
+    /// Why ⌘↩ cannot expand or collapse anything right now, in the one line the
+    /// greyed menu item and the ⌘E row print — or nil when it can.
+    ///
+    /// Three ways to say no, and each is a sentence rather than a silence:
+    ///
+    /// - **Outside the gallery there is no tile.** The strip's equivalent is
+    ///   ⇧⌘↩ Maximize Pane, which already exists; a second one under another
+    ///   key would be two answers to one question.
+    /// - **No lane** — an empty strip has nothing to grow.
+    /// - **The focused lane is docked.** Since ADR-0011's 2026-09-24 amendment a
+    ///   docked lane is a wall, not a tile: it is at its real size already, and
+    ///   `expandTile` refuses it. The key says so instead of doing nothing, and
+    ///   it does *not* wander off to the nearest lane that would take it —
+    ///   moving the expansion somewhere the user did not focus is the churn the
+    ///   dock exists to be free of (`docs/critiques/docking.md` § 3). A tile
+    ///   expanded elsewhere stays up; the key speaks for the focused lane only.
+    public var expandTileRefusal: String? {
+        guard isGallery else { return "only in the gallery" }
+        guard let lane = store.focusedLane else { return "needs a lane" }
+        // Collapsing the tile that is up is always available, docked or not —
+        // and it can never be docked, because `expandTile` refused it.
+        guard expandedLaneId != lane.id else { return nil }
+        guard lane.dock == nil else { return "the lane is docked" }
+        return nil
+    }
+
+    /// Whether ⌘↩ has something to do. `expandTileRefusal` says why not.
+    public var canToggleExpandTile: Bool { expandTileRefusal == nil }
+
+    /// True while the focused lane is the expanded one, which is when the menu
+    /// item reads Collapse Tile rather than Expand Tile.
+    public var focusedTileIsExpanded: Bool {
+        guard isGallery, let lane = store.focusedLane else { return false }
+        return expandedLaneId == lane.id
+    }
+
+    /// ⌘↩: grow the focused lane's tile, or put it back when it is the one that
+    /// is already up.
+    ///
+    /// The keyboard could reach everything around expansion and not expansion
+    /// itself — ⌘G in, ⌘J and ⌘[ / ⌘] to *move* an expansion that a double
+    /// click had to start. This is the missing step, and it is the same two
+    /// calls the click monitor makes, so the motion is the one tile animation
+    /// and a repeat mid-flight turns round from where the tiles are drawn.
+    func toggleExpandFocusedTile() {
+        guard canToggleExpandTile, let lane = store.focusedLane else { return }
+        if expandedLaneId == lane.id {
+            collapseExpandedTile()
+        } else {
+            let focused = store.state.focusedPaneId
+            let paneId = lane.panes.contains { $0.id == focused } ? focused : nil
+            expandTile(laneId: lane.id, paneId: paneId)
+        }
+    }
+
     /// **While a tile is expanded, anything that lands focus on a different
     /// lane expands that lane instead, and the one that was expanded compresses
     /// back into its slot.** While nothing is expanded, nothing changes.

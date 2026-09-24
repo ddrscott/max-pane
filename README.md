@@ -567,6 +567,7 @@ Press **⌘/** for every shortcut. The three that matter:
 | **⌘[** / **⌘]** | move focus between lanes |
 | **⌃⌘[** / **⌃⌘]** | dock this lane to that edge of the window, or undock it |
 | **⌘G** | Lanes ⇄ Gallery: every lane on one screen, live; ⌘G again goes back |
+| **⌘↩** | Expand Tile: in the gallery, grow the focused lane's tile to the lane's real size; ⌘↩ again puts it back. Greyed outside the gallery |
 | **⇧⌘↩** | Maximize Pane: the focused pane over the whole visible strip; ⇧⌘↩ again puts it back |
 | **⌘P** | find a lane by title, URL or something it printed |
 | **⌃⌘W** | End Session: kill the session behind the focused terminal, after a sheet; ⌘K clears it, ⌃⌘R renames the lane |
@@ -2127,6 +2128,29 @@ the first one back too. Inside an expanded tile a double click selects a word
 again, since that tile is big enough to read. The session browser follows the
 same gestures while the gallery is up — click to focus, double-click to expand —
 and keeps its usual behaviour on the strip. ⌘G is still the way out.
+
+**⌘↩ expands and collapses the focused lane's tile**, which is the same two
+things without a mouse. The keyboard could reach everything *around* expansion —
+⌘G in, ⌘J and ⌘[ / ⌘] to move an expansion that already existed — and not
+expansion itself, so a keyboard user arrived in the gallery and was stuck on
+thumbnails. It reads with ⇧⌘↩ Maximize Pane beside it: open this, and open this
+all the way. Pressed on the lane whose tile is already up it puts the tile back,
+and the View menu says *Collapse Tile* while that is what it would do. It is the
+same animation the double click runs, so a repeat mid-flight turns round from
+where the tiles are drawn, and rebindable as `toggleExpandTile` in `[keys]`.
+
+Outside the gallery it is **greyed** — *only in the gallery* — because the
+strip's answer to "show me this properly" is ⇧⌘↩, and one question does not get
+two keys. **A docked lane refuses it**, with *the lane is docked*: since the
+gallery got walls a docked lane is not a tile, it is at its real size already,
+and the key says so rather than doing nothing or wandering off to the nearest
+lane that would take it. A tile expanded elsewhere stays up.
+
+**Esc is not the collapse**, and deliberately. Esc in the gallery belongs to the
+focused tile — answering an agent's prompt from its thumbnail is what the
+gallery is for — and the expanded tile is exactly the tile being answered. ⌘G is
+still the only way out of the gallery, and ⌘↩ the only way to put a tile back
+from the keyboard.
 
 **With a tile expanded, anything that focuses another lane moves the
 expansion** — not just the focus ring, and not just ⌘[ and ⌘]. The tile

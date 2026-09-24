@@ -413,3 +413,43 @@ mechanism for "keep this readable" rather than two.
 **Not driven in the running app.** The wall's geometry is held by
 `DockGalleryWallTests`, and the four arrangements — none, left, right, both — are
 in `gallery-walls-*.png`, looked at in light and dark.
+
+## Amended 2026-09-24: ⌘↩ expands a tile, and Esc still does not collapse one
+
+The owner asked: *"do we have a shortcut to toggle lane expansion?"* There was
+none. Every call to `expandTile` / `collapseExpandedTile` came from the click
+monitor or from the focus rule two amendments up; the keyboard reached ⌘G, ⌘J,
+⌘[ and ⌘] — everything *around* an expansion — and not the one step that starts
+reading. A keyboard user arrived in the gallery and was stuck on thumbnails.
+
+- **`toggleExpandTile` on ⌘↩**, rebindable, in the View menu under Toggle
+  Gallery, in the ⌘/ sheet and in ⌘E. It expands the focused lane's tile, or
+  collapses it when that lane is the one already up — the same two calls the
+  double click and the background click make, so the motion is the one tile
+  animation and a repeat mid-flight turns round from where the tiles are drawn.
+- **The chord reads with ⇧⌘↩ Maximize Pane**: open this, and open this all the
+  way. Nothing else binds Return, `Keymap.reserved` has none, and macOS keeps no
+  system chord on it.
+- **Greyed outside the gallery** — *only in the gallery*. ⇧⌘↩ is the strip's
+  answer to the same question and this must not become a second one.
+- **A docked lane refuses it** — *the lane is docked*. The amendment above made
+  a docked lane a wall rather than a tile, and `expandTile` already refused it;
+  the key now says why in the one line the greyed item prints, instead of doing
+  nothing silently. It does not move to the nearest expandable lane: that would
+  churn a lane the user did not focus, which is what § 3 of the docking critique
+  is about. A tile expanded elsewhere stays up.
+
+**Esc does not collapse, and the rule above is why.** The 2026-09-13 rule spends
+Esc on the focused tile — *"answering an agent's prompt from its thumbnail is
+what the gallery is for"* — and the expanded tile is precisely the tile whose
+agent is being answered, the one place in the gallery where a full-size vim, a
+TUI or a `y/n` is in front of you. A collapse on Esc would take the key from the
+pane that most needs it, and gating it on "only when a tile is expanded" makes
+the key mean two things in the same layout. So the collapse ships on ⌘↩ alone,
+Esc reaches the pane as it always did, and ⌘G stays the only way out of the
+gallery.
+
+Held by `GalleryExpandKeyTests`: the chord and its rebinding, expand and
+collapse on the rig's gallery, the toggle on the lane already expanded, the two
+refusals and their wording, and that Esc is nobody's key equivalent and leaves
+both the gallery and the expansion where they are.
