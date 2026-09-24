@@ -81,6 +81,8 @@ public enum Command: String, CaseIterable, Sendable {
     case savePDF
     case showHelp
     case showChangelog
+    case checkForUpdates
+    case updateApp
     case showSettings
 
     public var title: String {
@@ -160,6 +162,8 @@ public enum Command: String, CaseIterable, Sendable {
         case .savePDF: return "Save as PDF…"
         case .showHelp: return "Keyboard Shortcuts"
         case .showChangelog: return "What's New…"
+        case .checkForUpdates: return "Check for Updates…"
+        case .updateApp: return "Update…"
         case .showSettings: return "Settings…"
         }
     }
@@ -419,6 +423,10 @@ public enum Command: String, CaseIterable, Sendable {
         // and the ⌘/ sheet lists it; `keys` binds it for anyone who wants it
         // on one.
         case .showChangelog:   return nil
+        // No keys, like What's New: a release is a few-times-a-month event,
+        // reached from the Help menu, the `↻` in the status bar, the
+        // popover's line, or ⌘E by name; `keys` binds either (ADR-0038).
+        case .checkForUpdates, .updateApp: return nil
         // ⌘, is Settings in every Mac app, which is the whole argument.
         case .showSettings:    return (",", [.command])
         }
@@ -589,6 +597,9 @@ public enum Command: String, CaseIterable, Sendable {
         // what's-new: the ⌘/ sheet was under View while there was no Help
         // menu to put it in.
         case .showHelp, .showChangelog: return .help
+        // Help, under What's New: the release you do not have yet is the
+        // next thing after the changes you do.
+        case .checkForUpdates, .updateApp: return .help
         case .reload, .hardReload, .editAddress: return .navigate
         // Under Navigate with ⌘Y's picker, not under View with the dashboards:
         // what it is for is going back to a page, and the two keys that do that

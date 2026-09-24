@@ -1723,7 +1723,38 @@ public final class StripViewController: NSViewController {
     /// The beat before it starts is deliberate. An exit is often the last line
     /// of output, and a pane that vanishes the instant a command finishes takes
     /// the answer with it.
-    private func paneDidExit(_ paneId: String) {
+    /// Sessions whose exit is not a close: the update lane (ADR-0038),
+    /// which has to stay on the strip with its output legible and a
+    /// `RELAUNCH` in its footer once brew has finished. Keyed by session
+    /// rather than pane, so the hold can be placed before the lane exists
+    /// — a `true` for an `update_command` exits before the pane is built.
+    private var exitHolds: [String: (Int32) -> Void] = [:]
+
+    /// Keep the pane running `sessionId` on the strip when its session
+    /// ends, and hand the exit status to `handler` instead. One session,
+    /// once; ⌘W still closes the lane.
+    public func holdExit(ofSession sessionId: String, _ handler: @escaping (Int32) -> Void) {
+        exitHolds[sessionId] = handler
+    }
+
+    /// Put `text` and a `label` button on the banner of the pane whose
+    /// session is `sessionId`; the button runs `action`. False when the
+    /// pane has no controller on the strip.
+    @discardableResult
+    public func showExitAction(
+        ofSession sessionId: String, text: String, label: String, action: @escaping () -> Void
+    ) -> Bool {
+        guard let pane = store.allLanes.flatMap(\.panes).first(where: { $0.sessionKey?.id == sessionId }),
+              let terminal = paneControllers[pane.id] as? TerminalPaneController else { return false }
+        terminal.showExitAction(text, label: label, action: action)
+        return true
+    }
+
+    private func paneDidExit(_ paneId: String, code: Int32) {
+        if let sessionId = store.pane(paneId)?.sessionKey?.id, let hold = exitHolds.removeValue(forKey: sessionId) {
+            hold(code)
+            return
+        }
         guard exiting.insert(paneId).inserted else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.exitHold) { [weak self] in
             self?.closeExitedPane(paneId)
@@ -2535,7 +2566,15 @@ public final class StripViewController: NSViewController {
     }
 
     private func makeController(for pane: Pane, in lane: Lane) -> PaneController {
-        if let made = controllerFactory?(pane, lane) { return made }
+        if let made = controllerFactory?(pane, lane) {
+            // A terminal a test built over a fake attachment still exits
+            // through the strip, so the hold below is tested on the real
+            // path rather than on a stub of it.
+            if let terminal = made as? TerminalPaneController, terminal.onSessionExit == nil {
+                terminal.onSessionExit = { [weak self] code in self?.paneDidExit(pane.id, code: code) }
+            }
+            return made
+        }
         switch pane.kind {
         case .pty:
             let controller = TerminalPaneController(pane: pane, store: store, config: config)
@@ -2553,8 +2592,8 @@ public final class StripViewController: NSViewController {
             controller.onOpenToken = { [weak self] token in
                 self?.open(token, from: pane.id)
             }
-            controller.onSessionExit = { [weak self] _ in
-                self?.paneDidExit(pane.id)
+            controller.onSessionExit = { [weak self] code in
+                self?.paneDidExit(pane.id, code: code)
             }
             // A program set the clipboard (OSC 52): the header of whichever
             // lane holds the pane now says so. Looked up, not captured: a

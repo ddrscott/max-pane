@@ -36,6 +36,16 @@ public final class StatusBar: NSView {
     var soundText: String { soundShown ? sound.stringValue : "" }
     private var soundShown = false
     public var onClickSound: (() -> Void)?
+    /// `↻ v0.8.0` while a newer release is out (ADR-0038): at the right,
+    /// where Omarchy's bar puts its circle arrow, and nothing at all
+    /// otherwise. A click runs Help › Update…. In the accent, like the
+    /// corner's `+N`: news about the build, not a state of anything.
+    private let updateLabel = NSTextField(labelWithString: "")
+    private var updateShown = false
+    /// The `↻` as drawn, for tests; empty while there is no release to name.
+    var updateText: String { updateShown ? updateLabel.stringValue : "" }
+    var updateTooltip: String? { updateLabel.toolTip }
+    public var onClickUpdate: (() -> Void)?
     private let memory = NSTextField(labelWithString: "")
     private let hint = NSTextField(labelWithString: "")
 
@@ -90,7 +100,9 @@ public final class StatusBar: NSView {
         soundGroup.alignment = .centerY
         soundGroup.isHidden = true
         soundGroup.alphaValue = 0
-        let row = NSStackView(views: [sidebarToggle, profile, lanes, sessions, attention, soundGroup, spacer, memory, hint])
+        updateLabel.isHidden = true
+        updateLabel.alphaValue = 0
+        let row = NSStackView(views: [sidebarToggle, profile, lanes, sessions, attention, soundGroup, spacer, updateLabel, memory, hint])
         row.orientation = .horizontal
         row.spacing = 14
         row.alignment = .centerY
@@ -104,10 +116,12 @@ public final class StatusBar: NSView {
         // The spacer view is what pushes the right-hand group to the edge.
         spacer.setContentHuggingPriority(.init(1), for: .horizontal)
 
-        for field in [profile, lanes, sessions, attention, sound, memory, hint] {
+        for field in [profile, lanes, sessions, attention, sound, updateLabel, memory, hint] {
             field.font = Theme.mono(10)
             field.textColor = Theme.dimText
         }
+        updateLabel.font = Theme.mono(10, weight: .bold)
+        updateLabel.textColor = Theme.accent
         hint.stringValue = "⌘/ shortcuts"
         setProfile(Profile.current)
 
@@ -179,6 +193,10 @@ public final class StatusBar: NSView {
         }
         if soundShown, soundGroup.convert(soundGroup.bounds, to: self).insetBy(dx: -6, dy: -4).contains(point) {
             onClickSound?()
+            return
+        }
+        if updateShown, updateLabel.convert(updateLabel.bounds, to: self).insetBy(dx: -6, dy: -4).contains(point) {
+            onClickUpdate?()
             return
         }
         // The right-hand third is the memory readout; the rest is sessions.
@@ -305,6 +323,33 @@ public final class StatusBar: NSView {
             MainActor.assumeIsolated {
                 guard let self, !self.soundShown else { return }
                 self.soundGroup.isHidden = true
+            }
+        })
+    }
+
+    /// A newer release, or nil when there is none to name. Arrives and
+    /// leaves with a fade, like the speaker; the text changing (a second
+    /// release before the first was taken) is just text.
+    public func setUpdate(_ text: String?, tooltip: String?) {
+        if let text { updateLabel.stringValue = text }
+        updateLabel.toolTip = tooltip
+        guard (text != nil) != updateShown else { return }
+        updateShown = text != nil
+        let shown = updateShown
+        if shown { updateLabel.isHidden = false }
+        guard window != nil else {
+            updateLabel.alphaValue = shown ? 1 : 0
+            updateLabel.isHidden = !shown
+            return
+        }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = Motion.isReduced ? 0 : Motion.pane
+            context.timingFunction = Motion.easeOutTiming
+            updateLabel.animator().alphaValue = shown ? 1 : 0
+        }, completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, !self.updateShown else { return }
+                self.updateLabel.isHidden = true
             }
         })
     }

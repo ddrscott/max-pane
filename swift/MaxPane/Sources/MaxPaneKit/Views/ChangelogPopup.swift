@@ -29,6 +29,11 @@ final class ChangelogPopup: Popup {
     var openSections: [Int] { sections.indices.filter { !model.items[$0].isFolded } }
     /// The one-line notice when there is no changelog, or nil.
     private(set) var emptyText: String?
+    /// The update lines as drawn, for tests.
+    var noticeTexts: [String] { noticeViews.map(\.stringValue) }
+    private var noticeViews: [NSTextField] = []
+    /// The `update…` line was clicked: Help › Update…, from here.
+    var onUpdate: (() -> Void)?
 
     /// A window someone reads: ⌘-Tab to check a commit is not a decision to
     /// close it.
@@ -67,6 +72,30 @@ final class ChangelogPopup: Popup {
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.automaticallyAdjustsContentInsets = false
+
+        // The release you do not have, before the changes you do. The
+        // action line is in the accent, like the `↻` it repeats; the rest
+        // is grey, at rest.
+        if !model.notices.isEmpty {
+            let title = SectionHeader(text: "UPDATE")
+            stack.addArrangedSubview(title)
+            stack.setCustomSpacing(6, after: title)
+        }
+        for line in model.notices {
+            let field = NSTextField(wrappingLabelWithString: line.text)
+            field.font = Theme.mono(11, weight: line.isAction ? .bold : .regular)
+            field.textColor = line.isAction ? Theme.accent : Theme.dimText
+            field.preferredMaxLayoutWidth = Self.size.width - 2 * Self.inset
+            if line.isAction {
+                field.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(noticeClicked)))
+                field.toolTip = "Run the update in a terminal lane"
+            }
+            noticeViews.append(field)
+            stack.addArrangedSubview(field)
+            field.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            stack.setCustomSpacing(4, after: field)
+        }
+        if let last = noticeViews.last { stack.setCustomSpacing(16, after: last) }
 
         if model.isEmpty {
             let notice = NSTextField(wrappingLabelWithString: ChangelogPopupModel.emptyMessage)
@@ -124,6 +153,8 @@ final class ChangelogPopup: Popup {
         Motion.fade(stack.layer)
         sections[index].setFolded(model.items[index].isFolded)
     }
+
+    @objc private func noticeClicked() { onUpdate?() }
 
     /// The section as markdown, on the clipboard.
     func copy(_ index: Int) {

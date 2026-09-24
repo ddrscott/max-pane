@@ -23,6 +23,10 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private var helpPanel: HelpPanel?
     private var changelogPopup: ChangelogPopup?
     private var attentionPopup: AttentionPopup?
+    /// The daily release check (ADR-0038). Nil until the app delegate
+    /// hands one over with `startUpdateChecks`, which a test never does:
+    /// a window built in a test runner reaches no feed.
+    public private(set) var updateChecker: UpdateChecker?
     private var settingsWindow: SettingsWindow?
     /// An agent going BLOCKED or DONE while the app is not in front posts a
     /// notification (ADR-0037). Built with the real poster; a test builds
@@ -441,6 +445,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         // the noise is coming from this window at all.
         audioToken = store.audio.observe { [weak self] in self?.refreshSound() }
         statusBar.onClickSound = { [weak self] in self?.perform(.muteAll) }
+        // A release: the update, in a lane. Only relay-tty short: the
+        // popover, which says what is short and what is needed.
+        statusBar.onClickUpdate = { [weak self] in
+            guard let self else { return }
+            self.perform(self.updateChecker?.status.available != nil ? .updateApp : .showChangelog)
+        }
         // WebKit's footprint is sampled, not pushed, so the footer needs its own
         // slow tick to stay honest about it.
         statusTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
@@ -806,8 +816,10 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return store.isGathered
         case .gather:
             return store.focusedLane?.projectRoot != nil
-        case .showHelp, .showChangelog:
+        case .showHelp, .showChangelog, .updateApp:
             return true
+        case .checkForUpdates:
+            return updateChecker != nil
         case .showSettings:
             return configStore != nil
         case .copyWithStyles, .copyMode:
@@ -895,6 +907,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         case .ungather: return "not in a gather view"
         case .gather: return "the lane has no project"
         case .showSettings: return "no config file"
+        case .checkForUpdates: return "no update check in this build"
         case .copyWithStyles, .copyMode, .pasteWithoutAsking, .pasteEscaped, .pasteAsBase64,
              .pasteBase64Decoded, .pasteFileAsBase64, .pasteSlowly, .advancedPaste, .claimSession:
             return "needs a terminal with the keyboard"
@@ -932,6 +945,11 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         if command == .toggleMute, let active = command.activeTitle, let lane = store.focusedLane,
            muteTarget.map({ store.audio.mark(of: $0) }) ?? store.audio.mark(of: lane) == .muted {
             return active
+        }
+        // The release by name, once the check has one: the item says what
+        // pressing it gets.
+        if command == .updateApp, let release = updateChecker?.status.available {
+            return "Update to \(release.label)…"
         }
         return command.title
     }
@@ -991,6 +1009,12 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .showChangelog:
                 showChangelog()
+
+            case .checkForUpdates:
+                checkForUpdates()
+
+            case .updateApp:
+                try runUpdate()
 
             case .showSettings:
                 showSettings()
@@ -1814,12 +1838,97 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             existing.closePopup()
             return
         }
-        let popup = ChangelogPopup(model: ChangelogPopupModel(changelog: Changelog.bundled()))
+        let popup = ChangelogPopup(model: ChangelogPopupModel(changelog: Changelog.bundled(), notices: updateNotices()))
+        popup.onUpdate = { [weak self, weak popup] in
+            popup?.closePopup()
+            self?.perform(.updateApp)
+        }
         if let anchor = sidebar.versionAnchor, let window = anchor.window, !anchor.isHiddenOrHasHiddenAncestor {
             popup.anchorRect = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
         }
         changelogPopup = popup
         popup.present(over: window)
+    }
+
+    // MARK: - updates (ADR-0038)
+
+    /// The app delegate's checker, started: a check now if a day has
+    /// passed, one every hour after that, and the bar's `↻` following it.
+    public func startUpdateChecks(_ checker: UpdateChecker) {
+        updateChecker = checker
+        checker.onChange = { [weak self] in self?.refreshUpdate() }
+        refreshUpdate()
+        checker.start()
+    }
+
+    private func refreshUpdate() {
+        guard let checker = updateChecker else { return }
+        statusBar.setUpdate(
+            UpdateNotice.barText(checker.status, relay: checker.relay),
+            tooltip: UpdateNotice.barTooltip(checker.status, relay: checker.relay))
+    }
+
+    /// What the version popover says above the changelog; nothing without
+    /// a checker, which is a `swift run` or a test.
+    private func updateNotices() -> [UpdateNotice.Line] {
+        guard let checker = updateChecker else { return [] }
+        return UpdateNotice.lines(
+            status: checker.status, lastCheck: checker.lastCheck, lastError: checker.lastError,
+            relay: checker.relay)
+    }
+
+    /// Help › Check for Updates…: the feed now, whatever the clock says,
+    /// then the popover with the answer — a release to update to, up to
+    /// date, or the one line about why it could not say.
+    private func checkForUpdates() {
+        guard let checker = updateChecker else { return }
+        Task { @MainActor [weak self] in
+            await checker.check()
+            guard let self else { return }
+            if let open = self.changelogPopup, open.isOpen { open.closePopup() }
+            self.showChangelog()
+        }
+    }
+
+    /// Help › Update…, and the `↻`. `update_command`, else Homebrew's
+    /// upgrade, in a terminal lane beside the focused one whose exit is
+    /// held rather than closed: 0 puts `RELAUNCH` on its banner, anything
+    /// else leaves the output where it can be read. Without either, the
+    /// release page in a web lane, and one dialog saying so.
+    private func runUpdate() throws {
+        let live = configStore?.config ?? config
+        let plan = UpdatePlan.decide(
+            updateCommand: live.updateCommand,
+            brewOnPath: LocalSpawner.which("brew") != nil,
+            release: updateChecker?.status.available)
+        let near = store.focusedLane?.id
+        switch plan {
+        case .releasePage(let url):
+            try store.newWebLane(url: url, near: near)
+            ConfirmPopup.inform(over: window, title: "No Homebrew to update with", detail: UpdatePlan.noBrewNotice)
+        case .command(let line):
+            let size = newSessionSize()
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            let session = try LocalSpawner(config: config)
+                .spawn(cwd: home, shellLine: line, cols: size.cols, rows: size.rows)
+            // Before the lane exists: a fast command's EXIT can arrive with
+            // the replay, on the pane's first frame.
+            strip.holdExit(ofSession: session) { [weak self] code in
+                self?.updateLaneExited(session: session, code: code)
+            }
+            try store.newTerminalLane(relaySessionId: session, near: near)
+        }
+    }
+
+    private func updateLaneExited(session: String, code: Int32) {
+        if code == 0 {
+            strip.showExitAction(ofSession: session, text: "updated · exit 0", label: "relaunch") {
+                Relaunch.now()
+            }
+        } else {
+            strip.showExitAction(
+                ofSession: session, text: "update failed · exit \(code) · ⌘W closes this lane", label: "") {}
+        }
     }
 
     /// ⌘, — every setting and every key, written to `config.toml` as they

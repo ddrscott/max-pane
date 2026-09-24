@@ -1440,6 +1440,62 @@ and `keys` can give it one. A `swift run` from the package has no bundle and
 no changelog, and the popover says so in one line. [Releasing](#releasing) has
 the contract that keeps the corner and the file in step.
 
+### Updating
+
+Once a day, and whenever you choose Help › Check for Updates…, the app reads
+GitHub's `releases/latest` for this repository (no login; an `ETag` keeps a
+day with no release to one small answer). When the release is newer than the
+build — by version number, so `0.10.0` beats `0.9.0` and a build from main
+past the release is not behind it — `↻ v0.8.0` appears at the right of the
+status bar, in the accent, and the version popover opens with a `// UPDATE`
+block above the changelog: `↻ v0.8.0 is available · update…`. Otherwise the
+block says `up to date · v0.7.0 is the latest release · checked 3 hours ago`.
+A check that cannot reach github.com — offline, metered, rate-limited — is one
+line on stderr and nothing on screen; the popover names it only after you
+asked. Yesterday's answer is remembered, so the `↻` is there from the first
+frame after a relaunch.
+
+**Help › Update…**, the `↻`, or the popover's line runs the upgrade in a
+terminal lane beside the one you are in, so you watch it: `brew upgrade
+--cask max-pane`, the shipped path, or whatever `update_command` in
+`config.toml` says instead. The lane is held open when the command ends
+rather than closing itself the way a finished lane does. Exit 0 puts
+`UPDATED · EXIT 0` on its banner with a `$ RELAUNCH` button; anything else
+puts `UPDATE FAILED · EXIT n` with the output above it, and ⌘W closes it. The
+menu item reads `Update to v0.8.0…` once the check has a name for it, and
+runs whether or not it does — brew will say "already installed".
+
+**Relaunch** starts a detached `/bin/sh` that waits for this process to be
+gone (so two instances never share a ledger), then runs `open -n` on the
+bundle brew has just replaced, and quits the app the way ⌘Q does. The helper
+is started with a built environment — `HOME`, `USER`, `LOGNAME`, `SHELL`,
+`TMPDIR`, `LANG`, `SSH_AUTH_SOCK`, `__CF_USER_TEXT_ENCODING` and
+`PATH=/usr/bin:/bin:/usr/sbin:/sbin` — and nothing else, because `open`
+hands its environment to the app it launches and this process may carry
+`CLAUDE_CODE_CHILD_SESSION` from a Claude session's terminal or
+`ANTHROPIC_API_KEY` from an rc file, which every pane would then inherit.
+The window comes back where it was — the ledger is the truth and ADR-0036
+restores the frame; nothing is exported first. The helper gives up after a
+minute if the old process has not gone, rather than launching later behind
+something else.
+
+**Without Homebrew** (the DMG install, `update_command` unset and no `brew`
+on your login shell's `PATH`), Update… opens the release's page in a web lane
+beside you and says so in one dialog: download the DMG from there. Set
+`update_command` to make it a lane again.
+
+**relay-tty's version** is checked on the same tick, from `relay --version`
+(see [Requirements](#requirements): 1.22.0 or newer, the release that added
+agent state). When it is short, the `↻`'s tooltip and the popover's update
+block say `relay-tty 1.20.0 is installed · 1.22.0 or newer is needed for
+BLOCKED`, and with no release to name the bar reads `↻ relay-tty 1.22.0`
+and a click opens the popover. Not found is not short: the first lane says
+that.
+
+Neither command has a default key; `keys` binds them, and ⌘E finds them by
+name. Refused: Sparkle, a background download, a silent relaunch
+([ADR-0038](docs/decisions/0038-the-update-lane.md)).
+
 ### Folding a group puts its lanes away
 
 Folding a directory in the sidebar, a server's directory, or a whole section
@@ -2757,6 +2813,7 @@ osc52_write = "allow"
 osc52_read = "ask"
 cursor_blink = "focused"
 agent_notify = "away"
+# update_command = "brew upgrade --cask ddrscott/tap/max-pane"
 ```
 
 The window writes one value at a time, in place: your comments, the order of
@@ -2850,6 +2907,11 @@ notification: `"away"` (the default) only while Max Pane is not in front,
 `"always"` in front too for every pane but the one with the keyboard,
 `"never"` not at all. Read at each transition. See
 [What calls you back](#what-calls-you-back).
+
+`update_command` is what Help › Update… runs in a terminal lane, as a shell
+line. Unset, it is `brew upgrade --cask max-pane` when your login shell can
+find `brew`, and the release page in a web lane when it cannot. Read when
+Update… is chosen. See [Updating](#updating).
 
 `cursor_blink` is which terminal cursors blink: `"focused"`, `"always"` or
 `"never"`. `"focused"`, the default, blinks the one terminal that has the

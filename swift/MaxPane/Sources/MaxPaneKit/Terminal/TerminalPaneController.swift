@@ -347,6 +347,34 @@ final class TerminalPaneController: NSObject, PaneController {
         }
     }
     private var noticeTimer: Timer?
+    /// The session ended and the lane has one thing to offer: the update
+    /// lane's `UPDATED · EXIT 0` with `RELAUNCH` (ADR-0038). Replaces the
+    /// EXITED line the exit put there; the pane and its scrollback stay.
+    func showExitAction(_ text: String, label: String, action: @escaping () -> Void) {
+        noticeTimer?.invalidate()
+        noticeTimer = nil
+        status.isHidden = false
+        status.onAction = action
+        Motion.fade(status.layer)
+        status.setState(.action(text, label: label))
+    }
+
+    /// The banner's action button, for tests: `$ RELAUNCH`, or empty.
+    var exitActionLabel: String { status.actionLabel }
+    /// The banner's line, for tests.
+    var bannerText: String? {
+        switch status.state {
+        case .exited(let code): return code == 0 ? "EXITED" : "EXITED \(code)"
+        case .action(let text, _): return text.uppercased()
+        case .notice(let text), .refused(let text): return text.uppercased()
+        case .connected: return nil
+        case .reconnecting: return "RECONNECTING"
+        case .offline(let server): return server.label
+        }
+    }
+    /// Press the banner's button, for tests.
+    func pressExitAction() { status.onAction?() }
+
     /// The notice on show, if one is: what a test reads.
     var noticeText: String? {
         if case .notice(let text) = status.state { return text }
@@ -378,7 +406,7 @@ final class TerminalPaneController: NSObject, PaneController {
         serverOff = off
         attachment?.serverStateChanged(state)
         switch status.state {
-        case .exited, .refused, .notice: return
+        case .exited, .refused, .notice, .action: return
         case .connected, .reconnecting, .offline: break
         }
         Motion.fade(status.layer)
@@ -2000,6 +2028,10 @@ final class ReconnectingBanner: NSView {
         /// state the sidebar and the lane header are showing, in the same
         /// word, and what that means for the keyboard.
         case offline(ServerState)
+        /// The session ended and there is something to do about it: the
+        /// update lane's `UPDATED · EXIT 0` with `$ RELAUNCH` on the right
+        /// (ADR-0038). Sticky, like `exited`; the pane stays for reading.
+        case action(String, label: String)
     }
 
     /// What the banner says about typing while the wire is down, and it is
@@ -2013,6 +2045,12 @@ final class ReconnectingBanner: NSView {
 
     private(set) var state: State = .connected
     private let label = NSTextField(labelWithString: "")
+    /// The `action` state's button; hidden in every other state.
+    private let button = NSButton(title: "", target: nil, action: nil)
+    /// The button was clicked.
+    var onAction: (() -> Void)?
+    /// The button's words, for tests; empty when there is none.
+    var actionLabel: String { button.isHidden ? "" : button.attributedTitle.string }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -2020,17 +2058,31 @@ final class ReconnectingBanner: NSView {
         label.font = Theme.mono(10, weight: .medium)
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
+        button.isBordered = false
+        button.bezelStyle = .inline
+        button.setButtonType(.momentaryChange)
+        button.target = self
+        button.action = #selector(actionClicked)
+        button.isHidden = true
+        button.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(button)
         NSLayoutConstraint.activate([
             label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            button.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            button.centerYAnchor.constraint(equalTo: centerYAnchor),
+            button.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 8),
         ])
     }
+
+    @objc private func actionClicked() { onAction?() }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not a nib") }
 
     func setState(_ state: State) {
         self.state = state
+        if case .action = state {} else { button.isHidden = true }
         switch state {
         case .connected:
             isHidden = true
@@ -2057,6 +2109,19 @@ final class ReconnectingBanner: NSView {
             label.stringValue = why.uppercased()
             label.textColor = Theme.dimText
             layerBackgroundColor = Theme.laneBorder.withAlphaComponent(0.3)
+        case .action(let text, let name):
+            // The line is grey like an exit; the one thing to do is the
+            // accent, with the `$` the bar puts on a live thing.
+            isHidden = false
+            label.stringValue = text.uppercased()
+            label.textColor = Theme.dimText
+            layerBackgroundColor = Theme.laneBorder.withAlphaComponent(0.3)
+            button.attributedTitle = NSAttributedString(
+                string: "$ " + name.uppercased(),
+                attributes: [.font: Theme.mono(10, weight: .bold), .foregroundColor: Theme.accent])
+            // An empty label is a sticky line with nothing to press: the
+            // update that failed, which the lane's output explains.
+            button.isHidden = name.isEmpty
         }
     }
 }

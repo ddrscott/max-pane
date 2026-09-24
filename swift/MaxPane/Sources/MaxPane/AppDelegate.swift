@@ -113,6 +113,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowController.configStore = configStore
         buildMenu()
         windowController.showWindow(nil)
+        // The daily release check (ADR-0038), from here and not from the
+        // window: a window built in a test runner must reach no feed.
+        windowController.startUpdateChecks(UpdateChecker(installed: BuildInfo.current.version))
         NSApp.activate(ignoringOtherApps: true)
     }
 

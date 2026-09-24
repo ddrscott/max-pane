@@ -107,6 +107,16 @@ public struct Config: Codable, Equatable {
     /// PATH", which is right on this machine and wrong on someone else's.
     public var relayPtyHostPath: String?
 
+    /// What Help › Update… runs in a terminal lane, as a shell line. Unset,
+    /// it is `brew upgrade --cask max-pane` when the login shell can find
+    /// `brew`, and the release page in a web lane when it cannot (a DMG
+    /// install). Read when Update… is chosen (ADR-0038).
+    ///
+    /// ```toml
+    /// update_command = "brew upgrade --cask ddrscott/tap/max-pane"
+    /// ```
+    public var updateCommand: String?
+
     public var fontName: String = "JetBrains Mono"
     public var fontSize: Double = 13
 
@@ -367,6 +377,7 @@ public struct Config: Codable, Equatable {
         doneHoldSeconds = read(.doneHoldSeconds, d.doneHoldSeconds)
         agentNotify = read(.agentNotify, d.agentNotify)
         relayPtyHostPath = read(.relayPtyHostPath, d.relayPtyHostPath)
+        updateCommand = read(.updateCommand, d.updateCommand)
         fontName = read(.fontName, d.fontName)
         fontSize = read(.fontSize, d.fontSize)
         copyOnSelect = read(.copyOnSelect, d.copyOnSelect)

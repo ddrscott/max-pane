@@ -270,9 +270,15 @@ public struct ChangelogPopupModel: Equatable, Sendable {
     }
 
     public private(set) var items: [Item]
+    /// What the check knows, above the changelog: `↻ v0.8.0 is available ·
+    /// update…`, `up to date · …`, or why it could not say; and relay-tty
+    /// when it is short of the minimum (ADR-0038). Empty for a popup with
+    /// no checker behind it, which a test's or a `swift run`'s is.
+    public let notices: [UpdateNotice.Line]
 
-    public init(changelog: Changelog?) {
+    public init(changelog: Changelog?, notices: [UpdateNotice.Line] = []) {
         items = (changelog?.sections ?? []).map { Item(section: $0, isFolded: !$0.isUnreleased) }
+        self.notices = notices
     }
 
     /// No changelog in the bundle, or one with no sections: the popup says so
@@ -284,4 +290,85 @@ public struct ChangelogPopupModel: Equatable, Sendable {
         guard items.indices.contains(index) else { return }
         items[index].isFolded.toggle()
     }
+}
+
+/// A version as the changelog and the release feed write one: `0.8.0`,
+/// `v0.8.0`, `0.8.0-beta.1`. Ordered numerically by component, so `0.10.0`
+/// is newer than `0.9.0` — the comparison a string sort gets wrong — and a
+/// prerelease sorts before the release it precedes, as SemVer §11 has it.
+///
+/// This is the ordering the changelog's sections and the update check share:
+/// "is the feed's release newer than the plist's version" is the same
+/// question as "which of these two headings comes first", and one answer
+/// keeps the corner and the `↻` from disagreeing.
+public struct SemanticVersion: Equatable, Hashable, Sendable, Comparable, CustomStringConvertible {
+    /// Major, minor, patch — always three, missing ones read as 0.
+    public let parts: [Int]
+    /// What followed the `-`, or nil for a release.
+    public let prerelease: String?
+
+    public init(parts: [Int], prerelease: String? = nil) {
+        var padded = parts
+        while padded.count < 3 { padded.append(0) }
+        self.parts = padded
+        self.prerelease = prerelease
+    }
+
+    /// Nil for anything that is not a version: `Unreleased`, an empty
+    /// string, a word. A leading `v` or `V` is the tag style, not the
+    /// meaning, and is dropped; so is anything after a `+` (build metadata,
+    /// which SemVer says never orders).
+    public init?(_ text: String) {
+        var s = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasPrefix("v") || s.hasPrefix("V") { s.removeFirst() }
+        if let plus = s.firstIndex(of: "+") { s = String(s[..<plus]) }
+        var pre: String?
+        if let dash = s.firstIndex(of: "-") {
+            pre = String(s[s.index(after: dash)...])
+            s = String(s[..<dash])
+            if pre?.isEmpty == true { return nil }
+        }
+        let fields = s.split(separator: ".", omittingEmptySubsequences: false)
+        guard !fields.isEmpty, fields.count <= 3 else { return nil }
+        var parts: [Int] = []
+        for field in fields {
+            guard let n = Int(field), n >= 0, !field.isEmpty else { return nil }
+            parts.append(n)
+        }
+        self.init(parts: parts, prerelease: pre)
+    }
+
+    public var description: String {
+        parts.map(String.init).joined(separator: ".") + (prerelease.map { "-\($0)" } ?? "")
+    }
+
+    public static func < (a: SemanticVersion, b: SemanticVersion) -> Bool {
+        if a.parts != b.parts {
+            for (x, y) in zip(a.parts, b.parts) where x != y { return x < y }
+            return a.parts.count < b.parts.count
+        }
+        switch (a.prerelease, b.prerelease) {
+        case (nil, nil): return false
+        case (.some, nil): return true
+        case (nil, .some): return false
+        case (.some(let p), .some(let q)):
+            // Dotted identifiers: numeric ones compare as numbers and sort
+            // before words; otherwise the string, then the shorter one first.
+            let ps = p.split(separator: "."), qs = q.split(separator: ".")
+            for (x, y) in zip(ps, qs) where x != y {
+                switch (Int(x), Int(y)) {
+                case (.some(let m), .some(let n)): return m < n
+                case (.some, nil): return true
+                case (nil, .some): return false
+                default: return x < y
+                }
+            }
+            return ps.count < qs.count
+        }
+    }
+}
+
+extension Changelog.Section {
+    /// The heading as a version, or nil for `Unreleased`.
+    public var semanticVersion: SemanticVersion? { isUnreleased ? nil : SemanticVersion(version) }
 }
