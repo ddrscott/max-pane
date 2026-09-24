@@ -47,8 +47,9 @@ public final class ConfigStore {
 
     public var fileExists: Bool { text != nil }
 
-    /// The keymap the file describes — what the next launch will run.
-    public var keymap: Keymap { Keymap(overrides: config.keys) }
+    /// The keymap the file describes — what the next launch will run. Both
+    /// sources of chords: `[keys]` and `[[apps]]`.
+    public var keymap: Keymap { Keymap(overrides: config.keys, apps: config.apps) }
 
     /// Whether the file sets this key, as opposed to it being a default.
     public func isSet(_ field: ConfigField) -> Bool { document.entry(field.key) != nil }
@@ -164,6 +165,103 @@ public final class ConfigStore {
         next.set("name", in: table, to: .string(new))
         write(next)
         return true
+    }
+
+    // MARK: - the apps with a chord
+
+    /// The `[[apps]]` table whose `name` is `name`, as the document names it
+    /// (`apps[1]`), or nil. Case-insensitive, like every other place a name
+    /// answers to `maxpane app`.
+    private func appTable(named name: String, in document: TomlDocument) -> String? {
+        document.arrayTables(ConfigField.appsTable).first {
+            if case .success(.string(let n)) = document.entry("name", in: $0)?.value {
+                return n.lowercased() == name.lowercased()
+            }
+            return false
+        }
+    }
+
+    /// Add an `[[apps]]` table, or point an existing one of that name at a new
+    /// url, key and edge in place.
+    public func addApp(_ entry: WebAppEntry) {
+        var next = document
+        if let table = appTable(named: entry.name, in: next) {
+            next.set("url", in: table, to: .string(entry.url))
+            setKey(entry.key, in: table, of: &next)
+            setDocked(entry.docked, in: table, of: &next)
+        } else {
+            next.appendArrayTable(ConfigField.appsTable, [
+                (key: "name", value: .string(entry.name)),
+                (key: "url", value: .string(entry.url)),
+            ]
+                + (entry.key.isEmpty ? [] : [(key: "key", value: TomlValue.string(entry.key))])
+                + (entry.docked.map { [(key: "docked", value: TomlValue.string($0.rawValue))] } ?? []))
+        }
+        write(next)
+    }
+
+    public func removeApp(named name: String) {
+        var next = document
+        guard let table = appTable(named: name, in: next) else { return }
+        next.removeArrayTable(table)
+        write(next)
+    }
+
+    /// `key = "⌃⌥⌘G"` on one app, in place. An empty spelling takes the line
+    /// out rather than writing `key = ""`, because "this app has no key" is a
+    /// table with no `key` line.
+    public func setAppChord(named name: String, to spelling: String) {
+        var next = document
+        guard let table = appTable(named: name, in: next) else { return }
+        setKey(spelling, in: table, of: &next)
+        write(next)
+    }
+
+    public func setAppURL(named name: String, to url: String) {
+        var next = document
+        guard let table = appTable(named: name, in: next) else { return }
+        next.set("url", in: table, to: .string(url))
+        write(next)
+    }
+
+    /// `docked = "left"`, or the line taken out for an app that opens in the
+    /// strip.
+    public func setAppDocked(named name: String, to edge: AppDock?) {
+        var next = document
+        guard let table = appTable(named: name, in: next) else { return }
+        setDocked(edge, in: table, of: &next)
+        write(next)
+    }
+
+    /// `name = "new"` on one app, in place; refused when the new name is
+    /// already an app's, since the name is the identity.
+    @discardableResult
+    public func renameApp(from old: String, to new: String) -> Bool {
+        var next = document
+        let trimmed = new.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, old != trimmed, let table = appTable(named: old, in: next),
+              appTable(named: trimmed, in: next) == nil
+        else { return false }
+        next.set("name", in: table, to: .string(trimmed))
+        write(next)
+        return true
+    }
+
+    private func setKey(_ spelling: String, in table: String, of document: inout TomlDocument) {
+        let trimmed = spelling.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty {
+            document.remove("key", in: table)
+        } else {
+            document.set("key", in: table, to: .string(trimmed))
+        }
+    }
+
+    private func setDocked(_ edge: AppDock?, in table: String, of document: inout TomlDocument) {
+        if let edge {
+            document.set("docked", in: table, to: .string(edge.rawValue))
+        } else {
+            document.remove("docked", in: table)
+        }
     }
 
     /// The file, created with a header comment if there is none yet — so that

@@ -333,6 +333,25 @@ public struct Config: Codable, Equatable {
     /// next. Read at launch.
     public var servers: [RelayServerEntry] = []
 
+    /// Web apps with a key of their own, one `[[apps]]` table each:
+    ///
+    /// ```toml
+    /// [[apps]]
+    /// name = "Gmail"
+    /// url = "https://mail.google.com"
+    /// key = "ctrl+opt+cmd+g"
+    /// docked = "right"                # optional; left or right
+    /// ```
+    ///
+    /// The chord focuses the lane already on that site and opens one when
+    /// there is none, so "go to Gmail" is one key whether or not Gmail is up
+    /// — the thing a bookmark on a numbered row can never be, because the
+    /// number means something different every hour (ADR-0042). `key` is
+    /// optional: an app with no key is still a row in ⌘E and still
+    /// `maxpane app`. Read at launch, like `[keys]`, which is why a changed
+    /// chord says `relaunch to apply`.
+    public var apps: [WebAppEntry] = []
+
     /// `$XDG_CONFIG_HOME/maxpane/config.toml` for the default profile,
     /// `…/maxpane/profiles/<profile>/config.toml` for any other.
     ///
@@ -492,6 +511,72 @@ public struct RelayServerEntry: Codable, Equatable, Sendable {
         if trimmed.isEmpty { return "name is empty" }
         if trimmed.contains(":") || trimmed.contains("/") { return "name may not contain ':' or '/'" }
         if baseURL == nil { return "url must be http:// or https:// with a host" }
+        return nil
+    }
+}
+
+/// Which edge `docked` asks for. See `WebAppEntry.docked`.
+public enum AppDock: String, Codable, CaseIterable, Sendable {
+    case left, right
+
+    public static var names: String { allCases.map(\.rawValue).joined(separator: " ") }
+}
+
+/// One `[[apps]]` table: a web app with a chord. See `Config.apps`.
+public struct WebAppEntry: Codable, Equatable, Sendable {
+    /// What ⌘/, ⌘E and `maxpane app` call it. The name is the identity — it
+    /// is what the CLI is given and what a chord's refusal names — so two
+    /// apps may not share one.
+    public var name: String
+    /// Where the app lives. A bare host is read as `https://`, the way it is
+    /// in the address bar; anything else must parse to a host.
+    public var url: String
+    /// The chord, spelled as `[keys]` spells one (`"ctrl+opt+cmd+g"`, `"⌃⌥⌘G"`).
+    /// Empty is an app with no key, which is a row everywhere but the keyboard.
+    public var key: String
+    /// Which edge to hold the lane at when the chord has to *open* it. Nil
+    /// opens an ordinary strip lane. A lane that is already up is focused
+    /// where it is — the chord goes to the app, it does not rearrange the
+    /// strip behind it.
+    public var docked: AppDock?
+
+    public init(name: String, url: String, key: String = "", docked: AppDock? = nil) {
+        self.name = name
+        self.url = url
+        self.key = key
+        self.docked = docked
+    }
+
+    /// The page the chord opens, with a bare host given `https://`.
+    public var pageURL: URL? {
+        let trimmed = url.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        let spelled = trimmed.contains("://") ? trimmed : "https://" + trimmed
+        guard let c = URLComponents(string: spelled), let scheme = c.scheme?.lowercased(),
+              scheme == "http" || scheme == "https", let host = c.host, !host.isEmpty
+        else { return nil }
+        return c.url
+    }
+
+    /// The registrable domain the chord looks for on the strip — the same
+    /// notion the per-site blocking exemption switches on, and for the same
+    /// reason: `mail.google.com` and `google.com` are one site to a person
+    /// with one key for it.
+    public var domain: String? { ContentBlocker.domain(of: pageURL?.host) }
+
+    /// The chord the file asks for, or nil when it asks for none or asks for
+    /// something that is not a chord. `Keymap` is what reports the latter.
+    public var chord: KeyChord? {
+        let trimmed = key.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        return KeyChord(trimmed)
+    }
+
+    /// Why this entry cannot be used, or nil when it can.
+    public var complaint: String? {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return "name is empty" }
+        if pageURL == nil { return "url must be a host, with or without http:// or https://" }
         return nil
     }
 }

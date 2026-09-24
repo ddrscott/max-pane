@@ -1095,6 +1095,63 @@ whole of it is read and ranked by **the same ranker history uses**. `hop` finds
 `hoppers` and not *Launchd notes*, in both lists, because it is one
 implementation rather than two that agree today.
 
+### A chord per web app
+
+A bookmark is a row, and a row's number is whatever the ranking makes it this
+hour. **`[[apps]]`** is the other thing: one chord that means *go to Gmail*,
+forever, whether or not Gmail is up.
+
+```toml
+[[apps]]
+name = "Gmail"                      # what ⌘/, ⌘E and `maxpane app` call it
+url = "https://mail.google.com"     # a bare host is read as https://
+key = "ctrl+opt+cmd+g"              # optional; spelled as [keys] spells one
+docked = "right"                    # optional; left or right
+
+[[apps]]
+name = "Linear"
+url = "linear.app"
+key = "⌃⌥⌘L"
+```
+
+Pressing the chord **focuses the lane that app is already on**, and opens one
+only when there is none — so pressing it twice is pressing it once. "Already
+on" is by registrable domain, the same notion the per-site ad blocker switches
+on: anywhere inside `google.com` is Gmail's lane, which is what makes the key
+survive a redirect and a message you clicked into. The cost of stating the rule
+in domains is that two apps under one domain find each other's lanes. **Several
+lanes on the site: the most recently focused**, because "the Gmail I was using"
+is the only one of them you meant.
+
+`docked` applies when the chord *opens* the lane — it goes straight to that
+edge, [docked](#docking-a-lane-to-an-edge) and inset. A lane that is already up
+is focused where it is: the chord goes to the app, it does not rearrange the
+strip behind it.
+
+**The chord is refused rather than taken** when something already has it, and
+the refusal says what, on stderr and on the app's row in Settings: a chord
+macOS owns (`⌘Q is not available — macOS quits the app`), a chord a command
+holds whether by default or from your `[keys]` (`⌘G: the app Gallery does not
+get it — toggleGallery has it`), or a chord an earlier `[[apps]]` table has.
+The app keeps everything else — its row in ⌘E, its line in Settings, its name
+on the control socket — because an app you cannot reach by key is still an app
+you want to reach. A key with no `[[apps]]` entry works exactly as it did.
+
+A page never gets an app's ⌘-chord, for the same reason it never gets ⌘O: no
+browser lets the page it is showing bind the chrome's keys.
+
+**Where they show up.** `// APPS` in ⌘/ lists the ones with a key. **Settings ›
+Apps** is the rows: name, address, the chord with `rec` and `none`, and `strip
+| left | right` for the edge. **⌘E** lists every app under `// APPS`, with the
+chord on the right and `—` for none, and the second line saying whether ↩ will
+`focus` or `open`; ⌘⌫ on one records a chord into `[[apps]]` the way it does
+into `[keys]`. From a shell, `maxpane app gmail` — the name, or enough of it to
+be the only one that fits.
+
+Names and addresses apply the moment the file is written. The **chord** is read
+at launch, like `[keys]`, so a changed one says `relaunch to apply` until then.
+[ADR-0042](docs/decisions/0042-a-chord-per-web-app.md).
+
 ### Importing history and bookmarks from another browser
 
 **⌥⌘Y.** ⌘Y opens history; ⌥⌘Y is where it came from. One pass over a profile
@@ -2484,6 +2541,7 @@ maxpane capture [LANE] [--full]
                           # PNG of a lane's focused pane; prints the path and
                           # types it at the nearest prompt in that lane. No LANE
                           # is the focused pane; --full is the whole web page
+maxpane app gmail         # go to a [[apps]] web app: focus its lane, or open one
 maxpane server add NAME URL   # a remote relay-tty server, from its startup Auth URL; see "Remote servers"
 maxpane server ls             # the configured servers, their colour and how they are doing
 maxpane server color WSL violet   # the colour a server is known by: slate cyan blue violet magenta rose lemon ink
@@ -2958,7 +3016,9 @@ your `editor` setting, the same way ⌘-clicking a path does.
 `theme`, `status_clock`, `sidebar_collapse_hides_lanes`, `osc52_write`, `osc52_read` and the
 `paste_` keys (all but `paste_image_keep_days`, which is read at launch, when
 the pruning is) apply at once, and so does everything under Servers — each `[[servers]]` table's `name`, `url`, `enabled`
-and `color` (see [Remote servers](#remote-servers)). Every other
+and `color` (see [Remote servers](#remote-servers)). An `[[apps]]` table's
+`name`, `url` and `docked` apply at once too; its `key` does not (see
+[A chord per web app](#a-chord-per-web-app)). Every other
 key, the keyboard included, applies on
 the next launch, and the window marks a changed one `$ relaunch to apply` until
 then.
@@ -3133,7 +3193,7 @@ skipped value also prints a line on stderr.
 ### Run Command
 
 **⌘E** is ⌘O turned on the app itself: the `APP` scope, which `>` typed into
-⌘O also reaches, the way it does in an editor's quick-open. It lists three
+⌘O also reaches, the way it does in an editor's quick-open. It lists four
 kinds of row, and never a shell line — that is ⌘O's job, and a list where ↩
 sometimes starts a process is what the scopes exist to keep apart:
 
@@ -3151,9 +3211,13 @@ sometimes starts a process is what the scopes exist to keep apart:
   would not read until tomorrow would be a row that lies.
 - **Each server**: Reconnect, Disable and the next Colour for an enabled one,
   Enable for a disabled one.
+- **Each web app** with a `[[apps]]` table, with its chord on the right and
+  `—` for one with none. The second line says which of the two things ↩ will
+  do — `focus <lane>` when the app is already up, `open <url>` when it is not
+  (see [A chord per web app](#a-chord-per-web-app)).
 
-Nothing typed lists all of it under `// COMMANDS`, `// SETTINGS` and
-`// SERVERS`, in menu order. Typing ranks by where the match landed, like every
+Nothing typed lists all of it under `// COMMANDS`, `// SETTINGS`, `// SERVERS`
+and `// APPS`, in menu order. Typing ranks by where the match landed, like every
 other scope, over a command's title and its `keys` name (`toggleGallery`), a
 setting's key with or without its underscores, and a server's name.
 
@@ -3163,7 +3227,9 @@ to `[keys]` and shows on the row at once, marked `relaunch to apply`, since
 the keymap is read at launch. A chord is refused, with the reason, when macOS
 owns it (`⌘Q is not available — macOS quits the app`) or another command
 already has it (`⌘G is Toggle Gallery's`); the recorder stays open for the
-next try. ⌘⌫ on a setting or a server row does nothing but say so.
+next try. **⌘⌫ on an app row does the same**, writing `key` into that app's
+`[[apps]]` table and refusing a chord a command or another app holds by name.
+⌘⌫ on a setting or a server row does nothing but say so.
 
 ⌘E rather than the ⇧⌘P every editor uses: ⇧⌘P is Keep Lane Loaded here and
 a chord people have in their fingers stays where it is; ⌥⌘P pairs lanes and
@@ -3217,6 +3283,10 @@ All four show on that command's row in Settings, and print a line on stderr. On 
 beats a key that was only a default, so taking ⌘R for `newTerminalLane` is one
 edit and `reload` yields it — and if two commands you set both want it, the one
 declared first in `Command` keeps it and the other is named in the warning.
+
+`[[apps]]` is the second source of chords, and it is laid down over this one:
+an app's `key` is refused when a command already has it, and the complaint
+names the command (see [A chord per web app](#a-chord-per-web-app)).
 
 The keymap is read once, at launch, which is why a changed key says
 `$ relaunch to apply`.

@@ -9,6 +9,9 @@ public enum ConfigGroup: String, CaseIterable, Sendable {
     /// `[[servers]]`: not keys but tables, drawn by `ServersSection` rather
     /// than by `ConfigField` rows.
     case servers = "Servers"
+    /// `[[apps]]`: tables too, drawn by `AppsSection`, and last before the
+    /// keyboard because an app's row is half a keyboard row.
+    case apps = "Apps"
     case editorSearch = "Editor & search"
     case appearance = "Appearance"
     case keyboard = "Keyboard"
@@ -298,6 +301,10 @@ public struct ConfigField {
     public static let serversTable = "servers"
     /// The keys one `[[servers]]` element may carry.
     public static let serverKeys: Set<String> = ["name", "url", "enabled", "color"]
+    /// The array of tables the web apps with a chord live in.
+    public static let appsTable = "apps"
+    /// The keys one `[[apps]]` element may carry.
+    public static let appKeys: Set<String> = ["name", "url", "key", "docked"]
 }
 
 /// Something in the file that was not used, and why.
@@ -338,6 +345,8 @@ public enum ConfigFile {
         // `[[servers]]` elements, by index, each a partial entry until every
         // key has been seen.
         var servers: [Int: (name: String?, url: String?, enabled: Bool, color: ServerColour?, line: Int)] = [:]
+        // `[[apps]]` elements, the same way.
+        var apps: [Int: (name: String?, url: String?, key: String, docked: AppDock?, line: Int)] = [:]
         for entry in document.entries {
             let table = entry.table
             let identity = "\(table ?? "").\(entry.key)"
@@ -380,6 +389,36 @@ public enum ConfigFile {
                     problems.append(.init(key: shown, line: entry.line, reason: "not a server setting; left as it is"))
                 }
                 servers[element.index] = server
+                continue
+            }
+
+            if let table, let element = TomlDocument.arrayElement(table), element.name == ConfigField.appsTable {
+                var app = apps[element.index] ?? (nil, nil, "", nil, entry.line)
+                switch (entry.key, entry.value) {
+                case (_, .failure(let error)):
+                    problems.append(.init(key: shown, line: entry.line, reason: error.reason))
+                case ("name", .success(.string(let s))): app.name = s
+                case ("url", .success(.string(let s))): app.url = s
+                // A chord that does not parse is reported by `Keymap`, on the
+                // app's own row, the way `[keys]` reports one: the app keeps
+                // its place in every other surface and loses only the key.
+                case ("key", .success(.string(let s))): app.key = s
+                case ("docked", .success(.string(let s))):
+                    // An edge nobody has costs the edge, never the app.
+                    if let edge = AppDock(rawValue: s.lowercased()) {
+                        app.docked = edge
+                    } else {
+                        problems.append(.init(
+                            key: shown, line: entry.line,
+                            reason: "\"\(s)\" is not an edge (\(AppDock.names)) — opening in the strip"))
+                    }
+                case ("name", .success(let v)), ("url", .success(let v)), ("key", .success(let v)),
+                     ("docked", .success(let v)):
+                    problems.append(.init(key: shown, line: entry.line, reason: "expected a string, got \(v.kind)"))
+                default:
+                    problems.append(.init(key: shown, line: entry.line, reason: "not an app setting; left as it is"))
+                }
+                apps[element.index] = app
                 continue
             }
 
@@ -443,6 +482,31 @@ public enum ConfigFile {
                 problems.append(.init(key: shown, line: partial.line, reason: "another server is already named \"\(entry.name)\"; skipped"))
             } else {
                 config.servers.append(entry)
+            }
+        }
+        // An app with no name or no usable url is skipped the same way. A
+        // name that is already taken is skipped rather than merged: the name
+        // is what `maxpane app` is given and what a chord's refusal prints,
+        // and two rows answering to one word is the ambiguity that makes both
+        // of them useless.
+        for index in apps.keys.sorted() {
+            let partial = apps[index]!
+            let shown = "\(ConfigField.appsTable)[\(index)]"
+            let entry = WebAppEntry(
+                name: partial.name ?? "", url: partial.url ?? "", key: partial.key, docked: partial.docked)
+            if partial.name == nil {
+                problems.append(.init(key: shown, line: partial.line, reason: "an app needs a name; skipped"))
+            } else if partial.url == nil {
+                problems.append(.init(key: shown, line: partial.line, reason: "an app needs a url; skipped"))
+            } else if let why = entry.complaint {
+                problems.append(.init(key: shown, line: partial.line, reason: "\(why); skipped"))
+            } else if let held = config.apps.first(where: { $0.name.lowercased() == entry.name.lowercased() }) {
+                // The name that answers is the one already in the file, so a
+                // table spelled `mail` under a `Mail` says which it collided
+                // with rather than quoting itself back.
+                problems.append(.init(key: shown, line: partial.line, reason: "another app is already named \"\(held.name)\"; skipped"))
+            } else {
+                config.apps.append(entry)
             }
         }
         return (config, problems)

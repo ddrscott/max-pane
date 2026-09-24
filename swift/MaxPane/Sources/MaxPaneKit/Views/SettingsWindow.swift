@@ -51,7 +51,9 @@ final class SettingsWindow: Popup {
     private var selected: ConfigGroup = .lanes
     private var observers: [NSObjectProtocol] = []
     private var keyMonitor: Any?
-    private weak var recording: KeyRow?
+    private weak var recording: (any ChordRecording)?
+    /// The apps with a chord, drawn like the servers: tables, not keys.
+    private var appsSection: AppsSection?
 
     init(store: ConfigStore, servers: RelayServerBook? = nil, onOpenInEditor: @escaping (URL) -> Void) {
         self.store = store
@@ -177,6 +179,14 @@ final class SettingsWindow: Popup {
                     none.preferredMaxLayoutWidth = Self.textWidth + 260
                     sections.addArrangedSubview(none)
                 }
+            } else if group == .apps {
+                let section = AppsSection(store: store)
+                section.onRecord = { [weak self] row in
+                    guard let self else { return }
+                    self.beginRecording(row)
+                }
+                appsSection = section
+                sections.addArrangedSubview(section)
             } else if group == .keyboard {
                 keyboardNote.font = Theme.mono(11)
                 keyboardNote.textColor = Theme.dimText
@@ -271,8 +281,14 @@ final class SettingsWindow: Popup {
         noteLabel.attributedStringValue = note()
         for row in rows { row.refresh(animated: animated) }
 
+        appsSection?.refresh(animated: animated)
         let keymap = store.keymap
-        var unclaimed = keymap.complaints
+        // An app's complaints belong on its own row, not in the keyboard
+        // note: taken out here so the note says only what no row claimed.
+        let appNames = store.config.apps.map(\.name)
+        var unclaimed = keymap.complaints.filter { complaint in
+            !appNames.contains { AppRow.mentions(complaint, $0) }
+        }
         var keyProblems = store.problems.filter { $0.key.hasPrefix(ConfigField.keysTable + ".") }
         for row in keyRows {
             let mine = unclaimed.filter { KeyRow.mentions($0, row.command) }
@@ -376,22 +392,34 @@ final class SettingsWindow: Popup {
         closePopup { [onOpenInEditor] in onOpenInEditor(url) }
     }
 
-    private func beginRecording(_ row: KeyRow) {
+    private func beginRecording(_ row: any ChordRecording) {
         if let current = recording, current !== row { current.setRecording(false) }
         recording = row
         row.setRecording(true)
     }
 
-    private func finishRecording(_ row: KeyRow, with event: NSEvent) {
+    private func finishRecording(_ row: any ChordRecording, with event: NSEvent) {
         recording = nil
         row.setRecording(false)
         // The APP scope's ⌘⌫ reads the same key the same way (`ChordRecorder`).
         guard case .chord(let chord) = ChordRecorder.outcome(of: event) else { return }
-        store.setChords(row.command, to: [chord.configText])
+        row.commit(chord)
     }
 }
 
 // MARK: - the pieces
+
+/// A settings row the window's key monitor can record a chord into.
+///
+/// Two rows take a chord — a command's and an app's — and the monitor has to
+/// hand the press to whichever is open without knowing which kind it is. The
+/// key itself is read the one way (`ChordRecorder`); only where it is written
+/// differs, and that is the conformance's business.
+@MainActor
+protocol ChordRecording: AnyObject {
+    func setRecording(_ on: Bool)
+    func commit(_ chord: KeyChord)
+}
 
 /// Which keyboard row a `Keymap` complaint belongs on.
 enum KeyComplaint {
@@ -848,7 +876,7 @@ private final class SettingRow: NSView, NSTextFieldDelegate {
 
 /// A command, the chords that run it, and the ways to change them.
 @MainActor
-private final class KeyRow: NSView {
+private final class KeyRow: NSView, ChordRecording {
     let command: Command
     var onRecord: (() -> Void)?
     private let store: ConfigStore
@@ -943,6 +971,8 @@ private final class KeyRow: NSView {
         chords.placeholderString = on ? "press a chord" : "no key"
         chords.stringValue = on ? "" : shown
     }
+
+    func commit(_ chord: KeyChord) { store.setChords(command, to: [chord.configText]) }
 
     /// Typed chords, space-separated, in either spelling. One that does not
     /// parse is written as typed, so the file says exactly what was asked and

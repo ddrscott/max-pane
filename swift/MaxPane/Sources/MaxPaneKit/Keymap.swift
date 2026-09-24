@@ -237,10 +237,28 @@ public struct KeyBindings: Codable, Equatable, Sendable {
 /// `Command.claims`. One edit in the file therefore moves all five, and the
 /// help sheet cannot print a key that no longer fires.
 public struct Keymap: Sendable {
+    /// One `[[apps]]` table that got its key: the app's name, and the chord
+    /// that focuses or opens it.
+    public struct AppBinding: Equatable, Sendable {
+        public let name: String
+        public let chord: KeyChord
+    }
+
     /// Command → its chords, in order. The first is the one a menu item can
     /// carry; the rest are matched in the window's key monitor. Empty means
     /// deliberately unbound.
     public let bindings: [Command: [KeyChord]]
+
+    /// The second source of chords: `[[apps]]`, in file order.
+    ///
+    /// Not part of `bindings` because these are not commands — there is no
+    /// `Command` case to declare, no menu item to carry the key, and the set
+    /// changes with the file rather than with the binary. They are laid down
+    /// *after* every command, and a chord a command already holds is refused
+    /// by name rather than taken: a key that silently stopped opening the
+    /// gallery because an app was added is the surprise this whole file
+    /// exists to prevent, and an app is the newer claim.
+    public let appChords: [AppBinding]
 
     /// What was wrong with the config file, in the order it was found. Held
     /// rather than printed so resolution is a pure function a test can call —
@@ -260,13 +278,25 @@ public struct Keymap: Sendable {
             (command, ((command.defaultShortcut.map { [$0] } ?? []) + command.defaultAlternateShortcuts).map(KeyChord.init))
         }), complaints: [])
 
-    private init(bindings: [Command: [KeyChord]], complaints: [String]) {
+    private init(bindings: [Command: [KeyChord]], appChords: [AppBinding] = [], complaints: [String]) {
         self.bindings = bindings
+        self.appChords = appChords
         self.complaints = complaints
-        self.claimed = Self.claimedChords(in: bindings)
+        self.claimed = Self.claimedChords(in: bindings, appChords: appChords)
     }
 
     public func chords(for command: Command) -> [KeyChord] { bindings[command] ?? [] }
+
+    /// The chord this app ended up with, or nil when it asked for none or was
+    /// refused the one it asked for.
+    public func chord(forApp name: String) -> KeyChord? {
+        appChords.first { $0.name.lowercased() == name.lowercased() }?.chord
+    }
+
+    /// The app this chord opens, or nil when it opens none.
+    public func app(for chord: KeyChord) -> String? {
+        appChords.first { $0.chord == chord }?.name
+    }
 
     // MARK: - the active one
 
@@ -312,7 +342,7 @@ public struct Keymap: Sendable {
     /// `newTerminalLane` to ⌘R and `reload` yields its default, with a line
     /// saying so. Two configured commands on one chord is a genuine mistake, and
     /// there the earlier one in `Command.allCases` keeps it.
-    public init(overrides: KeyBindings) {
+    public init(overrides: KeyBindings, apps: [WebAppEntry] = []) {
         var complaints: [String] = []
         var configured: [Command: [KeyChord]] = [:]
 
@@ -377,7 +407,37 @@ public struct Keymap: Sendable {
             lay(command, Keymap.defaults.chords(for: command), configuredHere: false)
         }
 
-        self.init(bindings: bindings, complaints: complaints)
+        // The apps, last, over a keyboard every command has already had its
+        // say in. Three ways one is refused, each costing the app its key and
+        // nothing else — it keeps its row in ⌘E, its line in Settings and its
+        // name on the control socket, because an app you cannot reach by key
+        // is still an app you want to reach.
+        var appChords: [AppBinding] = []
+        var appOwner: [KeyChord: String] = [:]
+        for app in apps {
+            let spelling = app.key.trimmingCharacters(in: .whitespaces)
+            guard !spelling.isEmpty else { continue }
+            guard let chord = KeyChord(spelling) else {
+                complaints.append("apps.\(app.name): \"\(spelling)\" is not a chord")
+                continue
+            }
+            if let reason = Self.reserved.first(where: { $0.0 == chord })?.1 {
+                complaints.append("apps.\(app.name): \(chord.text) is not available — \(reason)")
+                continue
+            }
+            if let held = owner[chord] {
+                complaints.append("\(chord.text): the app \(app.name) does not get it — \(held.rawValue) has it")
+                continue
+            }
+            if let held = appOwner[chord] {
+                complaints.append("\(chord.text): the app \(app.name) does not get it — the app \(held) has it")
+                continue
+            }
+            appOwner[chord] = app.name
+            appChords.append(AppBinding(name: app.name, chord: chord))
+        }
+
+        self.init(bindings: bindings, appChords: appChords, complaints: complaints)
     }
 
     /// Why `chord` cannot be given to `command` in this map, or nil when it
@@ -393,6 +453,29 @@ public struct Keymap: Sendable {
         if let held = bindings.first(where: { $0.key != command && $0.value.contains(chord) })?.key,
            held != command.sharesChordWith {
             return "\(chord.text) is \(held.title)'s"
+        }
+        if let held = appChords.first(where: { $0.chord == chord })?.name {
+            return "\(chord.text) is the app \(held)'s"
+        }
+        return nil
+    }
+
+    /// The same question for an app's chord: why `chord` cannot be given to
+    /// the app called `name`, or nil when it can. Asked by Settings › Apps
+    /// and by ⌘⌫ in the picker before either writes the file, so a chord that
+    /// the keymap would refuse at the next launch is refused while the
+    /// recorder is still open and can take another.
+    public func refusal(binding chord: KeyChord, toApp name: String) -> String? {
+        if let reason = Self.reserved.first(where: { $0.0 == chord })?.1 {
+            return "\(chord.text) is not available — \(reason)"
+        }
+        if let held = bindings.first(where: { $0.value.contains(chord) })?.key {
+            return "\(chord.text) is \(held.title)'s"
+        }
+        if let held = appChords.first(where: {
+            $0.chord == chord && $0.name.lowercased() != name.lowercased()
+        })?.name {
+            return "\(chord.text) is the app \(held)'s"
         }
         return nil
     }
@@ -410,18 +493,28 @@ public struct Keymap: Sendable {
         ",": "<", ".": ">", ";": ":", "'": "\"", "`": "~",
     ]
 
-    private static func claimedChords(in bindings: [Command: [KeyChord]]) -> Set<KeyChord> {
+    private static func claimedChords(
+        in bindings: [Command: [KeyChord]], appChords: [AppBinding]
+    ) -> Set<KeyChord> {
         var out: Set<KeyChord> = []
-        // A chord is a page's to keep only when every command on it yields it
-        // (`Command.yieldsToPage`).
-        let kept = bindings.filter { !$0.key.yieldsToPage }
-        for chord in kept.values.flatMap({ $0 })
-        where chord.modifiers.contains(.command) {
+        func claim(_ chord: KeyChord) {
+            guard chord.modifiers.contains(.command) else { return }
             out.insert(chord)
             if chord.modifiers.contains(.shift), let alt = shifted[chord.key] {
                 out.insert(KeyChord(key: alt, modifiers: chord.modifiers))
             }
         }
+        // A chord is a page's to keep only when every command on it yields it
+        // (`Command.yieldsToPage`).
+        let kept = bindings.filter { !$0.key.yieldsToPage }
+        for chord in kept.values.flatMap({ $0 }) { claim(chord) }
+        // An app's chord is taken from the page by the same rule, with the
+        // "every command on it" half already settled: a chord a command holds
+        // is refused to the app, so an app chord is never shared and there is
+        // nothing to yield to. It goes to the app for the same reason ⌘O
+        // does — no browser lets the page it is showing bind the chrome's
+        // keys, and "go to Gmail" is chrome.
+        for binding in appChords { claim(binding.chord) }
         return out
     }
 }

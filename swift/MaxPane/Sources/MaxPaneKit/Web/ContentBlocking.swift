@@ -71,7 +71,11 @@ public final class ContentBlocker {
 
     /// `www.youtube.com` → `youtube.com`; an IP literal or a single label is
     /// itself. Lowercased, so the ledger's rows compare as plain strings.
-    public static func domain(of host: String?) -> String? {
+    /// `nonisolated`: a pure string function, and the one registrable-domain
+    /// rule in the app. `[[apps]]` matches a lane by it off the main actor
+    /// (`WebApps`), and a second copy of the rule that could disagree with
+    /// this one about what `bbc.co.uk` is would be worse than either.
+    public nonisolated static func domain(of host: String?) -> String? {
         guard let host = host?.lowercased(), !host.isEmpty else { return nil }
         if host.contains(":") || host.allSatisfy({ $0.isNumber || $0 == "." }) { return host }
         return BrowserAddress.splitHost(host).registrable

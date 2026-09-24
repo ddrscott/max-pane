@@ -196,6 +196,7 @@ struct OmniCandidate: Equatable {
         case .app(.command(let command)): return "app:cmd:" + command.rawValue
         case .app(.setting(let key, _)): return "app:set:" + key
         case .app(.server(let name, let action)): return "app:srv:\(name):\(action.word)"
+        case .app(.app(let name)): return "app:app:" + name.lowercased()
         }
     }
 }
@@ -737,8 +738,24 @@ final class OmniPicker: PaletteController {
     /// Write a chord for a command, answering why not; nil when there is no
     /// config file to write to.
     private let binder: ((Command, KeyChord) -> String?)?
-    /// ⌘⌫ on a command row: the next key press is its chord.
-    private var recording: Command?
+    /// The same for a `[[apps]]` app, which takes a chord the same way and
+    /// writes it to a different table.
+    private let appBinder: ((String, KeyChord) -> String?)?
+    /// ⌘⌫ on a command or app row: the next key press is its chord.
+    private var recording: Recording?
+
+    /// What the recorder is taking a chord for, and how to name it back.
+    private enum Recording {
+        case command(Command)
+        case app(name: String)
+
+        var title: String {
+            switch self {
+            case .command(let c): return c.title
+            case .app(let name): return name
+            }
+        }
+    }
 
     init(
         store: StripStore,
@@ -749,6 +766,7 @@ final class OmniPicker: PaletteController {
         servers: [String] = [],
         app: @escaping () -> AppScope = { .empty },
         binder: ((Command, KeyChord) -> String?)? = nil,
+        appBinder: ((String, KeyChord) -> String?)? = nil,
         completion: @escaping (OmniAction?) -> Void
     ) {
         self.store = store
@@ -759,6 +777,7 @@ final class OmniPicker: PaletteController {
         self.servers = servers
         self.app = app
         self.binder = binder
+        self.appBinder = appBinder
         self.completion = completion
         self.recents = store.recents(limit: 60)
         self.pageCount = store.historyCount
@@ -887,8 +906,8 @@ final class OmniPicker: PaletteController {
     override func handleKey(_ event: NSEvent) -> Bool {
         // While recording, every key is the answer. Nothing else in the
         // picker sees it: not the field, not the ⌘-digits, not Esc.
-        if let command = recording {
-            record(event, for: command)
+        if let recording {
+            record(event, for: recording)
             return true
         }
         // Tab, unmodified. It does nothing else in a palette, and a scope that
@@ -935,31 +954,41 @@ final class OmniPicker: PaletteController {
     /// › Keyboard has — the next chord you press is the key, esc cancels —
     /// rather than a second window over the first: the row is already
     /// selected, and the list is where the result has to show.
-    private func beginRecording(_ command: Command) {
-        guard binder != nil else {
+    private func beginRecording(_ what: Recording) {
+        let available: Bool
+        switch what {
+        case .command: available = binder != nil
+        case .app: available = appBinder != nil
+        }
+        guard available else {
             showNotice("no config file to write a key to")
             return
         }
         // The line stays as typed — the keys are swallowed, not written —
         // so the list is still the one the row was chosen from afterwards.
-        recording = command
-        showNotice("press a chord for \(command.title) · esc cancels")
+        recording = what
+        showNotice("press a chord for \(what.title) · esc cancels")
     }
 
-    private func record(_ event: NSEvent, for command: Command) {
+    private func record(_ event: NSEvent, for what: Recording) {
         switch ChordRecorder.outcome(of: event) {
         case .ignored:
             return
         case .cancelled:
             endRecording(saying: nil)
         case .chord(let chord):
+            let refusal: String?
+            switch what {
+            case .command(let command): refusal = binder?(command, chord)
+            case .app(let name): refusal = appBinder?(name, chord)
+            }
             // Refused with the reason, and still recording: a collision is
             // an invitation to press a different key, not to start over.
-            if let why = binder?(command, chord) {
-                showNotice(why)
+            if let refusal {
+                showNotice(refusal)
                 return
             }
-            endRecording(saying: "\(command.title) is \(chord.text) · relaunch to apply")
+            endRecording(saying: "\(what.title) is \(chord.text) · relaunch to apply")
         }
     }
 
@@ -975,13 +1004,13 @@ final class OmniPicker: PaletteController {
     private func forgetSelected() {
         let row = table.selectedRow
         guard row >= 0, row < rows.count, let candidate = rows[row].candidate else { return }
-        // An APP row is not a memory. On a command, ⌘⌫ is the other thing a
-        // key can be to a row: bound.
+        // An APP row is not a memory. On a command or an app, ⌘⌫ is the
+        // other thing a key can be to a row: bound.
         if case .app(let action) = candidate.action {
-            if case .command(let command) = action {
-                beginRecording(command)
-            } else {
-                showNotice("only a command takes a key")
+            switch action {
+            case .command(let command): beginRecording(.command(command))
+            case .app(let name): beginRecording(.app(name: name))
+            default: showNotice("only a command or an app takes a key")
             }
             return
         }
@@ -1280,6 +1309,8 @@ final class OmniPickerRow: NSTableCellView {
         case .app(.command): return ">"
         case .app(.setting): return "="
         case .app(.server): return "@"
+        // The lane's own glyph: an app row goes to a page, open or not.
+        case .app(.app): return "◍"
         }
     }
 

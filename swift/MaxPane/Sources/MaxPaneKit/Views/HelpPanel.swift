@@ -88,7 +88,12 @@ final class HelpPanel: Popup {
         return chords.map(\.text).joined(separator: " ")
     }
 
-    private static func body() -> NSAttributedString {
+    /// The sheet's text. `apps` is a parameter rather than read inside,
+    /// because it is the one part of this sheet that comes from the reader's
+    /// config file rather than from the binary — and a test that had to
+    /// install a keymap globally to see it would be a test that fights every
+    /// other one in the run.
+    static func body(apps: [Keymap.AppBinding] = Keymap.active.appChords) -> NSAttributedString {
         let out = NSMutableAttributedString()
 
         func heading(_ s: String) {
@@ -138,6 +143,19 @@ final class HelpPanel: Popup {
                         + "          \(describe(.focusUp)) \(describe(.focusDown)) too, once at the top or bottom of a split lane\n",
                     attributes: [.foregroundColor: NSColor.secondaryLabelColor, .font: Theme.mono(12)]))
             }
+            blank()
+        }
+
+        // The second source of chords, and the only part of this sheet that
+        // is not `Command`: a key here comes from the reader's own `[[apps]]`
+        // rather than from the binary, so the section is absent on a config
+        // that has none rather than printing an empty header.
+        if !apps.isEmpty {
+            heading("Apps")
+            for app in apps { row(app.chord.text, app.name) }
+            out.append(NSAttributedString(
+                string: "          the lane that app is already on, or a new one — [[apps]] in config.toml\n",
+                attributes: [.foregroundColor: NSColor.secondaryLabelColor, .font: Theme.mono(12)]))
             blank()
         }
 

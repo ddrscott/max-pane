@@ -59,6 +59,9 @@ public final class OpenServer: @unchecked Sendable {
         /// the page beside it. The reply is the path, which is why this op
         /// answers later than the others (see `handler`).
         case capture(lane: String, fullPage: Bool)
+        /// `maxpane app NAME`: go to a `[[apps]]` web app — the same
+        /// focus-the-lane-or-open-it the app's chord does, from a shell.
+        case app(name: String)
     }
 
     /// What goes back. `session` carries the id of a session just started;
@@ -265,6 +268,12 @@ public final class OpenServer: @unchecked Sendable {
             // "my pane" means; `ls` names the others.
             let lane = (object["lane"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "focused"
             return .capture(lane: lane, fullPage: object["full"] as? Bool ?? false)
+
+        case "app":
+            guard let name = (object["name"] as? String)?.trimmingCharacters(in: .whitespaces),
+                  !name.isEmpty
+            else { return nil }
+            return .app(name: name)
 
         case "volume":
             guard let lane = object["lane"] as? String, !lane.isEmpty,

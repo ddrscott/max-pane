@@ -3,17 +3,24 @@ import AppKit
 /// What a row of the APP scope does: run Max Pane itself rather than a program
 /// or a page.
 ///
-/// Three kinds, and no fourth: every `Command` (what the menu bar can do), the
-/// settings that apply live (what Settings can flip without a relaunch), and a
-/// server's switches (what Settings › Servers can do to one). A row that would
-/// run a shell line is refused here on purpose — that is ⌘O's job, and one
-/// list where ↩ sometimes starts a process is the confusion this scope exists
-/// to keep out of.
+/// Four kinds, and no fifth: every `Command` (what the menu bar can do), the
+/// settings that apply live (what Settings can flip without a relaunch), a
+/// server's switches (what Settings › Servers can do to one), and the web apps
+/// with a chord (`[[apps]]`). A row that would run a shell line is refused
+/// here on purpose — that is ⌘O's job, and one list where ↩ sometimes starts
+/// a process is the confusion this scope exists to keep out of.
+///
+/// An app is in the APP scope rather than beside the pages in ⌘O because it
+/// is not a page: ↩ on it goes to the lane that app is on when there is one,
+/// and only opens when there is not. Two rows that look alike and behave
+/// differently is exactly what the scopes are for.
 enum AppAction: Equatable {
     case command(Command)
     /// Write this value for this key, through `ConfigStore`, comments kept.
     case setting(key: String, to: TomlValue)
     case server(name: String, ServerAction)
+    /// Focus the lane this app is on, or open one.
+    case app(name: String)
 }
 
 /// What can be done to one configured server from a row.
@@ -82,9 +89,24 @@ struct AppScope: Equatable {
         var detail: String
     }
 
+    struct AppItem: Equatable {
+        var name: String
+        var url: String
+        /// The chord the file gives it — nil for an app with no key, or one
+        /// whose key the keymap refused.
+        var chord: KeyChord?
+        /// The file's chord differs from the running one: relaunch to apply.
+        var pending: Bool
+        /// `open` or `focus <lane title>`: what ↩ will do, read off the strip
+        /// as the picker opens, so the row says which of the two it is before
+        /// it is pressed.
+        var detail: String
+    }
+
     var commands: [CommandItem]
     var settings: [SettingItem]
     var servers: [ServerItem]
+    var apps: [AppItem] = []
 
     static let empty = AppScope(commands: [], settings: [], servers: [])
 
@@ -146,6 +168,22 @@ struct AppScope: Equatable {
         }
     }
 
+    /// One row per `[[apps]]` table, in file order — the order Settings and
+    /// ⌘/ list them in, because an app's place in the file is the only order
+    /// anybody chose.
+    static func appItems(
+        entries: [WebAppEntry], file keymap: Keymap, active: Keymap = .active,
+        openLane: (WebAppEntry) -> String?
+    ) -> [AppItem] {
+        entries.map { entry in
+            let chord = keymap.chord(forApp: entry.name)
+            return AppItem(
+                name: entry.name, url: entry.url, chord: chord,
+                pending: chord != active.chord(forApp: entry.name),
+                detail: openLane(entry).map { "focus \($0)" } ?? "open \(entry.url)")
+        }
+    }
+
     // MARK: - the rows
 
     /// The list, for what was typed after `>` (or in the scope itself).
@@ -165,6 +203,7 @@ struct AppScope: Equatable {
             let commands = all.filter { if case .app(.command) = $0.action { return true } else { return false } }
             let settings = all.filter { if case .app(.setting) = $0.action { return true } else { return false } }
             let servers = all.filter { if case .app(.server) = $0.action { return true } else { return false } }
+            let apps = all.filter { if case .app(.app) = $0.action { return true } else { return false } }
             if !commands.isEmpty {
                 rows.append(.section(title: "COMMANDS", note: "\(commands.count) · ⌘⌫ binds"))
                 rows.append(contentsOf: commands.map(OmniRow.item))
@@ -177,6 +216,10 @@ struct AppScope: Equatable {
                 let named = Set(self.servers.map(\.name)).count
                 rows.append(.section(title: "SERVERS", note: "\(named) \(named == 1 ? "server" : "servers")"))
                 rows.append(contentsOf: servers.map(OmniRow.item))
+            }
+            if !apps.isEmpty {
+                rows.append(.section(title: "APPS", note: "\(apps.count) · ⌘⌫ binds"))
+                rows.append(contentsOf: apps.map(OmniRow.item))
             }
             if rows.isEmpty {
                 rows.append(.note(title: OmniScope.app.title, detail: "nothing to run"))
@@ -240,6 +283,17 @@ struct AppScope: Equatable {
                 trailing: nil,
                 unavailable: nil,
                 searchable: [item.name, item.action.word, "server \(item.name)"]))
+        }
+        for item in apps {
+            var detail = item.detail
+            if item.pending { detail += " · relaunch to apply" }
+            add(OmniCandidate(
+                action: .app(.app(name: item.name)), kind: .app,
+                headline: item.name, detail: detail, quality: .prefix,
+                chosenAt: 0, count: 0, telemetry: nil, bookmarkId: nil,
+                trailing: item.chord?.text ?? "—",
+                unavailable: nil,
+                searchable: [item.name, item.url, "app \(item.name)"]))
         }
         return out
     }

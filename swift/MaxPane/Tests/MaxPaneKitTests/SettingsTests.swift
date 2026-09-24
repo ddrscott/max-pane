@@ -152,16 +152,18 @@ struct ConfigFileTests {
     func schemaIsComplete() {
         let properties = Set(Mirror(reflecting: Config()).children.compactMap(\.label))
         let named = ConfigField.all.map(\.name)
-        // Two exemptions, both tables rather than keys: `keys` is listed from
-        // `Command`, and `servers` is an array of tables drawn by the Servers
-        // section (`ServersSection`) as rows you act on, not as key rows.
-        // `ConfigFile.decode` reads both by name.
-        #expect(Set(named) == properties.subtracting(["keys", "servers"]))
+        // Three exemptions, all tables rather than keys: `keys` is listed
+        // from `Command`, and `servers` and `apps` are arrays of tables drawn
+        // by their own sections (`ServersSection`, `AppsSection`) as rows you
+        // act on, not as key rows. `ConfigFile.decode` reads all three by name.
+        #expect(Set(named) == properties.subtracting(["keys", "servers", "apps"]))
         #expect(Set(named).count == named.count)
         #expect(ConfigField.all.map(\.key).contains("lane_default_pt"))
         #expect(ConfigField.all.map(\.key).contains("relay_pty_host_path"))
-        // Every group but the keyboard's and the servers' has a key in it.
-        for group in ConfigGroup.allCases where group != .keyboard && group != .servers {
+        // Every group but the keyboard's, the servers' and the apps' has a
+        // key in it.
+        for group in ConfigGroup.allCases
+        where group != .keyboard && group != .servers && group != .apps {
             #expect(ConfigField.all.contains { $0.group == group }, "\(group) is empty")
         }
     }
@@ -451,6 +453,17 @@ struct SettingsRenderTests {
             editor = "hx %f:%l:%c"
             laneMaxPt = 900
 
+            [[apps]]
+            name = "Gmail"
+            url = "https://mail.google.com"
+            key = "ctrl+opt+cmd+g"
+
+            [[apps]]
+            name = "Linear"
+            url = "linear.app"
+            key = "cmd+g"
+            docked = "right"
+
             [keys]
             closePane = []
             newTerminalLane = "cmd+r"
@@ -459,7 +472,10 @@ struct SettingsRenderTests {
         let store = ConfigStore(path: file, legacyPath: nil, watches: false)
 
         var open: [Popup] = []
-        for (name, group) in [("top", ConfigGroup.lanes), ("editor", ConfigGroup.editorSearch), ("keyboard", ConfigGroup.keyboard)] {
+        for (name, group) in [
+            ("top", ConfigGroup.lanes), ("editor", ConfigGroup.editorSearch),
+            ("apps", ConfigGroup.apps), ("keyboard", ConfigGroup.keyboard),
+        ] {
             try AppearanceSheet.render(to: dir, named: "settings-\(name)") {
                 let popup = SettingsWindow(store: store) { _ in }
                 open.append(popup)

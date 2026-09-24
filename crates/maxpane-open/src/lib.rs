@@ -138,6 +138,9 @@ commands:
                         whole page for a web pane, below the fold as well;
                         a terminal has no fold and ignores it. The path is
                         typed at the nearest prompt in that lane too
+  app NAME              go to a web app from config.toml's [[apps]]: focus
+                        the lane it is already on, or open one. NAME is the
+                        app's name, or enough of it to be the only one
   sessions              list every session, here and on each server
   attach [NAME:]ID      put a running session on the strip as a lane
   server add NAME URL   add a remote relay-tty server: NAME is what the lane
@@ -201,6 +204,13 @@ pub fn run() {
             }
         },
         Some("capture") => match capture_payload(&args[1..]) {
+            Ok(payload) => sound_command(payload, &profile),
+            Err(why) => {
+                eprintln!("maxpane: {why}");
+                std::process::exit(2)
+            }
+        },
+        Some("app") => match app_payload(&args[1..]) {
             Ok(payload) => sound_command(payload, &profile),
             Err(why) => {
                 eprintln!("maxpane: {why}");
@@ -438,6 +448,23 @@ fn capture_payload(args: &[String]) -> Result<String, String> {
         "{{\"op\":\"capture\",\"lane\":{},\"full\":{full}}}",
         json_string(lane.unwrap_or(""))
     ))
+}
+
+/// The request for `maxpane app NAME`. The name is joined rather than
+/// required to be one word, so `maxpane app google docs` works unquoted —
+/// a name with a space in it is the ordinary case for an app, and quoting is
+/// the part people forget. Which app a name means is the app's decision, not
+/// this binary's: nothing here keeps a second copy of the list.
+fn app_payload(args: &[String]) -> Result<String, String> {
+    if let Some(flag) = args.iter().find(|a| a.starts_with('-')) {
+        return Err(format!("app: unknown flag {flag}"));
+    }
+    let name = args.join(" ");
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("app takes the name of an app from config.toml's [[apps]]".to_string());
+    }
+    Ok(format!("{{\"op\":\"app\",\"name\":{}}}", json_string(name)))
 }
 
 fn sound_command(payload: String, profile: &str) {

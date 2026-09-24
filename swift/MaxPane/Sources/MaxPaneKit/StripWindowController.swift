@@ -351,8 +351,59 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                 self.perform(command)
                 return nil
             }
+            // The second source. An app's chord has no menu item to carry it
+            // — there is no `Command` to hang one on — so *every* app chord is
+            // matched here, first one included, and AppKit has not had it.
+            if let app = Keymap.active.app(for: typed) {
+                // A chord with no ⌘ is one a text field may legitimately
+                // want, exactly as it is for a command: ⌃⌥G typed into the
+                // address bar is a G.
+                if !typed.modifiers.contains(.command) {
+                    guard !self.strip.isGallery, !self.isEditingText else { return event }
+                }
+                self.openApp(named: app)
+                return nil
+            }
             return event
         }
+    }
+
+    /// Go to a web app: focus the lane it is already on, else open one.
+    ///
+    /// The chord, `maxpane app NAME` and the picker's row all arrive here, so
+    /// there is one answer to "what does going to Gmail do" however it was
+    /// asked for.
+    func openApp(named name: String) {
+        guard let entry = WebApps.named(name, in: configStore?.config.apps ?? []) else { return }
+        openApp(entry)
+    }
+
+    @discardableResult
+    func openApp(_ entry: WebAppEntry) -> Bool {
+        guard let url = entry.pageURL else { return false }
+        if let lane = WebApps.lane(for: entry, in: store.allLanes) {
+            // Focused where it is. The chord goes to the app; it does not
+            // rearrange the strip behind it, so a lane you have undocked
+            // stays undocked and one you have moved stays where you moved it.
+            let pane = WebApps.pane(for: entry, in: lane)
+            strip.select(laneId: lane.id, paneId: pane?.id)
+            return true
+        }
+        do {
+            try store.newWebLane(url: url.absoluteString, near: store.focusedLane?.id)
+            // The newest lane is the one just made: `state.lanes` is in strip
+            // order, so `.last` is only the new one when it was appended, and
+            // this one goes right of whatever is focused.
+            guard let lane = store.allLanes.max(by: { $0.createdAt < $1.createdAt }) else { return true }
+            if let edge = entry.docked {
+                try store.dockLane(lane.id, side: edge == .left ? .left : .right, mode: .inset)
+            }
+            strip.select(laneId: lane.id, paneId: lane.panes.first?.id)
+        } catch {
+            Log.warn("app \(entry.name): \(error)")
+            return false
+        }
+        return true
     }
 
     /// Whether the keyboard is in a text field rather than in the strip.
@@ -506,7 +557,29 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             // Answered by `captureFromCLI`, which the socket routes to
             // directly because it cannot answer inside this switch.
             return .refused("capture is answered elsewhere")
+        case .app(let name):
+            return appFromCLI(name: name)
         }
+    }
+
+    /// `maxpane app NAME` — the chord, from a shell.
+    ///
+    /// A name that is nobody's is refused with the names there are, because
+    /// the alternative is a command that appears to work and does nothing;
+    /// a prefix that fits two apps is refused for saying which two.
+    private func appFromCLI(name: String) -> OpenServer.Reply {
+        let apps = configStore?.config.apps ?? []
+        guard !apps.isEmpty else { return .refused("no [[apps]] are configured") }
+        guard let entry = WebApps.named(name, in: apps) else {
+            let names = apps.map(\.name).joined(separator: ", ")
+            return .refused("no app is called \"\(name)\" — there is \(names)")
+        }
+        let wasOpen = WebApps.lane(for: entry, in: store.allLanes) != nil
+        guard openApp(entry) else { return .refused("\(entry.name): \(entry.url) is not a page") }
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        return OpenServer.Reply(
+            ok: true, lanes: "\(entry.name)\t\(entry.url)\t\(wasOpen ? "focused" : "opened")\n")
     }
 
     /// `maxpane capture [LANE] [--full]` — a PNG of that lane's focused pane,
@@ -1444,6 +1517,13 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                     store.setChords(command, to: [chord.configText])
                     return store.writeError.map { "could not write \(store.path.path): \($0)" }
                 }
+            },
+            appBinder: configStore.map { store in
+                { name, chord in
+                    if let why = store.keymap.refusal(binding: chord, toApp: name) { return why }
+                    store.setAppChord(named: name, to: chord.configText)
+                    return store.writeError.map { "could not write \(store.path.path): \($0)" }
+                }
             }
         ) { action in
             guard let action else { return }
@@ -1456,7 +1536,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     }
 
     /// ⌘E's corpus, as things stand: every command with the file's chord and
-    /// the menu's verdict on it, the live settings, the servers.
+    /// the menu's verdict on it, the live settings, the servers, the apps.
     func appScope() -> AppScope {
         let keymap = configStore?.keymap ?? .active
         return AppScope(
@@ -1470,10 +1550,16 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                         ? "\(status.word) · \(status.sessions) \(status.sessions == 1 ? "session" : "sessions")"
                         : status.word
                 }
-            } ?? [])
+            } ?? [],
+            apps: AppScope.appItems(entries: configStore?.config.apps ?? [], file: keymap) { [self] entry in
+                // What the row says ↩ will do, read off the strip as the
+                // picker opens: the lane's title when one is already on it.
+                WebApps.lane(for: entry, in: store.allLanes).map { $0.title ?? "its lane" }
+            })
     }
 
-    /// An APP row, chosen. Nothing here touches the strip.
+    /// An APP row, chosen. `.app` is the one kind that touches the strip —
+    /// going to an app is going somewhere.
     func run(_ action: AppAction) {
         switch action {
         case .command(let command):
@@ -1489,6 +1575,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             case .reconnect: book.reconcile(tokenChanged: [name])
             case .colour(let colour): book.setColour(name, colour)
             }
+        case .app(let name):
+            openApp(named: name)
         }
     }
 

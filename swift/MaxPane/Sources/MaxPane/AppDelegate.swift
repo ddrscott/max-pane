@@ -75,7 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Before the window and before the menu: both bake in key equivalents
         // when they are built, so a keymap installed after either of them would
         // leave the menu advertising one key and the monitor answering another.
-        Keymap.install(Keymap(overrides: config.keys))
+        Keymap.install(Keymap(overrides: config.keys, apps: config.apps))
 
         // Pictures ⌘V wrote for a terminal (`PastedImages`), a week old by
         // default: gone, off the main thread.
