@@ -162,7 +162,7 @@ the same rule. Three things differ:
 
 - **The viewport is the whole gallery**, not the strip's window less its docks. A
   dock is an ordinary tile in the gallery (ADR-0011), so there is no wall to stay
-  clear of.
+  clear of. **Amended 2026-09-24 — there is now.** See the last section.
 - **A terminal lets go of its `ThumbnailHold` going up and is held again on
   landing.** A tile holds its terminal at the strip's size and draws it small;
   left held, the pane would fill the window with a lane-sized terminal in its
@@ -232,3 +232,24 @@ menu before the `WKWebView` can hand it to the site.
   for 0.22 s. **Not yet seen on a screen** — no app instance was launched to
   build this; the tests check that the animation exists, its key path and its length, not
   how it looks.
+
+## Amended 2026-09-24: the gallery's viewport is the gallery less its docks
+
+The bullet above — *the viewport is the whole gallery* — rested on ADR-0011's
+"a dock is an ordinary tile in the gallery", and that has been reversed: the
+gallery has walls now, and a docked lane is drawn at its edge at full size
+(ADR-0011, amended the same day; `docs/critiques/docking.md` finding 1).
+
+So `maximizedViewportRect` says the same sentence in both layouts: **between the
+rails, inside an inset dock, clear of an overlay one** — in the gallery, the
+gallery less its walls. One sentence rather than two is most of the point, but
+the reason it had to change is sharper than symmetry: the wall exists so one
+lane stays readable while the user navigates others, and a ⇧⌘↩ that covered that
+lane would undo the pin with a keystroke. Maximize is a *temporary overlay*
+(this ADR's whole decision), and a temporary overlay must not take the one thing
+the user asked to keep.
+
+Everything else in this ADR is unchanged. A docked lane's own pane still
+maximizes into that window rather than the dock's (*A docked lane*, above), and
+in the gallery it now does so clear of its own wall, which keeps its place with
+the slot showing — the same behaviour, now true in both layouts.

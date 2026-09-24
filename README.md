@@ -1970,8 +1970,8 @@ and then goes to it. Zoom, reload, find, a navigation or a new title leave the
 pane up. **Esc never restores**, because a terminal always has a use for Esc.
 
 **In the gallery too.** ⇧⌘↩ maximizes the focused pane from a tile and from an
-expanded tile, and there it fills the whole gallery: a dock is an ordinary tile in
-that view, so there is no wall to stay clear of. The same key puts the pane back
+expanded tile, and there it fills the gallery less its walls — the same sentence
+as the strip's, because the gallery has walls now (below). The same key puts the pane back
 in its tile, and an expanded tile is still expanded. A double click grows a tile
 to the size of its lane; this is the step past that, to the size of the window. A
 terminal in a tile is held at its strip size and drawn small, so it lets go of
@@ -2011,6 +2011,11 @@ A docked lane keeps its place in the strip's order the whole time, so undocking
 puts it back exactly where it was — even if lanes were created or closed around
 it meanwhile. It is also never evicted and never unparented, whatever memory
 does, which is what keeps a docked page playing.
+
+**The gallery has edges too, and a dock holds one there as well.** ⌘G does not
+unpin anything: the docked lane stays exactly where it is, at full size, and the
+tiles are laid into the gallery less its walls. Every key above works there. See
+*The gallery* for what that means for the grid.
 
 A docked lane is still a lane: **⇧⌘D** splits it, the seam between its panes
 drags, its header works, and **⇧⌘[** / **⇧⌘]** walk its stack. ⌘[ / ⌘] pressed
@@ -2163,9 +2168,18 @@ The ⋯ menu still works.
 
 A few things behave the way the rest of the strip made them:
 
-- **Docked lanes are ordinary tiles**, at their place in the order, and go back to
-  their edge when the gallery closes — except that focusing one never moves the
-  expansion onto it, and ⌘[ / ⌘] step over it.
+- **A docked lane stays at its wall.** The gallery has edges too: a docked lane
+  is drawn at the left or right of it, at the dock's width and the gallery's
+  full height, at full size — and the tiles are laid into what is left, exactly
+  as an inset dock narrows the strip. ⌘G moves it not one point in either
+  direction, so the lane you pinned to keep readable is readable in both
+  layouts, which is the whole purpose of docking. It is not on the grid at all:
+  it has no tile, it can never be the expanded one, ⌘[ / ⌘] and the expansion
+  cycle step over it, and a drop cannot land on it. ⌃⌘[ ⌃⌘] ⌃⌘\ ⌃⌘= ⌃⌘- and a
+  drag of the wall's inner edge all work there, on the same lane, the same way.
+  An overlay wall takes the same room from the grid as an inset one, because the
+  gallery cannot be scrolled out from under it; what the mode changes is how the
+  wall is drawn, and what it does the moment the strip is back.
 - **Gather has no key.** It narrows the strip, and the gallery, to one project,
   and it was too easy to land in without meaning to — one keystroke, or a double
   click on a lane header. It is in the View menu, and `keys` will bind it for

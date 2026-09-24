@@ -378,4 +378,107 @@ struct GalleryRenderTests {
             }
         }
     }
+
+    /// The gallery's walls: a docked lane pinned at the edge at its real size
+    /// while the grid is laid into what is left (ADR-0011 and ADR-0019, both
+    /// amended 2026-09-24).
+    ///
+    /// Four arrangements — none, left, right, both — in both appearances, so
+    /// the thing the eye has to check is checkable: the wall is a readable
+    /// column and every tile clears it, with no tile under it and none cropped
+    /// at the seam. The walls are drawn inset, which is what the grid sees;
+    /// overlay differs only in the wall's own shadow and floating edge, which
+    /// the strip's dock sheets already show.
+    @Test("renders the gallery with a lane docked left, right, both and neither, light and dark")
+    func wallSheet() throws {
+        guard let dir = ProcessInfo.processInfo.environment["MAXPANE_SHOTS"] else { return }
+        let app = NSApplication.shared
+        let previous = app.appearance
+        defer { app.appearance = previous }
+
+        let music = lane("m", "open.spotify.com", width: 420, [
+            pane("m1", "m", 0, kind: .web, url: "https://open.spotify.com/playlist")])
+        let reference = lane("r", "ghostty.org — docs", width: 480, [
+            pane("r1", "r", 0, kind: .web, url: "https://ghostty.org/docs")])
+        let grid: [Lane] = [
+            lane("a", "claude — max-pane", width: 656, [pane("a1", "a", 0), pane("a2", "a", 1)]),
+            lane("d", "claude — relay-tty", width: 1312, span: 2, [pane("d1", "d", 0)]),
+            lane("e", "cargo test", width: 540, [pane("e1", "e", 0)]),
+            lane("f", "claude — laned-core", width: 656, [pane("f1", "f", 0)]),
+            lane("i", "htop", width: 420, [pane("i1", "i", 0)]),
+            lane("j", "claude — pretty-good-ai", width: 656, [pane("j1", "j", 0)]),
+        ]
+        let focused = "a2"
+        func views() -> [String: NSView] {
+            [
+                "a1": agent("max-pane · feat/gallery-walls", asking: false),
+                "a2": shell(["~/code/max-pane $ ./scripts/test.sh", "==> laned-core", "test result: ok. 39 passed", "==> MaxPane", "✔ gallery walls (8 tests)"]),
+                "d1": agent("relay-tty · main", asking: true),
+                "e1": shell(["$ cargo test -p laned-core", "   Compiling laned-core v0.1.0", "    Finished test [unoptimized]", "     Running tests/docking.rs", "test a_docked_lane_is_never_evicted ... ok"]),
+                "f1": agent("laned-core · docking", asking: true),
+                "i1": shell(["  PID USER      %CPU  COMMAND", "  812 spierce   38.0  MaxPane", "  901 spierce   12.4  relay-pty-host", "  344 spierce    3.1  WebContent"]),
+                "j1": agent("pretty-good-ai · web", asking: true),
+                "m1": page("Deep Focus"),
+                "r1": page("Ghostty docs"),
+            ]
+        }
+
+        let size = CGSize(width: 1728, height: 1080)
+        let backing: CGFloat = 2
+        let rail = StripEdgeRail.width
+        let arrangements: [(String, Lane?, Lane?)] = [
+            ("none", nil, nil), ("left", music, nil), ("right", nil, reference),
+            ("both", music, reference),
+        ]
+        for (mode, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            app.appearance = NSAppearance(named: appearance)
+            for (name, left, right) in arrangements {
+                // `galleryContentRect`'s arithmetic: the wall keeps the rail's
+                // width outside it, because that is where the dock stands on the
+                // strip and ⌘G must move it not at all.
+                let leftRoom = left.map { CGFloat($0.widthPt) + rail } ?? 0
+                let rightRoom = right.map { CGFloat($0.widthPt) + rail } ?? 0
+                let room = CGSize(width: size.width - leftRoom - rightRoom, height: size.height)
+                let placement = GalleryLayout.place(
+                    widths: grid.map { CGFloat($0.widthPt) }, laneHeight: size.height, in: room)
+                let stubs = views()
+                var tiles: [Tile] = []
+                for (index, lane) in grid.enumerated() {
+                    guard let image = renderLane(lane, views: stubs, focused: focused, height: size.height,
+                                                 scale: placement.scale, backing: backing)
+                    else { continue }
+                    let slot = placement.rects[index].offsetBy(dx: leftRoom, dy: 0)
+                    tiles.append(Tile(
+                        image: image,
+                        frame: CGRect(x: slot.minX, y: slot.minY,
+                                      width: CGFloat(lane.widthPt) * placement.scale,
+                                      height: size.height * placement.scale),
+                        scale: placement.scale))
+                }
+                #expect(tiles.count == grid.count)
+                #expect(tiles.allSatisfy { $0.frame.minX >= leftRoom - 0.5 && $0.frame.maxX <= size.width - rightRoom + 0.5 },
+                        "a tile is under a wall in the \(name) sheet, which is the bug the wall exists to not have")
+
+                // The walls, last so they are drawn over nothing and nothing
+                // over them: at scale 1, the dock's width, the gallery's height.
+                for (wall, x) in [(left, rail), (right, size.width - rail - CGFloat(right?.widthPt ?? 0))] {
+                    guard let wall,
+                          let image = renderLane(wall, views: stubs, focused: focused, height: size.height,
+                                                 scale: 1, backing: backing)
+                    else { continue }
+                    tiles.append(Tile(
+                        image: image,
+                        frame: CGRect(x: x, y: 0, width: CGFloat(wall.widthPt), height: size.height),
+                        scale: 1))
+                }
+
+                guard let upsideDown = composite(tiles, size: size, backing: backing, appearance: appearance),
+                      let sheet = flippedVertically(upsideDown)
+                else { continue }
+                let png = try #require(NSBitmapImageRep(cgImage: sheet).representation(using: .png, properties: [:]))
+                try png.write(to: URL(fileURLWithPath: dir)
+                    .appendingPathComponent("gallery-walls-\(name)-\(mode).png"))
+            }
+        }
+    }
 }

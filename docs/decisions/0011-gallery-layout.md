@@ -349,3 +349,67 @@ is a long list.
   from its presentation-layer frame, so both tiles move at once and a repeat
   mid-flight turns round from where they are drawn. Nothing new, nothing
   instant.
+
+## Amended 2026-09-24: the gallery gets walls, and a docked lane is not a tile
+
+This reverses *Docked lanes are ordinary tiles* and the rejection of *"docks
+kept at the wall in the gallery"* above. Both were decided against one sentence,
+and the sentence is the owner's:
+
+> "The purpose of docking is to pin one or more lanes in expanded mode so I can
+> keep them readable as I navigate some other lanes temporarily." … "docking
+> from lane and gallery mode [should be] consistent"
+
+⌘G threw the pin away. `layoutDocks` returned before placing a wall, `syncGallery`
+drew every lane flat, and the one lane he had asked to stay readable became one
+thumbnail among twenty — the *least* readable it had ever been. That is not a
+smaller version of docking; it is its absence (`docs/critiques/docking.md` § 2
+and finding 1). The reason 0011 gave — the grid would lose the edges' width —
+is simply the price of docking, knowingly paid on the strip, and the sentence
+says he wants to pay it in both layouts.
+
+- **A docked lane is drawn at the gallery's edge**, at the dock's width, the
+  gallery's full height and **scale 1**: the same `LaneView`, at the same frame,
+  as a sibling of the scroll view (`dockViews`), which is where the audio
+  guarantee lives and is untouched by this. Every tile guarantee it used to have
+  as a tile it now has for the older reason: it is never evicted, never
+  unparented and never recycled because it is docked.
+- **It is not on the grid.** `syncGallery` tiles `stripLanes`; `layoutGallery`
+  lays them into `galleryContentRect`, the gallery less its walls, exactly as an
+  inset dock narrows the strip's viewport. A docked lane has no tile, so it is
+  no longer a drop target, a gap to drop between, or a stop for any key.
+- **Entering and leaving the gallery move it not at all.** Its frame is
+  `layoutDocks`'s in both layouts, so ⌘G is a no-op for it: nothing to animate,
+  because nothing moves. The wall keeps the edge rail's width outside it for the
+  same reason — that is where the dock stands on the strip. The rail itself is
+  hidden in the gallery, so what is beside the wall is plain background, and an
+  edge with no dock keeps the full width.
+- **Both modes take the same room, and that is the one place the gallery departs
+  from the strip.** On the strip an overlay costs the grid nothing, because the
+  lanes under it can be scrolled out from under it; the gallery does not scroll,
+  so a wall drawn *over* the grid would hide a tile or two with no way to reach
+  them, and "every lane on one screen" is the whole of what the gallery
+  promises. ⌃⌘\ still changes the mode, the drawing (floating, with its cast
+  shadow) and what the dock does the moment the strip is back.
+- **An expanded tile can never be a docked lane**, and the expansion cycle and
+  ⌘[ / ⌘] step over one — the rules the 2026-09-23 and 2026-09-24 amendments
+  above already carry, now for the plainer reason that a wall *is* the readable
+  lane and has nothing to expand. `expandTile` refuses, and a double click on a
+  docked lane's sidebar row selects it rather than expanding it. Docking the
+  lane that was expanded puts the expansion down.
+- **⌃⌘[ ⌃⌘] ⌃⌘\ ⌃⌘= ⌃⌘- and a wall's width drag are all real in the gallery**
+  now, which retires the complaint that they wrote persistent state with nothing
+  on screen to show for it (finding 4). Nothing in `canPerform` changed; the
+  keys were always live, and now they do something.
+- **The ledger gained nothing.** `lane.dock` was already the truth in both
+  layouts; only the drawing differed.
+
+This also settles finding 6 — persisting `expandedLaneId` — by making it
+unnecessary. The durable pin is `lane.dock`, which is a ledger column and
+survives a relaunch into either layout; the expansion stays what it is, a
+temporary look, held in memory only, as the 2026-09-13 amendment says. One
+mechanism for "keep this readable" rather than two.
+
+**Not driven in the running app.** The wall's geometry is held by
+`DockGalleryWallTests`, and the four arrangements — none, left, right, both — are
+in `gallery-walls-*.png`, looked at in light and dark.

@@ -925,8 +925,12 @@ public final class StripViewController: NSViewController {
 
     private func updateMaterialization() {
         // The gallery materialises everything, because everything is on screen.
+        // Docks first there too: they hold the walls the grid is laid between,
+        // and `syncGallery` lays that grid.
         if isGallery {
-            syncGallery(store.state)
+            let state = store.state
+            updateDocks(state)
+            syncGallery(state)
             return
         }
         let state = store.state
@@ -1016,9 +1020,12 @@ public final class StripViewController: NSViewController {
         } ?? false
         laneView.focusedPaneId = store.state.focusedPaneId
         laneView.onResize = { [weak self] width, isFinal in
-            // The gallery writes nothing but the layout and focus. The handle
-            // is hidden on a tile; this is the belt to that brace.
-            guard let self, !self.isGallery else { return }
+            guard let self else { return }
+            // The gallery writes nothing but the layout and focus — except at
+            // a wall, which is a lane at its real size with its inner edge in
+            // reach, exactly as on the strip. Everywhere else in the gallery
+            // the handle is hidden on a tile, and this is the belt to that brace.
+            guard !self.isGallery || self.store.lane(lane.id)?.dock != nil else { return }
             // The same gesture on a different number. A docked lane's inner
             // edge drags the *dock's* width, which is durable and separate, so
             // undocking gives the lane back at the width it had in the strip.
@@ -1254,7 +1261,10 @@ public final class StripViewController: NSViewController {
         laneView.drawnDockMode = nil
         laneView.resizeEdge = .trailing
         laneView.alphaValue = 1
-        content.addSubview(laneView)
+        // Back to the strip's document — or, in the gallery, left where it is
+        // for `layoutGallery` to put in a tile, which is one reparent rather
+        // than two and never parks a live page inside the hidden scroll view.
+        if !isGallery { content.addSubview(laneView) }
     }
 
     /// The dock slides in from the edge it is going to hold.
@@ -1293,6 +1303,7 @@ public final class StripViewController: NSViewController {
             return dock
         }
 
+        let previousLayout = dockLayout
         dockLayout = DockGeometry.resolve(
             left: requested(.left), right: requested(.right),
             viewport: available, laneMinPt: CGFloat(config.laneMinPt))
@@ -1328,12 +1339,9 @@ public final class StripViewController: NSViewController {
 
         // The scroll view above is still framed in the gallery, because its
         // clip view's height is the height every lane has — the one a tile has
-        // to keep. The docks themselves are tiles there, and not at the wall.
-        guard !isGallery else {
-            dockShadows.values.forEach { $0.isHidden = true }
-            return
-        }
-
+        // to keep. **The walls below are placed in both layouts**, at the same
+        // frame, which is the whole of "⌘G moves a docked lane not at all"
+        // (ADR-0011, amended 2026-09-24; `docs/critiques/docking.md` finding 1).
         for side in [DockSide.left, .right] {
             guard let laneView = dockViews[side] else {
                 dockShadows[side]?.isHidden = true
@@ -1372,6 +1380,15 @@ public final class StripViewController: NSViewController {
             // subviews from a layout pass that runs on every animation frame
             // would be sixty tree mutations a second to say the same thing.
         }
+
+        // The grid is laid into what the walls leave it, so a dock that
+        // arrived, left, changed mode or changed width re-flows the gallery
+        // from here — the one place that resolves what the docks take. Not
+        // animated: this also runs on every frame of a window resize and of a
+        // wall's width drag, and a tile easing behind the pointer lags it. A
+        // dock toggled by a key arrives as a snapshot, and `syncGallery`'s
+        // animated pass carries that.
+        if isGallery, dockLayout != previousLayout { layoutGallery() }
     }
 
     // MARK: - the gallery layout
@@ -1398,8 +1415,10 @@ public final class StripViewController: NSViewController {
     /// In the gallery that is its tile, expanded in place. On the strip it is
     /// exactly the select a click runs — which is what the second click of a
     /// double click in the sidebar always did.
+    /// A docked lane has no tile to expand in either layout: it is already at
+    /// its full size at the wall, so the row selects it and nothing moves.
     public func openLane(laneId: String, paneId: String?) {
-        if isGallery {
+        if isGallery, store.lane(laneId)?.dock == nil {
             expandTile(laneId: laneId, paneId: paneId)
         } else {
             select(laneId: laneId, paneId: paneId)
@@ -1416,6 +1435,14 @@ public final class StripViewController: NSViewController {
     /// Running while lanes ease out of their tiles: the strip does not recycle
     /// an off-window lane view in the middle of the motion that carries it off.
     private var retirementHold: MotionTimer?
+
+    /// For tests: a lane's tile, in window coordinates, or nil when it has
+    /// none — which is every lane while the strip is up, and **a docked lane in
+    /// the gallery**, where it is at a wall rather than on the grid.
+    func tileRect(_ laneId: String) -> CGRect? {
+        guard isGallery, let tile = gallery.tile(for: laneId) else { return nil }
+        return tile.convert(tile.bounds, to: nil)
+    }
 
     /// For tests: the layer a lane is drawn by right now — its tile's in the
     /// gallery, its own on the strip — and that layer's superview, whose
@@ -1437,7 +1464,9 @@ public final class StripViewController: NSViewController {
     /// past the window's edge is brought in to just beyond that edge — it still
     /// arrives from its own side, which is the spatial fact worth keeping, and
     /// does not cross thirty lanes' worth of screen in a fifth of a second to
-    /// say so. A docked lane comes from its wall.
+    /// say so. **A docked lane is not in here at all**: it has no tile to come
+    /// from, because it stays at its wall and is not drawn by the gallery
+    /// (ADR-0011, amended 2026-09-24).
     private func stripRectsForGallery() -> [String: CGRect] {
         if gallery.frame != view.bounds { gallery.frame = view.bounds }
         var rects: [String: CGRect] = [:]
@@ -1452,10 +1481,6 @@ public final class StripViewController: NSViewController {
             rects[lane.id] = rect
             x += width + Theme.borderWidth
         }
-        for dock in dockViews.values {
-            guard let laneView = laneViews[dock.laneId], laneView.window != nil else { continue }
-            rects[dock.laneId] = gallery.convert(laneView.bounds, from: laneView)
-        }
         return rects
     }
 
@@ -1463,8 +1488,12 @@ public final class StripViewController: NSViewController {
 
     /// Grow a tile in place and give its pane the keyboard. Expanding another
     /// tile puts the first one back, because the grid has room for one.
+    /// **Never a docked lane.** It is at the wall at its real size already, so
+    /// there is nothing to grow and no slot to grow out of — and the expansion
+    /// is the roaming look the wall exists to be independent of
+    /// (`docs/critiques/docking.md` findings 1 and 2).
     func expandTile(laneId: String, paneId: String?) {
-        guard isGallery, let lane = store.lane(laneId) else { return }
+        guard isGallery, let lane = store.lane(laneId), lane.dock == nil else { return }
         expandedLaneId = laneId
         layoutGallery(animated: true)
         if let pane = paneId ?? lane.panes.first?.id { focus(pane) }
@@ -1648,11 +1677,14 @@ public final class StripViewController: NSViewController {
         if let laneId = store.focusedLane?.id { ensureVisible(laneId) }
     }
 
-    /// Give every lane on the strip a view and a tile, and nothing else one.
+    /// Give every lane a view, and every lane that is not at a wall a tile.
     ///
-    /// `state.lanes` rather than `stripLanes`: in the gallery a docked lane is
-    /// an ordinary tile at its ordinal (ADR-0011), and a gather filter has
-    /// already narrowed the list to its tag.
+    /// `state.lanes` for the views and `stripLanes` for the tiles: a docked
+    /// lane is at the gallery's wall, not on the grid (ADR-0011, amended
+    /// 2026-09-24), and it must keep its view whatever the grid is doing —
+    /// `updateDocks` has already parented it above the gallery. A gather filter
+    /// has already narrowed `state.lanes` to its tag, and docked lanes survive
+    /// that filter in the core, so a gather cannot take a wall away either.
     private func syncGallery(_ state: StripState) {
         let wanted = Set(state.lanes.map(\.id))
         for (id, laneView) in laneViews where !wanted.contains(id) && !isDeparting(id) {
@@ -1697,11 +1729,14 @@ public final class StripViewController: NSViewController {
         if animated && !Motion.isReduced {
             for (id, rect) in galleryEntryOrigins where before[id] == nil { before[id] = rect }
         }
-        let lanes = store.state.lanes
+        // The docks are at the walls, not on the grid: the grid is what is left
+        // between them, exactly as an inset dock narrows the strip's viewport.
+        let lanes = store.stripLanes
         let stripHeight = galleryStripHeight
+        let room = galleryContentRect
         let sizes = lanes.map { realSize(of: $0, stripHeight: stripHeight) }
         let placement = GalleryLayout.place(
-            widths: sizes.map(\.width), laneHeight: stripHeight, in: view.bounds.size)
+            widths: sizes.map(\.width), laneHeight: stripHeight, in: room.size)
         let backing = view.window?.backingScaleFactor ?? 2
 
         for (index, lane) in lanes.enumerated() {
@@ -1712,10 +1747,13 @@ public final class StripViewController: NSViewController {
                 x: slot.minX, y: slot.minY,
                 width: size.width * placement.scale, height: size.height * placement.scale)
             // The expanded tile keeps its place in the order and is drawn over
-            // the grid, as near its own slot as the gallery allows.
+            // the grid, as near its own slot as the gallery allows — and no
+            // further out than the walls, which it must not cover.
             if lane.id == expandedLaneId {
-                frame = GalleryLayout.expanded(tile: frame, laneSize: size, in: view.bounds.size)
+                frame = GalleryLayout.expanded(tile: frame, laneSize: size, in: room.size)
             }
+            // Solved in the grid's own space, then moved into the gallery's.
+            frame = frame.offsetBy(dx: room.minX, dy: room.minY)
             let scale = frame.width / size.width
             // Before the lane moves: a terminal has to take hold of its strip
             // size while it still has it, not after the tile has rounded it.
@@ -1739,6 +1777,23 @@ public final class StripViewController: NSViewController {
                 expandedLaneId = nil
             }
         }
+        // A lane docked while the gallery is up leaves the grid for the wall,
+        // and the tile it was in is about to be dropped. Its view goes up to
+        // `view` here rather than waiting for `updateDocks`, because a lane
+        // view carried out of the window inside a removed tile is a page
+        // reloaded and a song stopped — the one thing docking exists to
+        // prevent, and the reason a dock view is a sibling of the scroll view
+        // (see `dockViews`). Idempotent, so the call order cannot break it.
+        for lane in store.state.lanes where lane.dock != nil {
+            guard let laneView = laneViews[lane.id], gallery.tile(for: lane.id) != nil else { continue }
+            laneView.thumbnailScale = nil
+            laneView.isExpandedTile = false
+            for pane in lane.panes {
+                (paneControllers[pane.id] as? TerminalPaneController)?
+                    .setThumbnail(scale: nil, backingScale: backing)
+            }
+            view.addSubview(laneView, positioned: .above, relativeTo: nil)
+        }
         let shown = Set(lanes.map(\.id))
         for (id, from) in before where shown.contains(id) {
             if let tile = gallery.tile(for: id) { animateTile(tile, from: from) }
@@ -1751,6 +1806,38 @@ public final class StripViewController: NSViewController {
     /// out at.
     private var galleryStripHeight: CGFloat {
         scrollView.contentView.bounds.height > 0 ? scrollView.contentView.bounds.height : view.bounds.height
+    }
+
+    /// The gallery less its walls: the room the tile grid is laid into.
+    ///
+    /// A docked lane is drawn at the gallery's edge at the width and the full
+    /// height it has on the strip, and the tiles get what is left — exactly as
+    /// an inset dock narrows the strip's viewport (ADR-0011 and ADR-0019, both
+    /// amended 2026-09-24).
+    ///
+    /// **Both modes take their room here, and that is the one place the gallery
+    /// departs from the strip.** On the strip an overlay costs the grid nothing
+    /// because the lanes underneath can be scrolled out from under it; the
+    /// gallery does not scroll, so a wall drawn *over* the grid would hide a
+    /// tile or two with no way to reach them, and "every lane on one screen" is
+    /// the whole of what the gallery promises. The mode still decides how the
+    /// wall is drawn — floating, with its cast shadow — and what it does on the
+    /// strip, so ⌃⌘\ is neither a lie nor a no-op there.
+    ///
+    /// **The rail's width stays outside the wall**, because that is where the
+    /// dock stands on the strip and the point of a wall is that ⌘G moves the
+    /// lane not at all. The rail itself is hidden in the gallery, so what is
+    /// left beside the wall is plain background; an edge with no dock keeps the
+    /// full width.
+    private var galleryContentRect: CGRect {
+        guard isGallery else { return view.bounds }
+        let rail = config.stripEdgeRails ? StripEdgeRail.width : 0
+        let left = dockLayout.left.map { $0.width + rail } ?? 0
+        let right = dockLayout.right.map { $0.width + rail } ?? 0
+        return CGRect(
+            x: left, y: 0,
+            width: max(0, view.bounds.width - left - right),
+            height: view.bounds.height)
     }
 
     /// The size a lane has when it is not a tile — which is the size its tile
@@ -2267,10 +2354,17 @@ public final class StripViewController: NSViewController {
     /// rails, inside an inset dock and clear of an overlay one. The sidebar is
     /// outside this view altogether. Docks stay where they are and stay usable.
     ///
-    /// In the gallery it is the gallery: a dock is an ordinary tile there
-    /// (ADR-0011), so there is no wall to stay clear of.
+    /// In the gallery it is the gallery **less its walls** — the same sentence
+    /// as the strip's, which is what makes ⇧⌘↩ mean one thing in both layouts.
+    /// A docked lane is drawn at the edge there too (ADR-0011 and ADR-0019,
+    /// both amended 2026-09-24), and a maximized pane that covered the one lane
+    /// the user pinned to stay readable would undo the pin with a keystroke.
     var maximizedViewportRect: CGRect {
-        if isGallery { return view.bounds }
+        if isGallery {
+            let room = galleryContentRect
+            return CGRect(
+                x: room.minX, y: view.bounds.minY, width: room.width, height: view.bounds.height)
+        }
         let strip = scrollView.frame
         return CGRect(
             x: strip.minX + dockLayout.overlayLeft, y: strip.minY,
@@ -2964,9 +3058,10 @@ public final class StripViewController: NSViewController {
     private func handleDrag(_ source: PaneDrag.Source, at windowPoint: NSPoint, isFinal: Bool) {
         let surface: NSView = isGallery ? gallery : content
         let boxes = isGallery ? galleryDropBoxes() : PaneDrag.boxes(lanes: store.stripLanes, laneHeight: content.bounds.height)
-        // Over a dock the strip lane under the pointer is one the dock is
-        // hiding, and a drop there would land somewhere nobody can see.
-        let drop = !isGallery && isOverADock(windowPoint)
+        // Over a dock the lane under the pointer is one the dock is hiding, and
+        // a drop there would land somewhere nobody can see. True at a gallery
+        // wall too, now that there is one.
+        let drop = isOverADock(windowPoint)
             ? nil
             : PaneDrag.drop(
                 at: surface.convert(windowPoint, from: nil), in: boxes, dragging: source,
@@ -2996,10 +3091,13 @@ public final class StripViewController: NSViewController {
         }
     }
 
-    /// Every tile as a drop surface, in strip order. A docked lane is a tile at
-    /// its ordinal here (ADR-0011), so it is a place to drop like any other.
+    /// Every tile as a drop surface, in strip order. A docked lane has no tile
+    /// — it is at the wall (ADR-0011, amended 2026-09-24) — so it is neither a
+    /// target nor a gap to drop between, the same as on the strip. Dragging a
+    /// wall's header still works: it is a source, and the drop lands on the
+    /// grid, which is what undocks it.
     private func galleryDropBoxes() -> [PaneDrag.LaneBox] {
-        store.state.lanes.compactMap { lane in
+        store.stripLanes.compactMap { lane in
             guard let tile = gallery.tile(for: lane.id) else { return nil }
             return PaneDrag.box(
                 for: lane, laneSize: realSize(of: lane, stripHeight: galleryStripHeight), drawnIn: tile.frame)
