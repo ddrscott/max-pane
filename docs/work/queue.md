@@ -75,5 +75,5 @@
 - [x] Omarchy F3: ⇧⌘P Run Command — every command, live setting toggles and server actions in the picker, `>` prefix in ⌘O, ⌘⌫ binds a chord — [detail](omarchy-f3-run-command.md)
 - [x] Omarchy F7: daily release check, `↻ vNEXT` in the status bar and version popover, Help › Update… runs brew in a terminal lane and offers Relaunch (env-scrubbed) — [detail](omarchy-f7-update-lane.md)
 - [x] Omarchy F10: ⌃⌘W End Session with a sheet, ⌘K clears scrollback, rename from the lane header — [detail](omarchy-f10-end-session.md)
-- [ ] Omarchy F2: clock, battery and network at the right of the status bar while fullscreen — [detail](omarchy-f2-status-clock.md)
+- [-] Omarchy F2: clock, battery and network at the right of the status bar while fullscreen — [detail](omarchy-f2-status-clock.md)
 - [ ] Omarchy F6: ⌃⌘S Capture Pane to a PNG whose path is pasted into the nearest terminal, and `maxpane capture` — [detail](omarchy-f6-capture-pane.md)
