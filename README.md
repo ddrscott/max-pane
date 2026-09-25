@@ -3410,6 +3410,14 @@ a chord people have in their fingers stays where it is; ⌥⌘P pairs lanes and
 
 ### Shortcuts
 
+**A dialog in front owns the keyboard.** With a picker, a sheet, a popover, a
+confirmation or another window in front, what you type goes to it: ⌘V pastes
+into the ⌘O picker's field, not into the terminal behind it, and ⌘C in a sheet
+over a page copies from the sheet. Strip commands grey out in the menu until
+the strip has the keyboard again, so ⌘W with the picker open closes nothing
+behind it. App and Help commands, such as ⌘, and ⌘/, work from anywhere.
+[ADR-0045](docs/decisions/0045-a-dialog-in-front-owns-the-keyboard.md).
+
 The **Keyboard** section of Settings lists every command, the keys that run it
 and the key it ships with. **rec** takes the next chord you press (esc cancels),
 **none** unbinds, and **default** gives the shipped key back. You can also type

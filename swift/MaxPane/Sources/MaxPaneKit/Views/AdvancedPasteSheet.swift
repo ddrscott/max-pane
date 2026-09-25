@@ -537,22 +537,12 @@ final class AdvancedPasteSheet: NSView, NSTextViewDelegate, NSTextFieldDelegate 
     }
 }
 
-/// ⌘V while this sheet is up. The Edit menu offers a paste to a terminal pane
-/// first (`TerminalPasteTarget`), and the pane's container is up the responder
-/// chain from the sheet's text boxes: unanswered here, ⌘V in the content
-/// would be a paste into the terminal, which the pane drops while a question
-/// is up, and the box would get nothing. So the sheet answers first: a text
-/// box with the keyboard gets an ordinary `paste:`, and anything else is
-/// swallowed, a question being no place to paste.
-extension AdvancedPasteSheet: TerminalPasteTarget {
-    func pasteIntoTerminalPane(_ sender: Any?) {
-        guard isTyping, let text = window?.firstResponder as? NSText else { return }
-        text.paste(sender)
-    }
-
-    func pasteIntoTerminalPaneWithoutAsking(_ sender: Any?) {}
-    func pasteSpecialIntoTerminalPane(_ sender: Any?) {}
-}
+// ⌘V in this sheet's text boxes needs nothing here. It used to: the pane's
+// container is up the responder chain from the boxes, and it took the Edit
+// menu's routed paste, so this sheet answered first as a one-off. The
+// container now answers only while the terminal itself has the keyboard
+// (ADR-0045), so the routed paste finds no taker from a box and the menu's
+// plain `paste:` reaches it — the rule every sheet and picker gets.
 
 /// One step of an Advanced Paste: its digit, a square that is filled when the
 /// step is on, its name. Grey at rest, the accent when on.

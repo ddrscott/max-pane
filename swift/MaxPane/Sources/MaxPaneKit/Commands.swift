@@ -705,6 +705,14 @@ public enum Command: String, CaseIterable, Sendable {
     }
 }
 
+extension Command {
+    /// A command about the app rather than the strip: the app menu and Help.
+    /// These run from whatever window has the keyboard. Every other command
+    /// acts on the strip and, from the menu, runs only while the strip's own
+    /// window has the keyboard (`StripWindowController.canPerformFromMenu`).
+    public var isAppLevel: Bool { menu == .app || menu == .help }
+}
+
 public enum MenuSection: String, CaseIterable {
     /// The menu named for the app. Built by hand around About, Hide and Quit;
     /// only its `Command`s come from here.

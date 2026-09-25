@@ -265,10 +265,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// ⌘V, offered to a terminal pane first and to everything else after.
     ///
     /// The two sends are the whole of it. `pasteIntoTerminalPane:` is answered
-    /// only by a terminal pane's container, so it finds one when a terminal has
-    /// the keyboard and nothing at all otherwise — at which point `paste:`
-    /// takes over and reaches WKWebView, a search field, or whatever else is
-    /// focused, exactly as it did before this existed.
+    /// only by a terminal pane's container, and only while that terminal has
+    /// the keyboard in the key window (`TerminalPaneContainer.responds(to:)`),
+    /// so it finds one when a terminal has the keyboard and nothing at all
+    /// otherwise — a picker, a sheet, a web page, a field — at which point
+    /// `paste:` takes over and reaches whatever is focused. Before that check,
+    /// AppKit's fallback to the main window handed a ⌘V typed into the ⌘O
+    /// picker to the terminal behind it (ADR-0045).
     ///
     /// The terminal has to be asked separately because its own `paste:` frames
     /// the clipboard from the local emulator's belief about a program at the
@@ -335,6 +338,6 @@ extension AppDelegate: NSMenuDelegate {
 extension AppDelegate: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         guard let raw = menuItem.representedObject as? String, let command = Command(rawValue: raw) else { return true }
-        return windowController.canPerform(command)
+        return windowController.canPerformFromMenu(command)
     }
 }

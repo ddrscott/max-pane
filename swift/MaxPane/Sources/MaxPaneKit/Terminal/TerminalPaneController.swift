@@ -291,6 +291,7 @@ final class TerminalPaneController: NSObject, PaneController {
         terminal.setAccessibilityElement(true)
         terminal.setAccessibilityLabel("Terminal")
         container.addSubview(terminal)
+        container.keyboardView = terminal
 
         status.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(status)
@@ -2238,6 +2239,26 @@ final class ReconnectingBanner: NSView {
 /// A pane's container, which tells Ghostty to re-measure whenever it lays out.
 @MainActor
 final class TerminalPaneContainer: NSView {
+    /// The view the keyboard is in when this pane has it: the terminal. Set
+    /// once by the controller, which owns both.
+    weak var keyboardView: NSView?
+
+    /// The routed Edit-menu actions are answered only while the terminal has
+    /// the keyboard (`keyboardIsIn`). Declining here, rather than taking the
+    /// action and then doing nothing with it, is the point: AppKit's search
+    /// goes on to whatever does have the keyboard — a picker's field, a sheet's
+    /// text box, the find field — and `sendAction` reports that no terminal
+    /// took it, which is what hands the Edit menu over to a plain `paste:`.
+    /// `nonisolated` because `responds(to:)` is NSObject's; AppKit only ever
+    /// asks it on the main thread, and anything else gets the old answer.
+    nonisolated override func responds(to aSelector: Selector!) -> Bool {
+        guard let aSelector, Thread.isMainThread,
+              isRoutedAction(aSelector, of: TerminalPasteTarget.self)
+                || isRoutedAction(aSelector, of: TerminalCopyTarget.self)
+        else { return super.responds(to: aSelector) }
+        return super.responds(to: aSelector) && MainActor.assumeIsolated { keyboardIsIn(keyboardView) }
+    }
+
     var onLayout: (() -> Void)?
     var onAttach: (() -> Void)?
     var onPaste: (() -> Void)?

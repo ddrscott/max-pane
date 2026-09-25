@@ -89,7 +89,9 @@ final class WebPaneController: NSObject, PaneController {
     var trail = RedirectTrail()
 
     /// Internal: the delegate methods in `WebPaneAsks.swift` need it.
-    var webView: WKWebView?
+    var webView: WKWebView? {
+        didSet { container.keyboardView = webView }
+    }
     private var placeholder: PlaceholderView?
     /// The panel covering a web view that has not painted yet, and the timer
     /// that lifts it if the page never arrives. See `showFirstPaintCover`.
@@ -2162,6 +2164,22 @@ final class DataStorePool {
 /// field's ⌘C still work.
 @MainActor
 final class WebPaneContainer: NSView {
+    /// The view the keyboard is in when this pane's *page* has it: the web
+    /// view. Kept current by the controller, which builds a new web view when
+    /// an evicted pane comes back.
+    weak var keyboardView: NSView?
+
+    /// Copy routed from the Edit menu is answered only while the page has the
+    /// keyboard, for the reason `TerminalPaneContainer.responds(to:)` gives:
+    /// declining lets AppKit's search reach the field that does have it, where
+    /// taking the action would copy from the page behind a picker or a sheet.
+    nonisolated override func responds(to aSelector: Selector!) -> Bool {
+        guard let aSelector, Thread.isMainThread,
+              isRoutedAction(aSelector, of: WebCopyTarget.self)
+        else { return super.responds(to: aSelector) }
+        return super.responds(to: aSelector) && MainActor.assumeIsolated { keyboardIsIn(keyboardView) }
+    }
+
     var onKeyEquivalent: ((NSEvent) -> Bool)?
     /// ⌘C while this pane's page has the keyboard. Before the subviews, and
     /// so before the web view: see `performKeyEquivalent`.

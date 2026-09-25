@@ -333,15 +333,21 @@ struct AdvancedPasteSheetTests {
         #expect(rig.window.makeFirstResponder(sheet.editor))
         #expect(sheet.holdsKeyboard)
         // The Edit menu's ⌘V asks the responder chain for a terminal first.
-        // From the content, the first to answer is the sheet, which hands the
-        // box a `paste:`, and not the pane's container beyond it. (`paste:`
-        // itself reads the general pasteboard, which no test touches.)
-        let action = #selector(TerminalPasteTarget.pasteIntoTerminalPane(_:))
-        var responder: NSResponder? = sheet.editor
-        while let next = responder, !next.responds(to: action) { responder = next.nextResponder }
-        #expect(responder === sheet)
-        sheet.pasteIntoTerminalPaneWithoutAsking(nil)
-        sheet.pasteSpecialIntoTerminalPane(Command.pasteEscaped.rawValue as NSString)
+        // From the content nothing answers any more: the sheet no longer
+        // carries its own copy of the routed paste, and the pane's container
+        // answers only while the terminal itself has the keyboard (ADR-0045),
+        // so the menu falls through to a plain `paste:` for the box. This
+        // rig's window is never key, which would decline on its own;
+        // `KeyboardOwnerTests` proves the first-responder half with a window
+        // that is. (`paste:` itself reads the general pasteboard, which no
+        // test touches.)
+        for action in [#selector(TerminalPasteTarget.pasteIntoTerminalPane(_:)),
+                       #selector(TerminalPasteTarget.pasteIntoTerminalPaneWithoutAsking(_:)),
+                       #selector(TerminalPasteTarget.pasteSpecialIntoTerminalPane(_:))] {
+            var responder: NSResponder? = sheet.editor
+            while let next = responder, !next.responds(to: action) { responder = next.nextResponder }
+            #expect(responder == nil, "\(action) found a taker from the sheet's text box")
+        }
         try await rig.settle()
         #expect(rig.wire.sent.isEmpty)
         #expect(rig.pane.advancedSheet === sheet)

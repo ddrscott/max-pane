@@ -97,12 +97,12 @@ extension WebPaneController {
     /// app has the least business keeping.
     @discardableResult
     func copyFromPage() -> Bool {
-        // The page has the keyboard — the web view itself, or something
-        // inside it, which is the same test `applyPendingFocus` makes.
-        guard let webView, let window = webView.window,
-              let responder = window.firstResponder as? NSView,
-              responder === webView || responder.isDescendant(of: webView)
-        else { return false }
+        // The page has the keyboard — the web view itself or something inside
+        // it, *in the key window*. The window clause is what keeps a ⌘C typed
+        // into a picker over the strip from being taken as the page's: the
+        // strip window's first responder is still the web view then, it is
+        // only no longer key (`keyboardIsIn`, ADR-0045).
+        guard keyboardIsIn(webView) else { return false }
         let pasteboard = clipPasteboard
         let before = pasteboard.changeCount
         // WebKit's own `copy:`, down the responder chain to the page, exactly

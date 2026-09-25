@@ -943,6 +943,32 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
     // MARK: - CommandHandling
 
+    /// Whether the menu — an item clicked, or its key pressed — may run
+    /// `command` now.
+    ///
+    /// A command that acts on the strip runs from the menu only while the
+    /// strip's window has the keyboard. With a picker, a sheet or another
+    /// window in front, what you type belongs to that: ⌘W reaching past the ⌘O
+    /// picker to close a lane is the same bug as ⌘V reaching past it to paste
+    /// into a terminal (ADR-0045). App and Help commands run from anywhere.
+    ///
+    /// The menu only. `canPerform` is unchanged, because ⌘E's picker is itself
+    /// a key panel whose whole job is to run strip commands, and it asks
+    /// `canPerform` about each row while it is in front. The alternate-chord
+    /// monitor makes the same key-window check on its own
+    /// (`installAlternateShortcuts`), which is where this rule came from.
+    public func canPerformFromMenu(_ command: Command) -> Bool {
+        let stripHasKeyboard = window.map { NSApp.keyWindow === $0 } ?? true
+        guard Self.menuMayReach(command, stripHasKeyboard: stripHasKeyboard) else { return false }
+        return canPerform(command)
+    }
+
+    /// The rule `canPerformFromMenu` adds to `canPerform`, alone, so it can be
+    /// checked against every command without a window that is really key.
+    static func menuMayReach(_ command: Command, stripHasKeyboard: Bool) -> Bool {
+        command.isAppLevel || stripHasKeyboard
+    }
+
     public func canPerform(_ command: Command) -> Bool {
         switch command {
         case .ungather:
