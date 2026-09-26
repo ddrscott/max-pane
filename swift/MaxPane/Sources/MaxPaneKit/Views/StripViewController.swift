@@ -1989,30 +1989,9 @@ public final class StripViewController: NSViewController {
             return
         }
         exiting.remove(paneId)
-        focusNeighbourIfNeeded(closing: paneId)
+        // Where the keyboard goes, if it was here, is the core's call: the
+        // same up-then-left heir ⌘W gets, so an exit and a close agree.
         try? store.closePane(paneId)
-    }
-
-    /// Keep the keyboard somewhere real when the focused pane is the one going.
-    private func focusNeighbourIfNeeded(closing paneId: String) {
-        // `stripLanes`, because "the lane beside it" is a fact about the row.
-        // A docked lane is beside nothing — it is at the wall — and handing the
-        // keyboard to it when a terminal three columns away exits would move
-        // focus across the window for no reason the user can see.
-        let lanes = store.stripLanes
-        guard store.state.focusedPaneId == paneId,
-              let lane = store.lane(containing: paneId),
-              let index = lanes.firstIndex(where: { $0.id == lane.id })
-        else { return }
-        // The lane to the right inherits the column the closing one is leaving,
-        // so it is the one the eye is already on.
-        let neighbours = [index + 1, index - 1].compactMap { i -> Lane? in
-            guard i >= 0, i < lanes.count else { return nil }
-            let candidate = lanes[i]
-            return candidate.id == lane.id ? nil : candidate
-        }
-        guard let next = neighbours.first, let pane = next.panes.first else { return }
-        try? store.focusPane(pane.id)
     }
 
     // MARK: - lane transitions

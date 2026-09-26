@@ -123,6 +123,47 @@ fn mean_weight(existing: &[f64]) -> f64 {
     sum / existing.len() as f64
 }
 
+/// Whether a lane is on the strip the user can see: not docked, not folded
+/// away by a collapsed sidebar group, and inside the gather if one is on. The
+/// one test every focus heir is chosen by.
+fn on_strip(l: &Lane, hidden: &BTreeSet<String>, gather: Option<&str>) -> bool {
+    l.dock.is_none()
+        && !hidden.contains(&l.id)
+        && gather.is_none_or(|root| l.project_root.as_deref() == Some(root))
+}
+
+/// The `(lane, pane)` that inherits the keyboard when `pane_id` closes;
+/// see [`Core::close_pane`] for the rule. Read before the delete, so the
+/// stack and the strip are still the ones the user was looking at.
+fn close_heir(inner: &Inner, pane_id: &str) -> Result<Option<(String, String)>> {
+    let lanes = inner.ledger.lanes()?;
+    let Some(at) = lanes.iter().position(|l| l.panes.iter().any(|p| p.id == pane_id)) else {
+        return Ok(None);
+    };
+    let lane = &lanes[at];
+    let heir = |p: &Pane| Some((p.lane_id.clone(), p.id.clone()));
+    if lane.panes.len() > 1 {
+        let i = lane.panes.iter().position(|p| p.id == pane_id).unwrap_or(0);
+        return Ok(heir(&lane.panes[if i > 0 { i - 1 } else { 1 }]));
+    }
+    let visible = |l: &Lane| l.id != lane.id && on_strip(l, &inner.hidden, inner.gather.as_deref());
+    if lane.dock.is_some() {
+        return Ok(lanes
+            .iter()
+            .filter(|l| visible(l))
+            .max_by_key(|l| l.last_focus_at)
+            .and_then(|l| l.panes.first())
+            .and_then(heir));
+    }
+    Ok(lanes[..at]
+        .iter()
+        .rev()
+        .find(|l| visible(l))
+        .or_else(|| lanes[at + 1..].iter().find(|l| visible(l)))
+        .and_then(|l| l.panes.last())
+        .and_then(heir))
+}
+
 struct Inner {
     ledger: Ledger,
     index: search::Index,
@@ -399,13 +440,37 @@ impl Core {
 
     /// Close one pane. Closing a lane's last pane closes the lane: an empty
     /// column is not a thing the user can do anything with.
+    ///
+    /// # Where the keyboard goes
+    ///
+    /// Only when the pane going had it; closing anything else (a ⋯ menu, the
+    /// sidebar's ✕, a page's `window.close()`) leaves focus alone. The heir is
+    /// read up, then left, so ⌘D, run a thing, ⌘W lands back on the pane
+    /// the split was made from:
+    ///
+    /// 1. the pane directly above it in its lane;
+    /// 2. the top pane closing → the pane that is now on top;
+    /// 3. the lane's last pane → the **bottom** pane of the nearest lane on
+    ///    the strip to the left, else to the right;
+    /// 4. nothing left → no heir, and the id is left as it was.
+    ///
+    /// "On the strip" is `set_hidden_lanes`'s test: not docked, not folded away
+    /// by the sidebar, inside the gather. A dock's own stack follows 1 and 2,
+    /// and its last pane hands the keyboard back to the strip lane that last
+    /// had it — where ⌥⌘] out of a dock lands.
     pub fn close_pane(&self, pane_id: String) -> Result<StripState> {
         let mut inner = self.inner.lock();
+        let had_focus = inner.ledger.app_state(KEY_FOCUSED_PANE)?.as_deref() == Some(pane_id.as_str());
+        let heir = if had_focus { close_heir(&inner, &pane_id)? } else { None };
         inner.index.forget(&pane_id);
         inner.visits.forget(&pane_id);
         let lane_id = inner.ledger.delete_pane(&pane_id)?;
         if inner.ledger.lane(&lane_id)?.panes.is_empty() {
             inner.ledger.delete_lane(&lane_id)?;
+        }
+        if let Some((heir_lane, heir_pane)) = heir {
+            inner.ledger.touch_focus(&heir_lane, now_ms())?;
+            inner.ledger.set_app_state(KEY_FOCUSED_PANE, &heir_pane)?;
         }
         Self::bump(&mut inner);
         Self::snapshot(&inner)
@@ -1763,11 +1828,7 @@ impl Core {
         if hand_off_focus {
             let lanes = inner.ledger.lanes()?;
             let focused = inner.ledger.app_state(KEY_FOCUSED_PANE)?;
-            let visible = |l: &Lane| {
-                l.dock.is_none()
-                    && !next.contains(&l.id)
-                    && inner.gather.as_deref().is_none_or(|root| l.project_root.as_deref() == Some(root))
-            };
+            let visible = |l: &Lane| on_strip(l, &next, inner.gather.as_deref());
             let at = focused
                 .as_deref()
                 .and_then(|pane| lanes.iter().position(|l| l.panes.iter().any(|p| p.id == pane)));

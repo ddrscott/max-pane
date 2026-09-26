@@ -1553,6 +1553,18 @@ when the pane was its last, by the same animation an exit or a ⌘W gets. A
 refusal — the server said 404, the token is a guest's, the box is off —
 leaves the lane exactly where it is and says why.
 
+**Where focus goes when the focused pane closes** reads up, then left, so
+⌘D, run a thing, ⌘W lands back on the pane you split from: the pane directly
+above it; the new top pane if it was on top; the **bottom** pane of the
+nearest lane to the left if it was the lane's last pane, or of the nearest
+lane to the right when there is none to the left. Docked, sidebar-hidden and
+gathered-out lanes are never heirs; a dock's own stack hands up inside the
+dock, and its last pane hands back to the strip lane that last had focus.
+Closing a pane that did not have focus (a ⋯ menu, the sidebar's ✕, a page's
+`window.close()`) leaves focus where it is. An exited session follows the
+same rule. The core picks the heir in `close_pane`; the strip scrolls to it
+by the usual animated `ensureVisible`.
+
 What "kill" means is what relay-tty's own *stop session* means, in both of
 its forms: **`SIGTERM` to pty-host's pid**, read from the session file. On
 this Mac the app sends it itself, as `relay` does when no server is

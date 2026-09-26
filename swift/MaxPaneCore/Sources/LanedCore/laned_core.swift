@@ -767,6 +767,24 @@ public protocol CoreProtocol: AnyObject, Sendable {
     /**
      * Close one pane. Closing a lane's last pane closes the lane: an empty
      * column is not a thing the user can do anything with.
+     *
+     * # Where the keyboard goes
+     *
+     * Only when the pane going had it; closing anything else (a ⋯ menu, the
+     * sidebar's ✕, a page's `window.close()`) leaves focus alone. The heir is
+     * read up, then left, so ⌘D, run a thing, ⌘W lands back on the pane
+     * the split was made from:
+     *
+     * 1. the pane directly above it in its lane;
+     * 2. the top pane closing → the pane that is now on top;
+     * 3. the lane's last pane → the **bottom** pane of the nearest lane on
+     * the strip to the left, else to the right;
+     * 4. nothing left → no heir, and the id is left as it was.
+     *
+     * "On the strip" is `set_hidden_lanes`'s test: not docked, not folded away
+     * by the sidebar, inside the gather. A dock's own stack follows 1 and 2,
+     * and its last pane hands the keyboard back to the strip lane that last
+     * had it — where ⌥⌘] out of a dock lands.
      */
     func closePane(paneId: String) throws  -> StripState
     
@@ -1917,6 +1935,24 @@ open func closeLane(laneId: String)throws  -> StripState  {
     /**
      * Close one pane. Closing a lane's last pane closes the lane: an empty
      * column is not a thing the user can do anything with.
+     *
+     * # Where the keyboard goes
+     *
+     * Only when the pane going had it; closing anything else (a ⋯ menu, the
+     * sidebar's ✕, a page's `window.close()`) leaves focus alone. The heir is
+     * read up, then left, so ⌘D, run a thing, ⌘W lands back on the pane
+     * the split was made from:
+     *
+     * 1. the pane directly above it in its lane;
+     * 2. the top pane closing → the pane that is now on top;
+     * 3. the lane's last pane → the **bottom** pane of the nearest lane on
+     * the strip to the left, else to the right;
+     * 4. nothing left → no heir, and the id is left as it was.
+     *
+     * "On the strip" is `set_hidden_lanes`'s test: not docked, not folded away
+     * by the sidebar, inside the gather. A dock's own stack follows 1 and 2,
+     * and its last pane hands the keyboard back to the strip lane that last
+     * had it — where ⌥⌘] out of a dock lands.
      */
 open func closePane(paneId: String)throws  -> StripState  {
     return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
@@ -8177,7 +8213,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_close_lane() != 42855) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_laned_core_checksum_method_core_close_pane() != 19304) {
+    if (uniffi_laned_core_checksum_method_core_close_pane() != 37939) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_create_lane() != 9560) {
