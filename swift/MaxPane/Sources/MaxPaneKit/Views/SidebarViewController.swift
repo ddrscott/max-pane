@@ -76,8 +76,13 @@ final class SidebarViewController: NSViewController {
     var onNewSession: (() -> Void)?
     /// Click a session that has no lane → attach it.
     var onAttach: ((SessionKey) -> Void)?
-    /// Click a remote server's header → Settings › Servers, on that row.
+    /// Server Settings… from a server header's menu → Settings › Servers, on that row.
     var onOpenServer: ((String) -> Void)?
+    /// How the `⋯` shows its menu: hung under the dots. A test swaps it,
+    /// because `popUp` tracks the mouse until the menu closes.
+    var presentMenu: @MainActor (NSMenu, NSView) -> Void = { menu, anchor in
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.isFlipped ? anchor.bounds.maxY + 2 : -2), in: anchor)
+    }
     /// The servers, for a server header's menu: its colour, its name and
     /// whether it is on are changed through the same book Settings › Servers
     /// uses (ADR-0021, ADR-0025), so there is no second way to do any of it.
@@ -535,24 +540,25 @@ final class SidebarViewController: NSViewController {
     // MARK: - actions
 
     @objc private func rowClicked() {
-        let row = table.clickedRow
+        click(row: table.clickedRow, at: NSApp.currentEvent?.locationInWindow)
+    }
+
+    /// A left click on `row`, at `point` in window coordinates. Split from
+    /// `rowClicked` so a test can click without a mouse: AppKit only sets
+    /// `clickedRow` from inside its own tracking.
+    func click(row: Int, at point: NSPoint?) {
         if let group = group(at: row) {
             // A folded header's `N BLOCKED` / `N DONE` is the way to that
             // session: the same click as on its row, which the fold took
             // off the screen. The reach-through (ADR-0024) opens the fold
             // on the way, so it is unfolded and then you are there.
-            if group.collapsed, let target = stateTarget(of: group, at: row) {
+            if group.collapsed, let point, let target = stateTarget(of: group, at: row, point: point) {
                 go(to: target)
                 return
             }
-            // A server's header is two targets: its triangle folds the whole
-            // server, and the rest of it is still the way to Settings ›
-            // Servers (ADR-0023). `// LOCAL` has nowhere to go, so all of it
-            // folds.
-            if group.isServer, let server = group.server, !clickIsOnTriangle() {
-                onOpenServer?(server)
-                return
-            }
+            // Anywhere else on any header folds it — a server's included,
+            // like `// LOCAL`. A server's menu is behind its `⋯`, which takes
+            // its own press, so a click there never reaches this.
             flipFold(of: group.path)
             return
         }
@@ -620,20 +626,13 @@ final class SidebarViewController: NSViewController {
 
     /// Collapse everything, or open everything back up — the bar's second
     /// button, and the only way to get ten projects onto one screen.
-    /// Whether the click that is being handled landed on a header's triangle.
-    private func clickIsOnTriangle() -> Bool {
-        guard let event = NSApp.currentEvent else { return false }
-        return table.convert(event.locationInWindow, from: nil).x <= SidebarGroupView.triangleReach
-    }
-
     /// The session the click being handled goes to, when it landed on a
     /// folded header's `N BLOCKED` or `N DONE`; nil for a click anywhere
     /// else on the header.
-    private func stateTarget(of group: SidebarModel.Group, at row: Int) -> SidebarModel.Target? {
-        guard let event = NSApp.currentEvent,
-              let view = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarGroupView
+    private func stateTarget(of group: SidebarModel.Group, at row: Int, point: NSPoint) -> SidebarModel.Target? {
+        guard let view = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarGroupView
         else { return nil }
-        switch view.stateHit(at: view.convert(event.locationInWindow, from: nil)) {
+        switch view.stateHit(at: view.convert(point, from: nil)) {
         case .blocked: return group.blockedTarget
         case .done: return group.doneTarget
         case nil: return nil
@@ -980,9 +979,11 @@ extension SidebarViewController: NSMenuDelegate {
 extension SidebarViewController {
     /// **Color ▸** the eight, each with its square and its name, the current
     /// one ticked; **Rename…**, **Disable**, **Server Settings…**. Opened by a
-    /// right-click on `// WSL`, in the menu every header already has — the
-    /// sidebar's headers have no `⋯`, so none was invented. Internal, so a
-    /// test can read it and press it without a mouse.
+    /// right-click on `// WSL`, in the menu every header already has, and by
+    /// the `⋯` at the header's right end — invented for server headers only,
+    /// once a click on the header went back to folding it and the menu
+    /// needed a door you can see. Internal, so a test can read it and press
+    /// it without a mouse.
     func serverMenuItems(for server: String) -> [NSMenuItem] {
         guard let entry = serverBook?.entries.first(where: { $0.name == server }) else { return [] }
         let colour = NSMenuItem(title: "Color", action: nil, keyEquivalent: "")
@@ -1005,6 +1006,25 @@ extension SidebarViewController {
             item.representedObject = server
         }
         return [colour, .separator(), rename, disable, settings]
+    }
+
+    /// The `⋯`'s menu: the right-click's, item for item, built by the same
+    /// `populate` for the header's row.
+    func serverMenu(for server: String) -> NSMenu {
+        let menu = NSMenu()
+        populate(menu, forRow: row(ofServer: server) ?? -1)
+        return menu
+    }
+
+    /// The table row a server's header is on, for the `⋯` and for tests.
+    func row(ofServer server: String) -> Int? {
+        rows.firstIndex {
+            if case .group(let g) = $0 { return g.isServer && g.server == server } else { return false }
+        }
+    }
+
+    fileprivate func showServerMenu(_ server: String, from mark: MoreMark) {
+        presentMenu(serverMenu(for: server), mark)
     }
 
     @objc private func pickServerColour(_ sender: NSMenuItem) {
@@ -1140,6 +1160,9 @@ extension SidebarViewController: NSTableViewDelegate {
         case .group(let g):
             let view = SidebarGroupView(group: g)
             view.speaker.onToggle = { [weak self] in self?.muteHidden(g.audibleLanes) }
+            if let server = g.server {
+                view.more?.onPress = { [weak self] mark in self?.showServerMenu(server, from: mark) }
+            }
             return view
         case .entry(let e):
             let view = SidebarEntryView(entry: e)

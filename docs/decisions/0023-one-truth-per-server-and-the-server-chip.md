@@ -1,6 +1,6 @@
 # ADR 0023 — One truth per server, shown everywhere at once; the one mark of a remote session is the server chip
 
-**Status:** Accepted · 2026-09-19 · **Amended by [ADR-0025](0025-a-server-has-a-colour.md)** (§5: a server now has a colour; the grey name chip on a sidebar row became a colour square, and the chip that remains elsewhere is tinted)
+**Status:** Accepted · 2026-09-19 · **Amended by [ADR-0025](0025-a-server-has-a-colour.md)** (§5: a server now has a colour; the grey name chip on a sidebar row became a colour square, and the chip that remains elsewhere is tinted) · **Amended 2026-09-28** (a click on a server's header folds it; its menu is behind a `⋯` — see the amendment at the end)
 **Decides:** how fast a dead remote server is noticed and by whom; how the
 session list's verdict and a lane's own wire inform each other; what a
 disconnected server looks like on every surface; what happens to typing while
@@ -184,3 +184,27 @@ byte.
   it does with the new case.
 - A server that answers its list but whose session sockets are dead is shown
   per lane by the wire's own banner, as before; the server's chip stays off.
+
+## Amendment — 2026-09-28: a header click folds; `⋯` holds the server's menu
+
+This record (and ADR-0021 before it) made a click on the body of a server's
+sidebar header the way to Settings › Servers, and ADR-0024 kept that when
+sections learned to fold, leaving the small triangle as the only fold target.
+In daily use that was a surprise: every other header, `// LOCAL` included,
+folds on a click, and the server's header was the one that went somewhere
+else.
+
+Now a click anywhere on a server's header folds and unfolds it, exactly like
+`// LOCAL`. ADR-0024's reach-through is unchanged: on a folded header, a click
+on `N BLOCKED` or `N DONE` still goes to that session. The server's menu
+(ADR-0025 §4: Color ▸, Rename…, Disable, Server Settings…) moved behind a `⋯`
+at the header's right end, on server headers only. It shows while the pointer
+is on the header, and stays out while the server is not answering (whenever
+the state chip is up), so the route to Settings › Servers is in sight exactly
+when a server needs fixing. It fades on `Motion` timing, lands without a middle
+under Reduce Motion, is drawn as three square dots, and takes its own press, so
+a click on it never folds. A right-click on the header opens the same menu, as
+before.
+
+Evidence: [`docs/work/server-header-click-folds.md`](../work/server-header-click-folds.md);
+`ServerHeaderClickTests.swift`.

@@ -90,4 +90,4 @@
 - [x] Closing the focused pane hands focus up, then left: the pane above, else the new top pane, else the bottom pane of the lane to the left (right if none) — so ⌘D, run, ⌘W lands back where you started — [detail](close-pane-focus-heir.md)
 - [x] Resume agent sessions after a reboot: panes remember their `claude` session id, cwd and flags while alive; a dead pane offers `$ RESUME` in place, and Resume All brings every one back in strip order — [detail](resume-agents-after-reboot.md)
 - [x] A click on a docked lane goes to the dock, never scrolling the strip to the lane under it; audit every mouse path over a dock — [detail](dock-click-beats-strip.md)
-- [-] A click on a server's sidebar header folds and unfolds it like every other header; its menu (color, rename, disable, Server Settings…) moves behind a `⋯` button — [detail](server-header-click-folds.md)
+- [x] A click on a server's sidebar header folds and unfolds it like every other header; its menu (color, rename, disable, Server Settings…) moves behind a `⋯` button — [detail](server-header-click-folds.md)

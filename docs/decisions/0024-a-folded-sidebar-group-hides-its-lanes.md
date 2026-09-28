@@ -9,7 +9,8 @@ reaches a hidden one.
 **Amends:** [ADR-0023](0023-one-truth-per-server-and-the-server-chip.md) in one
 place: a section header (`// LOCAL`, `// NAME`) now has a triangle and folds. A
 click on a server's header still opens Settings › Servers; the triangle is the
-fold.
+fold. *(Superseded 2026-09-28: the whole header now folds, and the server's
+menu is behind a `⋯`; see the amendment at the end of ADR-0023.)*
 **Evidence:** the work item [`docs/work/sidebar-collapse-hides-lanes.md`](../work/sidebar-collapse-hides-lanes.md);
 `crates/laned-core/tests/hidden.rs`; `SidebarCollapseHidesLanesTests.swift`
 (the model, the store against a real ledger, the strip with a real

@@ -2917,10 +2917,14 @@ file's problems say which line and what the eight are.
 chip when it is anything but connected — with that server's project groups
 under it. A refused or unreachable server is a header with its chip and
 whatever it last held; a disabled one is not there. The header's `//` is in
-the server's colour. A click on a server's header opens Settings › Servers on
-that row, a right-click opens its menu (below), and its triangle folds the whole
-server, as `// LOCAL`'s folds this Mac (see [Folding a group puts its lanes
-away](#folding-a-group-puts-its-lanes-away)). BLOCKED counts in the footer and
+the server's colour. A click anywhere on a server's header folds the whole
+server and a second click opens it, as `// LOCAL`'s does for this Mac (see
+[Folding a group puts its lanes away](#folding-a-group-puts-its-lanes-away));
+on a folded header, a click on its `N BLOCKED` or `N DONE` still goes to that
+session. The server's menu (below) is behind the `⋯` at the header's right
+end, which shows while the pointer is on the header and stays out while the
+server is not answering, so **Server Settings…** is one click from a broken
+server. A right-click on the header opens the same menu. BLOCKED counts in the footer and
 the status bar include remote sessions, while their server is answering.
 
 **A server has a colour, and the colour is the mark.** Each server is known
@@ -2958,7 +2962,8 @@ as working. A new server gets the first colour no other server is using, and a
 written to the file once; a colour you chose, `slate` included, is never
 changed for you.
 
-**Picking it.** Right-click the server's header in the sidebar: **Color ▸** the
+**Picking it.** Click the `⋯` on the server's header in the sidebar, or
+right-click the header: **Color ▸** the
 eight, each with its square and its name and the current one ticked, then
 **Rename…**, **Disable** and **Server Settings…**, which are the actions of
 Settings › Servers and go through the same code. The swatches on the server's

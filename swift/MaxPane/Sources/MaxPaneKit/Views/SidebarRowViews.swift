@@ -383,10 +383,17 @@ final class SidebarGroupView: NSTableCellView {
     var stateChipText: String { stateChip.isHidden ? "" : stateChip.stringValue.trimmingCharacters(in: .whitespaces) }
 
     static let height: CGFloat = 26
-    /// How far in from the left a click still counts as on the triangle: the
-    /// triangle, its inset, and the gap after it. Only a server's header asks,
-    /// because only there does the rest of the row do something else.
-    static let triangleReach: CGFloat = 24
+    /// A server header's `⋯`, at its right end: the server's menu, in sight
+    /// on hover and while the server is not answering. Nil on every other
+    /// header — `// LOCAL`, a project, the bookmarks — which have no menu of
+    /// their own to show.
+    let more: MoreMark?
+    /// The chip is up, so the server is not answering and the `⋯` stays out.
+    private let keepsMoreShown: Bool
+    private var isHovered = false { didSet { if isHovered != oldValue { syncMore() } } }
+    /// What the slot keeps clear at the right: the house inset, and on a
+    /// server header the `⋯` and its gap as well.
+    private var trailingInset: CGFloat { more == nil ? 9 : 3 + MoreMark.size + 2 }
     /// The least of the path the roll-up may leave on screen before its grey
     /// tail is dropped: `…/PANE` and a little.
     static let leastLabel: CGFloat = 44
@@ -430,6 +437,8 @@ final class SidebarGroupView: NSTableCellView {
 
     init(group: SidebarModel.Group) {
         hasStates = group.rollUp.count > 1
+        more = group.isServer && group.server != nil ? MoreMark() : nil
+        keepsMoreShown = group.stateChip != nil
         super.init(frame: .zero)
 
         // The leading mark, in the brightest state's colour under a folded
@@ -531,9 +540,25 @@ final class SidebarGroupView: NSTableCellView {
             speaker.heightAnchor.constraint(equalToConstant: SpeakerMark.minimumHit),
 
             slot.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 6),
-            slot.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -9),
+            slot.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -trailingInset),
             slot.centerYAnchor.constraint(equalTo: triangle.centerYAnchor),
         ])
+        if let more {
+            more.translatesAutoresizingMaskIntoConstraints = false
+            more.toolTip = "Color, Rename, Disable, Server Settings…"
+            addSubview(more)
+            NSLayoutConstraint.activate([
+                more.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -3),
+                // Below the triangle's centre: the count's caps sit low in their line,
+                // and three points down is where the dots read level with them.
+                more.centerYAnchor.constraint(equalTo: triangle.centerYAnchor, constant: 3),
+                more.widthAnchor.constraint(equalToConstant: MoreMark.size),
+                more.heightAnchor.constraint(equalToConstant: MoreMark.size),
+            ])
+            // Built shown, not faded in: a rebuilt row is not an arrival.
+            more.shown = keepsMoreShown
+            more.layer?.removeAllAnimations()
+        }
         // Only while it is there: a silent header's path keeps every point.
         if !group.audibleLanes.isEmpty {
             label.trailingAnchor.constraint(lessThanOrEqualTo: speaker.leadingAnchor, constant: -2).isActive = true
@@ -558,7 +583,8 @@ final class SidebarGroupView: NSTableCellView {
         // the accent green beside the count — a state, in the family every
         // state uses, outlined and still because filled and moving are
         // BLOCKED's alone — with the last error as the tooltip. A click
-        // opens Settings › Servers.
+        // folds it like any header; `⋯` at its right end holds its menu,
+        // Server Settings… included.
         stateChip.isHidden = true
         if group.isSection {
             // A server's slashes are in that server's colour (ADR-0025): the
@@ -576,10 +602,10 @@ final class SidebarGroupView: NSTableCellView {
                 attributes: [.foregroundColor: NSColor.secondaryLabelColor, .font: Theme.mono(10, weight: .bold)]))
             label.attributedStringValue = mark
             label.lineBreakMode = .byTruncatingTail
-            let fold = group.collapsed ? "the triangle opens it" : "the triangle folds it"
+            let fold = "click to \(group.collapsed ? "open" : "fold") it"
             toolTip = group.isLocalSection
-                ? "This Mac — \(group.rollUpText.lowercased()); click to \(group.collapsed ? "open" : "fold") it"
-                : "\(group.server ?? group.header) — \(group.rollUpText.lowercased()); click for Settings › Servers, \(fold)"
+                ? "This Mac — \(group.rollUpText.lowercased()); \(fold)"
+                : "\(group.server ?? group.header) — \(group.rollUpText.lowercased()); \(fold), ⋯ for its menu"
         }
         if group.hiddenLanes > 0 {
             toolTip = (toolTip ?? "") + " — \(group.hiddenLanes) lane\(group.hiddenLanes == 1 ? "" : "s") off the strip, still running; open this to bring \(group.hiddenLanes == 1 ? "it" : "them") back"
@@ -604,7 +630,7 @@ final class SidebarGroupView: NSTableCellView {
             ])
             stateChip.setContentCompressionResistancePriority(.required, for: .horizontal)
             let why = group.serverError ?? state.lowercased()
-            toolTip = "\(group.server ?? group.header) — \(why); click for Settings › Servers"
+            toolTip = "\(group.server ?? group.header) — \(why); ⋯ › Server Settings… to fix it"
         }
     }
 
@@ -631,7 +657,7 @@ final class SidebarGroupView: NSTableCellView {
     /// the answer is the same on the pass the hide triggers.
     override func layout() {
         if hasStates {
-            let fixed: CGFloat = 7 + 11 + 6 + 6 + 9 + Self.leastLabel
+            let fixed: CGFloat = 7 + 11 + 6 + 6 + trailingInset + Self.leastLabel
                 + (speaker.mark == .silent ? 0 : SpeakerMark.minimumHit + 4)
                 + (stateChip.isHidden ? 0 : stateChip.intrinsicContentSize.width + 6)
             // Quietest first; BLOCKED is never dropped.
@@ -651,7 +677,45 @@ final class SidebarGroupView: NSTableCellView {
             }
         }
         super.layout()
+        settleHover()
     }
+
+    // MARK: - the `⋯` comes up under the pointer
+
+    /// Whether the `⋯` is drawn, for tests.
+    var isMoreShown: Bool { more?.shown ?? false }
+
+    private func syncMore() { more?.shown = isHovered || keepsMoreShown }
+
+    /// The table rebuilds its rows on every telemetry tick, and a row built
+    /// under a pointer that has not moved is never told it was entered. So
+    /// the first layout in a window asks where the pointer is, and lands
+    /// the answer without a fade: a rebuilt row is not an arrival.
+    private var hoverSettled = false
+
+    private func settleHover() {
+        guard let more, !hoverSettled, let window, bounds.width > 0 else { return }
+        hoverSettled = true
+        let pointer = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        guard bounds.contains(pointer) else { return }
+        isHovered = true
+        more.layer?.removeAllAnimations()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        guard more != nil else { return }
+        for area in trackingAreas where area.owner === self { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) { isHovered = true }
+    override func mouseExited(with event: NSEvent) { isHovered = false }
+
+    /// The pointer arriving and leaving, for tests: AppKit only sends the
+    /// events to a window on screen with a real mouse.
+    func setHovered(_ hovered: Bool) { isHovered = hovered }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not a nib") }

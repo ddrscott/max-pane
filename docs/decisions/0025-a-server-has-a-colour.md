@@ -141,6 +141,10 @@ Collapse All / Expand All. Each item calls what Settings › Servers calls —
 same closure the settings window is handed), `setEnabled`, and the
 `onOpenServer` a plain click already runs. There is no second code path.
 
+*Amended 2026-09-28:* a plain click on the header now folds it, and the same
+menu also opens from a `⋯` invented for server headers only; see the amendment
+at the end of ADR-0023.
+
 The same control is on the server's row in Settings › Servers as eight square
 swatches, the chosen one in a full-perimeter frame, and on the socket as
 `maxpane server color NAME COLOR` (`server-color`; the app, not the CLI, knows
