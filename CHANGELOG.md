@@ -9,7 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - ⌘↩ expands the focused lane's tile in the gallery, and puts it back when that tile is the one already up — expanding was a double click and collapsing was a click on the background, so the keyboard could reach everything around an expansion and not the expansion itself. It reads with ⇧⌘↩ Maximize Pane beside it, is greyed outside the gallery, and says *the lane is docked* rather than doing nothing on a wall. Esc still belongs to the focused tile, and ⌘G is still the only way out of the gallery
-
 - Agent sessions come back after a reboot. While a `claude` runs in a pane, the pane remembers its conversation, directory and flags; when the session is gone the banner offers `$ RESUME` (or ↩ in the pane), which runs `claude --resume` with the original flags in the original directory in the same pane. Resume All Agents, in the File menu, ⌘E and `maxpane resume [--all|LANE]`, does every one left to right, and after a launch that finds some the status bar offers it once. A conversation already open somewhere is skipped, the resumed agent never inherits `ANTHROPIC_API_KEY`, and remote panes are left out
 
 ### Changed
