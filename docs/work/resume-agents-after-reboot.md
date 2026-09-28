@@ -42,6 +42,17 @@ it proves the data is available and is the behaviour to beat.
 - Tests: core record round trip; the argv cleanup; a spawner test that the resume command line is right.
 - README section, CHANGELOG Unreleased, an ADR for "the pane keeps its agent's session id".
 
+## Learned from the stopgap's first real run (2026-09-28)
+- All 14 conversations came back. But `resume.sh` was run from inside one of the lanes it listed, so it
+  resumed *that* conversation a second time: two `claude` clients on one conversation. Never resume a
+  session id that a live `~/.claude/sessions/<pid>.json` already claims.
+- A resumed session can take several seconds to write its `sessions/<pid>.json` (salesflow hadn't
+  after a minute), so "resumed" means the process is up, not the file. Don't read a missing file as
+  failure.
+- Panes carry `ANTHROPIC_API_KEY` from Scott's shell. Claude Code has that key in
+  `customApiKeyResponses.rejected`, so interactive sessions still use the Max login. The spawner should
+  still drop it (and `CLAUDECODE` / `CLAUDE_CODE_*`) from a resume's environment rather than depend on that.
+
 ## Relevant Files
 - crates/laned-core/src/model.rs (`Pane`), ledger migrations
 - swift/MaxPane/Sources/MaxPaneKit/Terminal/SessionSpawner.swift, TerminalPaneController.swift
