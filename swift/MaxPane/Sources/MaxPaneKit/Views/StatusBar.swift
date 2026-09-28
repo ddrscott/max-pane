@@ -46,6 +46,18 @@ public final class StatusBar: NSView {
     var updateText: String { updateShown ? updateLabel.stringValue : "" }
     var updateTooltip: String? { updateLabel.toolTip }
     public var onClickUpdate: (() -> Void)?
+    /// `$ RESUME 12 AGENTS ×` after a launch that found panes whose agent
+    /// can be brought back (ADR-0046): offered once, quietly, and gone when
+    /// taken, dismissed, or when there is nothing left to resume. A click on
+    /// the words runs Resume All; the `×` puts it away for this launch.
+    private let resumeLabel = NSTextField(labelWithString: "")
+    private let resumeDismiss = NSTextField(labelWithString: "×")
+    private let resumeGroup = NSStackView()
+    private var resumeShown = false
+    /// The offer as drawn, for tests; empty while there is none.
+    var resumeText: String { resumeShown ? resumeLabel.stringValue : "" }
+    public var onClickResume: (() -> Void)?
+    public var onDismissResume: (() -> Void)?
     private let memory = NSTextField(labelWithString: "")
     private let hint = NSTextField(labelWithString: "")
     /// `14:32 · 78% ⚡ · wifi`, last on the right, only while the window is
@@ -118,9 +130,17 @@ public final class StatusBar: NSView {
         soundGroup.alphaValue = 0
         updateLabel.isHidden = true
         updateLabel.alphaValue = 0
+        resumeGroup.setViews([resumeLabel, resumeDismiss], in: .leading)
+        resumeGroup.orientation = .horizontal
+        resumeGroup.spacing = 6
+        resumeGroup.alignment = .centerY
+        resumeGroup.isHidden = true
+        resumeGroup.alphaValue = 0
+        resumeLabel.toolTip = "Resume every agent whose session a reboot ended, left to right"
+        resumeDismiss.toolTip = "Not now"
         clock.isHidden = true
         clock.alphaValue = 0
-        let row = NSStackView(views: [sidebarToggle, profile, lanes, sessions, attention, soundGroup, spacer, updateLabel, memory, hint, clock])
+        let row = NSStackView(views: [sidebarToggle, profile, lanes, sessions, attention, soundGroup, resumeGroup, spacer, updateLabel, memory, hint, clock])
         row.orientation = .horizontal
         row.spacing = 14
         row.alignment = .centerY
@@ -140,6 +160,10 @@ public final class StatusBar: NSView {
         }
         updateLabel.font = Theme.mono(10, weight: .bold)
         updateLabel.textColor = Theme.accent
+        resumeLabel.font = Theme.mono(10, weight: .bold)
+        resumeLabel.textColor = Theme.accent
+        resumeDismiss.font = Theme.mono(10)
+        resumeDismiss.textColor = Theme.dimText
         hint.stringValue = "⌘/ shortcuts"
         setProfile(Profile.current)
 
@@ -211,6 +235,14 @@ public final class StatusBar: NSView {
         }
         if soundShown, soundGroup.convert(soundGroup.bounds, to: self).insetBy(dx: -6, dy: -4).contains(point) {
             onClickSound?()
+            return
+        }
+        if resumeShown, resumeDismiss.convert(resumeDismiss.bounds, to: self).insetBy(dx: -4, dy: -4).contains(point) {
+            onDismissResume?()
+            return
+        }
+        if resumeShown, resumeLabel.convert(resumeLabel.bounds, to: self).insetBy(dx: -6, dy: -4).contains(point) {
+            onClickResume?()
             return
         }
         if updateShown, updateLabel.convert(updateLabel.bounds, to: self).insetBy(dx: -6, dy: -4).contains(point) {
@@ -375,6 +407,36 @@ public final class StatusBar: NSView {
                 self.updateLabel.isHidden = true
             }
         })
+    }
+
+    /// The resume offer: how many agents can be brought back, or nil to take
+    /// it away. Fades like the `↻`.
+    public func setResume(_ count: Int?) {
+        let count = count.flatMap { $0 > 0 ? $0 : nil }
+        if let count { resumeLabel.stringValue = Self.resumeText(count) }
+        guard (count != nil) != resumeShown else { return }
+        resumeShown = count != nil
+        let shown = resumeShown
+        if shown { resumeGroup.isHidden = false }
+        guard window != nil else {
+            resumeGroup.alphaValue = shown ? 1 : 0
+            resumeGroup.isHidden = !shown
+            return
+        }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = Motion.isReduced ? 0 : Motion.pane
+            context.timingFunction = Motion.easeOutTiming
+            resumeGroup.animator().alphaValue = shown ? 1 : 0
+        }, completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, !self.resumeShown else { return }
+                self.resumeGroup.isHidden = true
+            }
+        })
+    }
+
+    static func resumeText(_ count: Int) -> String {
+        "$ RESUME \(count) AGENT\(count == 1 ? "" : "S")"
     }
 
     /// The clock, battery and network, or nil to take them away (windowed,

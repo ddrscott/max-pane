@@ -524,6 +524,13 @@ public final class SessionRegistry {
     /// Ask every remote source for a fresh list now — after a wake, or when
     /// a lane has just attached and wants the state the wire will not send
     /// until it changes.
+    /// Read this Mac's session directory now rather than at the next poll:
+    /// a session just started should be live before a five-second tick says
+    /// so (a resumed pane, ADR-0046).
+    public func refreshLocal() {
+        for source in sources where source.server == nil { source.refresh() }
+    }
+
     public func refreshRemotes() {
         for source in sources where source.server != nil { source.refresh() }
     }

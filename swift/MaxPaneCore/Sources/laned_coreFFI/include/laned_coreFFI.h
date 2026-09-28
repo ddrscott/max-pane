@@ -384,6 +384,11 @@ RustBuffer uniffi_laned_core_fn_method_core_export_strip(uint64_t ptr, RustCallS
 RustBuffer uniffi_laned_core_fn_method_core_focus_pane(uint64_t ptr, RustBuffer pane_id, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_FORGET_PANE_AGENT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_FORGET_PANE_AGENT
+void uniffi_laned_core_fn_method_core_forget_pane_agent(uint64_t ptr, RustBuffer pane_id, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_FORGET_RECENT
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_FORGET_RECENT
 void uniffi_laned_core_fn_method_core_forget_recent(uint64_t ptr, RustBuffer kind, RustBuffer value, RustCallStatus *_Nonnull out_status
@@ -534,6 +539,16 @@ void uniffi_laned_core_fn_method_core_pair(uint64_t ptr, RustBuffer pty_pane_id,
 RustBuffer uniffi_laned_core_fn_method_core_pairs_of(uint64_t ptr, RustBuffer pane_id, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PANE_AGENT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PANE_AGENT
+RustBuffer uniffi_laned_core_fn_method_core_pane_agent(uint64_t ptr, RustBuffer pane_id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PANE_AGENTS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PANE_AGENTS
+RustBuffer uniffi_laned_core_fn_method_core_pane_agents(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PANE_INTERACTION_STATE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PANE_INTERACTION_STATE
 RustBuffer uniffi_laned_core_fn_method_core_pane_interaction_state(uint64_t ptr, RustBuffer pane_id, RustCallStatus *_Nonnull out_status
@@ -559,6 +574,11 @@ RustBuffer uniffi_laned_core_fn_method_core_project_root_of(uint64_t ptr, RustBu
 void uniffi_laned_core_fn_method_core_push_scrollback(uint64_t ptr, RustBuffer pane_id, RustBuffer lines, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_REBIND_PANE_SESSION
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_REBIND_PANE_SESSION
+RustBuffer uniffi_laned_core_fn_method_core_rebind_pane_session(uint64_t ptr, RustBuffer pane_id, RustBuffer relay_session_id, RustBuffer relay_server, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECENTS
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECENTS
 RustBuffer uniffi_laned_core_fn_method_core_recents(uint64_t ptr, uint32_t limit, RustCallStatus *_Nonnull out_status
@@ -567,6 +587,11 @@ RustBuffer uniffi_laned_core_fn_method_core_recents(uint64_t ptr, uint32_t limit
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECORD_CLIP
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECORD_CLIP
 int8_t uniffi_laned_core_fn_method_core_record_clip(uint64_t ptr, RustBuffer pane_id, RustBuffer kind, RustBuffer source, RustBuffer text, uint32_t keep, uint32_t days, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECORD_PANE_AGENT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECORD_PANE_AGENT
+void uniffi_laned_core_fn_method_core_record_pane_agent(uint64_t ptr, RustBuffer agent, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECORD_VISIT
@@ -1174,6 +1199,12 @@ uint16_t uniffi_laned_core_checksum_method_core_focus_pane(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_FORGET_PANE_AGENT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_FORGET_PANE_AGENT
+uint16_t uniffi_laned_core_checksum_method_core_forget_pane_agent(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_FORGET_RECENT
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_FORGET_RECENT
 uint16_t uniffi_laned_core_checksum_method_core_forget_recent(void
@@ -1354,6 +1385,18 @@ uint16_t uniffi_laned_core_checksum_method_core_pairs_of(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PANE_AGENT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PANE_AGENT
+uint16_t uniffi_laned_core_checksum_method_core_pane_agent(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PANE_AGENTS
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PANE_AGENTS
+uint16_t uniffi_laned_core_checksum_method_core_pane_agents(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PANE_INTERACTION_STATE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PANE_INTERACTION_STATE
 uint16_t uniffi_laned_core_checksum_method_core_pane_interaction_state(void
@@ -1384,6 +1427,12 @@ uint16_t uniffi_laned_core_checksum_method_core_push_scrollback(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_REBIND_PANE_SESSION
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_REBIND_PANE_SESSION
+uint16_t uniffi_laned_core_checksum_method_core_rebind_pane_session(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RECENTS
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RECENTS
 uint16_t uniffi_laned_core_checksum_method_core_recents(void
@@ -1393,6 +1442,12 @@ uint16_t uniffi_laned_core_checksum_method_core_recents(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RECORD_CLIP
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RECORD_CLIP
 uint16_t uniffi_laned_core_checksum_method_core_record_clip(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RECORD_PANE_AGENT
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RECORD_PANE_AGENT
+uint16_t uniffi_laned_core_checksum_method_core_record_pane_agent(void
     
 );
 #endif

@@ -23,6 +23,16 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     private var helpPanel: HelpPanel?
     private var changelogPopup: ChangelogPopup?
     private var attentionPopup: AttentionPopup?
+    /// Which agent each pane is running, read off the main thread on the
+    /// session poll (ADR-0046). `agentsRead` is where a reading lands.
+    let agentWatch = AgentWatch()
+    /// Panes a resume has started for, and when: left alone by the sync and
+    /// by the offer until their agent is up (`AgentResume.hold`).
+    var resumingPanes: [String: Date] = [:]
+    /// The status bar's once-per-launch offer: not yet decided, showing, or
+    /// done with (taken, dismissed, or nothing was resumable at launch).
+    var resumeOfferState: ResumeOfferState = .undecided
+    enum ResumeOfferState { case undecided, showing, done }
     /// The daily release check (ADR-0038). Nil until the app delegate
     /// hands one over with `startUpdateChecks`, which a test never does:
     /// a window built in a test runner reaches no feed.
@@ -460,6 +470,13 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         }
         strip.onLaneLostWire = { [weak self] server in self?.sessions.laneLostWire(server: server) }
         strip.onEndSession = { [weak self] paneId in self?.confirmEndSession(paneId: paneId) }
+        strip.onResumePane = { [weak self] paneId in self?.resumeAgent(paneId: paneId) }
+        agentWatch.onReading = { [weak self] reading in self?.agentsRead(reading) }
+        statusBar.onClickResume = { [weak self] in
+            self?.dismissResumeOffer()
+            self?.perform(.resumeAllAgents)
+        }
+        statusBar.onDismissResume = { [weak self] in self?.dismissResumeOffer() }
         sessions.doneHold = config.doneHoldSeconds
         sessions.onStateChange = { [weak self] telemetry, _, to in
             self?.alert(telemetry, became: to)
@@ -498,6 +515,10 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             self.sidebar.sessionsChanged(telemetry)
             self.refreshStatus()
             self.attentionPopup?.update(self.attentionList())
+            // Which agents are in which panes, and which dead panes can
+            // bring theirs back. The reading is off the main thread.
+            self.agentWatch.poke()
+            self.refreshResumable()
         }
         statusBar.onClickSessions = { [weak self] in self?.perform(.openSessions) }
         statusBar.onClickMemory = { [weak self] in self?.perform(.showMemory) }
@@ -563,6 +584,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return .refused("capture is answered elsewhere")
         case .app(let name):
             return appFromCLI(name: name)
+        case .resume(let lane):
+            return resumeFromCLI(lane: lane)
         }
     }
 
@@ -998,6 +1021,10 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             // A terminal pane with a session behind it. A pty pane whose
             // session never started has nothing to end; ⌘W closes it.
             return store.state.focusedPaneId.flatMap { store.pane($0) }?.sessionKey != nil
+        case .resumeAgent:
+            return store.state.focusedPaneId.map { resumablePaneIds.contains($0) } ?? false
+        case .resumeAllAgents:
+            return !resumablePaneIds.isEmpty
         case .clearScrollback:
             // The ledger's focused pane, not the responder chain: in a web
             // pane the chord never gets here (`yieldsToPage`), and greying
@@ -1091,6 +1118,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
              .clearScrollback:
             return "needs a terminal with the keyboard"
         case .endSession: return "needs a terminal with a session"
+        case .resumeAgent: return "needs a terminal whose agent's session is gone"
+        case .resumeAllAgents: return "no agent is waiting to be resumed"
         case .renameLane: return strip.isGallery ? "not in the gallery" : "needs a lane"
         case .savePassword:
             return store.lane(containing: store.state.focusedPaneId ?? "")?.isPrivate == true
@@ -1252,6 +1281,13 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .endSession:
                 if let focused = store.state.focusedPaneId { confirmEndSession(paneId: focused) }
+
+            case .resumeAgent:
+                if let focused = store.state.focusedPaneId { resumeAgent(paneId: focused) }
+
+            case .resumeAllAgents:
+                dismissResumeOffer()
+                _ = resumeAgents(in: nil)
 
             case .clearScrollback:
                 if let focused = store.state.focusedPaneId { strip.clearScrollback(ofPane: focused) }
@@ -2351,5 +2387,190 @@ extension StripWindowController: NSWindowDelegate {
             statusClock = nil
             statusBar.setClock(nil)
         }
+    }
+}
+
+// MARK: - resuming agents after a reboot (ADR-0046)
+
+extension StripWindowController {
+    struct ResumeRefused: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
+    /// The sessions running now, local and remote.
+    private var liveSessionKeys: Set<SessionKey> {
+        Set(sessions.sessions.values.filter(\.isRunning).map(\.key))
+    }
+
+    /// Every pane whose agent can be brought back, in strip order.
+    func resumableAgents() -> [PaneAgent] {
+        pruneResumeHolds()
+        return AgentResume.resumable(
+            panes: store.allLanes.flatMap(\.panes), records: store.paneAgents(),
+            live: liveSessionKeys, holding: Set(resumingPanes.keys))
+    }
+
+    var resumablePaneIds: [String] { resumableAgents().map(\.paneId) }
+
+    private func pruneResumeHolds(now: Date = Date()) {
+        resumingPanes = resumingPanes.filter { now.timeIntervalSince($0.value) < AgentResume.hold }
+    }
+
+    /// A reading of which agent is in which pane: the ledger is told what
+    /// changed, and the offers are brought up to date.
+    func agentsRead(_ reading: AgentReading) {
+        pruneResumeHolds()
+        let panes = store.allLanes.flatMap(\.panes).compactMap { pane -> (paneId: String, relayId: String)? in
+            guard pane.kind == .pty, pane.relayServer == nil, let id = pane.relaySessionId else { return nil }
+            return (pane.id, id)
+        }
+        // A pane just resumed whose agent is up is not held any more.
+        for (paneId, relayId) in panes where resumingPanes[paneId] != nil && reading.sightings[relayId] != nil {
+            resumingPanes[paneId] = nil
+        }
+        let changes = AgentLedgerSync.changes(
+            panes: panes, records: store.paneAgents(), reading: reading,
+            holding: Set(resumingPanes.keys), now: Int64(Date().timeIntervalSince1970 * 1000))
+        for change in changes {
+            switch change {
+            case .record(let agent): store.recordPaneAgent(agent)
+            case .forget(let paneId): store.forgetPaneAgent(paneId)
+            }
+        }
+        refreshResumable()
+    }
+
+    /// Tell every pane whether it can resume, and keep the launch's one offer
+    /// in the status bar true.
+    func refreshResumable() {
+        let agents = resumableAgents()
+        strip.setResumeOffers(Dictionary(
+            agents.map { ($0.paneId, AgentResume.label($0)) }, uniquingKeysWith: { first, _ in first }))
+        switch resumeOfferState {
+        case .undecided:
+            // The first reading after launch decides it: a strip with
+            // agents to bring back says so once; one without never will.
+            resumeOfferState = agents.isEmpty ? .done : .showing
+            statusBar.setResume(agents.isEmpty ? nil : agents.count)
+        case .showing:
+            if agents.isEmpty { dismissResumeOffer() } else { statusBar.setResume(agents.count) }
+        case .done:
+            break
+        }
+    }
+
+    func dismissResumeOffer() {
+        resumeOfferState = .done
+        statusBar.setResume(nil)
+    }
+
+    /// `$ RESUME`, ↩ on a pane offering it, or Resume Agent from the menu.
+    func resumeAgent(paneId: String) {
+        if let why = startResume(paneId: paneId, claimed: AgentReading.claimedNow()) {
+            showError(ResumeRefused(message: why))
+        }
+    }
+
+    /// Start `claude --resume` for one pane, in its recorded directory with its
+    /// recorded flags, and put the pane on the new session when it is up.
+    /// Nil when it started; otherwise why not, in one line.
+    @discardableResult
+    func startResume(paneId: String, claimed: Set<String>) -> String? {
+        guard let pane = store.pane(paneId), pane.kind == .pty else { return "no such terminal pane" }
+        guard pane.relayServer == nil else {
+            return "a remote pane's agent cannot be seen from this Mac, so there is nothing recorded to resume"
+        }
+        guard let agent = store.paneAgent(paneId), let line = AgentResume.line(agent) else {
+            return "this pane has no agent to resume"
+        }
+        let name = AgentResume.label(agent)
+        if let key = pane.sessionKey, liveSessionKeys.contains(key) { return "\(name): its session is still running" }
+        guard resumingPanes[paneId] == nil else { return "\(name): already resuming" }
+        // Two clients on one conversation fight over it, and the stopgap
+        // found out the hard way: the pane it was run from was on the list.
+        guard !claimed.contains(agent.sessionId) else { return "\(name): already open in a running claude" }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: agent.cwd, isDirectory: &isDirectory), isDirectory.boolValue else {
+            return "\(name): \(agent.cwd) is gone, and claude finds a conversation by its directory"
+        }
+        resumingPanes[paneId] = Date()
+        refreshResumable()
+        let size = strip.grid(ofPane: paneId) ?? newSessionSize()
+        let failed: (Error) -> Void = { [weak self] error in
+            guard let self else { return }
+            self.resumingPanes[paneId] = nil
+            self.refreshResumable()
+            Log.warn("resume \(name): \(Self.describe(error))")
+            self.showError(error)
+        }
+        do {
+            try spawner(at: .local).spawn(cwd: agent.cwd, shellLine: line, cols: size.cols, rows: size.rows) {
+                [weak self] result in
+                guard let self else { return }
+                do {
+                    let session = try result.get()
+                    try self.strip.rebindPane(paneId, to: session.key)
+                    Log.debug("resumed \(name) in pane \(paneId) as session \(session.key)")
+                    self.sessions.refreshLocal()
+                } catch {
+                    failed(error)
+                }
+            }
+        } catch {
+            resumingPanes[paneId] = nil
+            refreshResumable()
+            return "\(name): \(Self.describe(error))"
+        }
+        return nil
+    }
+
+    /// Resume All, or every resumable pane in `lanes`: left to right, each
+    /// conversation once, none a live `claude` already has open, one every
+    /// `AgentResume.stagger` so a dozen starts do not land at once. What it
+    /// did, one line a pane, for the CLI.
+    @discardableResult
+    func resumeAgents(in lanes: [Lane]?) -> String {
+        var candidates = resumableAgents()
+        if let lanes {
+            let scope = Set(lanes.flatMap(\.panes).map(\.id))
+            candidates = candidates.filter { scope.contains($0.paneId) }
+        }
+        let plan = AgentResume.plan(candidates, claimed: AgentReading.claimedNow())
+        var out = ""
+        for (index, agent) in plan.go.enumerated() {
+            let name = AgentResume.label(agent)
+            out += "resuming\t\(name)\t\(agent.cwd)\n"
+            // Held from now, so the offer goes and a second Resume All does
+            // not queue the same pane again before its turn comes.
+            resumingPanes[agent.paneId] = Date()
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * AgentResume.stagger) { [weak self] in
+                guard let self else { return }
+                self.resumingPanes[agent.paneId] = nil
+                if let why = self.startResume(paneId: agent.paneId, claimed: AgentReading.claimedNow()) {
+                    Log.warn("resume all: \(why)")
+                }
+            }
+        }
+        for skipped in plan.skipped {
+            out += "skipped\t\(AgentResume.label(skipped.agent))\t\(skipped.why)\n"
+        }
+        refreshResumable()
+        return out
+    }
+
+    /// `maxpane resume [--all|LANE]`.
+    func resumeFromCLI(lane spec: String) -> OpenServer.Reply {
+        let lanes: [Lane]?
+        if spec.lowercased() == "all" {
+            lanes = nil
+        } else if let named = Self.lanes(named: spec, in: store.state.lanes) {
+            lanes = named
+        } else {
+            return .refused("no lane \(spec); maxpane ls lists them")
+        }
+        if lanes == nil { dismissResumeOffer() }
+        let out = resumeAgents(in: lanes)
+        return OpenServer.Reply(ok: true, lanes: out.isEmpty ? "nothing to resume\n" : out)
     }
 }

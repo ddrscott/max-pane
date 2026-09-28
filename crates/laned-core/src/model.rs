@@ -221,6 +221,32 @@ pub struct Pane {
     pub volume: u32,
 }
 
+/// The agent a terminal pane was last seen running (ADR-0046).
+///
+/// Written while the agent is alive, because the file it is read from goes
+/// when the agent does, and kept after the pane's session dies — that is the
+/// whole point: after a reboot it is the only thing that still knows which
+/// conversation the pane was in. Not part of `Pane`, and not in the strip's
+/// snapshot: it changes on a poll, and nothing that draws the strip reads it.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct PaneAgent {
+    pub pane_id: String,
+    /// The program: `claude` today. A string rather than an enum so another
+    /// agent CLI can join without a migration.
+    pub cli: String,
+    /// The agent's own conversation id — what `claude --resume` takes.
+    pub session_id: String,
+    /// Where it ran. A resume starts there.
+    pub cwd: String,
+    /// The flags it was started with, `--resume`/`--continue` already taken
+    /// out, so resuming does not stack them.
+    pub args: Vec<String>,
+    /// The conversation's name, when it has one: what the RESUME banner says.
+    pub name: Option<String>,
+    /// Epoch ms. When this was last written.
+    pub updated_at: i64,
+}
+
 /// Which edge of the window a docked lane holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum DockSide {

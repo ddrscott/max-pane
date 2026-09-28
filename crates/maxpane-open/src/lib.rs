@@ -141,6 +141,12 @@ commands:
   app NAME              go to a web app from config.toml's [[apps]]: focus
                         the lane it is already on, or open one. NAME is the
                         app's name, or enough of it to be the only one
+  resume [--all|LANE]   bring back the agents a reboot ended: each pane whose
+                        claude conversation is remembered and whose session
+                        is gone runs `claude --resume` in its old directory
+                        with its old flags, in place, left to right. With no
+                        LANE, or --all, every one; one already open somewhere
+                        is skipped. Local panes only
   sessions              list every session, here and on each server
   attach [NAME:]ID      put a running session on the strip as a lane
   server add NAME URL   add a remote relay-tty server: NAME is what the lane
@@ -211,6 +217,13 @@ pub fn run() {
             }
         },
         Some("app") => match app_payload(&args[1..]) {
+            Ok(payload) => sound_command(payload, &profile),
+            Err(why) => {
+                eprintln!("maxpane: {why}");
+                std::process::exit(2)
+            }
+        },
+        Some("resume") => match resume_payload(&args[1..]) {
             Ok(payload) => sound_command(payload, &profile),
             Err(why) => {
                 eprintln!("maxpane: {why}");
@@ -448,6 +461,26 @@ fn capture_payload(args: &[String]) -> Result<String, String> {
         "{{\"op\":\"capture\",\"lane\":{},\"full\":{full}}}",
         json_string(lane.unwrap_or(""))
     ))
+}
+
+/// The request for `maxpane resume [--all|LANE]`. No lane and `--all` are
+/// the same request: after a reboot "all of them" is the whole question.
+fn resume_payload(args: &[String]) -> Result<String, String> {
+    let mut lane: Option<&str> = None;
+    for arg in args {
+        match arg.as_str() {
+            "--all" | "-a" | "all" => {
+                if lane.is_some_and(|l| l != "all") {
+                    return Err("resume takes one lane or --all, not both".into());
+                }
+                lane = Some("all")
+            }
+            other if other.starts_with('-') => return Err(format!("resume: unknown flag {other}")),
+            other if lane.is_none() => lane = Some(other),
+            other => return Err(format!("resume takes one lane, not also {other:?}")),
+        }
+    }
+    Ok(format!("{{\"op\":\"resume\",\"lane\":{}}}", json_string(lane.unwrap_or("all"))))
 }
 
 /// The request for `maxpane app NAME`. The name is joined rather than
@@ -736,6 +769,18 @@ mod tests {
         // A typo is a refusal, not a lane named --fll.
         assert!(capture_payload(&args(&["--fll"])).is_err());
         assert!(capture_payload(&args(&["1", "2"])).is_err());
+    }
+
+    #[test]
+    fn resume_is_every_pane_unless_a_lane_is_named() {
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(resume_payload(&args(&[])).unwrap(), r#"{"op":"resume","lane":"all"}"#);
+        assert_eq!(resume_payload(&args(&["--all"])).unwrap(), r#"{"op":"resume","lane":"all"}"#);
+        assert_eq!(resume_payload(&args(&["3"])).unwrap(), r#"{"op":"resume","lane":"3"}"#);
+        assert_eq!(resume_payload(&args(&["left"])).unwrap(), r#"{"op":"resume","lane":"left"}"#);
+        assert!(resume_payload(&args(&["3", "--all"])).is_err());
+        assert!(resume_payload(&args(&["3", "4"])).is_err());
+        assert!(resume_payload(&args(&["--everything"])).is_err());
     }
 
     #[test]

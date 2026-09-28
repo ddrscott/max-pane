@@ -438,6 +438,23 @@ public final class StripStore {
     func setPaneMobile(_ paneId: String, _ mobile: Bool) { try? core.setPaneMobile(paneId: paneId, mobile: mobile) }
     func setPaneDataStore(_ paneId: String, _ id: String) { try? core.setPaneDataStore(paneId: paneId, dataStoreId: id) }
 
+    // MARK: - the agent a pane was running (ADR-0046)
+
+    /// Every pane's agent, by pane id. Read on each session poll, so it is a
+    /// query rather than something every snapshot carries.
+    func paneAgents() -> [String: PaneAgent] {
+        Dictionary(((try? core.paneAgents()) ?? []).map { ($0.paneId, $0) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    func paneAgent(_ paneId: String) -> PaneAgent? { (try? core.paneAgent(paneId: paneId)) ?? nil }
+    func recordPaneAgent(_ agent: PaneAgent) { try? core.recordPaneAgent(agent: agent) }
+    func forgetPaneAgent(_ paneId: String) { try? core.forgetPaneAgent(paneId: paneId) }
+
+    /// Put a pane on the session a resume started, in place (`Core.rebindPaneSession`).
+    func rebindPane(_ paneId: String, to key: SessionKey) throws {
+        publish(try core.rebindPaneSession(paneId: paneId, relaySessionId: key.id, relayServer: key.server))
+    }
+
     /// A web pane's whole session — history, scroll, form state — as WebKit's
     /// own opaque blob. Deliberately not part of `Pane`: it is read once, when
     /// the view is built, and carrying it in every snapshot would copy every

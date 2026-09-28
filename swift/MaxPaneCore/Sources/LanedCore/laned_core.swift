@@ -872,6 +872,13 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func focusPane(paneId: String) throws  -> StripState
     
     /**
+     * The pane's agent ended on its own while its shell lived on — `/exit`,
+     * or two ⌃Cs — so there is nothing to resume. Closing the pane needs no
+     * call: the row goes with it.
+     */
+    func forgetPaneAgent(paneId: String) throws 
+    
+    /**
      * Drop one entry — the picker's way of pruning a typo you will never run
      * again but which keeps taking a numeric shortcut.
      */
@@ -1207,6 +1214,14 @@ public protocol CoreProtocol: AnyObject, Sendable {
     
     func pairsOf(paneId: String) throws  -> [String]
     
+    func paneAgent(paneId: String) throws  -> PaneAgent?
+    
+    /**
+     * Every pane's agent, in strip order — docked and folded lanes included,
+     * since a reboot killed their sessions too.
+     */
+    func paneAgents() throws  -> [PaneAgent]
+    
     /**
      * Read back what a web pane was doing, for the one call that rebuilds it.
      */
@@ -1244,6 +1259,14 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func pushScrollback(paneId: String, lines: [String]) 
     
     /**
+     * Put a terminal pane on a new relay session in place: the resume's
+     * session, taking the dead one's slot. Same lane, same position, same
+     * height and zoom; no new lane. A session another pane already holds is
+     * refused, as every other door refuses it.
+     */
+    func rebindPaneSession(paneId: String, relaySessionId: String, relayServer: String?) throws  -> StripState
+    
+    /**
      * What to offer, most recent first.
      */
     func recents(limit: UInt32) throws  -> [Recent]
@@ -1258,6 +1281,14 @@ public protocol CoreProtocol: AnyObject, Sendable {
      * and text shaped like a secret is written as four characters and `•••`.
      */
     func recordClip(paneId: String, kind: ClipKind, source: ClipSource, text: String, keep: UInt32, days: UInt32) throws  -> Bool
+    
+    /**
+     * Remember the agent a terminal pane is running. Called on the shell's
+     * session poll whenever what it sees differs from what is kept, so this
+     * is a write per change, not per poll. No snapshot is published: the
+     * record is read when a session dies, and nothing on the strip draws it.
+     */
+    func recordPaneAgent(agent: PaneAgent) throws 
     
     /**
      * A web pane settled on a page. One call, from wherever the shell learns a
@@ -2112,6 +2143,20 @@ open func focusPane(paneId: String)throws  -> StripState  {
 }
     
     /**
+     * The pane's agent ended on its own while its shell lived on — `/exit`,
+     * or two ⌃Cs — so there is nothing to resume. Closing the pane needs no
+     * call: the row goes with it.
+     */
+open func forgetPaneAgent(paneId: String)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_forget_pane_agent(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(paneId),uniffiCallStatus
+    )
+}
+}
+    
+    /**
      * Drop one entry — the picker's way of pruning a typo you will never run
      * again but which keeps taking a numeric shortcut.
      */
@@ -2697,6 +2742,29 @@ open func pairsOf(paneId: String)throws  -> [String]  {
 })
 }
     
+open func paneAgent(paneId: String)throws  -> PaneAgent?  {
+    return try  FfiConverterOptionTypePaneAgent.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_pane_agent(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(paneId),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Every pane's agent, in strip order — docked and folded lanes included,
+     * since a reboot killed their sessions too.
+     */
+open func paneAgents()throws  -> [PaneAgent]  {
+    return try  FfiConverterSequenceTypePaneAgent.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_pane_agents(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
     /**
      * Read back what a web pane was doing, for the one call that rebuilds it.
      */
@@ -2776,6 +2844,24 @@ open func pushScrollback(paneId: String, lines: [String])  {try! rustCall() {
 }
     
     /**
+     * Put a terminal pane on a new relay session in place: the resume's
+     * session, taking the dead one's slot. Same lane, same position, same
+     * height and zoom; no new lane. A session another pane already holds is
+     * refused, as every other door refuses it.
+     */
+open func rebindPaneSession(paneId: String, relaySessionId: String, relayServer: String?)throws  -> StripState  {
+    return try  FfiConverterTypeStripState_lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_rebind_pane_session(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(paneId),
+        FfiConverterString.lower(relaySessionId),
+        FfiConverterOptionString.lower(relayServer),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * What to offer, most recent first.
      */
 open func recents(limit: UInt32)throws  -> [Recent]  {
@@ -2810,6 +2896,21 @@ open func recordClip(paneId: String, kind: ClipKind, source: ClipSource, text: S
         FfiConverterUInt32.lower(days),uniffiCallStatus
     )
 })
+}
+    
+    /**
+     * Remember the agent a terminal pane is running. Called on the shell's
+     * session poll whenever what it sees differs from what is kept, so this
+     * is a write per change, not per poll. No snapshot is published: the
+     * record is read when a session dies, and nothing on the strip draws it.
+     */
+open func recordPaneAgent(agent: PaneAgent)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_record_pane_agent(
+            self.uniffiCloneHandle(),
+        FfiConverterTypePaneAgent_lower(agent),uniffiCallStatus
+    )
+}
 }
     
     /**
@@ -5149,6 +5250,129 @@ public func FfiConverterTypePane_lift(_ buf: RustBuffer) throws -> Pane {
 #endif
 public func FfiConverterTypePane_lower(_ value: Pane) -> RustBuffer {
     return FfiConverterTypePane.lower(value)
+}
+
+
+/**
+ * The agent a terminal pane was last seen running (ADR-0046).
+ *
+ * Written while the agent is alive, because the file it is read from goes
+ * when the agent does, and kept after the pane's session dies — that is the
+ * whole point: after a reboot it is the only thing that still knows which
+ * conversation the pane was in. Not part of `Pane`, and not in the strip's
+ * snapshot: it changes on a poll, and nothing that draws the strip reads it.
+ */
+public struct PaneAgent: Equatable, Hashable {
+    public var paneId: String
+    /**
+     * The program: `claude` today. A string rather than an enum so another
+     * agent CLI can join without a migration.
+     */
+    public var cli: String
+    /**
+     * The agent's own conversation id — what `claude --resume` takes.
+     */
+    public var sessionId: String
+    /**
+     * Where it ran. A resume starts there.
+     */
+    public var cwd: String
+    /**
+     * The flags it was started with, `--resume`/`--continue` already taken
+     * out, so resuming does not stack them.
+     */
+    public var args: [String]
+    /**
+     * The conversation's name, when it has one: what the RESUME banner says.
+     */
+    public var name: String?
+    /**
+     * Epoch ms. When this was last written.
+     */
+    public var updatedAt: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(paneId: String, 
+        /**
+         * The program: `claude` today. A string rather than an enum so another
+         * agent CLI can join without a migration.
+         */cli: String, 
+        /**
+         * The agent's own conversation id — what `claude --resume` takes.
+         */sessionId: String, 
+        /**
+         * Where it ran. A resume starts there.
+         */cwd: String, 
+        /**
+         * The flags it was started with, `--resume`/`--continue` already taken
+         * out, so resuming does not stack them.
+         */args: [String], 
+        /**
+         * The conversation's name, when it has one: what the RESUME banner says.
+         */name: String?, 
+        /**
+         * Epoch ms. When this was last written.
+         */updatedAt: Int64) {
+        self.paneId = paneId
+        self.cli = cli
+        self.sessionId = sessionId
+        self.cwd = cwd
+        self.args = args
+        self.name = name
+        self.updatedAt = updatedAt
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PaneAgent: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePaneAgent: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PaneAgent {
+        return
+            try PaneAgent(
+                paneId: FfiConverterString.read(from: &buf), 
+                cli: FfiConverterString.read(from: &buf), 
+                sessionId: FfiConverterString.read(from: &buf), 
+                cwd: FfiConverterString.read(from: &buf), 
+                args: FfiConverterSequenceString.read(from: &buf), 
+                name: FfiConverterOptionString.read(from: &buf), 
+                updatedAt: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PaneAgent, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.paneId, into: &buf)
+        FfiConverterString.write(value.cli, into: &buf)
+        FfiConverterString.write(value.sessionId, into: &buf)
+        FfiConverterString.write(value.cwd, into: &buf)
+        FfiConverterSequenceString.write(value.args, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterInt64.write(value.updatedAt, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePaneAgent_lift(_ buf: RustBuffer) throws -> PaneAgent {
+    return try FfiConverterTypePaneAgent.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePaneAgent_lower(_ value: PaneAgent) -> RustBuffer {
+    return FfiConverterTypePaneAgent.lower(value)
 }
 
 
@@ -7686,6 +7910,30 @@ fileprivate struct FfiConverterOptionTypeLane: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypePaneAgent: FfiConverterRustBuffer {
+    typealias SwiftType = PaneAgent?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypePaneAgent.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypePaneAgent.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
     typealias SwiftType = [String]
 
@@ -7903,6 +8151,31 @@ fileprivate struct FfiConverterSequenceTypePane: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypePane.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePaneAgent: FfiConverterRustBuffer {
+    typealias SwiftType = [PaneAgent]
+
+    public static func write(_ value: [PaneAgent], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePaneAgent.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PaneAgent] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PaneAgent]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePaneAgent.read(from: &buf))
         }
         return seq
     }
@@ -8237,6 +8510,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_focus_pane() != 18867) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_forget_pane_agent() != 29753) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_forget_recent() != 59469) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -8327,6 +8603,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_pairs_of() != 9513) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_pane_agent() != 8736) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_pane_agents() != 10856) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_pane_interaction_state() != 34891) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -8342,10 +8624,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_push_scrollback() != 4856) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_rebind_pane_session() != 18755) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_recents() != 56922) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_record_clip() != 16145) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_record_pane_agent() != 64735) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_record_visit() != 22985) {

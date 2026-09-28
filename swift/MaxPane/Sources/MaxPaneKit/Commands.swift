@@ -23,6 +23,8 @@ public enum Command: String, CaseIterable, Sendable {
     case closePane
     case closeLane
     case endSession
+    case resumeAgent
+    case resumeAllAgents
     case focusLeft
     case focusRight
     case focusUp
@@ -110,6 +112,8 @@ public enum Command: String, CaseIterable, Sendable {
         case .closePane: return "Close Pane"
         case .closeLane: return "Close Lane"
         case .endSession: return "End Session…"
+        case .resumeAgent: return "Resume Agent"
+        case .resumeAllAgents: return "Resume All Agents"
         case .focusLeft: return "Focus Lane Left"
         case .focusRight: return "Focus Lane Right"
         case .focusUp: return "Focus Pane Above"
@@ -253,6 +257,10 @@ public enum Command: String, CaseIterable, Sendable {
         // and behind a sheet because it kills a program. macOS has no ⌃⌘W
         // (its ⌃⌘ chords are Space, F, Q and D) and nothing here had it.
         case .endSession:      return ("w", [.command, .control])
+        // No key: once after a reboot is not a chord's worth of use. ↩ in a
+        // pane offering it is the button, the banner is the other, and the
+        // palette (⌘E) and the File menu find both by name (ADR-0046).
+        case .resumeAgent, .resumeAllAgents: return nil
         case .focusLeft:       return ("[", [.command])
         case .focusRight:      return ("]", [.command])
         case .focusUp:         return ("[", [.command, .shift])
@@ -630,6 +638,8 @@ public enum Command: String, CaseIterable, Sendable {
         case .closePane, .closeLane: return .file
         // With Close Lane, which it is the stronger form of.
         case .endSession: return .file
+        // Beside End Session: the other thing to do about a session that ended.
+        case .resumeAgent, .resumeAllAgents: return .file
         case .focusLeft, .focusRight, .focusUp, .focusDown, .search, .gather, .ungather: return .navigate
         // With ⌘P and ⌘[ ⌘]: they move focus, to the agent that needs it.
         case .nextAttention, .previousAttention, .showAttention: return .navigate

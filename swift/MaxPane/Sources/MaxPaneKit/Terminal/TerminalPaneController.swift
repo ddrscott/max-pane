@@ -96,6 +96,9 @@ final class TerminalPaneController: NSObject, PaneController {
     var windowIsKey: (NSWindow) -> Bool = { $0.isKeyWindow }
     /// The grid as Ghostty last measured it, for turning a click into a cell.
     private var grid: (columns: Int, rows: Int)?
+    /// The grid this pane draws at, once Ghostty has measured it: what a
+    /// session started for this pane (a resume) should be born at.
+    var viewGrid: (columns: Int, rows: Int)? { grid }
 
     /// The terminal's inset inside its pane, matching the lane's own gutter.
     /// Shared with the controller's config: if the two drift, ⌘-click lands on
@@ -243,6 +246,13 @@ final class TerminalPaneController: NSObject, PaneController {
                 return true
             }
             if self.keyDuringSlowPaste(event) { return true }
+            // Return on a pane offering RESUME is the button: the keyboard's
+            // way to it, and nothing typed there was going anywhere anyway.
+            if self.offersResume, event.keyCode == 36 || event.keyCode == 76,
+               event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty {
+                self.resumeOffer?.action()
+                return true
+            }
             return self.controlV(event)
         }
         terminal.swallowsKeys = { [weak self] in self?.copyDriver.isOn ?? false }
@@ -401,7 +411,55 @@ final class TerminalPaneController: NSObject, PaneController {
     /// notice) is on it.
     private var restingBanner: ReconnectingBanner.State {
         if let serverOff { return .offline(serverOff) }
+        // A session that is gone, with an agent the ledger remembers: the
+        // one thing worth doing here is getting the conversation back
+        // (ADR-0046). "Reconnecting" would be a lie — nothing is coming back.
+        if offersResume, let resumeOffer {
+            return .action("session gone · \(resumeOffer.name)", label: "resume")
+        }
         return (isWireUp && isSessionAvailable) ? .connected : .reconnecting
+    }
+
+    // MARK: - resume (ADR-0046)
+
+    /// The agent this pane can bring back while its session is gone: what to
+    /// call it and what the button does. Set by the strip, which knows the
+    /// ledger's record and how to spawn; nil when there is nothing to resume.
+    private var resumeOffer: (name: String, action: () -> Void)?
+
+    /// Whether the banner is offering `$ RESUME` right now.
+    var offersResume: Bool { resumeOffer != nil && !isSessionAvailable }
+
+    func setResumeOffer(name: String?, action: (() -> Void)?) {
+        let was = offersResume
+        if let name, let action {
+            resumeOffer = (name, action)
+            status.onAction = { [weak self] in self?.resumeOffer?.action() }
+        } else {
+            resumeOffer = nil
+        }
+        guard was != offersResume || offersResume else { return }
+        switch status.state {
+        case .exited, .refused, .notice: return
+        case .action where !was: return
+        case .action, .connected, .reconnecting, .offline: break
+        }
+        Motion.fade(status.layer)
+        status.isHidden = false
+        status.setState(restingBanner)
+    }
+
+    /// A resume started a new session for this pane: the dead attachment
+    /// goes, the screen the dead session left is cleared — `claude --resume`
+    /// draws the conversation again — and the pane attaches to the new one.
+    /// Same pane, same place, same zoom: the point of resuming in place.
+    func rebind(to pane: Pane, attachment: RelayAttachment) {
+        self.pane = pane
+        resumeOffer = nil
+        isSessionAvailable = true
+        leaveCopyMode()
+        session.receive(Data("\u{1b}[H\u{1b}[2J\u{1b}[3J\u{1b}c".utf8))
+        reattach(attachment)
     }
 
     /// The server's state, from the registry by way of the strip. The

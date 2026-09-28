@@ -62,6 +62,9 @@ public final class OpenServer: @unchecked Sendable {
         /// `maxpane app NAME`: go to a `[[apps]]` web app — the same
         /// focus-the-lane-or-open-it the app's chord does, from a shell.
         case app(name: String)
+        /// `maxpane resume [--all|LANE]`: bring back the agents whose sessions
+        /// a reboot ended, in their panes (ADR-0046). `all` is every one.
+        case resume(lane: String)
     }
 
     /// What goes back. `session` carries the id of a session just started;
@@ -274,6 +277,10 @@ public final class OpenServer: @unchecked Sendable {
                   !name.isEmpty
             else { return nil }
             return .app(name: name)
+
+        case "resume":
+            let lane = (object["lane"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "all"
+            return .resume(lane: lane)
 
         case "volume":
             guard let lane = object["lane"] as? String, !lane.isEmpty,

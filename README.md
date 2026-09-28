@@ -1605,6 +1605,65 @@ rule 4). An empty name unpins and clears the ledger's title, and the header
 falls back to the session's own title, then the command. A web lane has no
 session to pin on: its name lasts until the page next sets a `<title>`.
 
+### Resuming agents after a reboot
+
+A reboot kills every relay-tty session. The lanes come back — the ledger
+keeps them — but a pane on its own only knows a session id that no longer
+exists, and the thing worth getting back is the `claude` conversation that
+was running in it. So **while an agent is alive, its pane remembers it**:
+which conversation, which directory, and the flags it was started with. When
+the pane's session is gone, its banner says `SESSION GONE · <name>` and
+offers **`$ RESUME`**. Click it, or press **↩** in the pane, or run **Resume
+Agent** from the File menu or ⌘E. Resume starts `claude --resume <id>` with
+the original flags in the original directory, and puts **the same pane** on
+the new session: same lane, same place in the stack, same height and zoom.
+No new lane.
+
+**Resume All Agents** (File menu, ⌘E, or `maxpane resume`) does every
+resumable pane left to right, a beat apart so a dozen `claude` starts do not
+land at once. After a launch that finds panes to resume, the status bar
+offers it once — `$ RESUME 12 AGENTS ×` — and a click takes it, `×` puts it
+away, and it leaves on its own once nothing is left. Nothing resumes by
+itself; it is always one click.
+
+How a pane knows its agent. Every running Claude Code writes
+`~/.claude/sessions/<pid>.json` with its conversation id, directory and
+name, and deletes it when it exits — which is why it has to be read while
+the agent is alive. On the session poll the app reads those files, walks
+each pid's parents to the `relay-pty-host` of a session on the strip, reads
+the process's argv for its flags (dropping any `--resume`, `-r`,
+`--continue` or `--session-id`, so a resume does not stack them), and writes
+what changed to the ledger. The record is kept after the session dies; that
+is the point. It is forgotten when:
+
+- the pane is closed on purpose — ⌘W, ⇧⌘W, End Session — which takes the
+  record with it;
+- the agent exits while the pane's shell lives on (`/exit`, two ⌃Cs): a
+  live session with no `claude` process in it has nothing to resume. A
+  `claude` whose session file has not appeared yet still counts as running;
+- the agent exits and takes its session with it (a lane started as `maxpane
+  run claude`): the pane closes on exit, as any exited session's does.
+
+What a resume refuses, in one line each: a conversation a live `claude`
+already has open (two clients on one conversation fight over it — the
+stopgap script did exactly that once, from the lane it was run in); a
+directory that is gone (Claude finds a conversation by its directory);
+a pane whose session is still running. Resume All also takes each
+conversation once, when two panes remember the same one.
+
+**Billing.** A resumed agent is spawned through the ordinary spawner, whose
+environment already drops Claude's child-session markers (`CLAUDECODE`,
+`CLAUDE_CODE_*`). Its line also begins `unset ANTHROPIC_API_KEY …;` — after
+the login shell has read its rc files, which is where that key comes from —
+so the resumed `claude` uses the Max login and saves its transcript, and
+does not depend on Claude Code happening to have the key on its reject list.
+
+**Remote panes are left out.** A remote server's relay-tty lists its
+sessions but says nothing about the processes inside one, so there is no
+way from here to see which conversation a remote `claude` has open. Those
+panes are never recorded and never offered a resume; `maxpane run
+@server claude --resume <id>` is the way back for now.
+
 ### What calls you back
 
 An agent that goes BLOCKED or DONE while Max Pane is not the frontmost app
@@ -2688,6 +2747,8 @@ maxpane capture [LANE] [--full]
                           # types it at the nearest prompt in that lane. No LANE
                           # is the focused pane; --full is the whole web page
 maxpane app gmail         # go to a [[apps]] web app: focus its lane, or open one
+maxpane resume [--all|LANE]   # bring back the claude conversations a reboot ended, in place;
+                              # see "Resuming agents after a reboot"
 maxpane server add NAME URL   # a remote relay-tty server, from its startup Auth URL; see "Remote servers"
 maxpane server ls             # the configured servers, their colour and how they are doing
 maxpane server color WSL violet   # the colour a server is known by: slate cyan blue violet magenta rose lemon ink

@@ -184,6 +184,56 @@ public final class StripViewController: NSViewController {
     /// For tests, which want a strip of lanes without a Relay socket or a
     /// `WKWebView` behind each one.
     var controllerFactory: ((Pane, Lane) -> PaneController?)?
+    /// Builds the attachment a resumed pane moves to, in place of the real
+    /// adapter. For tests, for the same reason.
+    var attachmentFactory: ((SessionKey) -> RelayAttachment)?
+
+    // MARK: - resume (ADR-0046)
+
+    /// The panes whose session is gone and whose agent can be brought back,
+    /// with the name each banner shows. Set by the window controller on every
+    /// session poll; kept here so a pane whose controller is built later —
+    /// scrolled to, unfolded — offers it from its first frame.
+    private var resumeOffers: [String: String] = [:]
+    /// `$ RESUME` was pressed, or ↩ on a pane offering it.
+    public var onResumePane: ((String) -> Void)?
+
+    func setResumeOffers(_ offers: [String: String]) {
+        let before = resumeOffers
+        resumeOffers = offers
+        for paneId in Set(before.keys).union(offers.keys) where before[paneId] != offers[paneId] {
+            applyResumeOffer(to: paneId)
+        }
+    }
+
+    private func applyResumeOffer(to paneId: String) {
+        guard let terminal = paneControllers[paneId] as? TerminalPaneController else { return }
+        if let name = resumeOffers[paneId] {
+            terminal.setResumeOffer(name: name) { [weak self] in self?.onResumePane?(paneId) }
+        } else {
+            terminal.setResumeOffer(name: nil, action: nil)
+        }
+    }
+
+    /// The grid a terminal pane is drawn at, when it has a controller that
+    /// has measured one.
+    func grid(ofPane paneId: String) -> (cols: Int, rows: Int)? {
+        guard let grid = (paneControllers[paneId] as? TerminalPaneController)?.viewGrid,
+              grid.columns > 0, grid.rows > 0 else { return nil }
+        return (grid.columns, grid.rows)
+    }
+
+    /// A resume's session has started: the ledger moves the pane onto it, and
+    /// the pane's controller, if it has one, drops the dead attachment and
+    /// takes the new one. A pane with no controller yet attaches to the new
+    /// session when it is built, from the ledger.
+    func rebindPane(_ paneId: String, to key: SessionKey) throws {
+        try store.rebindPane(paneId, to: key)
+        resumeOffers[paneId] = nil
+        guard let terminal = paneControllers[paneId] as? TerminalPaneController,
+              let pane = store.pane(paneId) else { return }
+        terminal.rebind(to: pane, attachment: attachmentFactory?(key) ?? adapter(for: key))
+    }
 
     // MARK: - docks
 
@@ -2859,6 +2909,9 @@ public final class StripViewController: NSViewController {
             if let terminal = made as? TerminalPaneController, terminal.onSessionExit == nil {
                 terminal.onSessionExit = { [weak self] code in self?.paneDidExit(pane.id, code: code) }
             }
+            if let terminal = made as? TerminalPaneController, let name = resumeOffers[pane.id] {
+                terminal.setResumeOffer(name: name) { [weak self] in self?.onResumePane?(pane.id) }
+            }
             return made
         }
         switch pane.kind {
@@ -2880,6 +2933,9 @@ public final class StripViewController: NSViewController {
             }
             controller.onSessionExit = { [weak self] code in
                 self?.paneDidExit(pane.id, code: code)
+            }
+            if let name = resumeOffers[pane.id] {
+                controller.setResumeOffer(name: name) { [weak self] in self?.onResumePane?(pane.id) }
             }
             // A program set the clipboard (OSC 52): the header of whichever
             // lane holds the pane now says so. Looked up, not captured: a

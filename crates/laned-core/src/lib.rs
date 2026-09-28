@@ -1689,6 +1689,54 @@ impl Core {
         inner.ledger.set_pane_data_store(&pane_id, &data_store_id)
     }
 
+    // ---- the agent a pane was running (ADR-0046) ---------------------------
+
+    /// Remember the agent a terminal pane is running. Called on the shell's
+    /// session poll whenever what it sees differs from what is kept, so this
+    /// is a write per change, not per poll. No snapshot is published: the
+    /// record is read when a session dies, and nothing on the strip draws it.
+    pub fn record_pane_agent(&self, agent: PaneAgent) -> Result<()> {
+        let inner = self.inner.lock();
+        inner.ledger.set_pane_agent(&agent)
+    }
+
+    /// The pane's agent ended on its own while its shell lived on — `/exit`,
+    /// or two ⌃Cs — so there is nothing to resume. Closing the pane needs no
+    /// call: the row goes with it.
+    pub fn forget_pane_agent(&self, pane_id: String) -> Result<()> {
+        let inner = self.inner.lock();
+        inner.ledger.clear_pane_agent(&pane_id)
+    }
+
+    pub fn pane_agent(&self, pane_id: String) -> Result<Option<PaneAgent>> {
+        let inner = self.inner.lock();
+        inner.ledger.pane_agent(&pane_id)
+    }
+
+    /// Every pane's agent, in strip order — docked and folded lanes included,
+    /// since a reboot killed their sessions too.
+    pub fn pane_agents(&self) -> Result<Vec<PaneAgent>> {
+        let inner = self.inner.lock();
+        inner.ledger.pane_agents()
+    }
+
+    /// Put a terminal pane on a new relay session in place: the resume's
+    /// session, taking the dead one's slot. Same lane, same position, same
+    /// height and zoom; no new lane. A session another pane already holds is
+    /// refused, as every other door refuses it.
+    pub fn rebind_pane_session(
+        &self,
+        pane_id: String,
+        relay_session_id: String,
+        relay_server: Option<String>,
+    ) -> Result<StripState> {
+        let mut inner = self.inner.lock();
+        Self::refuse_second_pane(&inner.ledger, &PaneKind::Pty, Some(&relay_session_id), relay_server.as_deref())?;
+        inner.ledger.rebind_pane_session(&pane_id, &relay_session_id, relay_server.as_deref())?;
+        Self::bump(&mut inner);
+        Self::snapshot(&inner)
+    }
+
     /// The shell has taken a snapshot and destroyed the `WKWebView`.
     pub fn mark_evicted(
         &self,

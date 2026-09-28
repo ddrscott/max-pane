@@ -42,6 +42,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("0016_clip_history", include_str!("../migrations/0016_clip_history.sql")),
     ("0017_pane_audio", include_str!("../migrations/0017_pane_audio.sql")),
     ("0018_clip_source", include_str!("../migrations/0018_clip_source.sql")),
+    ("0019_pane_agent", include_str!("../migrations/0019_pane_agent.sql")),
 ];
 
 /// A needle as an FTS5 query: one quoted phrase, nothing else.
@@ -2246,6 +2247,72 @@ impl Ledger {
         Ok(())
     }
 
+    // ---- the agent a pane was running (ADR-0046) ---------------------------
+
+    /// Write what a pane's agent is. One row per pane: a newer sighting
+    /// replaces the older one outright, because a pane runs one agent at a
+    /// time and the latest conversation is the one to go back to.
+    pub fn set_pane_agent(&self, agent: &PaneAgent) -> Result<()> {
+        let args = serde_json::to_string(&agent.args).map_err(|e| CoreError::Ledger { message: e.to_string() })?;
+        let n = self.conn.execute(
+            "INSERT INTO pane_agent (pane_id, cli, session_id, cwd, args, name, updated_at)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 WHERE EXISTS (SELECT 1 FROM pane WHERE id = ?1)
+             ON CONFLICT (pane_id) DO UPDATE SET
+               cli = excluded.cli, session_id = excluded.session_id, cwd = excluded.cwd,
+               args = excluded.args, name = excluded.name, updated_at = excluded.updated_at",
+            params![agent.pane_id, agent.cli, agent.session_id, agent.cwd, args, agent.name, agent.updated_at],
+        )?;
+        if n == 0 {
+            return Err(CoreError::NotFound { kind: "pane".into(), id: agent.pane_id.clone() });
+        }
+        Ok(())
+    }
+
+    /// Forget a pane's agent. Nothing to forget is not an error: the caller
+    /// is saying "this pane has no agent", and that is now true either way.
+    pub fn clear_pane_agent(&self, pane_id: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM pane_agent WHERE pane_id = ?1", [pane_id])?;
+        Ok(())
+    }
+
+    pub fn pane_agent(&self, pane_id: &str) -> Result<Option<PaneAgent>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT pane_id, cli, session_id, cwd, args, name, updated_at FROM pane_agent WHERE pane_id = ?1",
+                [pane_id],
+                row_to_pane_agent,
+            )
+            .optional()?)
+    }
+
+    /// Every pane's agent, in strip order: lanes by ordinal, panes top to
+    /// bottom. The order Resume All goes in.
+    pub fn pane_agents(&self) -> Result<Vec<PaneAgent>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT a.pane_id, a.cli, a.session_id, a.cwd, a.args, a.name, a.updated_at
+             FROM pane_agent a JOIN pane p ON p.id = a.pane_id JOIN lane l ON l.id = p.lane_id
+             ORDER BY l.ordinal ASC, p.position ASC",
+        )?;
+        let rows = stmt.query_map([], row_to_pane_agent)?.collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    /// Point a terminal pane at a different relay session: the one a resume
+    /// just started. Everything else about the pane — its lane, its place in
+    /// the stack, its height and zoom — is the point of doing it this way,
+    /// and none of it is touched.
+    pub fn rebind_pane_session(&self, pane_id: &str, relay_session_id: &str, relay_server: Option<&str>) -> Result<()> {
+        let n = self.conn.execute(
+            "UPDATE pane SET relay_session_id = ?2, relay_server = ?3 WHERE id = ?1 AND kind = 'pty'",
+            params![pane_id, relay_session_id, relay_server],
+        )?;
+        if n == 0 {
+            return Err(CoreError::NotFound { kind: "terminal pane".into(), id: pane_id.into() });
+        }
+        Ok(())
+    }
+
     pub fn height_weights(&self, lane_id: &str) -> Result<Vec<f64>> {
         let mut stmt = self
             .conn
@@ -2362,6 +2429,21 @@ fn row_to_pane(r: &Row) -> rusqlite::Result<Pane> {
         relay_server: r.get(13)?,
         muted: r.get::<_, i64>(14)? != 0,
         volume: r.get::<_, i64>(15)?.clamp(1, 100) as u32,
+    })
+}
+
+fn row_to_pane_agent(r: &Row) -> rusqlite::Result<PaneAgent> {
+    let args: String = r.get(4)?;
+    Ok(PaneAgent {
+        pane_id: r.get(0)?,
+        cli: r.get(1)?,
+        session_id: r.get(2)?,
+        cwd: r.get(3)?,
+        // A row this build cannot read is a resume with no flags, not an
+        // error: the conversation is still worth getting back to.
+        args: serde_json::from_str(&args).unwrap_or_default(),
+        name: r.get(5)?,
+        updated_at: r.get(6)?,
     })
 }
 
