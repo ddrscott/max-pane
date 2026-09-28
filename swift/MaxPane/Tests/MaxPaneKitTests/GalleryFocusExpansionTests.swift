@@ -212,9 +212,11 @@ extension MaximizeRig {
         return try click(atWindowPoint: paneView.convert(middle, to: nil), clicks: clicks)
     }
 
-    func click(atWindowPoint point: NSPoint, clicks: Int = 1) throws -> NSEvent {
+    func click(
+        atWindowPoint point: NSPoint, clicks: Int = 1, type: NSEvent.EventType = .leftMouseDown
+    ) throws -> NSEvent {
         try #require(NSEvent.mouseEvent(
-            with: .leftMouseDown, location: point, modifierFlags: [],
+            with: type, location: point, modifierFlags: [],
             timestamp: ProcessInfo.processInfo.systemUptime,
             windowNumber: window.windowNumber, context: nil,
             eventNumber: 0, clickCount: clicks, pressure: 1))

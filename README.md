@@ -3418,7 +3418,10 @@ moved, so holding the button through the slide selected half a screen of text;
 on a page it pressed a button that was no longer under the pointer on release.
 It is what the first click on an inactive window does. A click that moves
 nothing goes through as it always has, and so does every click in the gallery,
-in a dock and in a maximized pane.
+in a dock and in a maximized pane. A dock is hit-tested before the strip: an
+overlay dock is drawn over whichever lane has scrolled under it, and a click on
+the dock is the dock's, at rest or mid-slide, and never focuses or scrolls to
+the lane underneath. A sideways scroll over a dock is the docked pane's too.
 
 `strip_edge_rails` is the other half: an 18 pt column at each end of the strip
 with a count of the lanes hidden that way (`◀ 7`, `5 ▶`), and a plain wall when

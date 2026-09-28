@@ -624,20 +624,38 @@ public final class StripViewController: NSViewController {
         return abs(target - window.offset) > 0.5
     }
 
+    /// The lane views in the order a point is tested against them: topmost
+    /// first, because a point can be inside more than one.
+    ///
+    /// **The docks first.** They sit above the scroll view, and an overlay
+    /// dock is drawn over whichever strip lane has scrolled under it, so a
+    /// point on the dock is inside that lane too. Walking `laneViews` in
+    /// dictionary order picked one of the two by hash, and picking the strip
+    /// lane made a click on the dock a click that slides the strip to a lane
+    /// nobody could see (`DockClickTests`).
+    ///
+    /// **Then the expanded tile**, for the same reason: it is drawn over its
+    /// neighbours, so a point inside it is also inside whichever lane it
+    /// covers. The rest cannot overlap, so their order does not matter.
+    func hitOrder() -> [(laneId: String, view: LaneView)] {
+        let docks = [DockSide.left, .right].compactMap { side in
+            dockViews[side].map { (laneId: $0.laneId, view: $0) }
+        }
+        let docked = Set(docks.map(\.laneId))
+        var rest = laneViews.filter { !docked.contains($0.key) }.map { (laneId: $0.key, view: $0.value) }
+        if let expanded = expandedLaneId, let index = rest.firstIndex(where: { $0.laneId == expanded }) {
+            rest.swapAt(0, index)
+        }
+        return docks + rest
+    }
+
     /// Which pane is under a point in window coordinates.
     private func pane(at windowPoint: NSPoint) -> String? {
         // The maximized pane is drawn over every lane, so a point inside it is
         // also inside whichever lane it covers — and answering with that one
         // would move focus, which restores.
         if maximizer.contains(windowPoint: windowPoint) { return maximizer.paneId }
-        // The expanded tile first: it is drawn over its neighbours, so a point
-        // inside it is also inside whichever lane it covers, and the dictionary
-        // would otherwise pick one of the two at random.
-        var hitOrder = Array(laneViews)
-        if let expanded = expandedLaneId, let index = hitOrder.firstIndex(where: { $0.key == expanded }) {
-            hitOrder.swapAt(0, index)
-        }
-        for (laneId, laneView) in hitOrder {
+        for (laneId, laneView) in hitOrder() {
             let local = laneView.convert(windowPoint, from: nil)
             guard laneView.bounds.contains(local) else { continue }
             guard let lane = store.lane(laneId) else { return nil }
