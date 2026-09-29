@@ -91,4 +91,4 @@
 - [x] Resume agent sessions after a reboot: panes remember their `claude` session id, cwd and flags while alive; a dead pane offers `$ RESUME` in place, and Resume All brings every one back in strip order — [detail](resume-agents-after-reboot.md)
 - [x] A click on a docked lane goes to the dock, never scrolling the strip to the lane under it; audit every mouse path over a dock — [detail](dock-click-beats-strip.md)
 - [x] A click on a server's sidebar header folds and unfolds it like every other header; its menu (color, rename, disable, Server Settings…) moves behind a `⋯` button — [detail](server-header-click-folds.md)
-- [ ] Responsive lanes: a lane wider than the room left on screen fits it (display only, never saved), and eases back to its own size when the room comes back — [detail](responsive-lane-width.md)
+- [-] Responsive lanes: a lane wider than the room left on screen fits it (display only, never saved), and eases back to its own size when the room comes back — [detail](responsive-lane-width.md)
