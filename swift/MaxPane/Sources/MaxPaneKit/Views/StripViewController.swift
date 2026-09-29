@@ -71,6 +71,43 @@ public final class StripViewController: NSViewController {
     /// Lanes currently drawn differently from what the ledger says, because
     /// something is animating them.
     private var laneOverrides: [String: LaneOverride] = [:]
+    /// The widest a strip lane is drawn right now (`LaneFit`, ADR-0047): the
+    /// visible strip less a peek each side. Infinite until the window has a
+    /// size. Mid-ease this is between `laneRoomTarget` and where it came from.
+    private var laneRoom: CGFloat = .infinity
+    /// Where `laneRoom` is heading: what `layoutDocks` last measured.
+    private var laneRoomTarget: CGFloat = .infinity
+    /// When the room last changed, to tell a stream of changes (a window or a
+    /// sidebar being dragged or animated, which the lanes track directly) from
+    /// a single one (a dock arriving, which they ease into).
+    private var laneRoomChangedAt: CFAbsoluteTime = 0
+    private var laneRoomEase: MotionTimer?
+    /// Each strip lane's ledger width and drawn width at the last layout, to
+    /// notice a width the *room* changed and hold its terminals' word to the
+    /// far end until it settles.
+    private var fittedWidths: [String: (stored: UInt32, shown: UInt32)] = [:]
+    /// Terminals whose lane the room is resizing, held in a live resize until
+    /// it has been quiet for `TerminalPaneController.settleDelay`.
+    private var fitResizing: [String: TerminalPaneController] = [:]
+    private var fitSettle: DispatchWorkItem?
+
+    /// The strip's lanes as they are drawn: the ledger's, each no wider than
+    /// the room (`LaneFit`). **Every** layout, scroll and hit-test question in
+    /// this file asks this list rather than `store.stripLanes`, so the strip
+    /// has one idea of how wide a lane is. Never written anywhere.
+    private var stripLanes: [Lane] { LaneFit.fit(store.stripLanes, room: laneRoom) }
+
+    /// How wide a strip lane is drawn at rest. A docked lane is the dock's.
+    private func shownWidth(of lane: Lane) -> CGFloat {
+        LaneFit.width(of: lane, room: laneRoom)
+    }
+
+    /// The width a lane is drawn at on the strip, for the widen and narrow
+    /// keys to start from what is on screen. Nil for a docked or unknown lane.
+    func shownWidthPt(ofLane laneId: String) -> UInt32? {
+        guard let lane = store.lane(laneId), lane.dock == nil else { return nil }
+        return UInt32(shownWidth(of: lane))
+    }
     /// How far left or right of where the flow puts it a lane is drawn, while it
     /// slides from the place it used to be. Purely visual: the flow position is
     /// always the true one, so a re-layout mid-slide cannot desync it.
@@ -619,7 +656,7 @@ public final class StripViewController: NSViewController {
         let window = viewport
         guard let target = StripReveal.focused(
             from: window.offset, to: laneId,
-            lanes: store.stripLanes, viewport: window.width)
+            lanes: stripLanes, viewport: window.width)
         else { return false }
         return abs(target - window.offset) > 0.5
     }
@@ -718,8 +755,10 @@ public final class StripViewController: NSViewController {
         }
         let previous = lastLanes
         lastLanes = state.lanes
-        let previousStrip = previous.filter { $0.dock == nil }
-        let strip = state.lanes.filter { $0.dock == nil }
+        // Both as drawn (`LaneFit`): a column opens, closes and slides at the
+        // width it has on screen, not at one the window cannot hold.
+        let previousStrip = LaneFit.fit(previous.filter { $0.dock == nil }, room: laneRoom)
+        let strip = LaneFit.fit(state.lanes.filter { $0.dock == nil }, room: laneRoom)
         // **The diff is over the lanes the strip lays out, not over the
         // snapshot.** A docked lane keeps its ordinal and stays in
         // `state.lanes`, so a diff taken there would see docking as nothing at
@@ -1008,7 +1047,7 @@ public final class StripViewController: NSViewController {
         updateDocks(state)
         updateEdgeRails()
 
-        let strip = store.stripLanes
+        let strip = stripLanes
         let window = materializationWindow(in: strip)
         let wanted = Set(strip[window].map(\.id))
 
@@ -1395,8 +1434,15 @@ public final class StripViewController: NSViewController {
         // on a lane header drawn under it. The overlay dock's inset is fine
         // because the dock itself covers it.
         let visibleWidth = max(0, strip.width - dockLayout.overlayLeft - dockLayout.overlayRight)
+        // The room a lane may take, measured in that same window — so a dock,
+        // the sidebar and the window all reclamp through here. Measured in the
+        // gallery too, whose scroll view is still framed: a tile keeps the
+        // size its lane is drawn at on the strip, clamp included.
+        setLaneRoom(LaneFit.room(
+            viewport: visibleWidth, laneCount: store.stripLanes.count,
+            peek: CGFloat(config.lanePeekPt)))
         stripMargins = isGallery ? (left: CGFloat(0), right: CGFloat(0))
-            : StripReveal.margins(lanes: store.stripLanes, viewport: visibleWidth)
+            : StripReveal.margins(lanes: stripLanes, viewport: visibleWidth)
         let insets = NSEdgeInsets(
             top: 0, left: dockLayout.overlayLeft,
             bottom: 0, right: dockLayout.overlayRight)
@@ -1457,6 +1503,82 @@ public final class StripViewController: NSViewController {
         // dock toggled by a key arrives as a snapshot, and `syncGallery`'s
         // animated pass carries that.
         if isGallery, dockLayout != previousLayout { layoutGallery() }
+    }
+
+    /// Move the room lanes are clamped to (`LaneFit`) to `target`.
+    ///
+    /// Two kinds of change, told apart by their rhythm. One arriving within a
+    /// couple of frames of the last is part of something moving — a window
+    /// edge being dragged, the sidebar sliding — and the lanes track it
+    /// directly, because a column easing behind the pointer lags it. A change
+    /// on its own — a dock arriving, a second lane making room for peeks — is
+    /// a jump, and a jump eases on `Motion.lane` like every other change of
+    /// width on the strip. Reduce Motion lands at once.
+    private func setLaneRoom(_ target: CGFloat) {
+        guard target != laneRoomTarget else { return }
+        let now = CFAbsoluteTimeGetCurrent()
+        let streaming = now - laneRoomChangedAt < 0.1
+        laneRoomChangedAt = now
+        laneRoomTarget = target
+        laneRoomEase?.cancel()
+        laneRoomEase = nil
+        let from = laneRoom
+        guard !streaming, !view.inLiveResize, !isColdLaunch, !Motion.isReduced,
+              view.window != nil, from.isFinite, target.isFinite,
+              LaneFit.differs(store.stripLanes, from, target)
+        else {
+            laneRoom = target
+            return
+        }
+        laneRoomEase = Motion.run(duration: Motion.lane, step: { [weak self] t in
+            guard let self else { return }
+            self.laneRoom = from + (target - from) * Motion.easeOut(t)
+            self.relayout()
+        }, completion: { [weak self] in
+            guard let self else { return }
+            self.laneRoomEase = nil
+            self.laneRoom = self.laneRoomTarget
+            self.relayout()
+            self.updateMaterialization()
+        })
+    }
+
+    /// A lane the room made wider or narrower owes its terminals a new grid,
+    /// and the far end one word about it once it has settled — not one per
+    /// frame of a window drag. The same live-resize hold a seam drag uses
+    /// (`TerminalPaneController.beginLiveResize`), released when the widths
+    /// have been still for the settle delay a size preset waits.
+    ///
+    /// Only a change the ledger did not make: a stored width that moved has
+    /// its own path in `apply`, and a preset holds its terminals itself.
+    private func noteFittedWidths(_ shown: [Lane]) {
+        let stored = Dictionary(store.stripLanes.map { ($0.id, $0.widthPt) }, uniquingKeysWith: { a, _ in a })
+        var changed = false
+        for lane in shown {
+            guard let own = stored[lane.id] else { continue }
+            defer { fittedWidths[lane.id] = (own, lane.widthPt) }
+            guard let last = fittedWidths[lane.id], last.stored == own, last.shown != lane.widthPt else { continue }
+            for pane in lane.panes {
+                guard let terminal = paneControllers[pane.id] as? TerminalPaneController,
+                      !terminal.isInSizeTransition else { continue }
+                if fitResizing[pane.id] == nil {
+                    terminal.beginLiveResize()
+                    fitResizing[pane.id] = terminal
+                }
+                terminal.laneWidthDidChange(to: CGFloat(lane.widthPt))
+                changed = true
+            }
+        }
+        guard changed else { return }
+        fitSettle?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            let held = self.fitResizing
+            self.fitResizing.removeAll()
+            for terminal in held.values { terminal.endLiveResize() }
+        }
+        fitSettle = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + TerminalPaneController.settleDelay, execute: work)
     }
 
     // MARK: - the gallery layout
@@ -1541,7 +1663,7 @@ public final class StripViewController: NSViewController {
         let height = galleryStripHeight
         let window = gallery.convert(scrollView.frame, from: view)
         var x: CGFloat = 0
-        for lane in store.stripLanes {
+        for lane in stripLanes {
             let width = CGFloat(lane.widthPt)
             var rect = gallery.convert(CGRect(x: x, y: 0, width: width, height: height), from: content)
             if rect.maxX < window.minX { rect.origin.x = window.minX - width }
@@ -1854,7 +1976,7 @@ public final class StripViewController: NSViewController {
         }
         // The docks are at the walls, not on the grid: the grid is what is left
         // between them, exactly as an inset dock narrows the strip's viewport.
-        let lanes = store.stripLanes
+        let lanes = stripLanes
         let stripHeight = galleryStripHeight
         let room = galleryContentRect
         let sizes = lanes.map { realSize(of: $0, stripHeight: stripHeight) }
@@ -1980,7 +2102,7 @@ public final class StripViewController: NSViewController {
     /// the lane holding the keyboard, or — with focus in a dock, or nowhere —
     /// the strip lane focused most recently.
     private var galleryAnchor: Int {
-        let lanes = store.stripLanes
+        let lanes = stripLanes
         if let focused = store.focusedLane?.id, let index = lanes.firstIndex(where: { $0.id == focused }) {
             return index
         }
@@ -2071,12 +2193,12 @@ public final class StripViewController: NSViewController {
     /// finishes, or the lanes to its right teleport left the instant the write
     /// commits — which is the exact thing the collapse exists to prevent.
     private var laneLayout: [Lane] {
-        guard !departingLanes.isEmpty else { return store.stripLanes }
+        guard !departingLanes.isEmpty else { return stripLanes }
         var lanes = store.stripLanes
         for ghost in departingLanes.sorted(by: { $0.index < $1.index }) {
             lanes.insert(ghost.lane, at: min(ghost.index, lanes.count))
         }
-        return lanes
+        return LaneFit.fit(lanes, room: laneRoom)
     }
 
     private func isDeparting(_ laneId: String) -> Bool {
@@ -2096,9 +2218,17 @@ public final class StripViewController: NSViewController {
         // and a layout pass that ran first would be measured against the old
         // one for exactly one frame — which is the frame the eye catches.
         layoutDocks()
+        noteFittedWidths(stripLanes)
         if isGallery {
             layoutGallery()
             return
+        }
+        // A drag or a preset draws a lane at a width of its own for a while;
+        // it is still drawn no wider than the room. A masked slot is a column
+        // opening or closing and is already measured from the drawn width.
+        let overrides = laneOverrides.mapValues { override in
+            override.masked ? override
+                : LaneOverride(slot: min(override.slot, laneRoom), masked: false)
         }
         content.layOut(
             lanes: lanes ?? laneLayout,
@@ -2110,7 +2240,7 @@ public final class StripViewController: NSViewController {
                 guard let self, !self.isDocked(lane.id) else { return nil }
                 return self.laneViews[lane.id]
             },
-            overrides: laneOverrides,
+            overrides: overrides,
             xOffsets: xOffsets,
             height: scrollView.contentView.bounds.height)
         document.layOut(content: content, margins: stripMargins)
@@ -2192,7 +2322,7 @@ public final class StripViewController: NSViewController {
                 laneOverrides[id] = nil
                 continue
             }
-            let full = CGFloat(lane.widthPt)
+            let full = shownWidth(of: lane)
             laneView.alphaValue = 0
             startTransition(lane: id, duration: Motion.lane) { [weak self] t in
                 guard let self else { return }
@@ -2653,7 +2783,8 @@ public final class StripViewController: NSViewController {
             docked: dockSide != nil)
         let terminals = lane.panes.compactMap { paneControllers[$0.id] as? TerminalPaneController }
         let pages = lane.panes.compactMap { paneControllers[$0.id] as? WebPaneController }
-        let from = drawn ?? CGFloat(lane.dock?.widthPt ?? lane.widthPt)
+        // From the width it is drawn at, which the room may have clamped.
+        let from = drawn ?? (lane.dock.map { CGFloat($0.widthPt) } ?? shownWidth(of: lane))
 
         // The slot stays where it is drawn through the publish below; the
         // transition's first frame moves it.
@@ -2679,7 +2810,11 @@ public final class StripViewController: NSViewController {
         }
         // What the core actually stored, which a config wider than its bounds
         // can make different from what was asked for.
-        let target = CGFloat(store.lane(laneId).map { $0.dock?.widthPt ?? $0.widthPt } ?? shape.widthPt)
+        // And to the width it will be drawn at: a preset bigger than the room
+        // lands at the room (ADR-0047), and ⌘\ still lights the size stored.
+        let target = store.lane(laneId).map { stored in
+            stored.dock.map { CGFloat($0.widthPt) } ?? shownWidth(of: stored)
+        } ?? min(CGFloat(shape.widthPt), laneRoom)
         let key = "size:\(laneId)"
         sizeTransitionTargets[laneId] = preset
 
@@ -3165,7 +3300,7 @@ public final class StripViewController: NSViewController {
     /// indicator says where it will land instead, and the layout moves once.
     private func handleDrag(_ source: PaneDrag.Source, at windowPoint: NSPoint, isFinal: Bool) {
         let surface: NSView = isGallery ? gallery : content
-        let boxes = isGallery ? galleryDropBoxes() : PaneDrag.boxes(lanes: store.stripLanes, laneHeight: content.bounds.height)
+        let boxes = isGallery ? galleryDropBoxes() : PaneDrag.boxes(lanes: stripLanes, laneHeight: content.bounds.height)
         // Over a dock the lane under the pointer is one the dock is hiding, and
         // a drop there would land somewhere nobody can see. True at a gallery
         // wall too, now that there is one.
@@ -3205,7 +3340,7 @@ public final class StripViewController: NSViewController {
     /// wall's header still works: it is a source, and the drop lands on the
     /// grid, which is what undocks it.
     private func galleryDropBoxes() -> [PaneDrag.LaneBox] {
-        store.stripLanes.compactMap { lane in
+        stripLanes.compactMap { lane in
             guard let tile = gallery.tile(for: lane.id) else { return nil }
             return PaneDrag.box(
                 for: lane, laneSize: realSize(of: lane, stripHeight: galleryStripHeight), drawnIn: tile.frame)
@@ -3283,7 +3418,7 @@ public final class StripViewController: NSViewController {
     /// unparented, and finally silenced.
     private func distanceFromViewport(laneId: String) -> UInt32 {
         guard store.lane(laneId)?.dock == nil else { return 0 }
-        let lanes = store.stripLanes
+        let lanes = stripLanes
         guard let index = lanes.firstIndex(where: { $0.id == laneId }) else { return .max }
         if isGallery { return UInt32(abs(index - galleryAnchor)) }
         let visible = visibleLaneRange(in: lanes)
@@ -3412,7 +3547,7 @@ public final class StripViewController: NSViewController {
         guard let target = LaneSnap.settle(
             from: window.offset,
             viewport: window.width,
-            lanes: store.stripLanes,
+            lanes: stripLanes,
             minPeek: CGFloat(config.lanePeekPt),
             focused: store.focusedLane?.id)
         else { return }
@@ -3460,7 +3595,7 @@ public final class StripViewController: NSViewController {
         }
         guard let target = StripReveal.centred(
             on: laneId,
-            lanes: store.stripLanes,
+            lanes: stripLanes,
             viewport: viewport.width,
             // The same peek the snap takes. ⌘P lands you somewhere you have
             // never been, which is the moment "is there more that way" matters
@@ -3546,7 +3681,7 @@ public final class StripViewController: NSViewController {
         // and a docked lane does not scroll — landing on one would be a
         // keypress with no motion and a focus ring that jumped across the
         // window and back. ⌥⌘[ / ⌥⌘] are the way into a dock and back out.
-        let lanes = store.stripLanes
+        let lanes = stripLanes
         guard let currentPane = state.focusedPaneId else {
             if let first = lanes.first?.panes.first { focus(first.id) }
             return
@@ -3611,7 +3746,7 @@ public final class StripViewController: NSViewController {
     /// Returns false when the key is not this gesture, and the ordinary walk
     /// takes it.
     private func moveFocusAcrossTiles(from expanded: String, direction: FocusDirection) -> Bool {
-        let lanes = store.stripLanes
+        let lanes = stripLanes
         guard let index = lanes.firstIndex(where: { $0.id == expanded }) else { return false }
         let lane = lanes[index]
         let focusedInLane = store.state.focusedPaneId.flatMap { id in lane.panes.firstIndex { $0.id == id } }
@@ -3710,7 +3845,7 @@ public final class StripViewController: NSViewController {
         let window = viewport
         guard let target = StripReveal.focused(
             from: window.offset, to: laneId,
-            lanes: store.stripLanes, viewport: window.width)
+            lanes: stripLanes, viewport: window.width)
         else { return }
         scroll(to: target, revealing: laneId, flash: false)
     }
@@ -3742,7 +3877,7 @@ public final class StripViewController: NSViewController {
         // with the focused lane never a candidate. ADR-0011.
         let visible = isGallery
             ? galleryAnchor..<(galleryAnchor + 1)
-            : visibleLaneRange(in: store.stripLanes)
+            : visibleLaneRange(in: stripLanes)
         let viewport = Viewport(
             firstVisible: UInt32(visible.lowerBound),
             lastVisible: UInt32(max(visible.lowerBound, visible.upperBound - 1)))

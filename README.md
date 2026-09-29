@@ -1982,6 +1982,19 @@ new text size, and reflows once when the lane arrives. The session is told the
 new size once, and only if it changed: going **m → s** keeps every column but
 fits more rows into the same height, and **s → m** gives them back.
 
+**The sizes are a maximum, and the window may clamp them.** A lane wider than
+the room on screen is drawn exactly as wide as the room: the visible strip, less
+any dock, less a `lane_peek_pt` sliver each side so the neighbours stay in reach
+(a lane alone gets the whole width). Shrink the window, open a dock or the
+sidebar, and an **m** or **xl** lane fits what is left. Give the room back and
+it eases back to its own size. The clamp is display only and never saved:
+`width_pt`, span, zoom and the lit size stay as they were, so ⌘\\ still lights
+**xl** on a clamped **xl** lane, and a relaunch in a bigger window brings the real
+size back. A terminal reflows to the clamped width, and its session hears the new
+size once, after the window stops moving. Dragging a clamped lane's edge starts
+from the width on screen and saves a real width, and ⌃⌘- narrows from what is on
+screen. See [ADR-0047](docs/decisions/0047-the-window-clamps-the-ledger-keeps.md).
+
 **A docked lane** takes the sizes on its dock's width, and eases there the same
 way. A dock is bounded at 240 to 900 pt, so a size outside that is clamped:
 **xl** on a dock is 900 pt at 100%, not 1312. With the default config, **s** and

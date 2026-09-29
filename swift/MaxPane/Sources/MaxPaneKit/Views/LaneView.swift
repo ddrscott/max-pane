@@ -147,6 +147,8 @@ final class LaneView: NSView {
     /// What the drag handle is currently asking for. The parent reads it during
     /// a live resize; the ledger only hears about it on the drop.
     private(set) var desiredWidth: CGFloat = 0
+    /// Between the first event of a width drag and its drop.
+    private var isDraggingWidth = false
     /// An xl lane (span 2) may be twice as wide (PRD §13 Phase 3), so this is
     /// per lane rather than a constant.
     var widthBounds: ClosedRange<UInt32> = 420...900
@@ -302,6 +304,14 @@ final class LaneView: NSView {
             // opposite: pulling left widens a right-hand dock, because the edge
             // that is not moving is the one against the wall.
             let signed = self.resizeEdge == .leading ? -delta : delta
+            // A lane the window has clamped (`LaneFit`) is dragged from the
+            // width on screen, not from the wider one it would have with more
+            // room: the edge under the pointer is the edge that moves, and
+            // the drop writes a width the user saw.
+            if !self.isDraggingWidth, self.thumbnailScale == nil, self.frame.width > 0 {
+                self.desiredWidth = min(self.desiredWidth, self.frame.width)
+            }
+            self.isDraggingWidth = !final
             let next = UInt32(max(Double(self.widthBounds.lowerBound),
                                   min(Double(self.widthBounds.upperBound),
                                       Double(self.desiredWidth) + signed)))

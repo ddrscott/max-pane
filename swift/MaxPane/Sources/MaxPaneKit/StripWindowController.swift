@@ -1323,7 +1323,11 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                     if let dock = lane.dock {
                         try store.setDockWidth(lane.id, dock.widthPt >= 60 ? dock.widthPt - 60 : 0)
                     } else {
-                        try store.setLaneWidth(lane.id, config.clampWidth(lane.widthPt >= 60 ? lane.widthPt - 60 : config.laneMinPt))
+                        // From the width on screen: an xl lane the window has
+                        // clamped would otherwise take several presses to
+                        // visibly move at all (ADR-0047).
+                        let from = min(lane.widthPt, strip.shownWidthPt(ofLane: lane.id) ?? lane.widthPt)
+                        try store.setLaneWidth(lane.id, config.clampWidth(from >= 60 ? from - 60 : config.laneMinPt))
                     }
                 }
 
