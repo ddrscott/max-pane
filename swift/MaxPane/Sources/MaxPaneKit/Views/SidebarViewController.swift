@@ -74,6 +74,9 @@ final class SidebarViewController: NSViewController {
     var onOpen: ((_ laneId: String, _ paneId: String?) -> Void)?
     /// The `+ New` action.
     var onNewSession: (() -> Void)?
+    /// `+ NEW` on an open section header: the picker, aimed at that server —
+    /// handed the `@` word, the server's name or `local`.
+    var onNewSessionOn: ((String) -> Void)?
     /// Click a session that has no lane → attach it.
     var onAttach: ((SessionKey) -> Void)?
     /// Server Settings… from a server header's menu → Settings › Servers, on that row.
@@ -554,6 +557,11 @@ final class SidebarViewController: NSViewController {
             // on the way, so it is unfolded and then you are there.
             if group.collapsed, let point, let target = stateTarget(of: group, at: row, point: point) {
                 go(to: target)
+                return
+            }
+            // `+ NEW` takes its own press; the header under it never folds.
+            if let point, let view = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarGroupView,
+               view.newSessionHit(at: view.convert(point, from: nil)) {
                 return
             }
             // Anywhere else on any header folds it — a server's included,
@@ -1160,6 +1168,8 @@ extension SidebarViewController: NSTableViewDelegate {
         case .group(let g):
             let view = SidebarGroupView(group: g)
             view.speaker.onToggle = { [weak self] in self?.muteHidden(g.audibleLanes) }
+            let word = g.server ?? OmniServerPrefix.localWord
+            view.onNewSession = { [weak self] in self?.onNewSessionOn?(word) }
             if let server = g.server {
                 view.more?.onPress = { [weak self] mark in self?.showServerMenu(server, from: mark) }
             }

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- An open server header in the sidebar (`// WSL`, and `// LOCAL` too) shows `+ NEW` beside its `⋯`. It opens the ⌘R picker with `@wsl ` (or `@local `) already typed, so a server with no sessions has an obvious way to start one. It never folds the header, it goes away when the header is folded, and while the server isn't answering it's greyed out, with a tooltip that says why
+
 ### Changed
 - A lane wider than the room on screen now fits it instead of running off the edge. On a small window, a half-screen split, or with a dock or the sidebar open, an **m** or **xl** lane is drawn exactly as wide as the visible strip allows, with a sliver of each neighbour still showing to click. When the room comes back it eases back to its own size. It is display only: the stored width, span, zoom and the lit `s | m | xl` do not change, so nothing needs remembering after a relaunch or a wider window. A terminal reflows to the new width and its session hears the size once the window stops moving. Dragging a clamped lane's edge starts from what is on screen, and so does ⌃⌘-
 

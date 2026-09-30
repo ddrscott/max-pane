@@ -117,8 +117,9 @@ struct ServerHeaderClickTests {
         defer { f.tearDown() }
         #expect(!f.folded)
         var expectFolded = false
-        // Triangle, name, then out toward the count: every part is the fold.
-        for x: (SidebarGroupView) -> CGFloat in [{ _ in 10 }, { _ in 60 }, { $0.bounds.maxX - 40 }, { _ in 120 }] {
+        // Triangle, name, then out toward the count (left of an open header's
+        // `+ NEW`, which takes its own press): every part is the fold.
+        for x: (SidebarGroupView) -> CGFloat in [{ _ in 10 }, { _ in 60 }, { ($0.newSession?.frame.minX ?? $0.bounds.maxX - 20) - 20 }, { _ in 120 }] {
             let (row, view) = try f.header()
             let point = view.convert(NSPoint(x: x(view), y: view.bounds.midY), to: nil)
             // What the window would send the press to: the table, not a mark.

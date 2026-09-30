@@ -388,12 +388,34 @@ final class SidebarGroupView: NSTableCellView {
     /// header — `// LOCAL`, a project, the bookmarks — which have no menu of
     /// their own to show.
     let more: MoreMark?
+    /// `+ NEW` on an open section header — a server's or `// LOCAL` — which
+    /// opens the picker aimed there. Nil on a folded one and on every other
+    /// header. Always in sight while it is there: the header that most needs
+    /// it is a server with no sessions, where nothing else says how to start
+    /// one. Greyed and inert while the server is not answering, because a
+    /// session started there would fail in silence.
+    let newSession: SidebarButton?
+    /// Handed nothing: the controller knows which server this header is.
+    var onNewSession: (() -> Void)?
+    static let newSessionSize = NSSize(width: 46, height: 17)
     /// The chip is up, so the server is not answering and the `⋯` stays out.
     private let keepsMoreShown: Bool
     private var isHovered = false { didSet { if isHovered != oldValue { syncMore() } } }
     /// What the slot keeps clear at the right: the house inset, and on a
     /// server header the `⋯` and its gap as well.
-    private var trailingInset: CGFloat { more == nil ? 9 : 3 + MoreMark.size + 2 }
+    private var trailingInset: CGFloat {
+        let edge: CGFloat = more == nil ? 9 : 3 + MoreMark.size + 2
+        return newSession == nil ? edge : edge + Self.newSessionSize.width + 6
+    }
+    /// Where `+ NEW`'s right edge sits: clear of the `⋯` when there is one.
+    private var newSessionInset: CGFloat { more == nil ? 8 : 3 + MoreMark.size + 2 }
+
+    /// Whether a point in this view's coordinates is on `+ NEW`, so the
+    /// controller's row click leaves the press to the button and never folds.
+    func newSessionHit(at point: NSPoint) -> Bool {
+        guard let newSession, !newSession.isHidden else { return false }
+        return newSession.frame.insetBy(dx: -2, dy: -4).contains(point)
+    }
     /// The least of the path the roll-up may leave on screen before its grey
     /// tail is dropped: `…/PANE` and a little.
     static let leastLabel: CGFloat = 44
@@ -439,6 +461,10 @@ final class SidebarGroupView: NSTableCellView {
         hasStates = group.rollUp.count > 1
         more = group.isServer && group.server != nil ? MoreMark() : nil
         keepsMoreShown = group.stateChip != nil
+        newSession = group.isSection && !group.collapsed
+            ? SidebarButton(text: "NEW", icon: .plus, look: group.stateChip == nil ? .accent : .quiet, size: 10,
+                            action: nil, target: nil)
+            : nil
         super.init(frame: .zero)
 
         // The leading mark, in the brightest state's colour under a folded
@@ -558,6 +584,26 @@ final class SidebarGroupView: NSTableCellView {
             // Built shown, not faded in: a rebuilt row is not an arrival.
             more.shown = keepsMoreShown
             more.layer?.removeAllAnimations()
+        }
+        if let newSession {
+            newSession.target = self
+            newSession.action = #selector(newSessionPressed)
+            // Not while the server is not answering: greyed, inert, and the
+            // tooltip says why, rather than a picker whose line goes nowhere.
+            newSession.isEnabled = group.stateChip == nil
+            let name = group.server ?? "this Mac"
+            let word = group.server ?? OmniServerPrefix.localWord
+            newSession.toolTip = group.stateChip.map {
+                "\(name) is \((group.serverError ?? $0).lowercased()) — nothing can start there until it answers; ⋯ › Server Settings… to fix it"
+            } ?? "New session on \(name) (⌘R, then @\(word))"
+            newSession.setAccessibilityLabel("New session on \(name)")
+            addSubview(newSession)
+            NSLayoutConstraint.activate([
+                newSession.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -newSessionInset),
+                newSession.centerYAnchor.constraint(equalTo: triangle.centerYAnchor),
+                newSession.widthAnchor.constraint(equalToConstant: Self.newSessionSize.width),
+                newSession.heightAnchor.constraint(equalToConstant: Self.newSessionSize.height),
+            ])
         }
         // Only while it is there: a silent header's path keeps every point.
         if !group.audibleLanes.isEmpty {
@@ -679,6 +725,8 @@ final class SidebarGroupView: NSTableCellView {
         super.layout()
         settleHover()
     }
+
+    @objc private func newSessionPressed() { onNewSession?() }
 
     // MARK: - the `⋯` comes up under the pointer
 

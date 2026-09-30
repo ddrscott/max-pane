@@ -2937,7 +2937,12 @@ on a folded header, a click on its `N BLOCKED` or `N DONE` still goes to that
 session. The server's menu (below) is behind the `⋯` at the header's right
 end, which shows while the pointer is on the header and stays out while the
 server is not answering, so **Server Settings…** is one click from a broken
-server. A right-click on the header opens the same menu. BLOCKED counts in the footer and
+server. A right-click on the header opens the same menu. An open section
+header, the server's or `// LOCAL`, also shows `+ NEW` beside the `⋯`. It opens
+the ⌘R picker with `@NAME ` (or `@local `) already typed, so what you type next
+runs there. That's the way into a server that has no sessions yet. It never
+folds the header, a folded header doesn't show it, and while the server isn't
+answering it's greyed out, with a tooltip that says why. BLOCKED counts in the footer and
 the status bar include remote sessions, while their server is answering.
 
 **A server has a colour, and the colour is the mark.** Each server is known

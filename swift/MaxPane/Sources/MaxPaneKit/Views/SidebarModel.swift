@@ -859,6 +859,13 @@ enum SidebarModel {
             guard let was = headers[g.path] else { continue }
             if was.sounding != !g.audibleLanes.isEmpty || was.rollUp != g.rollUpText { return true }
         }
+        // A section folding or opening: its `+ NEW` comes and goes with the
+        // fold, and fades rather than cutting in.
+        var folds: [String: Bool] = [:]
+        for case .group(let g) in old where g.isSection { folds[g.path] = g.collapsed }
+        for case .group(let g) in new where g.isSection {
+            if let was = folds[g.path], was != g.collapsed { return true }
+        }
         // A server going quiet or coming back is a change of state too.
         var chips: [String: String?] = [:]
         for case .group(let g) in old where g.isServer { chips[g.path] = g.stateChip }

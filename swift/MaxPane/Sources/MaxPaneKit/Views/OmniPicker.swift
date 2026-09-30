@@ -125,6 +125,10 @@ struct OmniServerPrefix: Equatable {
     /// The word this Mac answers to.
     static let localWord = "local"
 
+    /// The field as a section header's `+ NEW` opens it: `@<word> `, caret
+    /// after the space, so what is typed next runs there.
+    static func prefill(_ word: String) -> String { "@\(word) " }
+
     static func parse(_ text: String, servers: [String]) -> OmniServerPrefix {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("@") else { return OmniServerPrefix(choice: nil, line: trimmed, unknown: nil) }

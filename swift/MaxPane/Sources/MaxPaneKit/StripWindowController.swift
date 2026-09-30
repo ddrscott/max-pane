@@ -275,6 +275,14 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             self.strip.openLane(laneId: laneId, paneId: paneId)
         }
         sidebar.onNewSession = { [weak self] in self?.perform(.openAnything) }
+        // A section header's `+ NEW`: the same picker, with `@<server> ` typed
+        // so the first row runs there. `// LOCAL` gets `@local `, not a plain
+        // picker, because a plain one runs where the focused lane is — which
+        // may well be a server.
+        sidebar.onNewSessionOn = { [weak self] word in
+            guard let self, self.canPerform(.openAnything) else { return }
+            self.showOmniPicker(scope: .everything, near: self.store.focusedLane, prefill: OmniServerPrefix.prefill(word))
+        }
         sidebar.onAttach = { [weak self] key in self?.attach(key) }
         // A server's header in the sidebar is the state of that server, and
         // the place to do something about it is Settings › Servers.
