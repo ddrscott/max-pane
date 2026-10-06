@@ -90,8 +90,5 @@
 		<key>NSAllowsArbitraryLoadsInWebContent</key>
 		<true/>
 	</dict>
-	<!-- The strip is the interface. Auto-hide the menu bar in fullscreen. -->
-	<key>LSUIPresentationMode</key>
-	<integer>4</integer>
 </dict>
 </plist>
