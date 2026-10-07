@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-06
+
 ### Added
 - An open server header in the sidebar (`// WSL`, and `// LOCAL` too) shows `+ NEW` beside its `⋯`. It opens the ⌘R picker with `@wsl ` (or `@local `) already typed, so a server with no sessions has an obvious way to start one. It never folds the header, it goes away when the header is folded, and while the server isn't answering it's greyed out, with a tooltip that says why
 
@@ -155,7 +157,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Panes never inherit Claude session markers from the process that launched the app, so `claude` inside a pane saves its transcript
 - The core is linked statically, so a rebuild in the checkout cannot break the installed app
 
-[Unreleased]: https://github.com/ddrscott/max-pane/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/ddrscott/max-pane/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/ddrscott/max-pane/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/ddrscott/max-pane/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/ddrscott/max-pane/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/ddrscott/max-pane/compare/v0.6.1...v0.7.0
