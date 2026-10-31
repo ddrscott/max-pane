@@ -549,6 +549,16 @@ RustBuffer uniffi_laned_core_fn_method_core_pane_agent(uint64_t ptr, RustBuffer 
 RustBuffer uniffi_laned_core_fn_method_core_pane_agents(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PANE_HISTORY_BACK
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PANE_HISTORY_BACK
+RustBuffer uniffi_laned_core_fn_method_core_pane_history_back(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PANE_HISTORY_FORWARD
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PANE_HISTORY_FORWARD
+RustBuffer uniffi_laned_core_fn_method_core_pane_history_forward(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PANE_INTERACTION_STATE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_PANE_INTERACTION_STATE
 RustBuffer uniffi_laned_core_fn_method_core_pane_interaction_state(uint64_t ptr, RustBuffer pane_id, RustCallStatus *_Nonnull out_status
@@ -1394,6 +1404,18 @@ uint16_t uniffi_laned_core_checksum_method_core_pane_agent(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PANE_AGENTS
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PANE_AGENTS
 uint16_t uniffi_laned_core_checksum_method_core_pane_agents(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PANE_HISTORY_BACK
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PANE_HISTORY_BACK
+uint16_t uniffi_laned_core_checksum_method_core_pane_history_back(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PANE_HISTORY_FORWARD
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_PANE_HISTORY_FORWARD
+uint16_t uniffi_laned_core_checksum_method_core_pane_history_forward(void
     
 );
 #endif

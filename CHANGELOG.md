@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- ⌃⌘, and ⌃⌘. go back and forward through the panes you've been in, like a browser's history, terminals and web pages alike. Each step focuses the pane and brings it into view, even when a folded group or a gather was hiding its lane. A click, a key, the sidebar or a new pane all count as being there; stepping doesn't add anything, focusing another pane after going back drops what was ahead, closed panes get skipped, and at either end the key does nothing. The history is kept in the ledger, so it survives a relaunch
+
 ## [0.10.0] - 2026-10-06
 
 ### Added

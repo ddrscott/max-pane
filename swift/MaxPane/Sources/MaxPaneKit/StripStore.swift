@@ -800,6 +800,12 @@ public final class StripStore {
         publish(try core.focusPane(paneId: paneId))
     }
 
+    /// Step through focus history. Moves the core's cursor and answers the pane
+    /// to focus, or nil at either end. Focusing that pane adds nothing to the
+    /// history, because the cursor is already on it (`pane_history.rs`).
+    func paneHistoryBack() -> String? { (try? core.paneHistoryBack()) ?? nil }
+    func paneHistoryForward() -> String? { (try? core.paneHistoryForward()) ?? nil }
+
     /// Debounced by the caller — this is a write, and 120 Hz of writes would be
     /// absurd.
     func setScrollX(_ x: Double) { try? core.setScrollX(scrollX: x) }

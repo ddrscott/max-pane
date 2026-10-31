@@ -19,6 +19,7 @@ pub mod ledger;
 pub mod logins;
 pub mod model;
 pub mod ordinal;
+pub mod pane_history;
 pub mod portable;
 pub mod project;
 pub mod search;
@@ -26,6 +27,7 @@ pub mod search;
 use error::{CoreError, Result};
 use ledger::Ledger;
 use model::*;
+use pane_history::PaneHistory;
 use parking_lot::Mutex;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -87,6 +89,8 @@ pub const DOCK_MAX_PT: u32 = LANE_MAX_PT;
 const KEY_SCROLL_X: &str = "strip_scroll_x";
 const KEY_FOCUSED_PANE: &str = "focused_pane_id";
 const KEY_LAYOUT: &str = "strip_layout";
+/// Back and forward through the panes: `pane_history::PaneHistory` as JSON.
+const KEY_PANE_HISTORY: &str = "pane_history";
 /// The lanes a collapsed sidebar group hides, as a JSON array of lane ids.
 const KEY_HIDDEN_LANES: &str = "hidden_lane_ids";
 /// The sidebar's collapsed groups and sections, as a JSON array of their keys.
@@ -226,7 +230,7 @@ impl Core {
             let focused = ledger.app_state(KEY_FOCUSED_PANE)?;
             if focused.as_deref().is_some_and(|f| ledger.pane(f).is_err()) {
                 if let Some(first) = ledger.lanes()?.iter().flat_map(|l| &l.panes).next() {
-                    ledger.set_app_state(KEY_FOCUSED_PANE, &first.id)?;
+                    Self::set_focus(&ledger, &first.id)?;
                 }
             }
         }
@@ -470,7 +474,7 @@ impl Core {
         }
         if let Some((heir_lane, heir_pane)) = heir {
             inner.ledger.touch_focus(&heir_lane, now_ms())?;
-            inner.ledger.set_app_state(KEY_FOCUSED_PANE, &heir_pane)?;
+            Self::set_focus(&inner.ledger, &heir_pane)?;
         }
         Self::bump(&mut inner);
         Self::snapshot(&inner)
@@ -524,7 +528,7 @@ impl Core {
         // now working in. Without this the keyboard stays wherever it was,
         // which after a drag that dissolved the source lane is a pane that no
         // longer exists.
-        inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane_id)?;
+        Self::set_focus(&inner.ledger, &pane_id)?;
         inner.ledger.touch_focus(&lane_id, now_ms())?;
         Self::bump(&mut inner);
         Self::snapshot(&inner)
@@ -566,7 +570,7 @@ impl Core {
             if source.dock.is_some() {
                 inner.ledger.set_dock(&source.id, None)?;
             }
-            inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane_id)?;
+            Self::set_focus(&inner.ledger, &pane_id)?;
             inner.ledger.touch_focus(&source.id, now_ms())?;
             Self::bump(&mut inner);
             return Self::snapshot(&inner);
@@ -597,7 +601,7 @@ impl Core {
         // 1.0, the weight a lane's first pane is born with everywhere else:
         // the only ratio in a stack of one is a share of the whole.
         inner.ledger.move_pane_to(&pane_id, &lane.id, 0, Some(1.0))?;
-        inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane_id)?;
+        Self::set_focus(&inner.ledger, &pane_id)?;
         Self::bump(&mut inner);
         Self::snapshot(&inner)
     }
@@ -659,7 +663,7 @@ impl Core {
         let focused = inner.ledger.app_state(KEY_FOCUSED_PANE)?;
         let keeps = focused.as_ref().is_some_and(|f| source.panes.iter().any(|p| &p.id == f));
         if !keeps {
-            inner.ledger.set_app_state(KEY_FOCUSED_PANE, &first)?;
+            Self::set_focus(&inner.ledger, &first)?;
         }
         inner.ledger.touch_focus(&into_lane_id, now_ms())?;
         Self::bump(&mut inner);
@@ -1786,7 +1790,7 @@ impl Core {
         let mut inner = self.inner.lock();
         let pane = inner.ledger.pane(&pane_id)?;
         inner.ledger.touch_focus(&pane.lane_id, now_ms())?;
-        inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane_id)?;
+        Self::set_focus(&inner.ledger, &pane_id)?;
         Self::bump(&mut inner);
         Ok(())
     }
@@ -1797,9 +1801,24 @@ impl Core {
         let mut inner = self.inner.lock();
         let pane = inner.ledger.pane(&pane_id)?;
         inner.ledger.touch_focus(&pane.lane_id, now_ms())?;
-        inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane_id)?;
+        Self::set_focus(&inner.ledger, &pane_id)?;
         Self::bump(&mut inner);
         Self::snapshot(&inner)
+    }
+
+    /// The pane before this one in focus history, with the cursor moved onto
+    /// it. `None` at the end of the list, and nothing changes.
+    ///
+    /// The shell focuses what this returns, the same way it focuses anything,
+    /// and [`PaneHistory::visit`] sees the pane already under the cursor and
+    /// adds nothing. That is why a step never grows the list.
+    pub fn pane_history_back(&self) -> Result<Option<String>> {
+        self.step_pane_history(|history| history.back().map(str::to_owned))
+    }
+
+    /// [`Core::pane_history_back`], the other way.
+    pub fn pane_history_forward(&self) -> Result<Option<String>> {
+        self.step_pane_history(|history| history.forward().map(str::to_owned))
     }
 
     /// Persist the strip's horizontal scroll. Called on a debounce, not per
@@ -1884,7 +1903,7 @@ impl Core {
                 let heir = lanes[at + 1..].iter().find(|l| visible(l)).or_else(|| lanes[..at].iter().rev().find(|l| visible(l)));
                 if let Some(pane) = heir.and_then(|l| l.panes.first()) {
                     inner.ledger.touch_focus(&pane.lane_id, now_ms())?;
-                    inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane.id)?;
+                    Self::set_focus(&inner.ledger, &pane.id)?;
                 }
             }
         }
@@ -2157,7 +2176,7 @@ impl Core {
             volume: 100,
         };
         inner.ledger.insert_pane(&pane)?;
-        inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane.id)?;
+        Self::set_focus(&inner.ledger, &pane.id)?;
         Self::bump(&mut inner);
         Self::snapshot(&inner)
     }
@@ -2397,9 +2416,43 @@ impl Core {
         };
         inner.ledger.insert_lane(&lane)?;
         inner.ledger.insert_pane(&pane)?;
-        inner.ledger.set_app_state(KEY_FOCUSED_PANE, &pane.id)?;
+        Self::set_focus(&inner.ledger, &pane.id)?;
         Self::bump(&mut inner);
         Self::snapshot(&inner)
+    }
+
+    fn step_pane_history(
+        &self,
+        step: impl FnOnce(&mut PaneHistory) -> Option<String>,
+    ) -> Result<Option<String>> {
+        let inner = self.inner.lock();
+        let mut history = Self::pane_history(&inner.ledger)?;
+        history.compact(|id| inner.ledger.pane(id).is_ok());
+        let target = step(&mut history);
+        inner.ledger.set_app_state(KEY_PANE_HISTORY, &history.to_json())?;
+        Ok(target)
+    }
+
+    fn pane_history(ledger: &Ledger) -> Result<PaneHistory> {
+        Ok(ledger.app_state(KEY_PANE_HISTORY)?.map(|raw| PaneHistory::parse(&raw)).unwrap_or_default())
+    }
+
+    /// The one way focus is written, so every route to a pane counts as
+    /// accessing it: a click, a key, a new lane, and the hand-off when the
+    /// focused pane closes.
+    fn set_focus(ledger: &Ledger, pane_id: &str) -> Result<()> {
+        let mut history = Self::pane_history(ledger)?;
+        // A ledger from before this existed, opened with a pane focused: that
+        // pane is where the first Back should go.
+        if history.is_empty() {
+            if let Some(previous) = ledger.app_state(KEY_FOCUSED_PANE)? {
+                history.visit(&previous);
+            }
+        }
+        if history.visit(pane_id) {
+            ledger.set_app_state(KEY_PANE_HISTORY, &history.to_json())?;
+        }
+        ledger.set_app_state(KEY_FOCUSED_PANE, pane_id)
     }
 
     /// A JSON array of strings out of `app_state`; anything unreadable is empty.
