@@ -565,6 +565,7 @@ Press **⌘/** for every shortcut. The three that matter:
 | **⌘O** (also **⌘T**) | start anything — a command, a URL, a page you have been to or kept, a session that is already running |
 | **⌘E** | run Max Pane: every command by name with its key, the live settings, the servers — or type `>` into ⌘O |
 | **⌘[** / **⌘]** | move focus between lanes |
+| **⌃⌘,** / **⌃⌘.** | back and forward through the panes you have been in, like a browser's history |
 | **⌃⌘[** / **⌃⌘]** | dock this lane to that edge of the window, or undock it |
 | **⌘G** | Lanes ⇄ Gallery: every lane on one screen, live; ⌘G again goes back |
 | **⌘↩** | Expand Tile: in the gallery, grow the focused lane's tile to the lane's real size; ⌘↩ again puts it back. Greyed outside the gallery |
@@ -598,6 +599,27 @@ scrolls to it, where every ⌘O row spends something to create a pane.
 With nothing typed it is not empty: every lane, most recently used first, the
 gathered-away ones included. The lane you are in is listed and marked focused,
 but the one before it is selected — so ⌘P ↩ goes back, the way ⌘⇥ does.
+
+### Back and forward through panes
+
+**⌃⌘,** goes back to the pane you were in before this one and **⌃⌘.** comes
+forward again, in Navigate and ⌘/ too, terminals and pages alike. Each step
+focuses the pane and brings its lane into view, the way ⌘P lands: a lane a
+folded group or a gather is hiding comes back first.
+
+It behaves like a browser's history because it is built like one. Any way a
+pane takes focus counts: a click, a key, the sidebar, a new pane, and the pane
+that inherits focus when the one you were in closes. Steps themselves add
+nothing, so back then forward leaves the list as it was. Focusing a different
+pane after going back drops whatever was ahead. Closed panes are skipped, and
+at either end the key does nothing. The history keeps the last 256 pane
+changes in the ledger (`app_state`, `crates/laned-core/src/pane_history.rs`), so
+it survives a relaunch like the strip does.
+
+⌘P with nothing typed is the other way to go back, by lane instead of by pane:
+its list is every lane in the order you last used it.
+
+`keys` moves them: `paneBack`, `paneForward`.
 
 ### A web lane
 

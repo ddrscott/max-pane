@@ -1223,6 +1223,21 @@ public protocol CoreProtocol: AnyObject, Sendable {
     func paneAgents() throws  -> [PaneAgent]
     
     /**
+     * The pane before this one in focus history, with the cursor moved onto
+     * it. `None` at the end of the list, and nothing changes.
+     *
+     * The shell focuses what this returns, the same way it focuses anything,
+     * and [`PaneHistory::visit`] sees the pane already under the cursor and
+     * adds nothing. That is why a step never grows the list.
+     */
+    func paneHistoryBack() throws  -> String?
+    
+    /**
+     * [`Core::pane_history_back`], the other way.
+     */
+    func paneHistoryForward() throws  -> String?
+    
+    /**
      * Read back what a web pane was doing, for the one call that rebuilds it.
      */
     func paneInteractionState(paneId: String) throws  -> Data?
@@ -2760,6 +2775,35 @@ open func paneAgents()throws  -> [PaneAgent]  {
     return try  FfiConverterSequenceTypePaneAgent.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
         uniffiCallStatus in
     uniffi_laned_core_fn_method_core_pane_agents(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * The pane before this one in focus history, with the cursor moved onto
+     * it. `None` at the end of the list, and nothing changes.
+     *
+     * The shell focuses what this returns, the same way it focuses anything,
+     * and [`PaneHistory::visit`] sees the pane already under the cursor and
+     * adds nothing. That is why a step never grows the list.
+     */
+open func paneHistoryBack()throws  -> String?  {
+    return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_pane_history_back(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * [`Core::pane_history_back`], the other way.
+     */
+open func paneHistoryForward()throws  -> String?  {
+    return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_pane_history_forward(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
@@ -8607,6 +8651,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_pane_agents() != 10856) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_pane_history_back() != 354) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_pane_history_forward() != 19266) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_pane_interaction_state() != 34891) {

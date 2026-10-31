@@ -1308,6 +1308,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             case .focusUp:    strip.moveFocus(.up)
             case .focusDown:  strip.moveFocus(.down)
 
+            case .paneBack:    stepPaneHistory(to: store.paneHistoryBack())
+            case .paneForward: stepPaneHistory(to: store.paneHistoryForward())
+
             case .moveLaneLeft:
                 if let lane = focusedLane { try store.nudgeLane(lane.id, right: false) }
             case .moveLaneRight:
@@ -1776,6 +1779,22 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         ) { [weak self] yes in
             if yes { self?.store.clearClipHistory() }
         }
+    }
+
+    /// ⌃⌘, / ⌃⌘. land the way ⌘P does: the pane may be in a lane a folded group
+    /// or a gather is hiding, and the strip has to go and find it. At either
+    /// end there is no pane and nothing happens.
+    ///
+    /// `canPerform` says yes at the ends on purpose. A menu item that is greyed
+    /// out lets its key fall through to the first responder, and a terminal
+    /// would type the chord's escape sequence at the prompt.
+    private func stepPaneHistory(to paneId: String?) {
+        guard let paneId, let laneId = store.allLanes.first(where: {
+            $0.panes.contains { $0.id == paneId }
+        })?.id else { return }
+        bringBack(laneId: laneId)
+        try? store.focusPane(paneId)
+        strip.reveal(laneId: laneId, flash: true)
     }
 
     private func showPalette() {

@@ -29,6 +29,8 @@ public enum Command: String, CaseIterable, Sendable {
     case focusRight
     case focusUp
     case focusDown
+    case paneBack
+    case paneForward
     case moveLaneLeft
     case moveLaneRight
     case toggleSidebar
@@ -118,6 +120,8 @@ public enum Command: String, CaseIterable, Sendable {
         case .focusRight: return "Focus Lane Right"
         case .focusUp: return "Focus Pane Above"
         case .focusDown: return "Focus Pane Below"
+        case .paneBack: return "Back to Previous Pane"
+        case .paneForward: return "Forward to Next Pane"
         case .moveLaneLeft: return "Move Lane Left"
         case .moveLaneRight: return "Move Lane Right"
         case .toggleSidebar: return "Toggle Sidebar"
@@ -266,6 +270,17 @@ public enum Command: String, CaseIterable, Sendable {
         case .focusUp:         return ("[", [.command, .shift])
         case .focusDown:       return ("]", [.command, .shift])
         // PRD §7.2 names these explicitly.
+        // ⌃⌘, / ⌃⌘.: back and forward through the panes you have been in, the
+        // way a browser's history goes. The keys are the ones with < and > on
+        // them. ⌘[ and ⌘] are the browser's keys and they already walk the
+        // strip, and all four of their modifiers are spent. The arrows were the
+        // first try and do not work on the owner's Mac: Spectacle takes ⌃⌘←
+        // and most other modified arrows system-wide, so the app never sees
+        // them; ⌘← and ⌘→ are line start and end in a terminal. macOS has
+        // nothing on these (its ⌃⌘ chords are Space, F, Q and D), and a page
+        // gives up a ⌘ chord through `claims(_:)` like every other in this file.
+        case .paneBack:        return (",", [.command, .control])
+        case .paneForward:     return (".", [.command, .control])
         case .moveLaneLeft:    return ("\u{2190}", [.command, .shift])
         case .moveLaneRight:   return ("\u{2192}", [.command, .shift])
         case .toggleSidebar:   return ("b", [.command])
@@ -641,6 +656,8 @@ public enum Command: String, CaseIterable, Sendable {
         // Beside End Session: the other thing to do about a session that ended.
         case .resumeAgent, .resumeAllAgents: return .file
         case .focusLeft, .focusRight, .focusUp, .focusDown, .search, .gather, .ungather: return .navigate
+        // Beside ⌘[ / ⌘]: the same act, by when instead of by where.
+        case .paneBack, .paneForward: return .navigate
         // With ⌘P and ⌘[ ⌘]: they move focus, to the agent that needs it.
         case .nextAttention, .previousAttention, .showAttention: return .navigate
         case .toggleGallery: return .view
