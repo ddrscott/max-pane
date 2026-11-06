@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-05
+
 ### Added
 - ⌃⌘, and ⌃⌘. go back and forward through the panes you've been in, like a browser's history, terminals and web pages alike. Each step focuses the pane and brings it into view, even when a folded group or a gather was hiding its lane. A click, a key, the sidebar or a new pane all count as being there; stepping doesn't add anything, focusing another pane after going back drops what was ahead, closed panes get skipped, and at either end the key does nothing. The history is kept in the ledger, so it survives a relaunch
 
@@ -163,7 +165,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Panes never inherit Claude session markers from the process that launched the app, so `claude` inside a pane saves its transcript
 - The core is linked statically, so a rebuild in the checkout cannot break the installed app
 
-[Unreleased]: https://github.com/ddrscott/max-pane/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/ddrscott/max-pane/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/ddrscott/max-pane/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/ddrscott/max-pane/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/ddrscott/max-pane/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/ddrscott/max-pane/compare/v0.7.0...v0.8.0
