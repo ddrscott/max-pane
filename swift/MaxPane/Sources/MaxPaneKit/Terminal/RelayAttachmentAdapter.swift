@@ -224,15 +224,23 @@ final class RelayAttachmentAdapter: RelayAttachment {
 
         // Every callback arrives on the session's own queue. Hop to the main
         // actor before touching anything the UI owns.
-        session.onData = { [weak self] bytes in
+        //
+        // **`session` is captured weak, every time.** The session owns these
+        // closures, so a strong capture is a cycle: closing the session and
+        // dropping `self.session` frees nothing. That leaked every connection
+        // ever made, each with its transport's 256 KiB read buffer, and a lane
+        // retrying a dead session every 15 s leaked about 1.4 GB a day. A
+        // copy of the app that had been up four and a half days held 54 000
+        // of them in 16 GB. `RelayAttachmentLeakTests` keeps it fixed.
+        session.onData = { [weak self, weak session] bytes in
             let copy = Array(bytes)
             Task { @MainActor in
                 guard let self else { return }
-                self.lastOffset = session.offset
+                if let session { self.lastOffset = session.offset }
                 self.onData?(copy[...])
             }
         }
-        session.onReplay = { [weak self] plain, isDelta in
+        session.onReplay = { [weak self, weak session] plain, isDelta in
             Task { @MainActor in
                 guard let self else { return }
                 // A reconnect's replay is held until the SYNC after it says
@@ -241,12 +249,15 @@ final class RelayAttachmentAdapter: RelayAttachment {
                     self.heldReplay = plain
                     return
                 }
-                self.lastOffset = session.offset
+                if let session { self.lastOffset = session.offset }
                 self.onData?(plain[...])
             }
         }
-        session.onSync = { [weak self] value in
-            Task { @MainActor in self?.syncArrived(value, resumedFrom: resumedFrom, offset: session.offset) }
+        session.onSync = { [weak self, weak session] value in
+            Task { @MainActor in
+                guard let self else { return }
+                self.syncArrived(value, resumedFrom: resumedFrom, offset: session?.offset ?? value)
+            }
         }
         session.onResize = { [weak self] cols, rows in
             Task { @MainActor in self?.onHostResize?(cols, rows) }
@@ -277,8 +288,9 @@ final class RelayAttachmentAdapter: RelayAttachment {
                 self.onConnectionChange?(true)
             }
         }
-        session.onClosed = { [weak self] in
-            let reason = session.closeReason
+        session.onClosed = { [weak self, weak session] in
+            // The session is calling this itself, so it is still here.
+            let reason = session?.closeReason
             Task { @MainActor in self?.handleClosed(reason) }
         }
         session.onGzipError = { [weak self] _ in

@@ -212,6 +212,11 @@ public final class WebSocketTransport: NSObject, RelayTransport, URLSessionWebSo
         closed = true
         pinger?.cancel(); pinger = nil
         task?.cancel()
+        // A URLSession holds its delegate, this transport, until it is
+        // invalidated. Without this every remote connection kept its
+        // transport, its URLSession, and that session's cache and SQLite
+        // handle for as long as the app ran.
+        urlSession.invalidateAndCancel()
         onClosed?(close)
     }
 
