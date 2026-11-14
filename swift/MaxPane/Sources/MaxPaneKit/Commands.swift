@@ -65,6 +65,7 @@ public enum Command: String, CaseIterable, Sendable {
     case advancedPaste
     case pasteHistory
     case clearPasteHistory
+    case dictate
     case clearScrollback
     case showMemory
     case pairWithNext
@@ -157,6 +158,7 @@ public enum Command: String, CaseIterable, Sendable {
         case .advancedPaste: return "Advanced Paste…"
         case .pasteHistory: return "Paste History…"
         case .clearPasteHistory: return "Clear Paste History…"
+        case .dictate: return "Dictate…"
         case .clearScrollback: return "Clear Scrollback"
         case .showMemory: return "Memory"
         case .pairWithNext: return "Pair With Lane to the Right"
@@ -399,6 +401,13 @@ public enum Command: String, CaseIterable, Sendable {
         case .pasteHistory: return ("h", [.command, .shift])
         // No key: it destroys something, once in a while, from a menu.
         case .clearPasteHistory: return nil
+        // F5, which is the microphone on an Apple silicon laptop's top row
+        // (fn-F5 there, or F5 with "use F1, F2… as standard function keys"),
+        // and a bare F5 on everything else. Nothing here or in macOS binds
+        // it, and a terminal program that wants F5 loses it only while a
+        // terminal pane has the keyboard, which is when this can run. With no
+        // ⌘ it is matched in the window's key monitor, not by the menu.
+        case .dictate: return ("\u{F708}", [])
         // ⌘K, the key every Mac terminal clears on (Terminal, iTerm, Ghostty)
         // and nobody else's here. Slack, Linear and Notion bind it in the
         // page, so in a web pane it is the page's (`yieldsToPage`), the way
@@ -526,6 +535,9 @@ public enum Command: String, CaseIterable, Sendable {
         // ⌘D was the other such alternate, until Split Right took the key for
         // itself — see `splitRight` above.
         case .openAnything: return [("t", [.command])]
+        // The microphone key itself, when macOS lets it through: it does when
+        // Keyboard › Dictation's shortcut is something other than 🎤.
+        case .dictate: return [("🎤", [])]
         default: return []
         }
     }
@@ -683,6 +695,8 @@ public enum Command: String, CaseIterable, Sendable {
              .advancedPaste: return .edit
         // Below Paste Special: the pastes, then what was pasted.
         case .pasteHistory, .clearPasteHistory: return .edit
+        // Under the pastes: it ends in one, of what you said.
+        case .dictate: return .edit
         // Under Edit with the other Clear, and where iTerm keeps its ⌘K.
         case .clearScrollback: return .edit
         case .showMemory: return .view

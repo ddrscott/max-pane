@@ -90,6 +90,15 @@ pub struct ClipEntry {
     pub at: i64,
 }
 
+/// One row of dictation history (ADR-0049): something said into the
+/// Dictate popup, as it stood when it left.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct DictationEntry {
+    pub id: i64,
+    pub content: String,
+    pub at: i64,
+}
+
 /// What a remembered entry launches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum RecentKind {

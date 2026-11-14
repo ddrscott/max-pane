@@ -361,8 +361,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             // A palette on screen owns the keyboard; ⌘T while typing a command
             // into the picker must not open a second picker.
             guard NSApp.keyWindow === self.window else { return event }
-            let typed = KeyChord(key: event.charactersIgnoringModifiers ?? "",
-                                 modifiers: event.modifierFlags)
+            let typed = KeyChord.typed(event)
             for command in Command.allCases {
                 // The first chord is the menu's, and AppKit has already had it.
                 // Matching it again here would run the command twice.
@@ -1049,6 +1048,10 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         case .claimSession:
             // Only meaningful for a terminal pane.
             return store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .pty
+        case .dictate:
+            // A terminal to type into, and no Dictate already up.
+            return store.state.focusedPaneId.flatMap { store.pane($0) }?.kind == .pty
+                && dictationPopup?.isOpen != true
         case .endSession:
             // A terminal pane with a session behind it. A pty pane whose
             // session never started has nothing to end; ⌘W closes it.
@@ -1149,7 +1152,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         case .checkForUpdates: return "no update check in this build"
         case .copyWithStyles, .copyMode, .pasteWithoutAsking, .pasteEscaped, .pasteAsBase64,
              .pasteBase64Decoded, .pasteFileAsBase64, .pasteSlowly, .advancedPaste, .claimSession,
-             .clearScrollback:
+             .clearScrollback, .dictate:
             return "needs a terminal with the keyboard"
         case .endSession: return "needs a terminal with a session"
         case .resumeAgent: return "needs a terminal whose agent's session is gone"
@@ -1444,6 +1447,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
 
             case .clearPasteHistory:
                 confirmClearPasteHistory(over: window)
+
+            case .dictate:
+                showDictation()
 
             case .claimSession:
                 confirmClaimSession()
@@ -1791,6 +1797,40 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         }
         palette = controller
         controller.present(over: window)
+    }
+
+    /// The Dictate popup that is up, while it is. One at a time: F5 inside it
+    /// is its own (listen again), and from the strip it is greyed.
+    private weak var dictationPopup: DictationPopup?
+
+    /// Edit › Dictate… (F5, ADR-0049). For the terminal with the keyboard,
+    /// which is where a send types and where the keyboard goes back after.
+    private func showDictation() {
+        guard let paneId = store.state.focusedPaneId, store.pane(paneId)?.kind == .pty else { return }
+        let builtWith = config
+        let target = store.lane(containing: paneId).map(SidebarModel.laneTitle) ?? "this terminal"
+        let popup = DictationPopup(
+            store: store, config: { [weak self] in self?.configStore?.config ?? builtWith },
+            paneId: paneId, target: target
+        ) { [weak self] text in
+            self?.strip.dictated(text, intoPane: paneId)
+        }
+        dictationPopup = popup
+        popup.present(over: window)
+    }
+
+    /// Edit › Start Dictation…, the item AppKit adds to every Edit menu, on
+    /// its way up the responder chain to `NSApplication`. With a terminal
+    /// pane's keyboard in this window it opens Dictate instead, because
+    /// dictating straight into a terminal types each word as it is heard,
+    /// with no chance to fix one before the agent reads it. Anywhere else —
+    /// a page, the address field — it goes on to the system's dictation.
+    @objc func startDictation(_ sender: Any?) {
+        if NSApp.keyWindow === window, canPerform(.dictate) {
+            perform(.dictate)
+        } else {
+            NSApp.sendAction(Selector(("startDictation:")), to: NSApp, from: sender)
+        }
     }
 
     /// Edit › Clear Paste History…, and the button in Settings. ↩ is Cancel.

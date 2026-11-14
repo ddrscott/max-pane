@@ -815,6 +815,13 @@ public protocol CoreProtocol: AnyObject, Sendable {
     
     func deleteClip(id: Int64) throws 
     
+    func deleteDictation(id: Int64) throws 
+    
+    /**
+     * Dictation history, newest first, after capping it at `keep`.
+     */
+    func dictationHistory(keep: UInt32) throws  -> [DictationEntry]
+    
     /**
      * Hold a lane at one edge of the window instead of letting it scroll with
      * the strip.
@@ -1296,6 +1303,14 @@ public protocol CoreProtocol: AnyObject, Sendable {
      * and text shaped like a secret is written as four characters and `•••`.
      */
     func recordClip(paneId: String, kind: ClipKind, source: ClipSource, text: String, keep: UInt32, days: UInt32) throws  -> Bool
+    
+    /**
+     * Keep `text` as said into the Dictate popup for the pane `pane_id`.
+     * True when it was kept. `keep` is `dictation_history_keep` as it is
+     * now; 0 is off. A private lane's pane, an unknown pane, blank text and
+     * anything over 64 KB are never written.
+     */
+    func recordDictation(paneId: String, text: String, keep: UInt32) throws  -> Bool
     
     /**
      * Remember the agent a terminal pane is running. Called on the shell's
@@ -2065,6 +2080,28 @@ open func deleteClip(id: Int64)throws   {try rustCallWithError(FfiConverterTypeC
         FfiConverterInt64.lower(id),uniffiCallStatus
     )
 }
+}
+    
+open func deleteDictation(id: Int64)throws   {try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_delete_dictation(
+            self.uniffiCloneHandle(),
+        FfiConverterInt64.lower(id),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Dictation history, newest first, after capping it at `keep`.
+     */
+open func dictationHistory(keep: UInt32)throws  -> [DictationEntry]  {
+    return try  FfiConverterSequenceTypeDictationEntry.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_dictation_history(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(keep),uniffiCallStatus
+    )
+})
 }
     
     /**
@@ -2938,6 +2975,24 @@ open func recordClip(paneId: String, kind: ClipKind, source: ClipSource, text: S
         FfiConverterString.lower(text),
         FfiConverterUInt32.lower(keep),
         FfiConverterUInt32.lower(days),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Keep `text` as said into the Dictate popup for the pane `pane_id`.
+     * True when it was kept. `keep` is `dictation_history_keep` as it is
+     * now; 0 is off. A private lane's pane, an unknown pane, blank text and
+     * anything over 64 KB are never written.
+     */
+open func recordDictation(paneId: String, text: String, keep: UInt32)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeCoreError_lift) {
+        uniffiCallStatus in
+    uniffi_laned_core_fn_method_core_record_dictation(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(paneId),
+        FfiConverterString.lower(text),
+        FfiConverterUInt32.lower(keep),uniffiCallStatus
     )
 })
 }
@@ -3973,6 +4028,68 @@ public func FfiConverterTypeClipEntry_lift(_ buf: RustBuffer) throws -> ClipEntr
 #endif
 public func FfiConverterTypeClipEntry_lower(_ value: ClipEntry) -> RustBuffer {
     return FfiConverterTypeClipEntry.lower(value)
+}
+
+
+/**
+ * One row of dictation history (ADR-0049): something said into the
+ * Dictate popup, as it stood when it left.
+ */
+public struct DictationEntry: Equatable, Hashable {
+    public var id: Int64
+    public var content: String
+    public var at: Int64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: Int64, content: String, at: Int64) {
+        self.id = id
+        self.content = content
+        self.at = at
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension DictationEntry: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDictationEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DictationEntry {
+        return
+            try DictationEntry(
+                id: FfiConverterInt64.read(from: &buf), 
+                content: FfiConverterString.read(from: &buf), 
+                at: FfiConverterInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DictationEntry, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.id, into: &buf)
+        FfiConverterString.write(value.content, into: &buf)
+        FfiConverterInt64.write(value.at, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDictationEntry_lift(_ buf: RustBuffer) throws -> DictationEntry {
+    return try FfiConverterTypeDictationEntry.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDictationEntry_lower(_ value: DictationEntry) -> RustBuffer {
+    return FfiConverterTypeDictationEntry.lower(value)
 }
 
 
@@ -8078,6 +8195,31 @@ fileprivate struct FfiConverterSequenceTypeClipEntry: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeDictationEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [DictationEntry]
+
+    public static func write(_ value: [DictationEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeDictationEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [DictationEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [DictationEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeDictationEntry.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeHistoryEntry: FfiConverterRustBuffer {
     typealias SwiftType = [HistoryEntry]
 
@@ -8542,6 +8684,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_laned_core_checksum_method_core_delete_clip() != 29185) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_laned_core_checksum_method_core_delete_dictation() != 54079) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_dictation_history() != 28686) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_laned_core_checksum_method_core_dock_lane() != 57766) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -8681,6 +8829,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_record_clip() != 16145) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_laned_core_checksum_method_core_record_dictation() != 13709) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_laned_core_checksum_method_core_record_pane_agent() != 64735) {

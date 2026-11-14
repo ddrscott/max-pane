@@ -364,6 +364,16 @@ RustBuffer uniffi_laned_core_fn_method_core_create_private_web_lane(uint64_t ptr
 void uniffi_laned_core_fn_method_core_delete_clip(uint64_t ptr, int64_t id, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_DELETE_DICTATION
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_DELETE_DICTATION
+void uniffi_laned_core_fn_method_core_delete_dictation(uint64_t ptr, int64_t id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_DICTATION_HISTORY
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_DICTATION_HISTORY
+RustBuffer uniffi_laned_core_fn_method_core_dictation_history(uint64_t ptr, uint32_t keep, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_DOCK_LANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_DOCK_LANE
 RustBuffer uniffi_laned_core_fn_method_core_dock_lane(uint64_t ptr, RustBuffer lane_id, RustBuffer side, RustBuffer mode, RustBuffer width_pt, RustCallStatus *_Nonnull out_status
@@ -597,6 +607,11 @@ RustBuffer uniffi_laned_core_fn_method_core_recents(uint64_t ptr, uint32_t limit
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECORD_CLIP
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECORD_CLIP
 int8_t uniffi_laned_core_fn_method_core_record_clip(uint64_t ptr, RustBuffer pane_id, RustBuffer kind, RustBuffer source, RustBuffer text, uint32_t keep, uint32_t days, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECORD_DICTATION
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECORD_DICTATION
+int8_t uniffi_laned_core_fn_method_core_record_dictation(uint64_t ptr, RustBuffer pane_id, RustBuffer text, uint32_t keep, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_FN_METHOD_CORE_RECORD_PANE_AGENT
@@ -1185,6 +1200,18 @@ uint16_t uniffi_laned_core_checksum_method_core_delete_clip(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_DELETE_DICTATION
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_DELETE_DICTATION
+uint16_t uniffi_laned_core_checksum_method_core_delete_dictation(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_DICTATION_HISTORY
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_DICTATION_HISTORY
+uint16_t uniffi_laned_core_checksum_method_core_dictation_history(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_DOCK_LANE
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_DOCK_LANE
 uint16_t uniffi_laned_core_checksum_method_core_dock_lane(void
@@ -1464,6 +1491,12 @@ uint16_t uniffi_laned_core_checksum_method_core_recents(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RECORD_CLIP
 #define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RECORD_CLIP
 uint16_t uniffi_laned_core_checksum_method_core_record_clip(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RECORD_DICTATION
+#define UNIFFI_FFIDEF_UNIFFI_LANED_CORE_CHECKSUM_METHOD_CORE_RECORD_DICTATION
+uint16_t uniffi_laned_core_checksum_method_core_record_dictation(void
     
 );
 #endif

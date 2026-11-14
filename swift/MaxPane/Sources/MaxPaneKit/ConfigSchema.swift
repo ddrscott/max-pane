@@ -316,6 +316,8 @@ public struct ConfigField {
                      "How many paste history entries are kept. 0 keeps none."),
             unsigned("pasteHistoryDays", \.pasteHistoryDays, .terminals, 0...3650, appliesLive: true,
                      "Paste history entries older than this many days are removed. 0 keeps any age."),
+            unsigned("dictationHistoryKeep", \.dictationHistoryKeep, .terminals, 0...10_000, appliesLive: true,
+                     "How many entries the Dictate popup (F5) keeps to bring back, sent or not. 0 keeps none and deletes what was kept."),
             choice("osc52Write", \.osc52Write, .terminals, appliesLive: true,
                    "A program setting the clipboard (OSC 52: tmux, vim, a remote yank). Allowed ones show COPIED in the lane header."),
             choice("osc52Read", \.osc52Read, .terminals, appliesLive: true,

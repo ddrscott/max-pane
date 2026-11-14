@@ -627,6 +627,23 @@ public final class StripStore {
     /// applies without waiting for the next paste.
     func applyPasteHistorySettings(_ config: Config) { _ = clipHistory(config) }
 
+    // MARK: dictation history (ADR-0049)
+
+    /// Keep what was said into the Dictate popup for `paneId`. The core
+    /// refuses a private lane's pane, blank text and over 64 KB.
+    @discardableResult
+    func recordDictation(paneId: String, text: String, config: Config) -> Bool {
+        (try? core.recordDictation(paneId: paneId, text: text, keep: config.dictationHistoryKeep)) ?? false
+    }
+
+    /// Dictation history, newest first, capped by the setting as it is now.
+    /// `dictation_history_keep = 0` empties it.
+    func dictationHistory(_ config: Config) -> [DictationEntry] {
+        (try? core.dictationHistory(keep: config.dictationHistoryKeep)) ?? []
+    }
+
+    func deleteDictation(_ id: Int64) { try? core.deleteDictation(id: id) }
+
     func clearHistory() { try? core.clearHistory() }
 
     /// Forget every page last opened at or after `cutoff`, and report how many

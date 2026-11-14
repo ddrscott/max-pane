@@ -1157,6 +1157,29 @@ impl Core {
         inner.ledger.clear_clips()
     }
 
+    // ---- dictation history (ADR-0049) -------------------------------------
+
+    /// Keep `text` as said into the Dictate popup for the pane `pane_id`.
+    /// True when it was kept. `keep` is `dictation_history_keep` as it is
+    /// now; 0 is off. A private lane's pane, an unknown pane, blank text and
+    /// anything over 64 KB are never written.
+    pub fn record_dictation(&self, pane_id: String, text: String, keep: u32) -> Result<bool> {
+        let inner = self.inner.lock();
+        inner.ledger.record_dictation(&pane_id, &text, keep, now_ms())
+    }
+
+    /// Dictation history, newest first, after capping it at `keep`.
+    pub fn dictation_history(&self, keep: u32) -> Result<Vec<DictationEntry>> {
+        let inner = self.inner.lock();
+        inner.ledger.prune_dictations(keep)?;
+        inner.ledger.dictations()
+    }
+
+    pub fn delete_dictation(&self, id: i64) -> Result<()> {
+        let inner = self.inner.lock();
+        inner.ledger.delete_dictation(id)
+    }
+
     // ---- content blocking ------------------------------------------------
 
     /// The sites the ad and tracker blocker is switched off for: registrable

@@ -194,6 +194,11 @@ public struct Config: Codable, Equatable {
     public var pasteHistoryKeep: UInt32 = 200
     /// Entries older than this many days go. 0 keeps any age.
     public var pasteHistoryDays: UInt32 = 30
+    /// Dictation history (ADR-0049): what was said into the Dictate popup
+    /// (F5), for it to bring back. How many entries are kept; 0 keeps none
+    /// and deletes what was kept. Read each time the popup opens or keeps
+    /// something.
+    public var dictationHistoryKeep: UInt32 = 200
 
     /// A program in a terminal setting the clipboard with OSC 52: what tmux,
     /// vim and neovim do to copy, and the only way a yank on a remote machine
@@ -451,6 +456,7 @@ public struct Config: Codable, Equatable {
         pasteHistory = read(.pasteHistory, d.pasteHistory)
         pasteHistoryKeep = read(.pasteHistoryKeep, d.pasteHistoryKeep)
         pasteHistoryDays = read(.pasteHistoryDays, d.pasteHistoryDays)
+        dictationHistoryKeep = read(.dictationHistoryKeep, d.dictationHistoryKeep)
         osc52Write = read(.osc52Write, d.osc52Write)
         osc52Read = read(.osc52Read, d.osc52Read)
         cursorBlink = read(.cursorBlink, d.cursorBlink)

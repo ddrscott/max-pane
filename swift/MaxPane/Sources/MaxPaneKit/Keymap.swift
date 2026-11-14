@@ -19,7 +19,11 @@ public struct KeyChord: Hashable, Sendable {
 
     public init(key: String, modifiers: NSEvent.ModifierFlags) {
         self.key = key.lowercased()
-        self.mask = modifiers.intersection(.deviceIndependentFlagsMask).rawValue
+        // The four a chord can name. Not the whole device-independent mask:
+        // an F-key or an arrow arrives with `.function` set and Caps Lock
+        // adds `.capsLock`, and either would make a typed chord unequal to
+        // the declared one.
+        self.mask = modifiers.intersection([.command, .control, .option, .shift]).rawValue
     }
 
     public init(_ pair: (String, NSEvent.ModifierFlags)) {
@@ -49,7 +53,36 @@ public struct KeyChord: Hashable, Sendable {
         ("enter", "↩", "\r"),
         ("delete", "⌫", "\u{8}"),
         ("backspace", "⌫", "\u{8}"),
+        // The microphone key (F5's place on Apple silicon laptops). It has no
+        // character, so it is stored as the glyph; it only ever arrives by
+        // key code, and only when macOS has not kept it for its own dictation.
+        ("mic", "🎤", "🎤"),
+    ] + (1...12).map { n in
+        // F1–F12 as AppKit spells them: `NSF1FunctionKey` onward, which is
+        // also what a menu item would take as a key equivalent.
+        ("f\(n)", "F\(n)", String(UnicodeScalar(UInt32(0xF703 + n))!))
+    }
+
+    /// Key codes for the keys whose characters are private-use points or
+    /// nothing at all. F-keys by their ANSI codes; 176 is the microphone key.
+    static let codes: [UInt16: String] = [
+        53: "\u{1b}", 123: "\u{2190}", 124: "\u{2192}", 125: "\u{2193}", 126: "\u{2191}",
+        48: "\u{21e5}", 49: " ", 36: "\r", 76: "\r", 51: "\u{8}",
+        122: "\u{F704}", 120: "\u{F705}", 99: "\u{F706}", 118: "\u{F707}", 96: "\u{F708}",
+        97: "\u{F709}", 98: "\u{F70A}", 100: "\u{F70B}", 101: "\u{F70C}", 109: "\u{F70D}",
+        103: "\u{F70E}", 111: "\u{F70F}", 176: "🎤",
     ]
+
+    /// The chord a key press is, for the key monitors. `charactersIgnoringModifiers`
+    /// for everything except the keys only a code names: an F-key's
+    /// character is a private-use point that `named` does spell, but the
+    /// microphone key has none at all.
+    public static func typed(_ event: NSEvent) -> KeyChord {
+        if event.type == .keyDown || event.type == .keyUp, event.keyCode == 176 {
+            return KeyChord(key: "🎤", modifiers: event.modifierFlags)
+        }
+        return KeyChord(key: event.charactersIgnoringModifiers ?? "", modifiers: event.modifierFlags)
+    }
 
     /// The chord as a human reads it: `⇧⌘D`, `⌃⌘[`, `esc`.
     ///
@@ -97,11 +130,7 @@ public struct KeyChord: Hashable, Sendable {
     /// map stores: ⇧⌘[ arrives as `{`.
     public init?(event: NSEvent) {
         let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
-        let byCode: [UInt16: String] = [
-            53: "\u{1b}", 123: "\u{2190}", 124: "\u{2192}", 125: "\u{2193}", 126: "\u{2191}",
-            48: "\u{21e5}", 49: " ", 36: "\r", 76: "\r", 51: "\u{8}",
-        ]
-        if let key = byCode[event.keyCode] {
+        if let key = Self.codes[event.keyCode] {
             self.init(key: key, modifiers: modifiers)
             return
         }

@@ -43,6 +43,7 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ("0017_pane_audio", include_str!("../migrations/0017_pane_audio.sql")),
     ("0018_clip_source", include_str!("../migrations/0018_clip_source.sql")),
     ("0019_pane_agent", include_str!("../migrations/0019_pane_agent.sql")),
+    ("0020_dictation", include_str!("../migrations/0020_dictation.sql")),
 ];
 
 /// A needle as an FTS5 query: one quoted phrase, nothing else.
@@ -445,6 +446,66 @@ impl Ledger {
         let done = self.conn.execute("DELETE FROM clip", []);
         self.conn.pragma_update(None, "secure_delete", false)?;
         Ok(done? as u64)
+    }
+
+    /// Keep `text` as said into the Dictate popup for the pane `pane_id`
+    /// (ADR-0049). True when it was kept. Refused, as a clip is: `keep` of 0,
+    /// a pane in a private lane or one the ledger does not know, nothing but
+    /// whitespace, and more than 64 KB. Not netted for secrets: it is speech,
+    /// and a recalled entry that came back as `•••` would be no use. The same
+    /// text again moves to the top instead of repeating.
+    pub fn record_dictation(&self, pane_id: &str, text: &str, keep: u32, now_ms: i64) -> Result<bool> {
+        if keep == 0 || text.trim().is_empty() || text.len() > crate::clips::MAX_BYTES {
+            return Ok(false);
+        }
+        let private: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT lane.is_private FROM pane JOIN lane ON lane.id = pane.lane_id WHERE pane.id = ?1",
+                [pane_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if private != Some(0) {
+            return Ok(false);
+        }
+        self.conn.execute("DELETE FROM dictation WHERE content = ?1", [text])?;
+        self.conn.execute(
+            "INSERT INTO dictation (content, at) VALUES (?1, ?2)",
+            params![text, now_ms],
+        )?;
+        self.prune_dictations(keep)?;
+        Ok(true)
+    }
+
+    /// All but the newest `keep` go (0 keeps none). Returns how many went.
+    pub fn prune_dictations(&self, keep: u32) -> Result<u64> {
+        let gone = self.conn.execute(
+            "DELETE FROM dictation WHERE id NOT IN
+               (SELECT id FROM dictation ORDER BY at DESC, id DESC LIMIT ?1)",
+            [keep],
+        )?;
+        Ok(gone as u64)
+    }
+
+    /// Dictation history, newest first.
+    pub fn dictations(&self) -> Result<Vec<DictationEntry>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, content, at FROM dictation ORDER BY at DESC, id DESC")?;
+        let rows = stmt.query_map([], |r| {
+            Ok(DictationEntry { id: r.get(0)?, content: r.get(1)?, at: r.get(2)? })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    /// With `secure_delete` on, as a clip's deletion is.
+    pub fn delete_dictation(&self, id: i64) -> Result<()> {
+        self.conn.pragma_update(None, "secure_delete", true)?;
+        let done = self.conn.execute("DELETE FROM dictation WHERE id = ?1", [id]);
+        self.conn.pragma_update(None, "secure_delete", false)?;
+        done?;
+        Ok(())
     }
 
     /// Delete every private lane, its panes with it, and the site permissions

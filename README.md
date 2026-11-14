@@ -2712,6 +2712,52 @@ all of it. `paste_history = false` records nothing and deletes what was kept,
 as the file is saved.
 [ADR-0031](docs/decisions/0031-paste-history-is-what-terminals-pasted-and-copied-never-the-clipboard.md).
 
+### Dictating into a terminal
+
+**F5, Edit › Dictate…, opens a box to talk into**, for the terminal that has
+the keyboard. It starts listening right away with Apple's own dictation, the
+same one Edit › Start Dictation uses, so there's nothing to install and no
+microphone permission for Max Pane to ask for. You talk, the words land in the
+box, you fix whatever it misheard, and then you send it. Talking straight into
+a terminal types every word the moment it's heard, and an agent reads the
+mistakes before you can fix them; the box is the pause in between.
+
+| Key | |
+|---|---|
+| **Esc** | Stop listening. A second Esc closes the box. |
+| **F5** | Listen again (or stop), from inside the box. |
+| **⌘↩**, SEND | Type the text into the terminal as it stands. Each line ending is a Return, the same as a paste, and nothing is pressed after the last word. |
+| **⇧⌘↩**, SEND ONE LINE | Type it as one line, joined the way Paste as One Line joins it, so nothing in it presses Return. |
+| **⇥** | Move between the box and the history list. |
+| **↑ ↓** in the list | Put that entry in the box, to edit or send. **↩** goes back to the box. |
+| **⌘⌫** in the list | Delete the entry, after asking. |
+
+What's sent goes in by the pane's own paste, without the sheet and without
+tidying: the box was the question, and you wrote what's in it. It's kept in
+paste history like any other paste. The keyboard goes back to the terminal
+whether you sent or not. A click on the strip doesn't close the box, since it
+may be to read what the agent just printed.
+
+**History sits beside the box, newest first.** Nothing you said is lost to a
+stray ↓ or an Esc: a send keeps what was sent (the lines, not the one-line
+join), a close keeps a box that history doesn't have yet, and recalling an
+entry keeps whatever the box held first. An entry recalled and changed is a new
+entry; the one it came from stays. One recalled and sent as it was moves to the
+top. It lives in the ledger, in its own table and not in paste history,
+capped at `dictation_history_keep` (200) entries; `0` keeps none and deletes
+what was kept. A private lane keeps nothing. It isn't netted for secrets the
+way paste history is, because it's speech and a recalled `•••` would be no use.
+
+**The microphone key.** On an Apple silicon laptop F5 *is* the microphone key,
+so it's fn-F5 there unless the top row is set to standard function keys. The
+microphone key itself is a second key for Dictate, matched by its key code
+(176) and spelled `mic` in `[keys]`, but macOS usually keeps that key for its
+own dictation, in which case Max Pane never sees it and the words go straight
+into the terminal. Edit › Start Dictation… with a terminal's keyboard opens
+Dictate rather than dictating into the terminal. On a page or in the address
+field it's the system's, as before.
+[ADR-0049](docs/decisions/0049-dictation-is-a-box-in-front-of-the-terminal.md).
+
 ### A program and the clipboard (OSC 52)
 
 **A program in a terminal can set the clipboard, and you see it happen.** tmux,
@@ -3339,6 +3385,7 @@ paste_image_max_mb = 25
 paste_history = true
 paste_history_keep = 200
 paste_history_days = 30
+dictation_history_keep = 200
 osc52_write = "allow"
 osc52_read = "ask"
 cursor_blink = "focused"
@@ -3429,6 +3476,10 @@ pastes and copies, and a web pane's own ⌘C — for ⇧⌘H
 nothing and deletes what was kept. `paste_history_keep` is how many entries
 stay (`0` is also off) and `paste_history_days` how long (`0` keeps any age).
 All three apply as the file is saved.
+
+`dictation_history_keep` is how many entries the Dictate popup keeps to bring
+back, sent or not ([Dictating into a terminal](#dictating-into-a-terminal));
+`0` keeps none and deletes what was kept the next time the popup opens.
 
 `osc52_write` and `osc52_read` are what a program in a terminal may do to the
 clipboard with OSC 52, each `"allow"`, `"ask"` or `"deny"`. Setting it is
@@ -3618,7 +3669,8 @@ a key, and a web pane stops having that chord taken off it.
 A chord is written either way the keyboard is described: `cmd+shift+d` or the
 `⇧⌘D` the help sheet prints. Modifiers are `cmd`, `ctrl`, `opt` (or `alt`) and
 `shift`; keys with no character of their own have names — `esc`, `tab`, `space`,
-`left`, `right`, `up`, `down`, `return`, `delete`. Copying a chord off ⌘/ and
+`left`, `right`, `up`, `down`, `return`, `delete`, `f1` through `f12`, and `mic`
+for the microphone key. Copying a chord off ⌘/ and
 pasting it into this file works, because the sheet and the parser are two halves
 of one spelling.
 

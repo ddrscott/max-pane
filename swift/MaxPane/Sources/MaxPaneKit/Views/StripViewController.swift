@@ -3963,6 +3963,18 @@ public final class StripViewController: NSViewController {
         terminal.paste(fromHistory: text)
     }
 
+    /// The Dictate popup has closed (ADR-0049). The terminal it was for gets
+    /// the keyboard back either way, and `text`, when there is some, goes in
+    /// by the pane's own paste: unasked and untidied, because the popup was
+    /// the question and you wrote what is in it, and kept in paste history
+    /// like any paste.
+    public func dictated(_ text: String?, intoPane paneId: String) {
+        guard let terminal = paneControllers[paneId] as? TerminalPaneController else { return }
+        terminal.takeFocus()
+        guard let text else { return }
+        terminal.paste(TerminalPaste.Clipboard(text: text), asking: false)
+    }
+
     /// The last line a terminal pane has on screen, for an agent
     /// notification's body. Nil for a pane with no controller yet (far off
     /// the strip, or in a folded group before it was ever built) or a page.
