@@ -147,6 +147,16 @@ commands:
                         with its old flags, in place, left to right. With no
                         LANE, or --all, every one; one already open somewhere
                         is skipped. Local panes only
+  park LANE [--force]   put the claude in a lane to sleep: it exits, its
+                        shell, scrollback and lane stay (relay park). What
+                        relay-tty refuses is printed with why; --force gets
+                        past busy, working, blocked and draft
+  park --idle [--dry-run]
+                        park every local claude lane quiet for
+                        park_idle_after, printing what was parked and what
+                        was skipped and why. --dry-run only prints
+  wake LANE             bring a parked lane's claude back: `claude --resume`
+                        with its old flags, typed into the same shell
   sessions              list every session, here and on each server
   attach [NAME:]ID      put a running session on the strip as a lane
   server add NAME URL   add a remote relay-tty server: NAME is what the lane
@@ -224,6 +234,20 @@ pub fn run() {
             }
         },
         Some("resume") => match resume_payload(&args[1..]) {
+            Ok(payload) => sound_command(payload, &profile),
+            Err(why) => {
+                eprintln!("maxpane: {why}");
+                std::process::exit(2)
+            }
+        },
+        Some("park") => match park_payload(&args[1..]) {
+            Ok(payload) => sound_command(payload, &profile),
+            Err(why) => {
+                eprintln!("maxpane: {why}");
+                std::process::exit(2)
+            }
+        },
+        Some("wake") => match wake_payload(&args[1..]) {
             Ok(payload) => sound_command(payload, &profile),
             Err(why) => {
                 eprintln!("maxpane: {why}");
@@ -481,6 +505,38 @@ fn resume_payload(args: &[String]) -> Result<String, String> {
         }
     }
     Ok(format!("{{\"op\":\"resume\",\"lane\":{}}}", json_string(lane.unwrap_or("all"))))
+}
+
+/// The request for `maxpane park LANE [--force]` or `maxpane park --idle
+/// [--dry-run]` (ADR-0048). A lane, or `--idle`, and never both.
+fn park_payload(args: &[String]) -> Result<String, String> {
+    let (mut lane, mut idle, mut force, mut dry) = (None::<&str>, false, false, false);
+    for arg in args {
+        match arg.as_str() {
+            "--idle" => idle = true,
+            "--force" | "-f" => force = true,
+            "--dry-run" | "-n" => dry = true,
+            other if other.starts_with('-') => return Err(format!("park: unknown flag {other}")),
+            other if lane.is_none() => lane = Some(other),
+            other => return Err(format!("park takes one lane, not also {other:?}")),
+        }
+    }
+    match (lane, idle) {
+        (Some(_), true) => Err("park takes a lane or --idle, not both".into()),
+        (None, false) => Err("park needs a lane, or --idle".into()),
+        (None, true) if force => Err("park --idle never forces; park one lane with --force".into()),
+        (None, true) => Ok(format!("{{\"op\":\"park\",\"idle\":true,\"dry\":{dry}}}")),
+        (Some(_), false) if dry => Err("--dry-run goes with --idle".into()),
+        (Some(lane), false) => Ok(format!("{{\"op\":\"park\",\"lane\":{},\"force\":{force}}}", json_string(lane))),
+    }
+}
+
+/// The request for `maxpane wake LANE`.
+fn wake_payload(args: &[String]) -> Result<String, String> {
+    match args {
+        [lane] if !lane.starts_with('-') => Ok(format!("{{\"op\":\"wake\",\"lane\":{}}}", json_string(lane))),
+        _ => Err("wake takes one lane".into()),
+    }
 }
 
 /// The request for `maxpane app NAME`. The name is joined rather than
@@ -769,6 +825,23 @@ mod tests {
         // A typo is a refusal, not a lane named --fll.
         assert!(capture_payload(&args(&["--fll"])).is_err());
         assert!(capture_payload(&args(&["1", "2"])).is_err());
+    }
+
+    #[test]
+    fn park_is_one_lane_or_the_idle_ones() {
+        let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(park_payload(&args(&["3"])).unwrap(), r#"{"op":"park","lane":"3","force":false}"#);
+        assert_eq!(park_payload(&args(&["3", "--force"])).unwrap(), r#"{"op":"park","lane":"3","force":true}"#);
+        assert_eq!(park_payload(&args(&["--idle"])).unwrap(), r#"{"op":"park","idle":true,"dry":false}"#);
+        assert_eq!(park_payload(&args(&["--idle", "--dry-run"])).unwrap(), r#"{"op":"park","idle":true,"dry":true}"#);
+        assert!(park_payload(&args(&[])).is_err());
+        assert!(park_payload(&args(&["3", "--idle"])).is_err());
+        assert!(park_payload(&args(&["--idle", "--force"])).is_err());
+        assert!(park_payload(&args(&["3", "--dry-run"])).is_err());
+        assert!(park_payload(&args(&["3", "4"])).is_err());
+        assert_eq!(wake_payload(&args(&["left"])).unwrap(), r#"{"op":"wake","lane":"left"}"#);
+        assert!(wake_payload(&args(&[])).is_err());
+        assert!(wake_payload(&args(&["1", "2"])).is_err());
     }
 
     #[test]

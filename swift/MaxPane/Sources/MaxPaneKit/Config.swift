@@ -117,6 +117,15 @@ public struct Config: Codable, Equatable {
     /// ```
     public var updateCommand: String?
 
+    /// How long a local Claude lane's output and input must both have been
+    /// quiet before Park Idle Lanes… offers to park it: `24h`, `90m`, `2d`,
+    /// `1w`. Read when the command runs (ADR-0048).
+    ///
+    /// ```toml
+    /// park_idle_after = "24h"
+    /// ```
+    public var parkIdleAfter: String = ParkIdle.defaultAfter
+
     public var fontName: String = "JetBrains Mono"
     public var fontSize: Double = 13
 
@@ -423,6 +432,7 @@ public struct Config: Codable, Equatable {
         agentNotify = read(.agentNotify, d.agentNotify)
         relayPtyHostPath = read(.relayPtyHostPath, d.relayPtyHostPath)
         updateCommand = read(.updateCommand, d.updateCommand)
+        parkIdleAfter = read(.parkIdleAfter, d.parkIdleAfter)
         fontName = read(.fontName, d.fontName)
         fontSize = read(.fontSize, d.fontSize)
         copyOnSelect = read(.copyOnSelect, d.copyOnSelect)

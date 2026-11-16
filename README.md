@@ -1686,6 +1686,51 @@ way from here to see which conversation a remote `claude` has open. Those
 panes are never recorded and never offered a resume; `maxpane run
 @server claude --resume <id>` is the way back for now.
 
+### Parking an idle Claude
+
+Twenty lanes of `claude` that nobody has typed into since last week still
+hold their memory. **Parking** puts one to sleep without losing the lane:
+the `claude` process exits, and the shell, the relay-tty session, the
+scrollback and the lane all stay. **Waking** types `claude --resume <id>
+<original flags>` back into that same shell, so the same conversation comes
+back in the same pane. relay-tty does the work (`relay park` / `relay
+unpark`, 1.24 or later); Max Pane offers it and shows it.
+[ADR-0048](docs/decisions/0048-park-an-idle-claude-instead-of-ending-it.md).
+
+- **Park** is on a session row's right-click menu, for a local session
+  with a `claude` running in it. relay-tty refuses a park while the agent
+  is working or blocked, while Claude says it is busy, or when something
+  was typed after the agent went idle (a draft you never sent). The reason
+  shows up on the row, and on the lane's banner, instead of in a dialog,
+  and the row's menu then offers **Park Anyway**.
+- **Park Idle Lanes…** (File menu, or ⌘E) lists every local Claude lane
+  whose output *and* input have been quiet for `park_idle_after` (24 hours
+  unless you set it), and asks once. Kept, blocked, working and drafted
+  lanes are listed as skipped, each with why. Anything relay-tty still
+  refuses is reported at the end.
+- A parked lane sorts into a dimmed **`// PARKED`** group at the bottom of
+  the sidebar, with how long it has been asleep (`parked 3d`). It never
+  counts toward a BLOCKED roll-up. Folding `// PARKED` puts those lanes
+  away, the way folding a project does.
+- The parked pane itself says **`PARKED · <name>`** with **`$ WAKE`**. Click
+  it or press **↩** in the pane to wake it; **Wake** is on the row's menu
+  too.
+- **Keep Lane Loaded** (⇧⌘P) also tells relay-tty to `keep` the lane's
+  sessions, so relay-tty's own auto-park (`park_after`) passes them by, and
+  so does Park Idle Lanes.
+
+From a shell, `maxpane park LANE [--force]`, `maxpane wake LANE` and
+`maxpane park --idle [--dry-run]` do the same, a line a lane: `parked`,
+`refused` or `skipped`, the name, and why.
+
+A parked lane stays bound to its conversation: its resume record (above) is
+kept, and if a reboot takes the session while it is parked, `$ RESUME`
+brings it back as it would any other.
+
+Against a relay-tty without park, none of this shows up and nothing else
+changes. Remote panes are left out for the same reason they are left out of
+resume.
+
 ### What calls you back
 
 An agent that goes BLOCKED or DONE while Max Pane is not the frontmost app
@@ -2784,6 +2829,10 @@ maxpane capture [LANE] [--full]
 maxpane app gmail         # go to a [[apps]] web app: focus its lane, or open one
 maxpane resume [--all|LANE]   # bring back the claude conversations a reboot ended, in place;
                               # see "Resuming agents after a reboot"
+maxpane park LANE [--force]   # put a lane's claude to sleep; shell and scrollback stay
+maxpane park --idle [--dry-run]   # park every claude lane quiet for park_idle_after
+maxpane wake LANE             # claude --resume, typed back into the same shell;
+                              # see "Parking an idle Claude"
 maxpane server add NAME URL   # a remote relay-tty server, from its startup Auth URL; see "Remote servers"
 maxpane server ls             # the configured servers, their colour and how they are doing
 maxpane server color WSL violet   # the colour a server is known by: slate cyan blue violet magenta rose lemon ink
@@ -3296,6 +3345,7 @@ cursor_blink = "focused"
 agent_notify = "away"
 status_clock = true
 # update_command = "brew upgrade --cask ddrscott/tap/max-pane"
+park_idle_after = "24h"
 ```
 
 The window writes one value at a time, in place: your comments, the order of
@@ -3304,7 +3354,7 @@ your keys and keys it does not know all survive
 finder** shows the file, and **open in editor** opens it in a terminal lane with
 your `editor` setting, the same way ⌘-clicking a path does.
 
-`theme`, `status_clock`, `sidebar_collapse_hides_lanes`, `osc52_write`, `osc52_read` and the
+`theme`, `status_clock`, `sidebar_collapse_hides_lanes`, `park_idle_after`, `osc52_write`, `osc52_read` and the
 `paste_` keys (all but `paste_image_keep_days`, which is read at launch, when
 the pruning is) apply at once, and so does everything under Servers — each `[[servers]]` table's `name`, `url`, `enabled`
 and `color` (see [Remote servers](#remote-servers)). An `[[apps]]` table's
@@ -3396,6 +3446,11 @@ notification: `"away"` (the default) only while Max Pane is not in front,
 line. Unset, it is `brew upgrade --cask max-pane` when your login shell can
 find `brew`, and the release page in a web lane when it cannot. Read when
 Update… is chosen. See [Updating](#updating).
+
+`park_idle_after` is how long a local Claude lane's output and input must
+both have been quiet before **Park Idle Lanes…** offers to park it: `24h`,
+`90m`, `2d`, `1w`, or a bare number of hours. Read each time the command
+runs. See [Parking an idle Claude](#parking-an-idle-claude).
 
 `cursor_blink` is which terminal cursors blink: `"focused"`, `"always"` or
 `"never"`. `"focused"`, the default, blinks the one terminal that has the

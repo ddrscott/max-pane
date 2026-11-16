@@ -54,6 +54,33 @@ struct AgentResumeTests {
         #expect(flags(["claude"]) == [])
     }
 
+    @Test("the launch prompt is not replayed, but every flag keeps its value (relay-tty's shared/park.ts)")
+    func argvDropsThePrompt() {
+        let flags = AgentArgv.resumeFlags
+        // Thunder's lead agent: the prompt sits between two flags.
+        let lead = "You are the lead for max-pane. Read the board, pick the next task, and hand it to a runner."
+        #expect(flags(["claude", "--dangerously-skip-permissions", lead, "--mcp-config", "/tmp/thunder-mcp.json"])
+            == ["--dangerously-skip-permissions", "--mcp-config", "/tmp/thunder-mcp.json"])
+        // A plain prompt, alone or before a flag.
+        #expect(flags(["claude", "fix the bug"]) == [])
+        #expect(flags(["claude", "fix the bug", "--model", "opus"]) == ["--model", "opus"])
+        #expect(flags(["claude", "--model", "opus", "hello"]) == ["--model", "opus"])
+        // Everything after `--` is the prompt.
+        #expect(flags(["claude", "--dangerously-skip-permissions", "--mcp-config", "/tmp/t.json", "--", "--not-a-flag", "prompt"])
+            == ["--dangerously-skip-permissions", "--mcp-config", "/tmp/t.json"])
+        // Variadic options keep words up to the next flag, never a sentence.
+        #expect(flags(["claude", "--add-dir", "/a", "/b", "--verbose"]) == ["--add-dir", "/a", "/b", "--verbose"])
+        #expect(flags(["claude", "--mcp-config", "a.json", "b.json", "do the thing now"]) == ["--mcp-config", "a.json", "b.json"])
+        // A single-value option keeps its value even with spaces in it.
+        #expect(flags(["claude", "--append-system-prompt", "be terse", "hi"]) == ["--append-system-prompt", "be terse"])
+        #expect(flags(["claude", "--permission-mode=plan", "go"]) == ["--permission-mode=plan"])
+        // Optional-value and unknown options keep one plain word.
+        #expect(flags(["claude", "--debug", "--verbose"]) == ["--debug", "--verbose"])
+        #expect(flags(["claude", "-d", "api", "fix it"]) == ["-d", "api"])
+        #expect(flags(["claude", "--new-flag", "val", "a long prompt"]) == ["--new-flag", "val"])
+        #expect(flags(["claude", "--dangerously-skip-permissions", "hi"]) == ["--dangerously-skip-permissions"])
+    }
+
     // MARK: the process table
 
     @Test("KERN_PROCARGS2 is argc, the path, padding, then the words")

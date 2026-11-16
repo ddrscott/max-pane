@@ -35,8 +35,29 @@ public struct RelaySessionInfo: Codable, Identifiable, Sendable {
     public var foregroundProcess: String?
     /// pty-host's own heuristic: "idle", "active", "done", …
     public var agentState: String?
+    /// When `agentState` last changed, ms since the epoch. relay-tty's park
+    /// guard compares it with `lastInputAt` to spot an unsent draft.
+    public var agentStateChangedAt: Double?
+    /// When input was last written to the pty, ms since the epoch: the other
+    /// half of "quiet", beside `lastActivity` for output. relay-tty 1.24+.
+    public var lastInputAt: Double?
+    /// The pid of the foreground process group's leader. relay-tty 1.24+.
+    public var foregroundPid: Int32?
+    /// The Claude this session was running, put to sleep by `relay park`;
+    /// absent while not parked (ADR-0048).
+    public var parked: ParkedAgent?
+    /// Never park this session automatically: `relay keep`, and Max Pane's
+    /// Keep Lane Loaded.
+    public var keep: Bool?
 
     public var isRunning: Bool { status == "running" }
+
+    /// Whether the pty-host that wrote this file knows about parking. Any of
+    /// the fields the park work added says so; an older relay-tty writes
+    /// none of them, and then nothing about parking is offered (ADR-0048).
+    public var knowsParking: Bool {
+        parked != nil || keep != nil || lastInputAt != nil || foregroundPid != nil
+    }
 
     /// What to show in a picker row.
     public var displayName: String {

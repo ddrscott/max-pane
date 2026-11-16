@@ -194,6 +194,23 @@ public struct ConfigField {
             })
     }
 
+    /// A length of time as `ParkIdle.parse` reads it: `24h`, `90m`, `2d`.
+    /// Anything else is refused, and the key keeps its default.
+    private static func duration(
+        _ name: String, _ path: WritableKeyPath<Config, String>, _ group: ConfigGroup, _ summary: String
+    ) -> ConfigField {
+        ConfigField(
+            name: name, group: group, control: .text(placeholder: Config()[keyPath: path]), summary: summary,
+            appliesLive: true,
+            read: { .string($0[keyPath: path]) },
+            apply: { config, value in
+                guard case .string(let s) = value else { return "expected a string like \"24h\", got \(value.kind)" }
+                guard ParkIdle.parse(s) != nil else { return "expected a length of time like \"24h\", \"90m\" or \"2d\"" }
+                config[keyPath: path] = s.trimmingCharacters(in: .whitespaces)
+                return nil
+            })
+    }
+
     /// A Ghostty theme by name, or unset for the app's own palette.
     ///
     /// Not a `choice`: that renders every option as a segment, and there are
@@ -317,6 +334,8 @@ public struct ConfigField {
             optionalString("updateCommand", \.updateCommand, .terminals,
                            unset: UpdatePlan.brewLine + ", or the release page without brew",
                            "What Help › Update… runs in a terminal lane. Relaunch is offered when it exits 0."),
+            duration("parkIdleAfter", \.parkIdleAfter, .terminals,
+                     "Park Idle Lanes… parks a local Claude lane quiet this long, output and input both: 24h, 90m, 2d, 1w."),
             optionalString("editor", \.editor, .editorSearch, unset: FileOpen.defaultEditorTemplate,
                            "What a ⌘-clicked file opens in. %f is the path, %l the line, %c the column."),
             string("searchUrl", \.searchUrl, .editorSearch,

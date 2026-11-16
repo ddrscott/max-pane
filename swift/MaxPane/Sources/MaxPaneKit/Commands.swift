@@ -25,6 +25,7 @@ public enum Command: String, CaseIterable, Sendable {
     case endSession
     case resumeAgent
     case resumeAllAgents
+    case parkIdleLanes
     case focusLeft
     case focusRight
     case focusUp
@@ -116,6 +117,7 @@ public enum Command: String, CaseIterable, Sendable {
         case .endSession: return "End Session…"
         case .resumeAgent: return "Resume Agent"
         case .resumeAllAgents: return "Resume All Agents"
+        case .parkIdleLanes: return "Park Idle Lanes…"
         case .focusLeft: return "Focus Lane Left"
         case .focusRight: return "Focus Lane Right"
         case .focusUp: return "Focus Pane Above"
@@ -264,7 +266,7 @@ public enum Command: String, CaseIterable, Sendable {
         // No key: once after a reboot is not a chord's worth of use. ↩ in a
         // pane offering it is the button, the banner is the other, and the
         // palette (⌘E) and the File menu find both by name (ADR-0046).
-        case .resumeAgent, .resumeAllAgents: return nil
+        case .resumeAgent, .resumeAllAgents, .parkIdleLanes: return nil
         case .focusLeft:       return ("[", [.command])
         case .focusRight:      return ("]", [.command])
         case .focusUp:         return ("[", [.command, .shift])
@@ -654,7 +656,7 @@ public enum Command: String, CaseIterable, Sendable {
         // With Close Lane, which it is the stronger form of.
         case .endSession: return .file
         // Beside End Session: the other thing to do about a session that ended.
-        case .resumeAgent, .resumeAllAgents: return .file
+        case .resumeAgent, .resumeAllAgents, .parkIdleLanes: return .file
         case .focusLeft, .focusRight, .focusUp, .focusDown, .search, .gather, .ungather: return .navigate
         // Beside ⌘[ / ⌘]: the same act, by when instead of by where.
         case .paneBack, .paneForward: return .navigate

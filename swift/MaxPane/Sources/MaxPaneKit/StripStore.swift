@@ -307,7 +307,12 @@ public final class StripStore {
     /// only the name; ADR-0010 is why it did not simply disappear into docking.
     func setKeepLive(_ laneId: String, _ keepLive: Bool) throws {
         publish(try core.setKeepLive(laneId: laneId, keepLive: keepLive))
+        onKeepLiveChanged?(laneId, keepLive)
     }
+
+    /// A lane's Keep Loaded changed, from whichever door: the window
+    /// controller tells relay-tty to `keep` its sessions too (ADR-0048).
+    var onKeepLiveChanged: ((_ laneId: String, _ keepLive: Bool) -> Void)?
 
     // MARK: - docking
 

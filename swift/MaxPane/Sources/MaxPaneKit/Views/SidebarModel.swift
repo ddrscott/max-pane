@@ -31,6 +31,13 @@ enum SidebarModel {
     /// sidebar is exactly what it was before servers existed.
     static let localSection = "\u{FFFD}local"
 
+    /// `// PARKED`: the local sessions whose Claude `relay park` put to
+    /// sleep, at the bottom of the list, dimmed (ADR-0048). Private-use for
+    /// the same reason as the others: no directory can be called this. It
+    /// folds like a project, through the store, so folding it puts the
+    /// parked lanes away as folding a project does (ADR-0024).
+    static let parkedGroup = "\u{FFFC}parked"
+
     enum Kind: Equatable {
         /// A RelayTTY session, whether or not a lane is attached to it.
         case session
@@ -107,6 +114,12 @@ enum SidebarModel {
         /// that is not to be covered; a page split under a terminal is
         /// reached from the lane header and the pane's own chrome.
         var audio: AudioMark = .silent
+        /// The session's Claude is parked: the row is dimmed, under
+        /// `// PARKED`, and says how long it has slept.
+        var parked = false
+        /// One line about what just happened to this row — a park relay-tty
+        /// refused, and why — in the chip's place, until it is cleared.
+        var note: String?
 
         var needsAttention: Bool { state == .blocked }
     }
@@ -174,6 +187,8 @@ enum SidebarModel {
         /// Folding one folds every project under it.
         var isSection: Bool { isServer || isLocalSection }
         var isLocalSection: Bool { path == SidebarModel.localSection }
+        /// The `// PARKED` group: dimmed, and its count is how many sleep.
+        var isParked: Bool { path == SidebarModel.parkedGroup }
 
         /// The server's state as a chip, when it is anything but connected:
         /// `RECONNECTING`, `UNREACHABLE`, `TOKEN REFUSED`. A header that said
@@ -202,6 +217,7 @@ enum SidebarModel {
             // called ~/CODE/MAX-PANE names nothing on this disk.
             if path == SidebarModel.looseWebGroup { return "Web" }
             if path == SidebarModel.bookmarksGroup { return "Bookmarks" }
+            if isParked { return "PARKED" }
             if isLocalSection { return "LOCAL" }
             if isServer { return (server ?? path).uppercased() }
             // A remote project is its path on that server. The section above
@@ -388,6 +404,7 @@ enum SidebarModel {
         serverErrors: [String: String] = [:],
         hiddenLanes: Set<String> = [],
         audio: [String: AudioMark] = [:],
+        notes: [SessionKey: String] = [:],
         now: Date = Date()
     ) -> [Row] {
         // The *pane* as well as the lane: a click on a row has to be able to
@@ -432,6 +449,21 @@ enum SidebarModel {
                 createdAt: created[key] ?? (t.lastActivity?.timeIntervalSince1970 ?? 0),
                 activityAt: t.lastActivity?.timeIntervalSince1970 ?? 0)
             entry.offline = t.isOffline
+            entry.note = notes[key]
+            // Parked: asleep on purpose, so it reads as at rest and sorts
+            // into its own group at the bottom, never into a roll-up.
+            if t.isParkedHere, let parked = t.parked {
+                entry.parked = true
+                entry.glyph = "z"
+                entry.chip = ""
+                entry.badge = ""
+                entry.badgeIsThroughput = false
+                let age = parked.age(now: now)
+                entry.age = age.isEmpty ? "parked" : "parked \(age)"
+                if let label = parked.name, entry.title.isEmpty || entry.title == t.command { entry.title = label }
+                grouped[parkedGroup, default: []].append(entry)
+                continue
+            }
             grouped[t.groupPath, default: []].append(entry)
         }
 
@@ -511,7 +543,7 @@ enum SidebarModel {
         var out: [Row] = bookmarkRows(bookmarks, controls)
         var byServer: [String: [String]] = [:]
         var local: [String] = []
-        for path in grouped.keys.sorted() {
+        for path in grouped.keys.sorted() where path != parkedGroup {
             if let server = LaneHeaderPath.splitServer(path)?.server {
                 byServer[server, default: []].append(path)
             } else {
@@ -564,6 +596,19 @@ enum SidebarModel {
             guard !collapsed else { return }
             out.append(contentsOf: ordered.map(Row.entry))
         }
+        // `// PARKED`: sleeping lanes, below everything that is awake. Its
+        // header counts them and nothing else — no BLOCKED, no RUNNING.
+        func emitParked() {
+            let kept = (grouped[parkedGroup] ?? []).filter { matches($0, controls) }
+            guard !kept.isEmpty else { return }
+            let collapsed = controls.collapsed.contains(parkedGroup)
+            out.append(.group(Group(
+                path: parkedGroup, running: 0, blocked: 0, total: kept.count,
+                collapsed: collapsed, countOverride: "\(kept.count) PARKED", serverState: nil,
+                hiddenLanes: collapsed ? hiding(grouped[parkedGroup]!) : 0)))
+            guard !collapsed else { return }
+            out.append(contentsOf: sorted(kept, controls).map(Row.entry))
+        }
         // A section's rows in drawn order: each project in turn, sorted.
         func ordered(_ paths: [String]) -> [Entry] {
             paths.flatMap { sorted(grouped[$0]!.filter { matches($0, controls) }, controls) }
@@ -610,6 +655,7 @@ enum SidebarModel {
             guard !folded else { continue }
             for path in paths { emit(path) }
         }
+        emitParked()
         return out
     }
 
@@ -849,7 +895,8 @@ enum SidebarModel {
         for case .entry(let e) in new {
             guard let was = before[e.id] else { continue }
             if was.state != e.state || was.chip != e.chip || was.offline != e.offline
-                || was.badgeIsThroughput != e.badgeIsThroughput || was.audio != e.audio { return true }
+                || was.badgeIsThroughput != e.badgeIsThroughput || was.audio != e.audio
+                || was.parked != e.parked { return true }
         }
         // A folded header's speaker arriving or leaving, or its roll-up
         // changing: a state appearing on, or clearing from, a fold.
@@ -952,7 +999,9 @@ enum SidebarModel {
     /// terminal whose session has gone, a remote one not heard from yet —
     /// files under its tag. A split lane can therefore be in two groups.
     static func groups(of lane: Lane, telemetry: [SessionKey: SessionTelemetry]) -> Set<String> {
-        let known = lane.panes.compactMap(\.sessionKey).compactMap { telemetry[$0]?.groupPath }
+        let known = lane.panes.compactMap(\.sessionKey).compactMap { key in
+            telemetry[key].map { $0.isParkedHere ? parkedGroup : $0.groupPath }
+        }
         return known.isEmpty ? [group(for: lane)] : Set(known)
     }
 

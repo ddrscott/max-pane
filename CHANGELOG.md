@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Park an idle Claude and wake it later with one click. Parking stops only the `claude` process; the shell, the session, the scrollback and the lane stay, and waking types `claude --resume` with the original flags back into the same shell. Park is on a session row's right-click menu; when relay-tty refuses (the agent is working or blocked, Claude is busy, or there's an unsent draft) the reason shows on the row and the lane, and the menu offers Park Anyway. **Park Idle Lanes…** lists every local Claude lane quiet longer than `park_idle_after` (24h by default), says why it would skip any, and asks once. Parked lanes sit in a dimmed `// PARKED` group at the bottom of the sidebar with how long they've slept, and never count as BLOCKED. A parked pane shows `PARKED · <name>` and `$ WAKE`, and ↩ in it wakes it. Keep Lane Loaded also marks the lane's sessions `keep` in relay-tty. Needs relay-tty with `relay park`; against an older one nothing changes
+
 ## [0.11.0] - 2026-11-05
 
 ### Added
