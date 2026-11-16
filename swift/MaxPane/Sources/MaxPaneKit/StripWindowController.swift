@@ -32,6 +32,15 @@ public final class StripWindowController: NSWindowController, CommandHandling {
     /// The status bar's once-per-launch offer: not yet decided, showing, or
     /// done with (taken, dismissed, or nothing was resumable at launch).
     var resumeOfferState: ResumeOfferState = .undecided
+    /// Park, wake and keep, through relay-tty (ADR-0048). A test hands in
+    /// its own, over a throwaway server or none.
+    var parker: AgentParking = LocalAgentParker()
+    /// relay-tty answered a park with "no such route": every park item goes
+    /// away for the rest of the run, and nothing else changes.
+    var parkingUnsupported = false
+    /// Panes a wake has been asked for, and when: the button goes until the
+    /// session file stops saying parked, or `AgentResume.hold` passes.
+    var wakingPanes: [String: Date] = [:]
     enum ResumeOfferState { case undecided, showing, done }
     /// The daily release check (ADR-0038). Nil until the app delegate
     /// hands one over with `startUpdateChecks`, which a test never does:
@@ -294,6 +303,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             guard let self else { return }
             self.launch(.open(url), near: self.store.focusedLane)
         }
+        sidebar.parkMenu = { [weak self] key in self?.parkMenu(for: key) ?? .none }
+        sidebar.onPark = { [weak self] key, force in self?.park(key, force: force) }
+        sidebar.onWake = { [weak self] key in self?.wake(key) }
         // The window's own delegate, for the two fullscreen transitions. Nothing
         // else wants it, and `NSWindowController` would take it anyway.
         window.delegate = self
@@ -479,6 +491,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         strip.onLaneLostWire = { [weak self] server in self?.sessions.laneLostWire(server: server) }
         strip.onEndSession = { [weak self] paneId in self?.confirmEndSession(paneId: paneId) }
         strip.onResumePane = { [weak self] paneId in self?.resumeAgent(paneId: paneId) }
+        strip.onWakePane = { [weak self] paneId in self?.wakeAgent(paneId: paneId) }
+        store.onKeepLiveChanged = { [weak self] laneId, keep in self?.syncRelayKeep(laneId: laneId, keep: keep) }
         agentWatch.onReading = { [weak self] reading in self?.agentsRead(reading) }
         statusBar.onClickResume = { [weak self] in
             self?.dismissResumeOffer()
@@ -527,6 +541,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             // bring theirs back. The reading is off the main thread.
             self.agentWatch.poke()
             self.refreshResumable()
+            self.refreshWakeOffers()
         }
         statusBar.onClickSessions = { [weak self] in self?.perform(.openSessions) }
         statusBar.onClickMemory = { [weak self] in self?.perform(.showMemory) }
@@ -1033,6 +1048,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return store.state.focusedPaneId.map { resumablePaneIds.contains($0) } ?? false
         case .resumeAllAgents:
             return !resumablePaneIds.isEmpty
+        case .parkIdleLanes:
+            return canParkAnything
         case .clearScrollback:
             // The ledger's focused pane, not the responder chain: in a web
             // pane the chord never gets here (`yieldsToPage`), and greying
@@ -1128,6 +1145,7 @@ public final class StripWindowController: NSWindowController, CommandHandling {
         case .endSession: return "needs a terminal with a session"
         case .resumeAgent: return "needs a terminal whose agent's session is gone"
         case .resumeAllAgents: return "no agent is waiting to be resumed"
+        case .parkIdleLanes: return "needs a relay-tty that can park (relay park)"
         case .renameLane: return strip.isGallery ? "not in the gallery" : "needs a lane"
         case .savePassword:
             return store.lane(containing: store.state.focusedPaneId ?? "")?.isPrivate == true
@@ -1296,6 +1314,9 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             case .resumeAllAgents:
                 dismissResumeOffer()
                 _ = resumeAgents(in: nil)
+
+            case .parkIdleLanes:
+                parkIdleLanes()
 
             case .clearScrollback:
                 if let focused = store.state.focusedPaneId { strip.clearScrollback(ofPane: focused) }
@@ -2462,7 +2483,8 @@ extension StripWindowController {
         }
         let changes = AgentLedgerSync.changes(
             panes: panes, records: store.paneAgents(), reading: reading,
-            holding: Set(resumingPanes.keys), now: Int64(Date().timeIntervalSince1970 * 1000))
+            holding: Set(resumingPanes.keys), now: Int64(Date().timeIntervalSince1970 * 1000),
+            parked: parkedSessions)
         for change in changes {
             switch change {
             case .record(let agent): store.recordPaneAgent(agent)
@@ -2603,5 +2625,194 @@ extension StripWindowController {
         if lanes == nil { dismissResumeOffer() }
         let out = resumeAgents(in: lanes)
         return OpenServer.Reply(ok: true, lanes: out.isEmpty ? "nothing to resume\n" : out)
+    }
+}
+
+// MARK: - parking an idle Claude (ADR-0048)
+
+extension StripWindowController {
+    /// What a session's row menu offers: Park, Wake, or nothing. Local
+    /// only, and only on a relay-tty that knows parking: against an older
+    /// one every item stays hidden and nothing else changes.
+    func parkMenu(for key: SessionKey) -> SidebarViewController.ParkMenu {
+        guard key.server == nil, !parkingUnsupported, let t = sessions.sessions[key],
+              t.knowsParking, t.isRunning else { return .none }
+        if t.parked != nil { return .wake }
+        guard let reading = agentWatch.latest, reading.sightings[key.id] != nil else { return .none }
+        return .park
+    }
+
+    /// Something on this Mac could be parked: Park Idle Lanes… is enabled.
+    var canParkAnything: Bool {
+        !parkingUnsupported && sessions.sessions.values.contains { $0.server == nil && $0.knowsParking }
+    }
+
+    /// Park one session's Claude. A refusal is said on its row and on its
+    /// pane's banner, not in a dialog; when force could get past it, the
+    /// row's menu offers Park Anyway.
+    func park(_ key: SessionKey, force: Bool, then: ((ParkOutcome) -> Void)? = nil) {
+        let name = sessionName(key)
+        parker.park(sessionId: key.id, force: force) { [weak self] outcome in
+            guard let self else { return }
+            self.landed(outcome, for: key, verb: "park", name: name)
+            then?(outcome)
+        }
+    }
+
+    /// `$ WAKE`, ↩ on a pane offering it, or Wake from the row's menu.
+    func wakeAgent(paneId: String) {
+        guard let key = store.pane(paneId)?.sessionKey else { return }
+        wake(key)
+    }
+
+    func wake(_ key: SessionKey) {
+        let name = sessionName(key)
+        let panes = store.allLanes.flatMap(\.panes).filter { $0.sessionKey == key }.map(\.id)
+        guard !panes.contains(where: { wakingPanes[$0] != nil }) else { return }
+        for paneId in panes { wakingPanes[paneId] = Date() }
+        refreshWakeOffers()
+        parker.unpark(sessionId: key.id) { [weak self] outcome in
+            guard let self else { return }
+            if outcome != .done {
+                for paneId in panes { self.wakingPanes[paneId] = nil }
+                self.refreshWakeOffers()
+            }
+            self.landed(outcome, for: key, verb: "wake", name: name)
+        }
+    }
+
+    /// What became of a park or a wake, said where the session is.
+    private func landed(_ outcome: ParkOutcome, for key: SessionKey, verb: String, name: String) {
+        let paneId = store.lane(holdingSession: key)?.panes.first { $0.sessionKey == key }?.id
+        switch outcome {
+        case .done:
+            sidebar.setNote(nil, for: key)
+            Log.debug("\(verb) \(name) (\(key))")
+            sessions.refreshLocal()
+            agentWatch.poke()
+        case .refused(let why, let forceable):
+            sidebar.setNote(.init(text: "\(verb) refused: \(why)", forceable: verb == "park" && forceable), for: key)
+            if let paneId { strip.showNotice("\(verb) refused · \(why)", onPane: paneId) }
+        case .unsupported:
+            // An older relay-tty: hide the items, change nothing else.
+            parkingUnsupported = true
+            sidebar.setNote(.init(text: "this relay-tty cannot \(verb)", forceable: false), for: key)
+            Log.warn("relay-tty has no \(verb) route; park and wake are hidden for this run")
+        case .failed(let why):
+            sidebar.setNote(.init(text: "\(verb) failed: \(why)", forceable: false), for: key)
+            if let paneId { strip.showNotice("\(verb) failed · \(why)", onPane: paneId) }
+        }
+    }
+
+    private func sessionName(_ key: SessionKey) -> String {
+        guard let t = sessions.sessions[key] else { return key.id }
+        if let parked = t.parked { return parked.label }
+        let title = SidebarModel.splitGlyph(SidebarModel.displayTitle(t)).title
+        return title.isEmpty ? key.id : title
+    }
+
+    /// Every local pane whose session is parked offers `$ WAKE`; a wake
+    /// under way takes the button away until the file stops saying parked.
+    func refreshWakeOffers() {
+        let now = Date()
+        wakingPanes = wakingPanes.filter { now.timeIntervalSince($0.value) < AgentResume.hold }
+        var offers: [String: StripViewController.WakeOffer] = [:]
+        for pane in store.allLanes.flatMap(\.panes) {
+            guard pane.kind == .pty, let key = pane.sessionKey, key.server == nil,
+                  let t = sessions.sessions[key], let parked = t.parked, t.isRunning else {
+                wakingPanes[pane.id] = nil
+                continue
+            }
+            offers[pane.id] = .init(name: parked.label, waking: wakingPanes[pane.id] != nil)
+        }
+        wakingPanes = wakingPanes.filter { offers[$0.key] != nil }
+        strip.setWakeOffers(offers)
+    }
+
+    /// The parked sessions by relay id, for the ledger sync: a parked lane
+    /// is still bound to its conversation.
+    var parkedSessions: [String: ParkedAgent] {
+        var out: [String: ParkedAgent] = [:]
+        for (key, t) in sessions.sessions where key.server == nil {
+            if let parked = t.parked { out[key.id] = parked }
+        }
+        return out
+    }
+
+    /// Keep Lane Loaded, from any door, is relay-tty's `keep` as well: a
+    /// lane you asked to keep is never parked behind your back.
+    func syncRelayKeep(laneId: String, keep: Bool) {
+        guard !parkingUnsupported, let lane = store.allLanes.first(where: { $0.id == laneId }) else { return }
+        for key in lane.panes.compactMap(\.sessionKey) where key.server == nil {
+            guard let t = sessions.sessions[key], t.knowsParking, t.keep != keep else { continue }
+            parker.setKeep(sessionId: key.id, keep: keep) { outcome in
+                if outcome != .done { Log.warn("relay keep \(keep ? "on" : "off") \(key): \(outcome)") }
+            }
+        }
+    }
+
+    /// The sessions Park Idle Lanes looks at.
+    func parkCandidates() -> [ParkCandidate] {
+        let reading = agentWatch.latest
+        return sessions.sessions.compactMap { key, t in
+            guard key.server == nil else { return nil }
+            return ParkCandidate(
+                key: key, name: sessionName(key), telemetry: t,
+                hasClaude: reading?.sightings[key.id] != nil,
+                keptLoaded: store.lane(holdingSession: key)?.keepLive ?? false)
+        }
+    }
+
+    /// Park Idle Lanes…: the list first, one confirmation, then each in
+    /// turn. What relay-tty refused is said at the end, with why.
+    func parkIdleLanes() {
+        let setting = (configStore?.config ?? config).parkIdleAfter
+        let quietFor = ParkIdle.parse(setting) ?? ParkIdle.parse(ParkIdle.defaultAfter)!
+        let plan = ParkIdle.plan(parkCandidates(), quietFor: quietFor)
+        let summary = ParkIdle.summary(park: plan.park, skipped: plan.skipped)
+        let quiet = ParkIdle.describe(quietFor)
+        guard !plan.park.isEmpty else {
+            ConfirmPopup.inform(
+                over: window, title: "No Claude lane has been idle \(quiet)",
+                detail: summary.isEmpty ? "park_idle_after is \(setting)." : summary)
+            return
+        }
+        let count = plan.park.count
+        ConfirmPopup.confirm(
+            over: window,
+            title: "Park \(count) Claude lane\(count == 1 ? "" : "s") idle \(quiet)?",
+            detail: summary + "\n\nEach Claude exits; its shell, scrollback and lane stay. $ WAKE brings the same conversation back.",
+            action: "Park \(count)", returnConfirms: true
+        ) { [weak self] go in
+            guard go, let self else { return }
+            self.parkInTurn(plan.park.map(\.key), refused: [])
+        }
+    }
+
+    /// One at a time: each park waits up to 5 s for its Claude to exit, and
+    /// twenty at once is the stampede the command exists to avoid.
+    private func parkInTurn(_ keys: [SessionKey], refused: [String]) {
+        guard let key = keys.first else {
+            if !refused.isEmpty {
+                ConfirmPopup.inform(
+                    over: window, title: "\(refused.count) lane\(refused.count == 1 ? " was" : "s were") not parked",
+                    detail: refused.joined(separator: "\n"))
+            }
+            return
+        }
+        let name = sessionName(key)
+        park(key, force: false) { [weak self] outcome in
+            var refused = refused
+            switch outcome {
+            case .done: break
+            case .refused(let why, _), .failed(let why): refused.append("\(name) — \(why)")
+            case .unsupported: refused.append("\(name) — this relay-tty cannot park")
+            }
+            if outcome == .unsupported {
+                self?.parkInTurn([], refused: refused)
+            } else {
+                self?.parkInTurn(Array(keys.dropFirst()), refused: refused)
+            }
+        }
     }
 }

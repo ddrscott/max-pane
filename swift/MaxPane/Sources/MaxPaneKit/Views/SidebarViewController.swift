@@ -100,6 +100,33 @@ final class SidebarViewController: NSViewController {
     /// decision ⌘O makes.
     var onOpenBookmark: ((String) -> Void)?
 
+    // MARK: parking (ADR-0048)
+
+    /// What a session's row can do about its Claude.
+    enum ParkMenu: Equatable { case none, park, wake }
+    /// Asked when the row's menu opens. `.none` keeps every park item out:
+    /// a remote session, an older relay-tty, a session with no Claude.
+    var parkMenu: ((SessionKey) -> ParkMenu)?
+    /// Park (force false) or Park Anyway (force true).
+    var onPark: ((SessionKey, _ force: Bool) -> Void)?
+    var onWake: ((SessionKey) -> Void)?
+
+    /// One line on a row about what just happened to it: a park refused,
+    /// and whether Park Anyway could get past it.
+    struct Note: Equatable {
+        var text: String
+        var forceable: Bool
+    }
+    private(set) var notes: [SessionKey: Note] = [:]
+
+    /// Put a note on a session's row, or take it off. A note is cleared by
+    /// the next park or wake that lands, or by the session going away.
+    func setNote(_ note: Note?, for key: SessionKey) {
+        guard notes[key] != note else { return }
+        notes[key] = note
+        rebuild(store.state)
+    }
+
     /// Every session Relay knows about, attached or not.
     weak var registryBox: AnyObject?
     var registry: SessionRegistry? {
@@ -113,6 +140,7 @@ final class SidebarViewController: NSViewController {
     /// New session telemetry arrived.
     func sessionsChanged(_ next: [SessionKey: SessionTelemetry]) {
         telemetry = next
+        notes = notes.filter { next[$0.key] != nil }
         readCreationTimes(for: next)
         rebuild(store.state)
     }
@@ -482,7 +510,8 @@ final class SidebarViewController: NSViewController {
             servers: registry?.serverStates ?? [:],
             serverErrors: registry?.serverErrors ?? [:],
             hiddenLanes: Set(state.hiddenLaneIds),
-            audio: audio)
+            audio: audio,
+            notes: notes.mapValues(\.text))
         updateFooter(state)
         syncFoldButton(Self.projectPaths(in: next))
         guard next != rows else {
@@ -881,6 +910,21 @@ final class SidebarViewController: NSViewController {
         NSPasteboard.general.setString(sessionId, forType: .string)
     }
 
+    @objc private func parkClicked() {
+        guard let key = entry(at: table.clickedRow)?.sessionKey else { return }
+        onPark?(key, false)
+    }
+
+    @objc private func parkAnywayClicked() {
+        guard let key = entry(at: table.clickedRow)?.sessionKey else { return }
+        onPark?(key, true)
+    }
+
+    @objc private func wakeClicked() {
+        guard let key = entry(at: table.clickedRow)?.sessionKey else { return }
+        onWake?(key)
+    }
+
     @objc private func togglePin() {
         guard let lane = clickedLane() else { return }
         try? store.setKeepLive(lane.id, !lane.keepLive)
@@ -974,6 +1018,20 @@ extension SidebarViewController: NSMenuDelegate {
         }
         if entry.sessionId != nil {
             add("Copy Session ID", #selector(copySessionId))
+        }
+        // Park and Wake (ADR-0048), by the session's state; nothing at all
+        // on a relay-tty that cannot park.
+        if let key = entry.sessionKey {
+            switch parkMenu?(key) ?? .none {
+            case .none: break
+            case .wake:
+                menu.addItem(.separator())
+                add("Wake", #selector(wakeClicked))
+            case .park:
+                menu.addItem(.separator())
+                add("Park", #selector(parkClicked))
+                if notes[key]?.forceable == true { add("Park Anyway", #selector(parkAnywayClicked)) }
+            }
         }
         if entry.laneId != nil {
             menu.addItem(.separator())

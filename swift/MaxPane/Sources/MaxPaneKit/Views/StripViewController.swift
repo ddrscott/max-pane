@@ -252,6 +252,46 @@ public final class StripViewController: NSViewController {
         }
     }
 
+    // MARK: - wake (ADR-0048)
+
+    /// The panes whose session is parked, with the name each banner shows
+    /// and whether a wake is under way. Kept, like `resumeOffers`, so a
+    /// controller built later offers it from its first frame.
+    private var wakeOffers: [String: WakeOffer] = [:]
+    struct WakeOffer: Equatable {
+        var name: String
+        var waking = false
+    }
+    /// `$ WAKE` was pressed, or ↩ on a pane offering it.
+    public var onWakePane: ((String) -> Void)?
+
+    func setWakeOffers(_ offers: [String: WakeOffer]) {
+        let before = wakeOffers
+        wakeOffers = offers
+        for paneId in Set(before.keys).union(offers.keys) where before[paneId] != offers[paneId] {
+            applyWakeOffer(to: paneId)
+        }
+    }
+
+    private func applyWakeOffer(to paneId: String) {
+        guard let terminal = paneControllers[paneId] as? TerminalPaneController else { return }
+        applyWakeOffer(to: terminal, paneId: paneId)
+    }
+
+    private func applyWakeOffer(to terminal: TerminalPaneController, paneId: String) {
+        if let offer = wakeOffers[paneId] {
+            terminal.setWakeOffer(name: offer.name, waking: offer.waking) { [weak self] in self?.onWakePane?(paneId) }
+        } else {
+            terminal.setWakeOffer(name: nil, action: nil)
+        }
+    }
+
+    /// A line on a terminal pane's banner, for a moment: a park refused,
+    /// said where the lane is as well as on its row.
+    func showNotice(_ text: String, onPane paneId: String) {
+        (paneControllers[paneId] as? TerminalPaneController)?.showNotice(text, lasting: 6)
+    }
+
     /// The grid a terminal pane is drawn at, when it has a controller that
     /// has measured one.
     func grid(ofPane paneId: String) -> (cols: Int, rows: Int)? {
@@ -3065,6 +3105,9 @@ public final class StripViewController: NSViewController {
             if let terminal = made as? TerminalPaneController, let name = resumeOffers[pane.id] {
                 terminal.setResumeOffer(name: name) { [weak self] in self?.onResumePane?(pane.id) }
             }
+            if let terminal = made as? TerminalPaneController, wakeOffers[pane.id] != nil {
+                applyWakeOffer(to: terminal, paneId: pane.id)
+            }
             return made
         }
         switch pane.kind {
@@ -3090,6 +3133,7 @@ public final class StripViewController: NSViewController {
             if let name = resumeOffers[pane.id] {
                 controller.setResumeOffer(name: name) { [weak self] in self?.onResumePane?(pane.id) }
             }
+            if wakeOffers[pane.id] != nil { applyWakeOffer(to: controller, paneId: pane.id) }
             // A program set the clipboard (OSC 52): the header of whichever
             // lane holds the pane now says so. Looked up, not captured: a
             // pane can have moved lanes since it was made.

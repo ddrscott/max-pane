@@ -241,6 +241,10 @@ public struct SessionTelemetry: Sendable, Equatable {
     /// decides DONE on this, so an agent that finished during an outage is
     /// DONE when the server comes back rather than never.
     var reportedState: AgentState {
+        // A parked session's Claude is gone on purpose: whatever pty-host
+        // last classified, or the title still says, is about a process that
+        // no longer exists. It is never BLOCKED, WORKING or DONE (ADR-0048).
+        if parked != nil { return .idle }
         let derived = AgentState.derived(title: title, relay: relayState)
         if doneSince != nil, derived == .idle || derived == .done { return .done }
         if doneDismissed, derived == .done { return .idle }
@@ -253,6 +257,27 @@ public struct SessionTelemetry: Sendable, Equatable {
     public var isRunning: Bool
     /// True while a lane is attached to it.
     public var isAttached: Bool
+
+    // MARK: parking (ADR-0048)
+
+    /// The Claude `relay park` put to sleep in this session, nil while not
+    /// parked.
+    public var parked: ParkedAgent?
+    /// `relay keep`: never park this one automatically.
+    public var keep = false
+    /// When input last reached the pty: the other half of "quiet".
+    public var lastInputAt: Date?
+    /// When pty-host's agent state last changed. Input after it is likely
+    /// a draft nobody sent.
+    public var agentStateChangedAt: Date?
+    /// The relay-tty that wrote this session knows how to park. False for
+    /// an older one, and then nothing about parking is offered.
+    public var knowsParking = false
+
+    /// Parked, and on this Mac: the sidebar's `// PARKED` group and the
+    /// pane's `$ WAKE`. A remote parked session stays where it was (ADR-0046's
+    /// rule: nothing about a remote agent is acted on from here).
+    public var isParkedHere: Bool { parked != nil && server == nil }
 
     public init(
         sessionId: String, server: String? = nil, title: String = "", cwd: String = "", command: String = "",
@@ -283,6 +308,11 @@ public struct SessionTelemetry: Sendable, Equatable {
             lastActivity: info.lastActivity.map { Date(timeIntervalSince1970: $0 / 1000) },
             isRunning: info.isRunning,
             isAttached: isAttached)
+        parked = info.parked
+        keep = info.keep ?? false
+        lastInputAt = info.lastInputAt.map { Date(timeIntervalSince1970: $0 / 1000) }
+        agentStateChangedAt = info.agentStateChangedAt.map { Date(timeIntervalSince1970: $0 / 1000) }
+        knowsParking = info.knowsParking
     }
 
     /// Throughput the way the bar prints it: `1.7KB/s`, `842B/s`, `2.1MB/s`.

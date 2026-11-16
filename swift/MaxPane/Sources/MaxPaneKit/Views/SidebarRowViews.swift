@@ -112,6 +112,8 @@ final class SidebarEntryView: NSTableCellView {
     var isBlockedMarkPulsing: Bool { chip.isAnimatingPulse }
 
     static let height: CGFloat = 40
+    /// How far a parked row, and the `// PARKED` header, are dimmed.
+    static let parkedAlpha: CGFloat = 0.5
 
     init(entry: SidebarModel.Entry) {
         super.init(frame: .zero)
@@ -173,6 +175,16 @@ final class SidebarEntryView: NSTableCellView {
         // fill and the movement are what keep it from being one more green word.
         chip.layerBackgroundColor = entry.needsAttention ? chipInk : NSColor.clear
         chip.isPulsing = entry.needsAttention
+        // A note — a park relay-tty refused, and why — takes the chip's place
+        // in the accent, unboxed: it is news about this row, not a state.
+        if let note = entry.note {
+            chip.stringValue = note
+            chip.font = Theme.mono(9)
+            chip.textColor = Theme.accent
+            chip.layer?.borderWidth = 0
+            chip.layerBackgroundColor = NSColor.clear
+            chip.isPulsing = false
+        }
 
         title.attributedStringValue = Self.titleText(entry)
 
@@ -189,6 +201,12 @@ final class SidebarEntryView: NSTableCellView {
         toolTip = attached
             ? "\(entry.title)\n\(entry.sessionId ?? "web lane") — click to reveal on the strip"
             : "\(entry.title)\n\(entry.sessionId ?? "") — click to attach"
+        if let note = entry.note { toolTip = (toolTip ?? "") + "\n" + note }
+        // Asleep: the whole row steps back, the way `// PARKED` does.
+        if entry.parked {
+            alphaValue = Self.parkedAlpha
+            toolTip = (toolTip ?? "") + "\nparked — right-click › Wake, or ↩ in its lane"
+        }
 
         for v in [glyph, title, badge, age, chip] {
             v.isBezeled = false
@@ -652,6 +670,20 @@ final class SidebarGroupView: NSTableCellView {
             toolTip = group.isLocalSection
                 ? "This Mac — \(group.rollUpText.lowercased()); \(fold)"
                 : "\(group.server ?? group.header) — \(group.rollUpText.lowercased()); \(fold), ⋯ for its menu"
+        }
+        if group.isParked {
+            // `// PARKED`: the house header, because it is not a path, and
+            // dimmed with its rows — asleep is the one thing it says.
+            let mark = NSMutableAttributedString(
+                string: "// ",
+                attributes: [.foregroundColor: Theme.accent, .font: Theme.mono(10, weight: .bold)])
+            mark.append(NSAttributedString(
+                string: group.header,
+                attributes: [.foregroundColor: NSColor.secondaryLabelColor, .font: Theme.mono(10, weight: .bold)]))
+            label.attributedStringValue = mark
+            label.lineBreakMode = .byTruncatingTail
+            alphaValue = SidebarEntryView.parkedAlpha + 0.2
+            toolTip = "Claude put to sleep in these lanes; the shell and scrollback stay. Wake one from its row's menu, or ↩ in its lane."
         }
         if group.hiddenLanes > 0 {
             toolTip = (toolTip ?? "") + " — \(group.hiddenLanes) lane\(group.hiddenLanes == 1 ? "" : "s") off the strip, still running; open this to bring \(group.hiddenLanes == 1 ? "it" : "them") back"

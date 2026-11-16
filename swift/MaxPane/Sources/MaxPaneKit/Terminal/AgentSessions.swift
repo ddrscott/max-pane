@@ -250,11 +250,26 @@ enum AgentLedgerSync {
     /// record is left alone until it is.
     static func changes(
         panes: [(paneId: String, relayId: String)], records: [String: PaneAgent],
-        reading: AgentReading, holding: Set<String>, now: Int64
+        reading: AgentReading, holding: Set<String>, now: Int64,
+        parked: [String: ParkedAgent] = [:]
     ) -> [Change] {
         var out: [Change] = []
         for (paneId, relayId) in panes {
             let kept = records[paneId]
+            // Parked (ADR-0048): Claude is gone on purpose and the shell is
+            // alive, which is exactly the "agent exited" case below — but the
+            // lane is still bound to its conversation. Keep the record, and
+            // take it from relay-tty's `parked` when this app never saw the
+            // agent run (parked before launch, or from the CLI).
+            if reading.sightings[relayId] == nil, let sleeping = parked[relayId],
+               sleeping.agent == AgentReading.cli, !sleeping.sessionId.isEmpty {
+                if let kept, kept.sessionId == sleeping.sessionId { continue }
+                out.append(.record(PaneAgent(
+                    paneId: paneId, cli: sleeping.agent, sessionId: sleeping.sessionId,
+                    cwd: sleeping.cwd.isEmpty ? (kept?.cwd ?? "") : sleeping.cwd,
+                    args: sleeping.flags, name: sleeping.name, updatedAt: now)))
+                continue
+            }
             if let seen = reading.sightings[relayId] {
                 if let kept, kept.cli == seen.cli, kept.sessionId == seen.sessionId, kept.cwd == seen.cwd,
                    kept.args == seen.args, kept.name == seen.name { continue }

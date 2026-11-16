@@ -248,9 +248,11 @@ final class TerminalPaneController: NSObject, PaneController {
             if self.keyDuringSlowPaste(event) { return true }
             // Return on a pane offering RESUME is the button: the keyboard's
             // way to it, and nothing typed there was going anywhere anyway.
-            if self.offersResume, event.keyCode == 36 || event.keyCode == 76,
+            if self.offersResume || self.offersWake, event.keyCode == 36 || event.keyCode == 76,
                event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty {
-                self.resumeOffer?.action()
+                // Wake first: a parked pane's session is alive, so it can
+                // never be offering a resume at the same time.
+                if self.offersWake { self.wakeOffer?.action() } else { self.resumeOffer?.action() }
                 return true
             }
             return self.controlV(event)
@@ -417,6 +419,11 @@ final class TerminalPaneController: NSObject, PaneController {
         if offersResume, let resumeOffer {
             return .action("session gone · \(resumeOffer.name)", label: "resume")
         }
+        // Parked: the session and its shell are alive, Claude is asleep on
+        // purpose, and the one thing to do is bring it back (ADR-0048).
+        if offersWake, let wakeOffer {
+            return .action("parked · \(wakeOffer.name)", label: wakeOffer.waking ? "" : "wake")
+        }
         return (isWireUp && isSessionAvailable) ? .connected : .reconnecting
     }
 
@@ -429,6 +436,39 @@ final class TerminalPaneController: NSObject, PaneController {
 
     /// Whether the banner is offering `$ RESUME` right now.
     var offersResume: Bool { resumeOffer != nil && !isSessionAvailable }
+
+    // MARK: - wake (ADR-0048)
+
+    /// The parked Claude this pane can wake: its name, the button, and
+    /// whether a wake is already on its way (the button goes while it is).
+    /// Set by the strip from the session file's `parked`; nil when the
+    /// session is not parked.
+    private var wakeOffer: (name: String, waking: Bool, action: () -> Void)?
+
+    /// Whether the banner is offering `$ WAKE` right now. Only while the
+    /// session is up: a parked session that died is a resume, not a wake.
+    var offersWake: Bool { wakeOffer != nil && isSessionAvailable }
+
+    func setWakeOffer(name: String?, waking: Bool = false, action: (() -> Void)?) {
+        let was = offersWake
+        let before = wakeOffer.map { ($0.name, $0.waking) }
+        if let name, let action {
+            wakeOffer = (name, waking, action)
+            status.onAction = { [weak self] in self?.wakeOffer?.action() }
+        } else {
+            wakeOffer = nil
+            if resumeOffer != nil { status.onAction = { [weak self] in self?.resumeOffer?.action() } }
+        }
+        let changed = was != offersWake || before.map { "\($0.0)\($0.1)" } != wakeOffer.map { "\($0.name)\($0.waking)" }
+        guard changed else { return }
+        switch status.state {
+        case .exited, .refused, .notice: return
+        case .action, .connected, .reconnecting, .offline: break
+        }
+        Motion.fade(status.layer)
+        status.isHidden = false
+        status.setState(restingBanner)
+    }
 
     func setResumeOffer(name: String?, action: (() -> Void)?) {
         let was = offersResume
