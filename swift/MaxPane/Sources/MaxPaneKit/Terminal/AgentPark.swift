@@ -71,6 +71,14 @@ public struct ParkedAgent: Codable, Equatable, Sendable {
 /// What a park, an unpark or a keep came to.
 enum ParkOutcome: Equatable {
     case done
+    /// Parked, on a pty-host from relay 1.23 or older. That host ignores
+    /// relay-tty's `SET_META`, so the session will never say `parked`; the
+    /// conversation is recoverable only from relay-tty's `parked/` copy, by
+    /// its conversation id. `note` is relay-tty's line for the user.
+    case parkedOnOldHost(ParkedAgent, note: String)
+    /// An unpark by conversation id started a new relay session to resume
+    /// in, because the one it was parked from is gone or never knew.
+    case spawned(session: String)
     /// relay-tty said no, and why, in its words. `forceable` when Park
     /// Anyway could get past it: a working, blocked or busy agent, or a
     /// draft — never a session with no Claude in it, or one already parked.
@@ -82,6 +90,7 @@ enum ParkOutcome: Equatable {
     case failed(String)
 
     var isUnsupported: Bool { self == .unsupported }
+    var isSpawned: Bool { if case .spawned = self { return true } else { return false } }
 }
 
 /// relay-tty's answer to a park, unpark or keep, as a value.
@@ -94,6 +103,16 @@ enum ParkReply {
         let code = object?["reason"] as? String
         switch status {
         case 200..<300:
+            if object?["legacyHost"] as? Bool == true,
+               let raw = object?["parked"], let json = try? JSONSerialization.data(withJSONObject: raw),
+               let parked = try? JSONDecoder().decode(ParkedAgent.self, from: json), !parked.sessionId.isEmpty {
+                let note = (object?["note"] as? String)
+                    ?? "This session's pty-host predates parking, so it won't show as PARKED."
+                return .parkedOnOldHost(parked, note: note)
+            }
+            if object?["spawned"] as? Bool == true, let session = object?["session"] as? String, !session.isEmpty {
+                return .spawned(session: session)
+            }
             return .done
         case 404:
             // Express answers a route it does not have with an HTML
@@ -109,6 +128,11 @@ enum ParkReply {
             let forceable = code.map(forceableCodes.contains) ?? Self.looksForceable(reason)
             return .refused(reason.isEmpty ? "HTTP \(status)" : reason, forceable: forceable)
         default:
+            // relay-tty's own refusals that happen to be 500s: `no-record`
+            // (it could not write the `parked/` copy, so it signalled
+            // nothing), `kill-failed`, `shell-died`. Said on the row like
+            // any refusal, and never forceable.
+            if code != nil, let message { return .refused(message, forceable: false) }
             let line = message ?? RemoteSpawner.errorLine(data)
             return .failed("HTTP \(status)" + (line.isEmpty ? "" : ": \(line)"))
         }
@@ -140,6 +164,10 @@ protocol AgentParking: AnyObject {
     func park(sessionId: String, force: Bool, completion: @escaping @MainActor (ParkOutcome) -> Void)
     func unpark(sessionId: String, completion: @escaping @MainActor (ParkOutcome) -> Void)
     func setKeep(sessionId: String, keep: Bool, completion: @escaping @MainActor (ParkOutcome) -> Void)
+    /// relay-tty's `agentQuietSince` for each local session that has it, by
+    /// relay id. Empty from a relay-tty too old to send it, or none answering:
+    /// Park Idle Lanes then measures from the session file, as it always has.
+    func agentQuiet(completion: @escaping @MainActor ([String: AgentQuiet]) -> Void)
 }
 
 /// The relay-tty server on this Mac, over HTTP on loopback (which its auth
@@ -198,6 +226,18 @@ final class LocalAgentParker: AgentParking {
         post("/api/sessions/\(sessionId)/keep", body: ["keep": keep], completion: completion)
     }
 
+    func agentQuiet(completion: @escaping @MainActor ([String: AgentQuiet]) -> Void) {
+        var components = URLComponents(url: baseURL(), resolvingAgainstBaseURL: false)!
+        components.path = "/api/sessions"
+        var request = URLRequest(url: components.url!)
+        request.timeoutInterval = 5
+        urlSession.dataTask(with: request) { data, response, _ in
+            let ok = ((response as? HTTPURLResponse)?.statusCode ?? 0) == 200
+            let quiet = ok ? AgentQuiet.parse(sessionList: data) : [:]
+            Task { @MainActor in completion(quiet) }
+        }.resume()
+    }
+
     private func post(
         _ path: String, body: [String: Any], completion: @escaping @MainActor (ParkOutcome) -> Void
     ) {
@@ -216,6 +256,80 @@ final class LocalAgentParker: AgentParking {
     }
 }
 
+// MARK: - Quiet time
+
+/// How long a session's Claude has been quiet, as relay-tty measures it
+/// (`shared/park.ts` `quietFor`): from Claude's own `statusUpdatedAt` and the
+/// session's last input, because Claude repaints on every resize, attach and
+/// status-line refresh and pty output is never old. `GET /api/sessions` adds
+/// it as `agentQuietSince`/`agentQuietSource`; the session file never has it.
+struct AgentQuiet: Equatable, Sendable {
+    var since: Date
+    /// `claude` when measured from Claude's session file, `output` when
+    /// relay-tty itself fell back to pty output.
+    var source: String
+
+    /// `{sessions: [{id, agentQuietSince, agentQuietSource}, …]}` → by id.
+    /// Sessions without the field are left out, which is every session
+    /// from a relay-tty older than the field.
+    static func parse(sessionList data: Data?) -> [String: AgentQuiet] {
+        guard let data, let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let sessions = object["sessions"] as? [[String: Any]] else { return [:] }
+        var out: [String: AgentQuiet] = [:]
+        for s in sessions {
+            guard let id = s["id"] as? String, let ms = (s["agentQuietSince"] as? NSNumber)?.doubleValue,
+                  ms > 0 else { continue }
+            let source = (s["agentQuietSource"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "output"
+            out[id] = AgentQuiet(since: Date(timeIntervalSince1970: ms / 1000), source: source)
+        }
+        return out
+    }
+}
+
+// MARK: - Old pty-hosts
+
+/// relay-tty's `~/.relay-tty/parked/<conversation>.json`: a copy of every
+/// park, written before Claude is signalled and removed by unpark. For a
+/// session on a pty-host from relay 1.23 or older it is the only record,
+/// because that host never stores `parked` in the session file.
+enum ParkLedger {
+    struct Entry: Equatable {
+        var parked: ParkedAgent
+        var relaySessionId: String
+    }
+
+    static var directory: URL { RelaySessionDirectory.root.appendingPathComponent("parked", isDirectory: true) }
+
+    static func entries(in dir: URL = directory) -> [Entry] {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        return names.filter { $0.hasSuffix(".json") }.compactMap { name in
+            guard let data = try? Data(contentsOf: dir.appendingPathComponent(name)),
+                  let parked = try? JSONDecoder().decode(ParkedAgent.self, from: data), !parked.sessionId.isEmpty,
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let relay = object["relaySessionId"] as? String, !relay.isEmpty else { return nil }
+            return Entry(parked: parked, relaySessionId: relay)
+        }
+    }
+
+    /// The local sessions parked on an old pty-host, by relay id: a ledger
+    /// entry for a session that is running, whose file knows nothing of
+    /// parking (a new host's says `parked`, and writes `lastInputAt` once
+    /// anyone types), and that has no `claude` in it now. A Claude resumed
+    /// by hand in that shell takes the session off the list. Not
+    /// `isLegacyHost`: that needs a foreground job, and parking removed it.
+    static func asleepOnOldHosts(
+        _ entries: [Entry], sessions: [SessionKey: SessionTelemetry], sightings: Set<String>
+    ) -> [String: ParkedAgent] {
+        var out: [String: ParkedAgent] = [:]
+        for e in entries.sorted(by: { ($0.parked.parkedAt ?? 0) < ($1.parked.parkedAt ?? 0) }) {
+            guard let t = sessions[SessionKey(id: e.relaySessionId)], t.isRunning, t.parked == nil,
+                  !t.knowsParking, !sightings.contains(e.relaySessionId) else { continue }
+            out[e.relaySessionId] = e.parked
+        }
+        return out
+    }
+}
+
 // MARK: - Park Idle Lanes
 
 /// One local session Park Idle Lanes looked at.
@@ -227,6 +341,8 @@ struct ParkCandidate: Equatable {
     var hasClaude: Bool
     /// Its lane is kept loaded (⇧⌘P), which means keep here as well.
     var keptLoaded: Bool
+    /// relay-tty's own quiet time for it, when the server sends one.
+    var agentQuiet: AgentQuiet? = nil
 }
 
 enum ParkIdle {
@@ -280,35 +396,71 @@ enum ParkIdle {
         return input > (t.agentStateChangedAt ?? .distantPast)
     }
 
+    /// When the session went quiet and how that was measured: relay-tty's
+    /// `agentQuietSince` when the server sent one, else the later of the
+    /// file's last output and last input (an older relay-tty, which has
+    /// only that), as `output`.
+    static func quietSince(_ c: ParkCandidate) -> (since: Date, source: String)? {
+        if let q = c.agentQuiet { return (q.since, q.source) }
+        return lastTouched(c.telemetry).map { ($0, "output") }
+    }
+
+    /// `31d (claude)`: the quiet time and where it came from, for the list.
+    static func quietText(_ c: ParkCandidate, now: Date = Date()) -> String {
+        guard let q = quietSince(c) else { return "?" }
+        return "\(ParkedAgent.shortAge(max(0, now.timeIntervalSince(q.since)))) (\(q.source))"
+    }
+
+    /// The draft rule with relay-tty's quiet time. Its `agentQuietSince` is
+    /// the later of Claude's `statusUpdatedAt` and the last input, so the
+    /// last input *being* it is relay-tty's draft check (`lastInputAt >
+    /// statusUpdatedAt`). Measured from output, the file's rule stands.
+    static func hasDraft(_ c: ParkCandidate) -> Bool {
+        guard let q = c.agentQuiet, q.source == "claude" else { return hasDraft(c.telemetry) }
+        guard let input = c.telemetry.lastInputAt else { return false }
+        return input >= q.since
+    }
+
     /// Which sessions Park Idle Lanes parks, and which it passes over and
-    /// why. Only local Claude sessions on a relay-tty that knows parking,
-    /// not already parked, and quiet — output and input both — for at least
-    /// `quietFor` are on the list at all; a busy one is not "skipped", it is
-    /// simply not idle. Of those, the kept, blocked, working and drafted are
-    /// skipped with their reason. Oldest-touched first.
+    /// why. Only local Claude sessions relay-tty can park, not already
+    /// parked, and quiet for at least `quietFor` are on the list at all; a
+    /// busy one is not "skipped", it is simply not idle. Of those, the kept,
+    /// blocked, working and drafted are skipped with their reason. Quietest
+    /// first.
+    ///
+    /// Quiet is relay-tty's `agentQuietSince` when the server sends it
+    /// (Claude's own status and the last input; a repaint does not count),
+    /// else output and input both, from the session file. A session the
+    /// server measured is parkable even when its file shows nothing of
+    /// parking: that is an old pty-host, which a server new enough to send
+    /// the field parks anyway (ADR-0048).
     static func plan(_ candidates: [ParkCandidate], quietFor: TimeInterval, now: Date = Date())
         -> (park: [ParkCandidate], skipped: [(candidate: ParkCandidate, why: String)])
     {
         let idle = candidates.filter { c in
             let t = c.telemetry
-            guard t.server == nil, t.isRunning, t.knowsParking, t.parked == nil, c.hasClaude,
-                  let touched = lastTouched(t) else { return false }
-            return now.timeIntervalSince(touched) >= quietFor
+            guard t.server == nil, t.isRunning, t.knowsParking || c.agentQuiet != nil, t.parked == nil,
+                  c.hasClaude || c.agentQuiet != nil, let quiet = quietSince(c) else { return false }
+            return now.timeIntervalSince(quiet.since) >= quietFor
         }.sorted {
-            let a = lastTouched($0.telemetry)!, b = lastTouched($1.telemetry)!
+            let a = quietSince($0)!.since, b = quietSince($1)!.since
             return a == b ? $0.key < $1.key : a < b
         }
         var park: [ParkCandidate] = []
         var skipped: [(candidate: ParkCandidate, why: String)] = []
         for c in idle {
             let t = c.telemetry
+            // pty-host's WORKING is an output rate that one Claude repaint
+            // raises for a minute; with Claude's own status to go by,
+            // relay-tty ignores it, and so does this.
+            let measured = c.agentQuiet?.source == "claude"
             if t.keep || c.keptLoaded {
                 skipped.append((c, "kept loaded"))
             } else if t.state == .blocked {
                 skipped.append((c, "blocked, waiting on you"))
-            } else if t.state == .working {
+            } else if t.state == .working, !measured {
                 skipped.append((c, "working"))
-            } else if hasDraft(t) {
+            } else if hasDraft(c) {
                 skipped.append((c, "an unsent draft at the prompt"))
             } else {
                 park.append(c)
@@ -323,12 +475,17 @@ enum ParkIdle {
     ) -> String {
         var lines: [String] = []
         for c in park {
-            let quiet = lastTouched(c.telemetry).map { ParkedAgent.shortAge(now.timeIntervalSince($0)) } ?? "?"
-            lines.append("$ park  \(c.name) — quiet \(quiet)")
+            lines.append("$ park  \(c.name) — quiet \(quietText(c, now: now))" + (isOldHost(c) ? " · \(oldHostNote)" : ""))
         }
         for s in skipped {
-            lines.append("  skip  \(s.candidate.name) — \(s.why)")
+            lines.append("  skip  \(s.candidate.name) — quiet \(quietText(s.candidate, now: now)) · \(s.why)")
         }
         return lines.joined(separator: "\n")
     }
+
+    /// relay-tty's `isLegacyHost`, from the session file: a foreground job
+    /// named with no `foregroundPid` beside it, and no input ever recorded.
+    static func isOldHost(_ c: ParkCandidate) -> Bool { c.telemetry.isOldPtyHost }
+
+    static let oldHostNote = "old pty-host: never shows PARKED, $ WAKE resumes it in a new session"
 }
