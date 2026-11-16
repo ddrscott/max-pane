@@ -37,9 +37,9 @@ server's, and `relay park` does the same from a shell, so it lives there.
 Max Pane calls `POST /api/sessions/:id/park` (`{force}`), `…/unpark` and
 `…/keep` (`{keep}`) on the local server, at the address relay-tty writes to
 `~/.config/relay-tty/server.json`, over loopback, which needs no cookie.
-When no server answers, or the route is missing, the `relay` CLI is asked
-the same thing. This is the first time the app talks to a *local* server at
-all; sessions are still files and sockets for everything else.
+This is the first time the app talks to a *local* server at all; sessions
+are still files and sockets for everything else. With no server answering,
+a park says so on the row.
 
 **Parking keeps the shell, the session and the lane.** That is the whole
 difference from ending. The pane stays attached to a live session; only the
@@ -113,6 +113,10 @@ ignored, and its row stays with its server.
   line ourselves). It would duplicate relay-tty's guards and record in a
   second place, and `relay park` from a shell would not know about it.
 - **A dialog for a refused park.** See above.
+- **The `relay` CLI as a fallback** when the server is down or lacks the
+  route. Tried, and it was wrong in the worst way: relay-tty before park
+  reads an unknown first word as a program, so `relay park <id>` starts a
+  new session running `park`, exits 0 and looks exactly like success.
 - **Auto-park from the app.** relay-tty has its own, off by default
   (`park_after`); a second timer here would be two owners for one decision.
 

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import LanedCore
 import Testing
@@ -225,12 +226,6 @@ struct AgentParkTests {
                 == .refused("Session not found", forceable: false))
         #expect(ParkReply.outcome(status: 0, data: nil, transportError: "Could not connect to the server.")
                 == .failed("Could not connect to the server."))
-        #expect(LocalAgentParker.cliOutcome(exit: 0, output: "parked abc") == .done)
-        #expect(LocalAgentParker.cliOutcome(exit: 1, output: "error: unknown command 'park'") == .unsupported)
-        #expect(LocalAgentParker.cliOutcome(exit: 1, output: "error: a draft may be unsent (use --force to park anyway)\n")
-                == .refused("a draft may be unsent", forceable: true))
-        #expect(LocalAgentParker.cliOutcome(exit: 1, output: "no Claude Code process in this session")
-                == .refused("no Claude Code process in this session", forceable: false))
     }
 
     @Test("the local server's address comes from relay-tty's server.json, else its default port")
@@ -262,5 +257,94 @@ struct AgentParkTests {
                                             parked: ["r2": ParkedAgent(sessionId: "conv-2", cwd: "/w", flags: ["-y"], name: "b")])
         #expect(fresh == [.record(PaneAgent(paneId: "p2", cli: "claude", sessionId: "conv-2", cwd: "/w",
                                              args: ["-y"], name: "b", updatedAt: 9))])
+    }
+}
+
+// MARK: - render sheet
+
+/// The sidebar with a `// PARKED` group, and a parked pane's banner, drawn
+/// by the real views offscreen. `MAXPANE_SHOTS=<dir>` to write it.
+@Suite("parked rendering")
+@MainActor
+struct ParkedRenderTests {
+    @Test("renders the sidebar with a // PARKED group and a parked pane's $ WAKE banner")
+    func sheet() throws {
+        guard let dir = ProcessInfo.processInfo.environment["MAXPANE_SHOTS"] else {
+            print("SKIPPED: set MAXPANE_SHOTS=<dir> to render the parked sheet")
+            return
+        }
+        BlockedPulse.isReduced = { true }
+        defer { BlockedPulse.isReduced = { Motion.isReduced } }
+        let now = AgentParkTests.now
+        let home = NSHomeDirectory()
+        func t(_ id: String, _ title: String, _ cwd: String, state: AgentState = .idle, bps: Double = 0,
+               ago: TimeInterval = 40, parkedAgo: Double? = nil) -> SessionTelemetry {
+            var t = SessionTelemetry(
+                sessionId: id, title: title, cwd: home + "/code/" + cwd, command: "zsh", state: state,
+                bytesPerSecond: bps, lastActivity: now.addingTimeInterval(-ago), isRunning: true)
+            t.knowsParking = true
+            if let parkedAgo {
+                t.parked = ParkedAgent(sessionId: id + "-conv", cwd: home + "/code/" + cwd, name: title,
+                                       parkedAt: (now.timeIntervalSince1970 - parkedAgo) * 1000)
+            }
+            return t
+        }
+        let telemetry: [SessionKey: SessionTelemetry] = [
+            "a1": t("a1", "◑ ship park ui", "max-pane", state: .working, bps: 2300, ago: 1),
+            "a2": t("a2", "✳ relay park api", "relay-tty", state: .blocked, ago: 90),
+            "a3": t("a3", "✳ release-notes", "max-pane", ago: 600),
+            "p1": t("p1", "fix-auth-flow", "trifecta", parkedAgo: 3 * 86_400),
+            "p2": t("p2", "docs-sweep", "site", parkedAgo: 5 * 3600),
+            "p3": t("p3", "migrate-billing", "trifecta", parkedAgo: 12 * 60),
+        ]
+        let rows = SidebarModel.rows(
+            lanes: [AgentParkTests.lane("L1", session: "p1")], telemetry: telemetry,
+            notes: ["a3": "park refused: a draft may be unsent"], now: now)
+
+        let sidebarWidth: CGFloat = 300, paneWidth: CGFloat = 560
+        let heights = rows.map { row -> CGFloat in
+            if case .group = row { return SidebarGroupView.height } else { return SidebarEntryView.height }
+        }
+        let height = max(heights.reduce(8, +), 300)
+        try AppearanceSheet.render(to: dir, named: "parked") {
+            let sheet = NSView(frame: NSRect(x: 0, y: 0, width: sidebarWidth + paneWidth + 1, height: height))
+            sheet.wantsLayer = true
+            sheet.layerBackgroundColor = Theme.stripBackground
+            var y = height - 4
+            for (row, h) in zip(rows, heights) {
+                let view: NSView
+                switch row {
+                case .group(let g): view = SidebarGroupView(group: g)
+                case .entry(let e): view = SidebarEntryView(entry: e)
+                case .bookmark: continue
+                }
+                y -= h
+                view.frame = NSRect(x: 0, y: y, width: sidebarWidth, height: h)
+                sheet.addSubview(view)
+                view.layoutSubtreeIfNeeded()
+            }
+            let rule = NSView(frame: NSRect(x: sidebarWidth, y: 0, width: 1, height: height))
+            rule.wantsLayer = true
+            rule.layerBackgroundColor = Theme.laneBorder
+            sheet.addSubview(rule)
+
+            // The parked pane: its banner over the scrollback it kept.
+            let banner = ReconnectingBanner(frame: NSRect(x: sidebarWidth + 1, y: height - 26, width: paneWidth, height: 26))
+            banner.setState(.action("parked · fix-auth-flow", label: "wake"))
+            sheet.addSubview(banner)
+            let text = NSTextField(wrappingLabelWithString: """
+                ~/code/trifecta $ claude --dangerously-skip-permissions --model opus
+                ✳ fix-auth-flow
+                ⏺ The token refresh now retries once on a 401 and the tests pass.
+                > 
+                ~/code/trifecta $ 
+                """)
+            text.font = Theme.mono(11)
+            text.textColor = .secondaryLabelColor
+            text.frame = NSRect(x: sidebarWidth + 13, y: height - 140, width: paneWidth - 26, height: 100)
+            sheet.addSubview(text)
+            banner.layoutSubtreeIfNeeded()
+            return sheet
+        }
     }
 }

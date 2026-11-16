@@ -1719,6 +1719,10 @@ unpark`, 1.24 or later); Max Pane offers it and shows it.
   sessions, so relay-tty's own auto-park (`park_after`) passes them by, and
   so does Park Idle Lanes.
 
+From a shell, `maxpane park LANE [--force]`, `maxpane wake LANE` and
+`maxpane park --idle [--dry-run]` do the same, a line a lane: `parked`,
+`refused` or `skipped`, the name, and why.
+
 A parked lane stays bound to its conversation: its resume record (above) is
 kept, and if a reboot takes the session while it is parked, `$ RESUME`
 brings it back as it would any other.
@@ -2825,6 +2829,10 @@ maxpane capture [LANE] [--full]
 maxpane app gmail         # go to a [[apps]] web app: focus its lane, or open one
 maxpane resume [--all|LANE]   # bring back the claude conversations a reboot ended, in place;
                               # see "Resuming agents after a reboot"
+maxpane park LANE [--force]   # put a lane's claude to sleep; shell and scrollback stay
+maxpane park --idle [--dry-run]   # park every claude lane quiet for park_idle_after
+maxpane wake LANE             # claude --resume, typed back into the same shell;
+                              # see "Parking an idle Claude"
 maxpane server add NAME URL   # a remote relay-tty server, from its startup Auth URL; see "Remote servers"
 maxpane server ls             # the configured servers, their colour and how they are doing
 maxpane server color WSL violet   # the colour a server is known by: slate cyan blue violet magenta rose lemon ink

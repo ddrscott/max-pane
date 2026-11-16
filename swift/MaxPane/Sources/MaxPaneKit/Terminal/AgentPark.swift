@@ -148,15 +148,16 @@ protocol AgentParking: AnyObject {
 ///
 /// Max Pane never needed a local server before: sessions are files and
 /// sockets. Parking is the server's because pty-host must write the record
-/// and pick the Claude out of the session's process tree. When no server
-/// answers, the `relay` CLI is asked the same thing, as it is for `relay
-/// keep`, which may have no route at all.
+/// and pick the Claude out of the session's process tree.
+///
+/// **Never the `relay` CLI as a fallback.** relay-tty before park reads an
+/// unknown first word as a program to run: `relay park <id>` starts a new
+/// session running `park`, exits 0, and looks exactly like success. With
+/// no server answering, a park says so instead.
 @MainActor
 final class LocalAgentParker: AgentParking {
     /// Where the server is, read on each call: it moves when restarted.
     let baseURL: @Sendable () -> URL
-    /// `relay` on PATH, or nil to not fall back.
-    let relayCLI: @Sendable () -> String?
     private let urlSession: URLSession
 
     nonisolated static var serverFile: URL {
@@ -174,12 +175,10 @@ final class LocalAgentParker: AgentParking {
         return URL(string: "http://localhost:7680")!
     }
 
-    init(
-        baseURL: @escaping @Sendable () -> URL = { LocalAgentParker.serverURL() },
-        relayCLI: @escaping @Sendable () -> String? = { LocalSpawner.which("relay") }
-    ) {
+    static let noServer = "no relay-tty server is answering on this Mac (relay server start)"
+
+    init(baseURL: @escaping @Sendable () -> URL = { LocalAgentParker.serverURL() }) {
         self.baseURL = baseURL
-        self.relayCLI = relayCLI
         let config = URLSessionConfiguration.ephemeral
         config.waitsForConnectivity = false
         // A park waits up to 5 s for Claude to go before SIGKILL.
@@ -188,24 +187,19 @@ final class LocalAgentParker: AgentParking {
     }
 
     func park(sessionId: String, force: Bool, completion: @escaping @MainActor (ParkOutcome) -> Void) {
-        post("/api/sessions/\(sessionId)/park", body: force ? ["force": true] : [:],
-             cli: ["park"] + (force ? ["--force"] : []) + [sessionId], completion: completion)
+        post("/api/sessions/\(sessionId)/park", body: force ? ["force": true] : [:], completion: completion)
     }
 
     func unpark(sessionId: String, completion: @escaping @MainActor (ParkOutcome) -> Void) {
-        post("/api/sessions/\(sessionId)/unpark", body: [:], cli: ["unpark", sessionId], completion: completion)
+        post("/api/sessions/\(sessionId)/unpark", body: [:], completion: completion)
     }
 
     func setKeep(sessionId: String, keep: Bool, completion: @escaping @MainActor (ParkOutcome) -> Void) {
-        post("/api/sessions/\(sessionId)/keep", body: ["keep": keep],
-             cli: ["keep"] + (keep ? [] : ["--off"]) + [sessionId], completion: completion)
+        post("/api/sessions/\(sessionId)/keep", body: ["keep": keep], completion: completion)
     }
 
-    /// The route, then the CLI when the server is not there or the route
-    /// is not (a `keep` route may never land; `relay keep` is the contract).
     private func post(
-        _ path: String, body: [String: Any], cli: [String],
-        completion: @escaping @MainActor (ParkOutcome) -> Void
+        _ path: String, body: [String: Any], completion: @escaping @MainActor (ParkOutcome) -> Void
     ) {
         var components = URLComponents(url: baseURL(), resolvingAgainstBaseURL: false)!
         components.path = path
@@ -213,62 +207,12 @@ final class LocalAgentParker: AgentParking {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        let relay = relayCLI
         urlSession.dataTask(with: request) { data, response, error in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             let outcome = ParkReply.outcome(
-                status: status, data: data, transportError: error.map { ($0 as NSError).localizedDescription })
-            Task { @MainActor in
-                switch outcome {
-                case .failed where status == 0, .unsupported:
-                    guard let binary = relay() else {
-                        completion(outcome.isUnsupported
-                            ? outcome : .failed("no relay-tty server is running on this Mac (relay server)"))
-                        return
-                    }
-                    Self.runCLI(binary, cli, completion: completion)
-                default:
-                    completion(outcome)
-                }
-            }
-        }.resume()
-    }
-
-    /// `relay <args>`, off the main thread. Exit 0 is done; an unknown
-    /// command is an older relay-tty; anything else is its stderr's first
-    /// line, as a refusal.
-    private static func runCLI(
-        _ binary: String, _ args: [String], completion: @escaping @MainActor (ParkOutcome) -> Void
-    ) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: binary)
-            process.arguments = args
-            let err = Pipe(), out = Pipe()
-            process.standardError = err
-            process.standardOutput = out
-            let outcome: ParkOutcome
-            do {
-                try process.run()
-                process.waitUntilExit()
-                let text = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                    + String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                outcome = cliOutcome(exit: process.terminationStatus, output: text)
-            } catch {
-                outcome = .failed("relay: \(error.localizedDescription)")
-            }
+                status: status, data: data, transportError: error.map { _ in Self.noServer })
             Task { @MainActor in completion(outcome) }
-        }
-    }
-
-    nonisolated static func cliOutcome(exit: Int32, output: String) -> ParkOutcome {
-        if exit == 0 { return .done }
-        let lower = output.lowercased()
-        if lower.contains("unknown command") || lower.contains("unknown option") { return .unsupported }
-        let line = output.split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
-            .map { $0.hasPrefix("error: ") ? String($0.dropFirst(7)) : $0 } ?? "relay exited \(exit)"
-        return .refused(ParkReply.trimForceHint(line), forceable: ParkReply.looksForceable(line))
+        }.resume()
     }
 }
 

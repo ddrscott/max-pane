@@ -464,9 +464,16 @@ public final class StripWindowController: NSWindowController, CommandHandling {
                     guard let self else { return answer(.refused("max pane is shutting down")) }
                     // One op answers later than this socket does; the rest
                     // answer where they always did, before returning.
-                    if case .capture(let lane, let fullPage) = request {
+                    switch request {
+                    case .capture(let lane, let fullPage):
                         self.captureFromCLI(lane: lane, fullPage: fullPage, answer: answer)
-                    } else {
+                    case .park(let lane, let force):
+                        self.parkFromCLI(lane: lane, force: force, answer: answer)
+                    case .parkIdle(let dryRun):
+                        self.parkIdleFromCLI(dryRun: dryRun, answer: answer)
+                    case .wake(let lane):
+                        self.wakeFromCLI(lane: lane, answer: answer)
+                    default:
                         answer(self.handle(request))
                     }
                 }
@@ -609,6 +616,8 @@ public final class StripWindowController: NSWindowController, CommandHandling {
             return appFromCLI(name: name)
         case .resume(let lane):
             return resumeFromCLI(lane: lane)
+        case .park, .parkIdle, .wake:
+            return .refused("park and wake are answered elsewhere")
         }
     }
 
@@ -2785,34 +2794,108 @@ extension StripWindowController {
             action: "Park \(count)", returnConfirms: true
         ) { [weak self] go in
             guard go, let self else { return }
-            self.parkInTurn(plan.park.map(\.key), refused: [])
+            self.parkInTurn(plan.park.map(\.key), lines: []) { [weak self] lines in
+                let refused = lines.filter { !$0.hasPrefix("parked\t") }.map {
+                    $0.split(separator: "\t").dropFirst().joined(separator: " — ")
+                }
+                guard let self, !refused.isEmpty else { return }
+                ConfirmPopup.inform(
+                    over: self.window,
+                    title: "\(refused.count) lane\(refused.count == 1 ? " was" : "s were") not parked",
+                    detail: refused.joined(separator: "\n"))
+            }
         }
     }
 
     /// One at a time: each park waits up to 5 s for its Claude to exit, and
-    /// twenty at once is the stampede the command exists to avoid.
-    private func parkInTurn(_ keys: [SessionKey], refused: [String]) {
-        guard let key = keys.first else {
-            if !refused.isEmpty {
-                ConfirmPopup.inform(
-                    over: window, title: "\(refused.count) lane\(refused.count == 1 ? " was" : "s were") not parked",
-                    detail: refused.joined(separator: "\n"))
-            }
-            return
-        }
+    /// twenty at once is the stampede the command exists to avoid. `done`
+    /// gets a line a session: `parked`, `refused` or `failed`, the name, why.
+    private func parkInTurn(_ keys: [SessionKey], lines: [String], done: @escaping ([String]) -> Void) {
+        guard let key = keys.first else { return done(lines) }
         let name = sessionName(key)
         park(key, force: false) { [weak self] outcome in
-            var refused = refused
+            var lines = lines
+            var rest = Array(keys.dropFirst())
             switch outcome {
-            case .done: break
-            case .refused(let why, _), .failed(let why): refused.append("\(name) — \(why)")
-            case .unsupported: refused.append("\(name) — this relay-tty cannot park")
+            case .done: lines.append("parked\t\(name)")
+            case .refused(let why, _): lines.append("refused\t\(name)\t\(why)")
+            case .failed(let why): lines.append("failed\t\(name)\t\(why)")
+            case .unsupported:
+                lines.append("refused\t\(name)\tthis relay-tty cannot park")
+                rest = []
             }
-            if outcome == .unsupported {
-                self?.parkInTurn([], refused: refused)
-            } else {
-                self?.parkInTurn(Array(keys.dropFirst()), refused: refused)
+            guard let self else { return done(lines) }
+            self.parkInTurn(rest, lines: lines, done: done)
+        }
+    }
+
+    /// The local sessions in the lane a CLI spec names.
+    private func localSessions(inLane spec: String) -> (keys: [SessionKey], why: String?) {
+        guard let lanes = Self.lanes(named: spec, in: store.state.lanes), !lanes.isEmpty else {
+            return ([], "no lane \(spec); maxpane ls lists them")
+        }
+        let keys = lanes.flatMap(\.panes).compactMap(\.sessionKey).filter { $0.server == nil }
+        return (keys, keys.isEmpty ? "lane \(spec) has no session on this Mac" : nil)
+    }
+
+    /// `maxpane park LANE [--force]`: the first session in it with a Claude.
+    func parkFromCLI(lane spec: String, force: Bool, answer: @escaping (OpenServer.Reply) -> Void) {
+        let found = localSessions(inLane: spec)
+        if let why = found.why { return answer(.refused(why)) }
+        do {
+            let keys = found.keys
+            guard !parkingUnsupported else { return answer(.refused("this relay-tty cannot park")) }
+            let key = keys.first { parkMenu(for: $0) == .park } ?? keys[0]
+            let name = sessionName(key)
+            park(key, force: force) { outcome in
+                switch outcome {
+                case .done: answer(OpenServer.Reply(ok: true, lanes: "parked\t\(name)\n"))
+                case .refused(let why, let forceable):
+                    answer(.refused("\(name): \(why)" + (forceable && !force ? " (--force to park anyway)" : "")))
+                case .failed(let why): answer(.refused("\(name): \(why)"))
+                case .unsupported: answer(.refused("this relay-tty cannot park"))
+                }
             }
+        }
+    }
+
+    /// `maxpane wake LANE`: every parked session in it.
+    func wakeFromCLI(lane spec: String, answer: @escaping (OpenServer.Reply) -> Void) {
+        let found = localSessions(inLane: spec)
+        if let why = found.why { return answer(.refused(why)) }
+        do {
+            let keys = found.keys
+            guard let key = keys.first(where: { sessions.sessions[$0]?.parked != nil }) else {
+                return answer(.refused("nothing in lane \(spec) is parked"))
+            }
+            let name = sessionName(key)
+            parker.unpark(sessionId: key.id) { [weak self] outcome in
+                self?.landed(outcome, for: key, verb: "wake", name: name)
+                switch outcome {
+                case .done: answer(OpenServer.Reply(ok: true, lanes: "woke\t\(name)\n"))
+                case .refused(let why, _), .failed(let why): answer(.refused("\(name): \(why)"))
+                case .unsupported: answer(.refused("this relay-tty cannot unpark"))
+                }
+            }
+        }
+    }
+
+    /// `maxpane park --idle [--dry-run]`: the plan, a line a session, then
+    /// what each park came to.
+    func parkIdleFromCLI(dryRun: Bool, answer: @escaping (OpenServer.Reply) -> Void) {
+        guard !parkingUnsupported else { return answer(.refused("this relay-tty cannot park")) }
+        let setting = (configStore?.config ?? config).parkIdleAfter
+        let quietFor = ParkIdle.parse(setting) ?? ParkIdle.parse(ParkIdle.defaultAfter)!
+        let plan = ParkIdle.plan(parkCandidates(), quietFor: quietFor)
+        let skipped = plan.skipped.map { "skipped\t\($0.candidate.name)\t\($0.why)" }
+        if dryRun || plan.park.isEmpty {
+            let would = plan.park.map { "would park\t\($0.name)" }
+            let out = (would + skipped).joined(separator: "\n")
+            return answer(OpenServer.Reply(
+                ok: true, lanes: out.isEmpty ? "no claude lane has been idle \(ParkIdle.describe(quietFor))\n" : out + "\n"))
+        }
+        parkInTurn(plan.park.map(\.key), lines: []) { lines in
+            answer(OpenServer.Reply(ok: true, lanes: (lines + skipped).joined(separator: "\n") + "\n"))
         }
     }
 }

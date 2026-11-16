@@ -65,6 +65,23 @@ public final class OpenServer: @unchecked Sendable {
         /// `maxpane resume [--all|LANE]`: bring back the agents whose sessions
         /// a reboot ended, in their panes (ADR-0046). `all` is every one.
         case resume(lane: String)
+        /// `maxpane park LANE [--force]` (ADR-0048). Answers when relay-tty
+        /// has, which can be seconds.
+        case park(lane: String, force: Bool)
+        /// `maxpane park --idle [--dry-run]`: Park Idle Lanes, without the
+        /// confirmation — typing it was the confirmation.
+        case parkIdle(dryRun: Bool)
+        /// `maxpane wake LANE`.
+        case wake(lane: String)
+
+        /// Answered later than the socket's own turn: the window controller
+        /// hands these an `answer` rather than returning a reply.
+        public var answersLater: Bool {
+            switch self {
+            case .capture, .park, .parkIdle, .wake: return true
+            default: return false
+            }
+        }
     }
 
     /// What goes back. `session` carries the id of a session just started;
@@ -281,6 +298,15 @@ public final class OpenServer: @unchecked Sendable {
         case "resume":
             let lane = (object["lane"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "all"
             return .resume(lane: lane)
+
+        case "park":
+            if object["idle"] as? Bool == true { return .parkIdle(dryRun: object["dry"] as? Bool ?? false) }
+            guard let lane = (object["lane"] as? String).flatMap({ $0.isEmpty ? nil : $0 }) else { return nil }
+            return .park(lane: lane, force: object["force"] as? Bool ?? false)
+
+        case "wake":
+            guard let lane = (object["lane"] as? String).flatMap({ $0.isEmpty ? nil : $0 }) else { return nil }
+            return .wake(lane: lane)
 
         case "volume":
             guard let lane = object["lane"] as? String, !lane.isEmpty,
