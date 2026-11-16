@@ -67,6 +67,26 @@ with their reason. The draft rule is relay-tty's own, to the letter, so the
 list never promises a park relay-tty will refuse. Then one confirmation, and
 the parks run one at a time, because each can wait 5 s for its Claude to go.
 What relay-tty still refused is reported at the end.
+Quiet is relay-tty's `agentQuietSince` from `GET /api/sessions` when the
+server sends it (relay-tty task trfwk9). That's Claude's own `statusUpdatedAt`
+and the last input, because Claude repaints on every resize, attach and
+status-line refresh, so output time is never old. With Claude's status to go
+by, pty-host's WORKING (an output rate a repaint trips) doesn't skip a lane,
+matching relay-tty. Without the field, the session file's output and input
+rule stands, so an older relay-tty still works. Each line shows the quiet
+time and its source, like `31d (claude)`.
+
+**Old pty-hosts.** A session started by relay 1.23 or older ignores
+`SET_META`, so a park can't put `parked` in its file. A server new enough to
+send `agentQuietSince` parks it anyway, writing its `parked/` copy first and
+refusing with `no-record` when it can't. That refusal is shown like any
+other and isn't forceable. Max Pane treats a ledger entry whose session is
+running, whose file knows nothing of parking, and which has no `claude` in it
+as parked. That keeps the `pane_agent` record and offers `$ WAKE`. Waking calls
+`unpark` with the conversation id, which relay-tty answers by starting a new
+session, and the pane is rebound to it. If relay-tty can't, the plain resume
+path runs instead, so the lane always has a way back. The old shell stays,
+with its scrollback.
 
 **`// PARKED` at the bottom, dimmed, never BLOCKED.** A parked session's
 state is idle whatever pty-host last classified or the title still says,
@@ -122,6 +142,7 @@ ignored, and its row stays with its server.
 
 ## Revisit when
 
-relay-tty's park route changes shape; remote relay-tty reports a session's
+relay-tty's park route changes shape, or `agentQuietSince` reaches the
+session file or `SESSION_UPDATE` (the extra fetch goes); remote relay-tty reports a session's
 foreground process (remote panes can then join, as ADR-0046 says); or
 another agent CLI learns to park.

@@ -59,6 +59,15 @@ public struct RelaySessionInfo: Codable, Identifiable, Sendable {
         parked != nil || keep != nil || lastInputAt != nil || foregroundPid != nil
     }
 
+    /// The pty-host that wrote this file is from relay 1.23 or older, and
+    /// ignores `SET_META`: relay-tty's `isLegacyHost`, to the letter. A
+    /// foreground job is named but its pid is not (new hosts write both),
+    /// and no input has ever been recorded. Such a session can still be
+    /// parked by a new enough server, but never says `parked` (ADR-0048).
+    public var isLegacyHost: Bool {
+        foregroundProcess != nil && foregroundPid == nil && lastInputAt == nil
+    }
+
     /// What to show in a picker row.
     public var displayName: String {
         if let t = title, !t.isEmpty { return t }

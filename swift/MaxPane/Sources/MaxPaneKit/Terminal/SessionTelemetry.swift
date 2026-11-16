@@ -273,6 +273,9 @@ public struct SessionTelemetry: Sendable, Equatable {
     /// The relay-tty that wrote this session knows how to park. False for
     /// an older one, and then nothing about parking is offered.
     public var knowsParking = false
+    /// Written by a pty-host from relay 1.23 or older (`isLegacyHost`):
+    /// parked, it never says so in its file.
+    public var isOldPtyHost = false
 
     /// Parked, and on this Mac: the sidebar's `// PARKED` group and the
     /// pane's `$ WAKE`. A remote parked session stays where it was (ADR-0046's
@@ -313,6 +316,7 @@ public struct SessionTelemetry: Sendable, Equatable {
         lastInputAt = info.lastInputAt.map { Date(timeIntervalSince1970: $0 / 1000) }
         agentStateChangedAt = info.agentStateChangedAt.map { Date(timeIntervalSince1970: $0 / 1000) }
         knowsParking = info.knowsParking
+        isOldPtyHost = info.isLegacyHost
     }
 
     /// Throughput the way the bar prints it: `1.7KB/s`, `842B/s`, `2.1MB/s`.

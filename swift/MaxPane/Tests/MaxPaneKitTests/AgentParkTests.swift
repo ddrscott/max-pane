@@ -198,8 +198,125 @@ struct AgentParkTests {
         ])
 
         let summary = ParkIdle.summary(park: plan.park, skipped: plan.skipped, now: Self.now)
-        #expect(summary.contains("$ park  old — quiet 5d"))
-        #expect(summary.contains("  skip  draft — an unsent draft at the prompt"))
+        #expect(summary.contains("$ park  old — quiet 5d (output)"))
+        #expect(summary.contains("  skip  draft — quiet 2d (output) · an unsent draft at the prompt"))
+    }
+
+    // MARK: relay-tty's quiet time (agentQuietSince)
+
+    static func quiet(_ ago: TimeInterval, _ source: String = "claude") -> AgentQuiet {
+        AgentQuiet(since: now.addingTimeInterval(-ago), source: source)
+    }
+
+    @Test("with relay-tty's agentQuietSince, a Claude idle for weeks is parked even though a repaint just touched its output")
+    func agentQuietSelection() {
+        // Repainted a minute ago: by output alone it is not idle. (Its last
+        // input is older than Claude's last status, as agentQuietSince is
+        // the later of the two: no draft.)
+        let repainted = Self.telemetry("repainted", quiet: 60, inputQuiet: 40 * Self.day)
+        #expect(ParkIdle.plan([Self.candidate(repainted)], quietFor: Self.day, now: Self.now).park.isEmpty,
+                "without agentQuietSince, today's rule: output counts")
+
+        var withQuiet = Self.candidate(repainted)
+        withQuiet.agentQuiet = Self.quiet(31 * Self.day)
+        // Claude said something an hour ago, though output has been still for days.
+        var recent = Self.candidate(Self.telemetry("recent", quiet: 5 * Self.day))
+        recent.agentQuiet = Self.quiet(3600)
+        // pty-host calls it working off the repaint; Claude's own status is idle.
+        var repaintWorking = Self.candidate(Self.telemetry("repaint-working", state: .working, quiet: 30, inputQuiet: 10 * Self.day))
+        repaintWorking.agentQuiet = Self.quiet(3 * Self.day)
+        // relay-tty fell back to output for this one: its working still counts.
+        var outputWorking = Self.candidate(Self.telemetry("output-working", state: .working))
+        outputWorking.agentQuiet = Self.quiet(2 * Self.day, "output")
+        // The last input is what agentQuietSince is: typed after Claude settled.
+        var draft = Self.candidate(Self.telemetry("draft", quiet: 60, inputQuiet: 4 * Self.day))
+        draft.agentQuiet = Self.quiet(4 * Self.day)
+        // An old pty-host: its file knows nothing of parking, but the server measured it.
+        var old = Self.telemetry("old-host", quiet: 60, knows: false)
+        old.lastInputAt = nil
+        old.isOldPtyHost = true
+        var oldHost = Self.candidate(old, hasClaude: false)
+        oldHost.agentQuiet = Self.quiet(10 * Self.day)
+        // Same file, no agentQuietSince: an older server, which cannot park it.
+        let oldHostOldServer = Self.candidate(old)
+
+        let plan = ParkIdle.plan(
+            [withQuiet, recent, repaintWorking, outputWorking, draft, oldHost, oldHostOldServer],
+            quietFor: Self.day, now: Self.now)
+        #expect(plan.park.map(\.name) == ["repainted", "old-host", "repaint-working"], "quietest first")
+        let skipped = Dictionary(uniqueKeysWithValues: plan.skipped.map { ($0.candidate.name, $0.why) })
+        #expect(skipped == ["output-working": "working", "draft": "an unsent draft at the prompt"])
+
+        let summary = ParkIdle.summary(park: plan.park, skipped: plan.skipped, now: Self.now)
+        #expect(summary.contains("$ park  repainted — quiet 31d (claude)"))
+        #expect(summary.contains("$ park  old-host — quiet 10d (claude) · old pty-host: never shows PARKED"))
+        #expect(summary.contains("  skip  output-working — quiet 2d (output) · working"))
+    }
+
+    @Test("agentQuietSince and agentQuietSource are read off GET /api/sessions, and a session without them is left out")
+    func agentQuietParse() {
+        let body = Data("""
+        {"sessions":[
+          {"id":"a","status":"running","agentQuietSince":1797408000000,"agentQuietSource":"claude"},
+          {"id":"b","status":"running","agentQuietSince":1799913600000},
+          {"id":"c","status":"running","lastActivity":1799999999000}
+        ]}
+        """.utf8)
+        let quiet = AgentQuiet.parse(sessionList: body)
+        #expect(quiet["a"] == AgentQuiet(since: Date(timeIntervalSince1970: 1_797_408_000), source: "claude"))
+        #expect(quiet["b"]?.source == "output")
+        #expect(quiet["c"] == nil)
+        #expect(AgentQuiet.parse(sessionList: Data("<html>".utf8)).isEmpty)
+    }
+
+    @Test("an old pty-host's file is recognized the way relay-tty does: a foreground job without its pid, and no input")
+    func legacyHostFile() throws {
+        func info(_ extra: String) throws -> RelaySessionInfo {
+            try JSONDecoder().decode(RelaySessionInfo.self, from: Data("""
+            {"id":"x","command":"zsh","args":[],"cwd":"/tmp","createdAt":1,"status":"running","cols":80,"rows":24\(extra)}
+            """.utf8))
+        }
+        #expect(try info(",\"foregroundProcess\":\"2.1.3\"").isLegacyHost)
+        #expect(try !info(",\"foregroundProcess\":\"2.1.3\",\"foregroundPid\":42").isLegacyHost)
+        #expect(try !info(",\"foregroundProcess\":\"2.1.3\",\"lastInputAt\":1").isLegacyHost)
+        #expect(try !info("").isLegacyHost, "no foreground job: nothing to go by")
+    }
+
+    @Test("a lane parked on an old pty-host is found from relay-tty's parked/ copy, and only while its shell has no claude")
+    func oldHostLedger() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("parked-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        func write(_ conv: String, relay: String) throws {
+            try Data("""
+            {"agent":"claude","sessionId":"\(conv)","cwd":"/tmp/a","flags":["--x"],"name":"n-\(conv)","parkedAt":1,"relaySessionId":"\(relay)"}
+            """.utf8).write(to: dir.appendingPathComponent("\(conv).json"))
+        }
+        try write("conv-old", relay: "old")
+        try write("conv-new", relay: "new")
+        try write("conv-gone", relay: "gone")
+        try write("conv-back", relay: "back")
+        try Data("not json".utf8).write(to: dir.appendingPathComponent("junk.json"))
+        let entries = ParkLedger.entries(in: dir)
+        #expect(entries.count == 4)
+
+        var old = Self.telemetry("old", knows: false)
+        old.lastInputAt = nil
+        // A new host's park says so in its own file: not this path.
+        let new = Self.telemetry("new", parked: Self.parked())
+        var back = Self.telemetry("back", knows: false)
+        back.lastInputAt = nil
+        let sessions = [old.key: old, new.key: new, back.key: back]
+        let asleep = ParkLedger.asleepOnOldHosts(entries, sessions: sessions, sightings: ["back"])
+        #expect(Array(asleep.keys) == ["old"], "gone is not running; back has its claude again")
+        #expect(asleep["old"]?.sessionId == "conv-old" && asleep["old"]?.flags == ["--x"])
+
+        // The lane keeps its record from that copy, as a parked one does.
+        let reading = AgentReading(hosts: ["old"], running: [], sightings: [:])
+        let changes = AgentLedgerSync.changes(
+            panes: [("p1", "old")], records: [:], reading: reading, holding: [], now: 9, parked: asleep)
+        #expect(changes == [.record(PaneAgent(paneId: "p1", cli: "claude", sessionId: "conv-old", cwd: "/tmp/a",
+                                              args: ["--x"], name: "n-conv-old", updatedAt: 9))])
     }
 
     // MARK: relay-tty's replies
@@ -226,6 +343,30 @@ struct AgentParkTests {
                 == .refused("Session not found", forceable: false))
         #expect(ParkReply.outcome(status: 0, data: nil, transportError: "Could not connect to the server.")
                 == .failed("Could not connect to the server."))
+        // no-record: relay-tty could not write the parked/ copy and signalled
+        // nothing. A refusal with its reason, never Park Anyway.
+        #expect(ParkReply.outcome(status: 500, data: refusal("no-record", "could not write /x/parked, so the conversation would not be recoverable"))
+                == .refused("could not write /x/parked, so the conversation would not be recoverable", forceable: false))
+        #expect(ParkReply.outcome(status: 500, data: Data("oops".utf8)) == .failed("HTTP 500: oops"))
+    }
+
+    @Test("a park on an old pty-host comes back with relay-tty's note, and an unpark by conversation with its new session")
+    func oldHostReplies() {
+        let parked = Data("""
+        {"ok":true,"session":"abc","pid":4242,"signal":"SIGTERM","legacyHost":true,
+         "note":"This session's pty-host predates parking, so it won't show as PARKED; relay unpark conv-1 brings the conversation back in a new session.",
+         "parked":{"agent":"claude","sessionId":"conv-1","cwd":"/tmp/a","flags":[],"parkedAt":1}}
+        """.utf8)
+        guard case .parkedOnOldHost(let agent, let note) = ParkReply.outcome(status: 200, data: parked) else {
+            Issue.record("expected parkedOnOldHost")
+            return
+        }
+        #expect(agent.sessionId == "conv-1" && note.contains("relay unpark conv-1"))
+        #expect(ParkReply.outcome(status: 200, data: Data("{\"ok\":true,\"session\":\"abc\",\"legacyHost\":false}".utf8)) == .done)
+        #expect(ParkReply.outcome(status: 200, data: Data("""
+            {"ok":true,"session":"fresh1","conversation":"conv-1","line":"claude --resume conv-1","spawned":true}
+            """.utf8)) == .spawned(session: "fresh1"))
+        #expect(ParkReply.outcome(status: 200, data: Data("{\"ok\":true,\"session\":\"abc\",\"spawned\":false}".utf8)) == .done)
     }
 
     @Test("the local server's address comes from relay-tty's server.json, else its default port")

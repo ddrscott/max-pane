@@ -1704,10 +1704,20 @@ unpark`, 1.24 or later); Max Pane offers it and shows it.
   shows up on the row, and on the lane's banner, instead of in a dialog,
   and the row's menu then offers **Park Anyway**.
 - **Park Idle Lanes…** (File menu, or ⌘E) lists every local Claude lane
-  whose output *and* input have been quiet for `park_idle_after` (24 hours
-  unless you set it), and asks once. Kept, blocked, working and drafted
+  that has been quiet for `park_idle_after` (24 hours unless you set it),
+  and asks once. Quiet is relay-tty's `agentQuietSince`, measured from
+  Claude's own status and your last input, so a repaint on resize or
+  reconnect doesn't reset it. Against a relay-tty too old to send it, quiet
+  means output *and* input, as before. Each line shows how long and by whose
+  clock, like `quiet 31d (claude)`. Kept, blocked, working and drafted
   lanes are listed as skipped, each with why. Anything relay-tty still
   refuses is reported at the end.
+- A session started by relay 1.23 or older keeps that release's pty-host,
+  which can't record `parked`. A new enough relay-tty parks it anyway and
+  says so on the row. The lane shows `PARKED · <name>` and `$ WAKE` from
+  relay-tty's `parked/` copy, and waking runs `relay unpark <conversation
+  id>`, which resumes it in a new session and moves the lane onto it. The
+  old shell is left running with its scrollback.
 - A parked lane sorts into a dimmed **`// PARKED`** group at the bottom of
   the sidebar, with how long it has been asleep (`parked 3d`). It never
   counts toward a BLOCKED roll-up. Folding `// PARKED` puts those lanes
