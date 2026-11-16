@@ -72,8 +72,8 @@ public struct ParkedAgent: Codable, Equatable, Sendable {
 enum ParkOutcome: Equatable {
     case done
     /// relay-tty said no, and why, in its words. `forceable` when Park
-    /// Anyway could get past it: the busy and draft guards, not a working
-    /// or blocked agent, and never a session with no Claude in it.
+    /// Anyway could get past it: a working, blocked or busy agent, or a
+    /// draft — never a session with no Claude in it, or one already parked.
     case refused(String, forceable: Bool)
     /// This relay-tty has no such route: the feature is not there, and the
     /// items that ask for it go away.
@@ -90,7 +90,8 @@ enum ParkReply {
     static func outcome(status: Int, data: Data?, transportError: String? = nil) -> ParkOutcome {
         if let transportError { return .failed(transportError) }
         let object = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-        let message = (object?["error"] as? String) ?? (object?["reason"] as? String)
+        let message = ((object?["error"] as? String) ?? (object?["message"] as? String)).map(trimForceHint)
+        let code = object?["reason"] as? String
         switch status {
         case 200..<300:
             return .done
@@ -105,7 +106,7 @@ enum ParkReply {
             return .unsupported
         case 400..<500:
             let reason = message ?? RemoteSpawner.errorLine(data)
-            let forceable = (object?["forceable"] as? Bool) ?? Self.looksForceable(reason)
+            let forceable = code.map(forceableCodes.contains) ?? Self.looksForceable(reason)
             return .refused(reason.isEmpty ? "HTTP \(status)" : reason, forceable: forceable)
         default:
             let line = message ?? RemoteSpawner.errorLine(data)
@@ -113,15 +114,23 @@ enum ParkReply {
         }
     }
 
-    /// relay-tty's `--force` skips the busy and draft guards only. When the
-    /// reply does not say `forceable`, the reason's words decide: an agent
-    /// that is working or blocked, or a session with no Claude, cannot be
-    /// forced, and Park Anyway is not offered for them.
+    /// relay-tty's refusal codes `--force` gets past (`shared/park.ts`,
+    /// `parkRefusal`). The rest — no Claude, already parked, not running —
+    /// are refused either way, and Park Anyway is not offered for them.
+    static let forceableCodes: Set<String> = ["agent-working", "agent-blocked", "claude-busy", "unsent-draft"]
+
+    /// With no code to go by (the CLI's stderr), the words decide.
     static func looksForceable(_ reason: String) -> Bool {
         let r = reason.lowercased()
-        for word in ["working", "blocked", "no claude", "not running claude", "not a claude", "already parked"]
-        where r.contains(word) { return false }
+        if r.contains("--force") { return true }
+        for word in ["no claude", "already parked", "not running", "not found"] where r.contains(word) { return false }
         return true
+    }
+
+    /// relay-tty's message tells a CLI user to pass `--force`; here the
+    /// row's menu offers Park Anyway instead, so the hint goes.
+    static func trimForceHint(_ message: String) -> String {
+        message.replacingOccurrences(of: " (use --force to park anyway)", with: "")
     }
 }
 
@@ -259,7 +268,7 @@ final class LocalAgentParker: AgentParking {
         let line = output.split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
             .map { $0.hasPrefix("error: ") ? String($0.dropFirst(7)) : $0 } ?? "relay exited \(exit)"
-        return .refused(line, forceable: ParkReply.looksForceable(line))
+        return .refused(ParkReply.trimForceHint(line), forceable: ParkReply.looksForceable(line))
     }
 }
 
@@ -319,10 +328,12 @@ enum ParkIdle {
     }
 
     /// Input after the agent's last state change: a draft sitting at the
-    /// prompt, the same guard relay-tty applies.
+    /// prompt. relay-tty's own guard, to the letter (`lastInputAt >
+    /// agentStateChangedAt`, a missing one as zero), so the list never
+    /// promises a park relay-tty will refuse.
     static func hasDraft(_ t: SessionTelemetry) -> Bool {
-        guard let input = t.lastInputAt, let changed = t.agentStateChangedAt else { return false }
-        return input > changed
+        guard let input = t.lastInputAt else { return false }
+        return input > (t.agentStateChangedAt ?? .distantPast)
     }
 
     /// Which sessions Park Idle Lanes parks, and which it passes over and

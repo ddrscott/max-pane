@@ -27,7 +27,9 @@ struct AgentParkTests {
             sessionId: id, server: server, title: "claude \(id)", cwd: cwd, command: "zsh", state: state,
             lastActivity: now.addingTimeInterval(-quiet), isRunning: true)
         t.lastInputAt = now.addingTimeInterval(-(inputQuiet ?? quiet))
-        t.agentStateChangedAt = stateChangedAgo.map { now.addingTimeInterval(-$0) }
+        // The agent settled when the last of its input and output did,
+        // unless a test says otherwise: no draft.
+        t.agentStateChangedAt = now.addingTimeInterval(-(stateChangedAgo ?? min(quiet, inputQuiet ?? quiet)))
         t.parked = parked
         t.keep = keep
         t.knowsParking = knows
@@ -204,14 +206,18 @@ struct AgentParkTests {
     @Test("relay-tty's replies: done, a refusal with its reason, a missing route is an older relay-tty, nobody home is a failure")
     func replies() {
         #expect(ParkReply.outcome(status: 200, data: Data("{\"ok\":true}".utf8)) == .done)
-        #expect(ParkReply.outcome(status: 409, data: Data("{\"error\":\"claude is busy\"}".utf8))
-                == .refused("claude is busy", forceable: true))
-        #expect(ParkReply.outcome(status: 409, data: Data("{\"error\":\"agent is working\"}".utf8))
-                == .refused("agent is working", forceable: false))
-        #expect(ParkReply.outcome(status: 409, data: Data("{\"error\":\"no claude in this session\"}".utf8))
-                == .refused("no claude in this session", forceable: false))
-        #expect(ParkReply.outcome(status: 409, data: Data("{\"error\":\"nope\",\"forceable\":false}".utf8))
-                == .refused("nope", forceable: false))
+        // relay-tty's own body: {ok, session, reason, message, error}.
+        func refusal(_ code: String, _ message: String) -> Data {
+            Data("{\"ok\":false,\"session\":\"abc\",\"reason\":\"\(code)\",\"message\":\"\(message)\",\"error\":\"\(message)\"}".utf8)
+        }
+        #expect(ParkReply.outcome(status: 409, data: refusal("claude-busy", "Claude reports itself busy (use --force to park anyway)"))
+                == .refused("Claude reports itself busy", forceable: true))
+        #expect(ParkReply.outcome(status: 409, data: refusal("agent-working", "the agent is working (use --force to park anyway)"))
+                == .refused("the agent is working", forceable: true))
+        #expect(ParkReply.outcome(status: 409, data: refusal("no-claude", "no Claude Code process in this session"))
+                == .refused("no Claude Code process in this session", forceable: false))
+        #expect(ParkReply.outcome(status: 409, data: refusal("already-parked", "already parked"))
+                == .refused("already parked", forceable: false))
         // Express's own 404 for a route it does not have, against an older relay-tty.
         #expect(ParkReply.outcome(status: 404, data: Data("<pre>Cannot POST /api/sessions/x/park</pre>".utf8)) == .unsupported)
         // The route, about a session it does not know.
@@ -221,8 +227,10 @@ struct AgentParkTests {
                 == .failed("Could not connect to the server."))
         #expect(LocalAgentParker.cliOutcome(exit: 0, output: "parked abc") == .done)
         #expect(LocalAgentParker.cliOutcome(exit: 1, output: "error: unknown command 'park'") == .unsupported)
-        #expect(LocalAgentParker.cliOutcome(exit: 1, output: "error: unsent draft in the prompt\n")
-                == .refused("unsent draft in the prompt", forceable: true))
+        #expect(LocalAgentParker.cliOutcome(exit: 1, output: "error: a draft may be unsent (use --force to park anyway)\n")
+                == .refused("a draft may be unsent", forceable: true))
+        #expect(LocalAgentParker.cliOutcome(exit: 1, output: "no Claude Code process in this session")
+                == .refused("no Claude Code process in this session", forceable: false))
     }
 
     @Test("the local server's address comes from relay-tty's server.json, else its default port")
