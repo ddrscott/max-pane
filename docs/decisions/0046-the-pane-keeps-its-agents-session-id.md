@@ -42,7 +42,10 @@ the files, one `sysctl(KERN_PROC_ALL)` for the process table, and
 Only `kind == interactive` counts. The argv loses `--resume`/`-r` (with a
 value only when the next word is not a flag — a bare `--resume` is a
 picker), `--resume=`, `--continue`/`-c`, `--session-id` and
-`--fork-session`, so a resume names the conversation once. The ledger is
+`--fork-session`, so a resume names the conversation once. It also loses
+the launch prompt (any word that is not a flag or a flag's value, and
+everything after `--`), so a resume doesn't send it a second time; the
+rules match relay-tty's `resumeFlags` in `shared/park.ts`. The ledger is
 written only when what is seen differs from what is kept.
 
 **Forgotten in three ways, and a dead session is not one of them.** Closing

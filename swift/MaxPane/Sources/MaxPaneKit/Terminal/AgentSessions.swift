@@ -64,34 +64,94 @@ struct ClaudeSessionFile: Equatable, Sendable {
 }
 
 /// The argv an agent was started with, as the flags a resume passes back.
+///
+/// The rules match relay-tty's `resumeFlags` in `shared/park.ts`, so a lane
+/// resumed by `$ RESUME` here and one woken by relay-tty's unpark come back
+/// with the same command line. Change one, change the other.
 enum AgentArgv {
+    /// Claude Code options that take exactly one value (`--model opus`).
+    static let singleValue: Set<String> = [
+        "--agent", "--agents", "--append-system-prompt", "--autocompact", "--debug-file",
+        "--effort", "--environment", "--fallback-model", "--input-format", "--json-schema",
+        "--max-budget-usd", "--model", "--name", "-n", "--output-format", "--permission-mode",
+        "--permission-prompts", "--permission-prompt-tool", "--plugin-dir", "--plugin-url",
+        "--remote-control-session-name-prefix", "--setting-sources", "--settings",
+        "--system-prompt", "--system-prompt-snapshot", "--append-system-prompt-file",
+        "--system-prompt-file",
+    ]
+
+    /// Options whose value is optional: the next word is theirs when it is not a flag.
+    static let optionalValue: Set<String> = ["--debug", "-d", "--worktree", "-w", "--remote-control", "--prompt-suggestions"]
+
+    /// Variadic options (`--mcp-config a.json b.json`).
+    static let variadic: Set<String> = [
+        "--add-dir", "--allowedTools", "--allowed-tools", "--disallowedTools", "--disallowed-tools",
+        "--betas", "--mcp-config", "--file", "--tools",
+    ]
+
+    /// Boolean options, so the word after them is never taken as their value.
+    static let noValue: Set<String> = [
+        "--allow-dangerously-skip-permissions", "--ax-screen-reader", "--bg", "--background", "--bare",
+        "--brief", "--chrome", "--no-chrome", "--dangerously-skip-permissions", "--desktop",
+        "--disable-slash-commands", "--exclude-dynamic-system-prompt-sections", "--forward-subagent-text",
+        "--ide", "--include-hook-events", "--include-partial-messages", "--no-session-persistence",
+        "--print", "-p", "--replay-user-messages", "--restricted", "--safe-mode", "--strict-mcp-config",
+        "--tmux", "--verbose", "--help", "-h", "--version", "-v",
+    ]
+
     /// The flags after the program, minus the ones that say which
-    /// conversation to open. A resume names the conversation itself, so a
-    /// `--resume <old>` or `--continue` left in would be a second, and
-    /// conflicting, answer to that question.
+    /// conversation to open and minus the launch prompt.
     ///
-    /// `--resume` takes an optional value in Claude Code: `claude --resume`
-    /// alone opens a picker. So the word after it is its value only when it
-    /// is not a flag. `argv[0]` may be `claude`, a path to it, or `node`
-    /// running Claude's `cli.js`; the flags start after whichever it is.
+    /// - A resume names the conversation itself, so `--resume`/`-r [id]`,
+    ///   `--session-id <id>`, `--continue`/`-c` and `--fork-session` go.
+    ///   `--resume` takes an optional value (`claude --resume` alone opens a
+    ///   picker), so the word after it is its value only when it is not a flag.
+    /// - The positional prompt goes: any word that is neither a flag nor a
+    ///   flag's value, and everything after `--`. Replaying it would send the
+    ///   launch prompt to the resumed conversation a second time.
+    /// - Each kept flag keeps its value: one word for a single-value option,
+    ///   the next non-flag word for an optional-value one, every word up to
+    ///   the next flag for a variadic one (but never a word with whitespace,
+    ///   which reads as a prompt), and for an option the tables don't know,
+    ///   one following word without whitespace, so a newer value flag survives.
+    ///
+    /// `argv[0]` may be `claude`, a path to it, or `node` running Claude's
+    /// `cli.js`; the flags start after whichever it is.
     static func resumeFlags(_ argv: [String]) -> [String] {
         guard !argv.isEmpty else { return [] }
         let start = argv.firstIndex(where: isProgram).map { $0 + 1 } ?? 1
+        func isFlag(_ word: String) -> Bool { word.hasPrefix("-") && word != "-" }
+        func isOneWord(_ word: String) -> Bool { !isFlag(word) && word != "--" && !word.contains(where: \.isWhitespace) }
         var out: [String] = []
         var i = start
         while i < argv.count {
             let word = argv[i]
             i += 1
+            if word == "--" { break }
             switch word {
             case "--resume", "-r":
-                if i < argv.count, !argv[i].hasPrefix("-") { i += 1 }
+                if i < argv.count, !isFlag(argv[i]) { i += 1 }
+                continue
             case "--session-id":
                 if i < argv.count { i += 1 }
+                continue
             case "--continue", "-c", "--fork-session":
                 continue
             default:
-                if word.hasPrefix("--resume=") || word.hasPrefix("--session-id=") { continue }
-                out.append(word)
+                break
+            }
+            if word.hasPrefix("--resume=") || word.hasPrefix("--session-id=") { continue }
+            guard isFlag(word) else { continue } // the positional prompt
+            out.append(word)
+            if word.contains("=") { continue }
+            if singleValue.contains(word) {
+                if i < argv.count { out.append(argv[i]); i += 1 }
+            } else if optionalValue.contains(word) {
+                if i < argv.count, !isFlag(argv[i]) { out.append(argv[i]); i += 1 }
+            } else if variadic.contains(word) {
+                while i < argv.count, isOneWord(argv[i]) { out.append(argv[i]); i += 1 }
+            } else if !noValue.contains(word) {
+                if i < argv.count, isOneWord(argv[i]) { out.append(argv[i]); i += 1 }
             }
         }
         return out
